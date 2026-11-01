@@ -1,0 +1,159 @@
+__DEVICE__ PGFamily pg_family(PGFour a,PGFour b,PGKernel k,int zeroBlack) {
+    PGFamily f;f.a=a;f.b=b;f.curveKernel=k;f.zeroBlack=zeroBlack;return f;
+}
+__DEVICE__ PGResponseFamily pg_response_family(PGFour c,PGFour q,PGFour a,PGFour b,PGKernel k) {
+    PGResponseFamily f;f.c=c;f.q=q;f.a=a;f.b=b;f.curveKernel=k;return f;
+}
+__DEVICE__ PGFour pg_log_stops(PGFour p) {
+    return pg_four(p.s*.693147180560f,p.m*.693147180560f,p.w*.693147180560f,p.h*.693147180560f);
+}
+__DEVICE__ float pg_neutral_nits(float j,PGModel m) {
+    if(j<=0.0f)return 0.0f;
+    float response=m.view.aw*_powf(j,1.0f/.943019577159f)/3.05f;
+    return pg_unresponse(response,m.view)*m.effectiveRefNits;
+}
+__DEVICE__ PGCoefficients pg_response_coefficients(PGResponseFamily f,PGWeights w) {
+    PGCoefficients c;c.c=pg_blend(f.c,0,w);c.q=pg_blend(f.q,0,w);
+    c.a=pg_blend(f.a,0,w);c.b=pg_blend(f.b,0,w);return c;
+}
+__DEVICE__ float pg_contribution(PGCoefficients c,PGDrivers d) {
+    return c.c*d.c+c.q*d.q+c.a*d.a+c.b*d.b;
+}
+__DEVICE__ float pg_remap(float j,PGModel m) {
+    if(m.remapActive==0)return j;
+    if(j<=m.black)return 0.0f;
+    float t=(j-m.black)/m.qHigh;
+    if(t==1.0f)return m.target.h;
+    PGFour v=pg_transitions(t,m.remap);
+    return m.tailSlope*t+m.residual.s*v.s+m.residual.m*v.m+m.residual.w*v.w+m.residual.h*v.h;
+}
+__DEVICE__ float pg_adaptance_weight(float H,float C,float strength) {
+    // Engineering adaptance envelope on modCAM16 H-K lightness H and true modCAM16 C.
+    // gamma=1, C0=30, p=2, rho=.25; H=100 at reference white, HDR unbounded.
+    float light=_fmaxf(0.0f,H)*.01f;
+    if(strength<=0.0f)return 0.0f;
+    if(strength>=1.0f)return light;
+    float c=C/30.0f,rate=.25f+.75f/(1.0f+c*c),ar=strength*rate;
+    return light*ar/(1.0f-strength+ar);
+}
+__DEVICE__ PGAdjustment pg_adjustments(float3 q,PGModel m) {
+    float t=pg_smoother(q.x/m.highJ);
+    PGWeights w=pg_weights(t,m.adaptance.curveKernel);
+    PGAdjustment a;a.adaptance=pg_pair(m.adaptance,w);
+    if(m.light.curveKernel.width!=m.adaptance.curveKernel.width)w=pg_weights(t,m.light.curveKernel);
+    a.light=pg_response_coefficients(m.light,w);
+    if(m.radius.curveKernel.width!=m.light.curveKernel.width)w=pg_weights(t,m.radius.curveKernel);
+    a.radius=pg_response_coefficients(m.radius,w);
+    if(m.hueCurve.width!=m.radius.curveKernel.width)w=pg_weights(t,m.hueCurve);
+    a.hue=pg_blend(m.hueHeights,0,w);
+    a.concentration=make_float3(pg_blend(m.concentrationAHeights,0,w),pg_blend(m.concentrationBHeights,0,w),0.0f);
+    a.adaptanceStrength=m.adaptanceStrength;
+    return a;
+}
+__DEVICE__ PGDrivers pg_drivers_ja(float3 q,float JA,PGAdjustment a) {
+    // Sample the fitted physical AP1 capacity once, before color changes.
+    float C=pg_hypot(q.y,q.z),denom=pg_hypot(C,2.0f),fade=C/denom;fade*=fade;
+    float hue=C>0.0f?_atan2f(q.z,q.y):0.0f;
+    float boundary=.4f*pg_physical_capacity(JA,hue),scale=_fmaxf(C,boundary);
+    float cn=0.0f,sn=0.0f;if(scale>0.0f) {cn=C/scale;sn=boundary/scale;}
+    cn*=cn;sn*=sn;float sum=cn+sn;
+    PGDrivers d;d.c=sum>0.0f?fade*(cn/sum):0.0f;d.q=sum>0.0f?fade*(sn/sum):0.0f;
+    d.a=q.y/denom;d.b=q.z/denom;
+    d.adaptanceWeight=pg_adaptance_weight(q.x,C,a.adaptanceStrength);
+    return d;
+}
+__DEVICE__ float3 pg_attributes(PGAdjustment a,PGDrivers d,PGModel m) {
+    // Matrix rows: additive J_HK, radians, natural-log radius. No d_a/d_b -> hue.
+    float deltaJ=pg_contribution(a.light,d);
+    float theta=(a.hue+m.hueByChroma*d.c+m.hueByBend*d.q)*.0174532925199433f;
+    float sigma=m.radiusBase+pg_contribution(a.radius,d);
+    return make_float3(deltaJ,theta,sigma);
+}
+__DEVICE__ float3 pg_hue_concentration(float3 q,float3 v) {
+    if(v.x==0.0f && v.y==0.0f)return q;
+    float C=_sqrtf(q.y*q.y+q.z*q.z);
+    if(C==0.0f)return q;
+    float t=_sqrtf(v.x*v.x+v.y*v.y)/.6f;
+    float e=_expf(-2.0f*t),t2=t*t;
+    float scale=t<.001f ? 1.0f+t2*(-1.0f/3.0f+2.0f*t2/15.0f) : (1.0f-e)/((1.0f+e)*t);
+    float fade=C*C/(C*C+4.0f),p=v.x*scale*fade,r=v.y*scale*fade;
+    float co=q.y/C,si=q.z/C,dr=1.0f+p*co+r*si,di=p*si-r*co;
+    float nr=co+p,ni=si+r,den=dr*dr+di*di;
+    return make_float3(q.x,C*(nr*dr+ni*di)/den,C*(ni*dr-nr*di)/den);
+}
+__DEVICE__ float3 pg_stage3_ja(float3 q,float JA,PGModel m) {
+    if(m.tonalActive==0 || q.x==0.0f)return q;
+    PGAdjustment a=pg_adjustments(q,m);PGDrivers d=pg_drivers_ja(q,JA,a);
+    float3 v=pg_attributes(a,d,m);float gain=_expf(v.z),cs=_cosf(v.y),sn=_sinf(v.y);
+    float3 f=pg_hue_concentration(q,a.concentration);
+    return make_float3(q.x+v.x,
+        d.adaptanceWeight*a.adaptance.x+gain*(cs*f.y-sn*f.z),
+        d.adaptanceWeight*a.adaptance.y+gain*(sn*f.y+cs*f.z));
+}
+__DEVICE__ PGModel pg_model(float3 ws,float3 wd,float exposureStops,
+                          float lra,float lrs,float lre,float lba,float lbs,float lbe,
+                          float sourceBlack,PGFour sourceLevels,int toneFit,
+                          PGFour aAdaptance,PGFour bAdaptance,int adaptanceCurveFit,float adaptanceAmount,
+                          PGFour lightC,PGFour lightQ,PGFour lightA,PGFour lightB,int lightnessCurveFit,
+                          PGFour radiusC,PGFour radiusQ,PGFour radiusA,PGFour radiusB,int chromaCurveFit,
+                          PGFour hueHeights,PGFour concentrationAHeights,PGFour concentrationBHeights,int hueCurveFit,float radiusStops,float hueC,float hueQ,
+                          float highNits) {
+    PGModel m;m.direction=0;m.ws=ws;m.wd=wd;m.wc=color_mv(color_cat(),wd);m.adapt=color_adaptation(ws,wd);
+    float3 cr=pg_anchor(wd,0,.30f),cb=pg_anchor(wd,2,.30f),z=color_zero3();
+    ColorMat delta=color_mul(color_cols(z,pg_target(cr,wd,lra,lrs,lre)-cr,pg_target(cb,wd,lba, lbs,lbe)-cb),color_inv(color_cols(m.wc,cr,cb)));
+    m.lin=color_add(color_id(),color_mul(color_mul(color_icat(),delta),color_cat()));
+    m.exposure=_exp2f(exposureStops);
+    m.linearActive=(ws.x!=wd.x || ws.y!=wd.y || ws.z!=wd.z || exposureStops!=0.0f || lra!=0.0f || lrs!=0.0f || lre!=0.0f || lba!=0.0f || lbs!=0.0f || lbe!=0.0f);
+    m.effectiveRefNits=203.0f;
+    m.effectivePeakNits=highNits;
+    m.view=pg_viewing(m.effectiveRefNits);
+    m.highJ=pg_neutral_j(m.effectivePeakNits/m.effectiveRefNits,m.view);
+    m.target=pg_four(m.view.lowJ*.01f,m.view.pivotJ*.01f,1.0f,m.highJ*.01f);
+    // UI source landmarks are absolute NEUTRAL nits. Parameter guards do not
+    // change pixel XYZ. Convert first, then preserve the original J ordering.
+    float jb=pg_neutral_j(_fmaxf(0.0f,sourceBlack)/m.effectiveRefNits,m.view)*.01f;
+    PGFour sj=pg_four(pg_neutral_j(_fmaxf(0.0f,sourceLevels.s)/m.effectiveRefNits,m.view)*.01f,
+                      pg_neutral_j(_fmaxf(0.0f,sourceLevels.m)/m.effectiveRefNits,m.view)*.01f,
+                      pg_neutral_j(_fmaxf(0.0f,sourceLevels.w)/m.effectiveRefNits,m.view)*.01f,
+                      pg_neutral_j(_fmaxf(0.0f,sourceLevels.h)/m.effectiveRefNits,m.view)*.01f);
+    m.black=jb;
+    m.input.s=_fmaxf(sj.s,m.black+.001f);
+    m.input.m=_fmaxf(sj.m,m.input.s+.001f);
+    m.input.w=_fmaxf(sj.w,m.input.m+.001f);
+    m.input.h=_fmaxf(sj.h,m.input.w+.001f);
+    m.ordered=(sourceBlack<0.0f || m.input.s!=sj.s || m.input.m!=sj.m || m.input.w!=sj.w || m.input.h!=sj.h);
+    float eps=3.0e-7f;
+    m.remapActive=!(m.black==0.0f && _fabs(m.input.s-m.target.s)<eps && _fabs(m.input.m-m.target.m)<eps && _fabs(m.input.w-m.target.w)<eps && _fabs(m.input.h-m.target.h)<eps);
+    m.qHigh=m.input.h-m.black;
+    PGFour knots=pg_four((m.input.s-m.black)/m.qHigh,(m.input.m-m.black)/m.qHigh,(m.input.w-m.black)/m.qHigh,1.0f);
+    m.remap=pg_kernel(knots,(float)toneFit);
+    float s0=m.target.s/knots.s,s1=(m.target.m-m.target.s)/(knots.m-knots.s);
+    float s2=(m.target.w-m.target.m)/(knots.w-knots.m),s3=(m.target.h-m.target.w)/(1.0f-knots.w);
+    m.tailSlope=_fminf(_fminf(s0,s1),_fminf(s2,s3));
+    m.residual=pg_four(_fmaxf(0.0f,m.target.s-m.tailSlope*knots.s),
+                       _fmaxf(0.0f,m.target.m-m.target.s-m.tailSlope*(knots.m-knots.s)),
+                       _fmaxf(0.0f,m.target.w-m.target.m-m.tailSlope*(knots.w-knots.m)),
+                       _fmaxf(0.0f,m.target.h-m.target.w-m.tailSlope*(1.0f-knots.w)));
+    PGFour tz=pg_four(pg_smoother(m.view.lowJ/m.highJ),pg_smoother(m.view.pivotJ/m.highJ),pg_smoother(100.0f/m.highJ),1.0f);
+    PGKernel kb=pg_kernel(tz,(float)adaptanceCurveFit);
+    PGKernel kl=lightnessCurveFit==adaptanceCurveFit?kb:pg_kernel(tz,(float)lightnessCurveFit);
+    PGKernel kr=chromaCurveFit==lightnessCurveFit?kl:pg_kernel(tz,(float)chromaCurveFit);
+    m.hueCurve=hueCurveFit==chromaCurveFit?kr:pg_kernel(tz,(float)hueCurveFit);
+    m.adaptance=pg_family(aAdaptance,bAdaptance,kb,1);
+    m.light=pg_response_family(lightC,lightQ,lightA,lightB,kl);
+    m.radius=pg_response_family(pg_log_stops(radiusC),pg_log_stops(radiusQ),pg_log_stops(radiusA),pg_log_stops(radiusB),kr);
+    m.concentrationAHeights=concentrationAHeights;m.concentrationBHeights=concentrationBHeights;
+    m.hueHeights=hueHeights;m.radiusBase=radiusStops*.693147180560f;
+    m.hueByChroma=hueC;m.hueByBend=hueQ;m.adaptanceStrength=_fminf(1.0f,_fmaxf(0.0f,adaptanceAmount));
+    m.tonalActive=(pg_four_energy(aAdaptance)+pg_four_energy(bAdaptance)+pg_four_energy(lightC)+pg_four_energy(lightQ)+pg_four_energy(lightA)+pg_four_energy(lightB)+pg_four_energy(radiusC)+pg_four_energy(radiusQ)+pg_four_energy(radiusA)+pg_four_energy(radiusB)+pg_four_energy(hueHeights)+pg_four_energy(concentrationAHeights)+pg_four_energy(concentrationBHeights))>0.0f || radiusStops!=0.0f || hueC!=0.0f || hueQ!=0.0f;
+    m.active=m.remapActive || m.tonalActive;
+    m.directional=pg_four_energy(lightA)+pg_four_energy(lightB)+pg_four_energy(radiusA)+pg_four_energy(radiusB)>0.0f;
+    float3 sourceCones=color_mv(color_cat(),ws),gains=m.wc/sourceCones;
+    m.valid=color_finite3(sourceCones)&&sourceCones.x>0.0f&&sourceCones.y>0.0f&&sourceCones.z>0.0f&&
+        color_finite3(gains)&&gains.x>0.0f&&gains.y>0.0f&&gains.z>0.0f&&
+        color_finite3(m.lin.a)&&color_finite3(m.lin.b)&&color_finite3(m.lin.c)&&color_finite(m.exposure)&&m.exposure>0.0f;
+    ColorMat complete=color_mul(m.lin,m.adapt);float determinant=color_dot(complete.a,color_cross(complete.b,complete.c));
+    // A collapsed UI axis is exactly singular before matrix rounding.
+    m.invertible=lrs!=-100.0f&&lbs!=-100.0f&&color_finite(determinant)&&determinant!=0.0f;
+    return m;
+}

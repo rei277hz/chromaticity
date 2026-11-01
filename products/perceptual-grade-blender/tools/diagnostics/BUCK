@@ -1,0 +1,54 @@
+PROBE_RESOURCES = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "project_probe_runner.py": "project_probe_runner.py",
+    "scope_probe_runner.py": "scope_probe_runner.py",
+    "scope_probe_report.py": "scope_probe_report.py",
+    "gui_undo_runner.py": "//products/perceptual-grade-blender/tests/installed:gui_undo_runner_source",
+    "gui_display.py": "//products/perceptual-grade-blender/tests/installed:gui_display_source",
+}
+
+python_library(
+    name = "project_probe_sources",
+    srcs = ["project_probe.py"],
+    base_module = "tools.diagnostics",
+    resources = select({
+        "prelude//os:linux": PROBE_RESOURCES | {"xvfb": "//third_party:xvfb_linux"},
+        "prelude//os:macos": PROBE_RESOURCES,
+    }),
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "scope_probe_report",
+    src = "scope_probe_report.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "project_probe_source",
+    src = "project_probe.py",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "project_probe",
+    main_module = "tools.diagnostics.project_probe",
+    deps = [":project_probe_sources"],
+)
+
+python_library(
+    name = "undo_publication_sources",
+    srcs = ["undo_publication.py"],
+    base_module = "tools.diagnostics",
+    resources = {
+        "blender": "//third_party:blender_native",
+        "undo_publication_runner.py": "undo_publication_runner.py",
+    },
+)
+
+python_binary(
+    name = "undo_publication",
+    main_module = "tools.diagnostics.undo_publication",
+    deps = [":undo_publication_sources"],
+)

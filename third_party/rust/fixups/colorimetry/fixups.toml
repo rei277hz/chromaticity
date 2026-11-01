@@ -1,0 +1,2 @@
+# Metadata required while the wasm-bindgen procedural macro expands.
+cargo_env = ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "CARGO_PKG_VERSION"]

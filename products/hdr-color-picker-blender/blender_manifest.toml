@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+id = "hdr_color_picker"
+version = "0.1.0"
+name = "HDR Color Picker"
+tagline = "Choose HDR Grease Pencil colors in modCAM16-HK UCS"
+maintainer = "Rei277Hz"
+type = "add-on"
+tags = ["Paint", "Grease Pencil"]
+blender_version_min = "5.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2026 Rei277Hz"]
+
+[permissions]
+files = "Store private immutable picker jobs and helper recovery journals"

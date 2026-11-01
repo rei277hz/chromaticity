@@ -1,0 +1,105 @@
+python_test(
+    name = "execution_policies",
+    srcs = ["test_execution_policies.py"],
+    base_module = "tests.blender_runtime",
+    resources = {"execution_baseline.json": "fixtures/execution_baseline.json"},
+    deps = ["//libraries/blender-runtime:machines"],
+)
+
+python_test(
+    name = "app",
+    srcs = ["test_app.py"],
+    base_module = "tests.blender_runtime",
+    deps = ["//libraries/blender-runtime:blender"],
+)
+
+python_test(
+    name = "execution_runtime",
+    srcs = [
+        "test_app.py",
+        "test_execution_runtime.py",
+    ],
+    base_module = "tests.blender_runtime",
+    resources = {"helper_fixture.py": "helper_fixture.py"},
+    deps = ["//libraries/blender-runtime:blender"],
+)
+
+python_test(
+    name = "physical_ownership",
+    srcs = [
+        "test_app.py",
+        "test_arena.py",
+        "test_native.py",
+        "test_registration.py",
+    ],
+    base_module = "tests.blender_runtime",
+    deps = ["//libraries/blender-runtime:blender"],
+)
+
+python_test(
+    name = "payloads",
+    srcs = ["test_payloads.py"],
+    base_module = "tests.blender_runtime",
+    deps = [
+        "//libraries/blender-runtime:runtime",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "journal",
+    srcs = ["test_journal.py"],
+    base_module = "tests.blender_runtime",
+    resources = {"helper_fixture.py": "helper_fixture.py"},
+    deps = ["//libraries/blender-runtime:runtime"],
+)
+
+python_test(
+    name = "isolation",
+    srcs = [
+        "test_app.py",
+        "test_isolation.py",
+    ],
+    base_module = "tests.blender_runtime",
+    deps = [
+        "//libraries/blender-runtime:blender",
+        "//libraries/color-core:runtime",
+    ],
+)
+
+# Shared ordinary policy bindings for owner-local runtime regressions.
+python_library(
+    name = "machine_fixture",
+    srcs = ["test_app.py"],
+    base_module = "tests.blender_runtime",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//libraries/blender-runtime:blender",
+        "//libraries/blender-runtime:edge_effect_machine",
+    ],
+)
+
+python_library(
+    name = "policy_fixture",
+    srcs = ["policy_fixture.py"],
+    base_module = "tests.blender_runtime",
+    visibility = ["PUBLIC"],
+    deps = ["//libraries/invariant:runtime"],
+)
+
+python_test(
+    name = "machine",
+    srcs = ["test_machine.py"],
+    base_module = "tests.blender_runtime",
+    deps = [
+        ":policy_fixture",
+        "//libraries/blender-runtime:abi",
+    ],
+)
+
+python_test(
+    name = "native_evaluation",
+    srcs = ["test_native_evaluation.py"],
+    base_module = "tests.blender_runtime",
+    deps = ["//libraries/blender-runtime:runtime"],
+)

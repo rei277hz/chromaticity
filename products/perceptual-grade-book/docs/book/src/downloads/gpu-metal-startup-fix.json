@@ -1,0 +1,104 @@
+{
+  "fix": {
+    "equations_tolerances_and_lut_grid_changed": false,
+    "error_policy": "Catch ordinary GPU startup/dispatch exceptions, cache/log once per context, preserve cancellation and complete current CPU LUT.",
+    "matrix_math": "Construct columns u*v[i] explicitly for the mat2 and mat3 Broyden rank-one updates.",
+    "project_migration_added": false
+  },
+  "gpu_arithmetic_checks": 42,
+  "handbook_katex_expressions_checked": 1220,
+  "installed_baking_checks": 60,
+  "invocation": "pinned authoring-preview; not a Buck2 release gate",
+  "limits": [
+    "The supplied Mac log establishes the reported compile failure; the replacement shader still needs native Metal validation on a Mac.",
+    "GPU arithmetic and native graph tests here used software OpenGL.",
+    "No new hardware performance result or 10x guarantee; existing 1.23.0 performance tables retain their source snapshots.",
+    "Buck2 was unavailable, so its release gates were not executed."
+  ],
+  "native_measurements": {
+    "native_compositor_normalized_error": 3.0550607106479546e-07,
+    "native_shader_normalized_error": 3.943146204663367e-08,
+    "native_stack_prepare_seconds": 0.7467868810017535,
+    "nested_inverse": {
+      "approximate": 0,
+      "backend": "GPU",
+      "bake_seconds": 0.8642354140029056,
+      "cpu_repair_seconds": 0.3187423399940599,
+      "cpu_repaired_vertices": 18,
+      "cpu_residual_samples": 18,
+      "device": "OPENGL \u00b7 llvmpipe (LLVM 20.1.2, 256 bits)",
+      "gpu_flagged_vertices": 18,
+      "gpu_rgb_search_vertices": 12255,
+      "gpu_samples": 274625,
+      "max_residual": 1.7545933831316045e-11,
+      "policy": "analytic-f32-relative3e-6-audited-v1"
+    }
+  },
+  "new_regressions": [
+    "Shader does not require the Metal-missing outerProduct builtin",
+    "Portable mat2 rank-one update preserves column orientation",
+    "Portable mat3 rank-one update preserves column orientation",
+    "Plain shader Exception completes backend selection",
+    "Plain shader Exception leaves Preparing for CPU fallback",
+    "Failed compiler is attempted only once per context",
+    "Startup failure is logged once with its traceback",
+    "Plain shader Exception installs the current CPU LUT"
+  ],
+  "reported_fault": {
+    "backend": "Metal",
+    "blender_family": "5.2",
+    "compiler_message": "use of undeclared identifier 'outerProduct'",
+    "python_exception_type": "Exception",
+    "result": "uncaught startup exception caused repeated compilation on redraw"
+  },
+  "reports": [
+    "validation/gpu-metal-fix/arithmetic/gpu-solver-checks.json",
+    "validation/gpu-metal-fix/integration/gpu-baking.json"
+  ],
+  "sources": {
+    "src/blender/__init__.py": {
+      "bytes": 669,
+      "sha256": "ba740da0683f927fe4d095dd1e0760da767b71424be620610377a47d62c42022"
+    },
+    "src/blender/blender_manifest.toml": {
+      "bytes": 544,
+      "sha256": "1ca37d541d1c553b15f2834c97ac67ac573dfa57e044e1646dbf1baeddbc450f"
+    },
+    "src/blender/graph/gpu.py": {
+      "bytes": 4004,
+      "sha256": "f73b21a1a0ef9c2df354b484b3e3ae1acf5586cc41b1622ca2f8811f2a56f57f"
+    },
+    "src/blender/graph/lut.py": {
+      "bytes": 35457,
+      "sha256": "700f07c08500890bc8ddec1eaba77a1658227209f09ef1ca640e5c0b531df5fb"
+    },
+    "src/blender/model/gpu.py": {
+      "bytes": 14623,
+      "sha256": "6db3b724d43b097dfdb43b0156306bebee2e4db2aff4e39a3606583005a22c32"
+    },
+    "src/blender/model/gpu_shader.py": {
+      "bytes": 21303,
+      "sha256": "5badc0a2e813f90ccbcde190b123bfd24b6708b6fef0adbcdf31524e66fe53bd"
+    },
+    "tests/blender/test_gpu_baking.py": {
+      "bytes": 19699,
+      "sha256": "8d3dc2950d19508deaafd1f09fc23e81cb8cc32485e99459689bda09b2777ada"
+    },
+    "tests/blender/test_gpu_solver.py": {
+      "bytes": 6074,
+      "sha256": "31c466d86279ccf2ecd747c7dcb188c34475474d95fd1d54461aa831ef943ed4"
+    }
+  },
+  "validation_environment": {
+    "blender": "5.2.2 LTS",
+    "gpu": {
+      "backend": "OPENGL",
+      "renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "vendor": "Mesa"
+    },
+    "numpy": "2.5.3",
+    "python": "3.13.15",
+    "software_renderer": true
+  },
+  "version": "1.23.1"
+}

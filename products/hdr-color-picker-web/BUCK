@@ -1,0 +1,143 @@
+load("//build_defs:artifacts.bzl", "generate", "source_tree")
+load("//build_defs:web.bzl", "static_site")
+
+source_tree(
+    name = "sources",
+    srcs = {p: p for p in glob([
+        "src/*.ts",
+        "src/*.css",
+        "index.html",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "tests/*.mjs",
+        "tests/*.py",
+        "tests/reference/*.ocio",
+    ], exclude = ["tests/test_publish.py"])},
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "bundle",
+    args = [
+        "site",
+        "--sources",
+        "$(location :sources)",
+        "--node",
+        "$(location //tools/web-build:node)",
+        "--npm",
+        "$(location //tools/web-build:npm)",
+        "--core",
+        "$(location //libraries/modcam16-color-core:wasm)",
+        "--decomposition",
+        "$(location //libraries/modcam16-decomposition:wasm)",
+        "--references",
+        "$(location //libraries/modcam16-color-core:references)",
+        "--rust-notices",
+        "$(location //libraries/modcam16-decomposition:rust_notices)",
+        "--manifest",
+        "$(location //third_party/web:manifest)",
+    ],
+    outputs = {},
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    tool = "//tools/web-build:builder",
+    visibility = ["PUBLIC"],
+)
+
+static_site(
+    name = "site",
+    bundle = ":bundle",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "publish_code",
+    srcs = {"publish.py": "tools/publish.py"},
+    base_module = "hdr_color_picker_publish",
+)
+
+python_library(
+    name = "publish_resources",
+    base_module = "hdr_color_picker_publish",
+    resources = {
+        "hdr-color-picker-web.zip": ":site",
+        "manifest.json": ":site[manifest]",
+    },
+)
+
+# Build the completed ZIP through NativeLink, then use `buck2 run` to replace
+# the local website checkout's files on the client.
+python_binary(
+    name = "publish",
+    main_module = "hdr_color_picker_publish.publish",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":publish_code",
+        ":publish_resources",
+    ],
+)
+
+python_test(
+    name = "publish_test",
+    srcs = {"test_publish.py": "tests/test_publish.py"},
+    base_module = "tests.hdr_color_picker_publish",
+    deps = [":publish_code"],
+)
+
+[
+    python_test(
+        name = mode,
+        srcs = {"test_runtime.py": "//tools/web-build:runtime_test_source"},
+        base_module = "modcam16_web_" + mode,
+        env = {"WEB_TEST_MODE": mode},
+        resources = {
+            "sources": ":sources",
+            "node": "//tools/web-build:node",
+            "npm": "//tools/web-build:npm",
+            "core_wasm": "//libraries/modcam16-color-core:wasm",
+            "decomposition_wasm": "//libraries/modcam16-decomposition:wasm",
+            "references": "//libraries/modcam16-color-core:references",
+        } | ({"browser": "//tools/web-build:chromium"} if mode == "browser" else {}),
+        target_compatible_with = [
+            "prelude//os:linux",
+            "prelude//cpu:x86_64",
+        ],
+        visibility = ["PUBLIC"],
+        deps = [
+            "//third_party:numpy",
+            "//third_party:pillow",
+            "//third_party/web:opencolorio",
+            "//tools/web-build:build_lib",
+        ],
+    )
+    for mode in [
+        "math",
+        "png",
+        "ocio",
+        "browser",
+    ]
+]
+
+python_test(
+    name = "acceptance",
+    srcs = {"test_runtime.py": "//tools/web-build:runtime_test_source"},
+    base_module = "modcam16_web_acceptance",
+    env = {"WEB_TEST_MODE": "acceptance"},
+    resources = {
+        "site.zip": ":site",
+        "node": "//tools/web-build:node",
+        "npm": "//tools/web-build:npm",
+        "browser": "//tools/web-build:chromium",
+        "acceptance.mjs": "//tools/web-build/tests:acceptance_source",
+    },
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    visibility = ["PUBLIC"],
+    deps = ["//tools/web-build:build_lib"],
+)

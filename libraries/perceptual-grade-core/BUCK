@@ -1,0 +1,249 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool", "source_tree")
+load("//build_defs:python_packages.bzl", "component_library")
+
+PREFIX = "src/perceptual_grade_core/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+MACHINES = [
+    "channel",
+    "lifecycle",
+    "exact",
+    "display",
+    "output",
+    "bake_image",
+]
+
+COORDINATORS = [
+    "bake",
+    "scope",
+    "publication",
+    "exact",
+    "scope_input",
+    "scope_demand",
+    "bake_queue",
+    "recovery",
+]
+
+[export_file(
+    name = machine + "_requirements",
+    src = "requirements/" + machine + ".inv",
+    visibility = ["PUBLIC"],
+) for machine in MACHINES]
+
+[export_file(
+    name = machine + "_coordinator_requirements",
+    src = "requirements/coordinators/" + machine + ".inv",
+    visibility = ["PUBLIC"],
+) for machine in COORDINATORS]
+
+[export_file(
+    name = machine + "_coordinator_source",
+    src = PREFIX + "graph/coordinators/" + machine + ".py",
+    visibility = ["PUBLIC"],
+) for machine in COORDINATORS]
+
+component_library(
+    name = "machines",
+    srcs = {path: source for path, source in SOURCES.items() if path.startswith("graph/policies/") or path.startswith("graph/coordinators/")} |
+           {"graph/policies/_" + machine + "_contracts.py": "//libraries/perceptual-grade-core/proofs:proof_" + machine + "[validators]" for machine in MACHINES} |
+           {"graph/coordinators/_" + machine + "_contracts.py": "//libraries/perceptual-grade-core/proofs:proof_" + machine + "_coordinator[validators]" for machine in COORDINATORS},
+    package = "perceptual_grade_core",
+    deps = ["//libraries/invariant:runtime"],
+)
+
+export_file(
+    name = "channel_source",
+    src = PREFIX + "graph/policies/channel.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "lifecycle_source",
+    src = PREFIX + "graph/policies/lifecycle.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "exact_source",
+    src = PREFIX + "graph/policies/exact.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "display_source",
+    src = PREFIX + "graph/policies/display.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "output_source",
+    src = PREFIX + "graph/policies/output.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "bake_image_source",
+    src = PREFIX + "graph/policies/bake_image.py",
+    visibility = ["PUBLIC"],
+)
+
+CATALOGS = {path[len(PREFIX + "locales/"):-5]: path for path in glob([PREFIX + "locales/*.json"])}
+
+source_tree(
+    name = "catalog_sources",
+    srcs = {locale + ".json": path for locale, path in CATALOGS.items()},
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "compile_locales",
+    srcs = {"pg_core_tools/compile_locales.py": "tools/compile_locales.py"},
+    main_module = "pg_core_tools.compile_locales",
+    deps = ["//third_party:babel"],
+)
+
+generate(
+    name = "locales",
+    args = [
+        "--catalog-dir",
+        "$(location :catalog_sources)",
+    ],
+    outputs = {locale: locale + "/LC_MESSAGES/perceptual_grade.mo" for locale in CATALOGS},
+    tool = ":compile_locales",
+    visibility = ["PUBLIC"],
+)
+
+component_library(
+    name = "catalogs",
+    srcs = {path: source for path, source in SOURCES.items() if path.startswith("localization/")},
+    package = "perceptual_grade_core",
+    resources = {"locales/" + locale + ".json": path for locale, path in CATALOGS.items()} |
+                {"locales/" + locale + "/LC_MESSAGES/perceptual_grade.mo": ":locales[" + locale + "]" for locale in CATALOGS} |
+                {path[len(PREFIX):]: path for path in glob([PREFIX + "localization/*.json"])},
+)
+
+component_library(
+    name = "model_code",
+    srcs = {path: source for path, source in SOURCES.items() if not path.startswith("localization/") and not path.startswith("graph/policies/") and not path.startswith("graph/coordinators/")},
+    external_deps = ["//third_party:numpy"],
+    package = "perceptual_grade_core",
+    deps = [
+        ":machines",
+        "//libraries/color-core:runtime",
+    ],
+)
+
+# Minimal legacy numerical closure for the independent reference oracle. Keep
+# this separate from model_code, whose machine dependency requires old proofs.
+component_library(
+    name = "reference_math_for_tests",
+    srcs = {
+        "__init__.py": PREFIX + "__init__.py",
+        "model/__init__.py": PREFIX + "model/__init__.py",
+        "model/boundary_resource.py": PREFIX + "model/boundary_resource.py",
+        "model/hk_guard.py": PREFIX + "model/hk_guard.py",
+        "model/saturation.py": PREFIX + "model/saturation.py",
+        "model/selective_adaptance.py": PREFIX + "model/selective_adaptance.py",
+        "model/tonal_web.py": PREFIX + "model/tonal_web.py",
+    },
+    external_deps = ["//third_party:numpy"],
+    package = "perceptual_grade_core",
+    visibility = ["PUBLIC"],
+    deps = ["//libraries/color-core:runtime"],
+)
+
+export_file(
+    name = "d65_boundary",
+    src = PREFIX + "model/d65_boundary.npz",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "cube_resource_generator",
+    srcs = {"pg_core_tools/cube_resource.py": "tools/cube_resource.py"},
+    main_module = "pg_core_tools.cube_resource",
+    deps = [":model_code"],
+)
+
+generate(
+    name = "d65_cube",
+    args = [
+        "--source",
+        "$(location :d65_boundary)",
+    ],
+    outputs = {"context": "d65_cube.npz"},
+    tool = ":cube_resource_generator",
+    visibility = ["PUBLIC"],
+)
+
+component_library(
+    name = "runtime",
+    srcs = {},
+    package = "perceptual_grade_core",
+    resources = {"model/d65_boundary.npz": ":d65_cube[context]"},
+    deps = [
+        ":catalogs",
+        ":model_code",
+    ],
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "scheduler_policy_source",
+    src = PREFIX + "graph/scheduler_policy.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "output_policy_source",
+    src = PREFIX + "graph/output_policy.py",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "scheduler_policy",
+    actual = ":model_code",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "output_policy",
+    actual = ":model_code",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "shadow_anchor_tool",
+    srcs = {"pg_core_tools/shadow_anchor.py": "tools/shadow_anchor.py"},
+    main_module = "pg_core_tools.shadow_anchor",
+)
+
+generate(
+    name = "shadow_anchor",
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":shadow_anchor_tool",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "locale_compiler",
+    srcs = {"compile_locales.py": "tools/compile_locales.py"},
+    base_module = "tools",
+    visibility = ["PUBLIC"],
+    deps = ["//third_party:babel"],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)

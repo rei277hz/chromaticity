@@ -1,0 +1,284 @@
+{
+  "version": "1.15.0",
+  "blender": "5.2.2 LTS",
+  "checks": [
+    "Empty selectors default to D65",
+    "Default-white no-op stays empty",
+    "Choosing a different white creates Grade.001",
+    "Only the eight DCTL presets are offered",
+    "Daylight D60 and ACES are distinct",
+    "Grade stores nine matrix coefficients and no linear sliders",
+    "D65 keeps Tone and Color values",
+    "D65 white-drag Jacobian matches the displayed scope",
+    "D65 preserves adapted anchor 0",
+    "D65 preserves adapted anchor 2",
+    "D60 keeps Tone and Color values",
+    "D60 white-drag Jacobian matches the displayed scope",
+    "D60 preserves adapted anchor 0",
+    "D60 preserves adapted anchor 2",
+    "ACES keeps Tone and Color values",
+    "ACES white-drag Jacobian matches the displayed scope",
+    "ACES preserves adapted anchor 0",
+    "ACES preserves adapted anchor 2",
+    "D50 keeps Tone and Color values",
+    "D50 white-drag Jacobian matches the displayed scope",
+    "D50 preserves adapted anchor 0",
+    "D50 preserves adapted anchor 2",
+    "D55 keeps Tone and Color values",
+    "D55 white-drag Jacobian matches the displayed scope",
+    "D55 preserves adapted anchor 0",
+    "D55 preserves adapted anchor 2",
+    "D75 keeps Tone and Color values",
+    "D75 white-drag Jacobian matches the displayed scope",
+    "D75 preserves adapted anchor 0",
+    "D75 preserves adapted anchor 2",
+    "DCI keeps Tone and Color values",
+    "DCI white-drag Jacobian matches the displayed scope",
+    "DCI preserves adapted anchor 0",
+    "DCI preserves adapted anchor 2",
+    "E keeps Tone and Color values",
+    "E white-drag Jacobian matches the displayed scope",
+    "E preserves adapted anchor 0",
+    "E preserves adapted anchor 2",
+    "All preset changes preserve the Stage 1 action",
+    "Derived controls reproduce regular rebased matrices",
+    "Linear Rec.709 leaves Grade data untouched",
+    "Linear Rec.709 reuses ordinary and Stack LUTs",
+    "Linear Rec.709 new nodes always start at D65",
+    "Linear Rec.2020 leaves Grade data untouched",
+    "Linear Rec.2020 reuses ordinary and Stack LUTs",
+    "Linear Rec.2020 new nodes always start at D65",
+    "ACEScg leaves Grade data untouched",
+    "ACEScg reuses ordinary and Stack LUTs",
+    "ACEScg new nodes always start at D65",
+    "Analytic adapters preserve all three baked paths",
+    "Linear animation keys only matrix coefficients",
+    "Animated white change keeps the recorded coefficient basis",
+    "Animated conjugation is valid for any interpolated matrix",
+    "Rebased matrix animation at frame 1",
+    "Rebased matrix animation at frame 6",
+    "Rebased matrix animation at frame 11",
+    "Derived control reads never overwrite arbitrary matrices",
+    "Exposure edits preserve an arbitrary matrix exactly",
+    "Reset clears the authoritative matrix",
+    "Singular matrix is retained",
+    "ShaderNodeTree Add entries are enabled",
+    "CompositorNodeTree Add entries are enabled",
+    "Linear Rec.709 compositor QUINTIC native output",
+    "Linear Rec.709 QUINTIC alpha bypass",
+    "Linear Rec.709 compositor LUT native output",
+    "Linear Rec.709 LUT alpha bypass",
+    "Linear Rec.709 compositor INVERSE native output",
+    "Linear Rec.709 INVERSE alpha bypass",
+    "Linear Rec.709 compositor STACK native output",
+    "Linear Rec.709 STACK alpha bypass",
+    "Linear Rec.709 shader QUINTIC native output",
+    "Linear Rec.709 shader LUT native output",
+    "Linear Rec.709 shader INVERSE native output",
+    "Linear Rec.709 shader STACK native output",
+    "Linear Rec.709 downstream scopes match Stack",
+    "Linear Rec.2020 compositor QUINTIC native output",
+    "Linear Rec.2020 QUINTIC alpha bypass",
+    "Linear Rec.2020 compositor LUT native output",
+    "Linear Rec.2020 LUT alpha bypass",
+    "Linear Rec.2020 compositor INVERSE native output",
+    "Linear Rec.2020 INVERSE alpha bypass",
+    "Linear Rec.2020 compositor STACK native output",
+    "Linear Rec.2020 STACK alpha bypass",
+    "Linear Rec.2020 shader QUINTIC native output",
+    "Linear Rec.2020 shader LUT native output",
+    "Linear Rec.2020 shader INVERSE native output",
+    "Linear Rec.2020 shader STACK native output",
+    "Linear Rec.2020 downstream scopes match Stack",
+    "ACEScg compositor QUINTIC native output",
+    "ACEScg QUINTIC alpha bypass",
+    "ACEScg compositor LUT native output",
+    "ACEScg LUT alpha bypass",
+    "ACEScg compositor INVERSE native output",
+    "ACEScg INVERSE alpha bypass",
+    "ACEScg compositor STACK native output",
+    "ACEScg STACK alpha bypass",
+    "ACEScg shader QUINTIC native output",
+    "ACEScg shader LUT native output",
+    "ACEScg shader INVERSE native output",
+    "ACEScg shader STACK native output",
+    "ACEScg downstream scopes match Stack",
+    "Save/load preserves the white and exact matrix data"
+  ],
+  "max_stage1_rebase_error": 8.881784197001252e-16,
+  "max_decomposition_error": 5.245803791353865e-15,
+  "max_coordinate_invariance_error": 1.602156743757251e-08,
+  "native_errors": [
+    {
+      "space": "Linear Rec.709",
+      "path": "compositor",
+      "method": "QUINTIC",
+      "error": 3.49617217080489e-07
+    },
+    {
+      "space": "Linear Rec.709",
+      "path": "compositor",
+      "method": "LUT",
+      "error": 1.8271172775564936e-07
+    },
+    {
+      "space": "Linear Rec.709",
+      "path": "compositor",
+      "method": "INVERSE",
+      "error": 1.222045397366467e-07
+    },
+    {
+      "space": "Linear Rec.709",
+      "path": "compositor",
+      "method": "STACK",
+      "error": 2.0013779833111584e-07
+    },
+    {
+      "space": "Linear Rec.709",
+      "path": "shader",
+      "method": "QUINTIC",
+      "error": 3.49617217080489e-07
+    },
+    {
+      "space": "Linear Rec.709",
+      "path": "shader",
+      "method": "LUT",
+      "error": 1.8271172775564936e-07
+    },
+    {
+      "space": "Linear Rec.709",
+      "path": "shader",
+      "method": "INVERSE",
+      "error": 1.222045397366467e-07
+    },
+    {
+      "space": "Linear Rec.709",
+      "path": "shader",
+      "method": "STACK",
+      "error": 2.0013779833111584e-07
+    },
+    {
+      "space": "Linear Rec.2020",
+      "path": "compositor",
+      "method": "QUINTIC",
+      "error": 2.0399194367209396e-07
+    },
+    {
+      "space": "Linear Rec.2020",
+      "path": "compositor",
+      "method": "LUT",
+      "error": 1.70355719337105e-07
+    },
+    {
+      "space": "Linear Rec.2020",
+      "path": "compositor",
+      "method": "INVERSE",
+      "error": 1.4842300715585685e-07
+    },
+    {
+      "space": "Linear Rec.2020",
+      "path": "compositor",
+      "method": "STACK",
+      "error": 1.7829455694788538e-07
+    },
+    {
+      "space": "Linear Rec.2020",
+      "path": "shader",
+      "method": "QUINTIC",
+      "error": 1.8228045837922434e-07
+    },
+    {
+      "space": "Linear Rec.2020",
+      "path": "shader",
+      "method": "LUT",
+      "error": 2.301425916350312e-07
+    },
+    {
+      "space": "Linear Rec.2020",
+      "path": "shader",
+      "method": "INVERSE",
+      "error": 1.4842300715585685e-07
+    },
+    {
+      "space": "Linear Rec.2020",
+      "path": "shader",
+      "method": "STACK",
+      "error": 1.7829455694788538e-07
+    },
+    {
+      "space": "ACEScg",
+      "path": "compositor",
+      "method": "QUINTIC",
+      "error": 1.7928579538940797e-07
+    },
+    {
+      "space": "ACEScg",
+      "path": "compositor",
+      "method": "LUT",
+      "error": 1.7731095416514219e-07
+    },
+    {
+      "space": "ACEScg",
+      "path": "compositor",
+      "method": "INVERSE",
+      "error": 1.10142620883392e-07
+    },
+    {
+      "space": "ACEScg",
+      "path": "compositor",
+      "method": "STACK",
+      "error": 2.49711595908042e-07
+    },
+    {
+      "space": "ACEScg",
+      "path": "shader",
+      "method": "QUINTIC",
+      "error": 1.7928579538940797e-07
+    },
+    {
+      "space": "ACEScg",
+      "path": "shader",
+      "method": "LUT",
+      "error": 1.7731095416514219e-07
+    },
+    {
+      "space": "ACEScg",
+      "path": "shader",
+      "method": "INVERSE",
+      "error": 1.10142620883392e-07
+    },
+    {
+      "space": "ACEScg",
+      "path": "shader",
+      "method": "STACK",
+      "error": 2.49711595908042e-07
+    }
+  ],
+  "bake_timings": [
+    {
+      "kind": "FORWARD",
+      "seconds": 1.503243643001042
+    },
+    {
+      "kind": "INVERSE",
+      "seconds": 3.3372996100006276
+    },
+    {
+      "kind": "stack",
+      "seconds": 4.5115608439991775
+    },
+    {
+      "kind": "FORWARD",
+      "seconds": 0.0029082580003887415
+    },
+    {
+      "kind": "INVERSE",
+      "seconds": 0.0017668999971647281
+    },
+    {
+      "kind": "stack",
+      "seconds": 0.0037061580005683936
+    }
+  ],
+  "scope": "Real Blender RNA, current-format save/load, native CPU shader/compositor. No GPU/Metal execution."
+}

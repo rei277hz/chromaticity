@@ -1,0 +1,236 @@
+python_test(
+    name = "preparation",
+    srcs = ["test_preparation.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "gui_drag_report",
+    srcs = ["test_gui_drag_report.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = ["//libraries/perceptual-grade-nodes:gui_drag_report_sources"],
+)
+
+python_test(
+    name = "color_preparation",
+    srcs = ["test_color_preparation.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:gate_policy_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "gate_policy",
+    srcs = ["test_gate_policy.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:gate_policy_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "hdr_metrics",
+    srcs = ["test_hdr_metrics.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "hdr_report",
+    srcs = ["test_hdr_report.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+# Verify diagnostic reductions against the current Compact-only texture layout.
+python_test(
+    name = "current_texture_candidates",
+    srcs = ["test_current_texture_candidates.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "web_toe_local",
+    srcs = ["test_web_toe_local.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "boundary_resource",
+    srcs = ["test_boundary_resource.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    resources = {"boundary_build_report.json": "//libraries/perceptual-grade-nodes:boundary_resource[report]"},
+    deps = [
+        "//libraries/perceptual-grade-nodes:boundary_generator_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "guards",
+    srcs = ["test_guards.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "color_stages",
+    srcs = ["test_color_stages.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "full",
+    srcs = ["test_full.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "saturation",
+    srcs = ["test_saturation.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "reference",
+    srcs = ["test_reference.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "native",
+    srcs = ["test_native.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "stages",
+    srcs = ["test_stages.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "architecture",
+    srcs = ["test_architecture.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    resources = {
+        "component_manifest.json": "//libraries/perceptual-grade-nodes:runtime_bundle[manifest]",
+        "component_bundle": "//libraries/perceptual-grade-nodes:runtime_bundle",
+        "component_sources": "//libraries/perceptual-grade-nodes:sources",
+    },
+    deps = ["//third_party:numpy"],
+)
+
+python_test(
+    name = "persistent",
+    srcs = ["test_persistent.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_library(
+    name = "color_stage_test_sources",
+    srcs = ["test_color_stages.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:evaluation_sources",
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "persistent_color_stages",
+    srcs = ["test_persistent_color_stages.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    labels = ["native"],
+    deps = [":color_stage_test_sources"],
+)

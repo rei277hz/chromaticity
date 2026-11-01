@@ -1,0 +1,105 @@
+load("@prelude//tests:test_toolchain.bzl", "noop_test_toolchain")
+load("@prelude//toolchains:cxx.bzl", "cxx_tools_info_toolchain", "system_cxx_toolchain")
+load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
+load("@prelude//toolchains:python.bzl", "remote_python_toolchain")
+load("@prelude//toolchains:remote_test_execution.bzl", "remote_test_execution_toolchain")
+load(":clang.bzl", "clang_tools")
+load(":remote_execution.bzl", "test_profile", "test_profiles")
+load(":rust.bzl", "pinned_rust_toolchain", "wasm_cxx_toolchain")
+
+remote_python_toolchain(
+    name = "python",
+    visibility = ["PUBLIC"],
+)
+
+[
+    system_cxx_toolchain(
+        name = name,
+        archiver = "/usr/bin/ar",
+        compiler = select({
+            "prelude//os:linux": "/usr/bin/gcc",
+            "DEFAULT": "/usr/bin/clang",
+        }),
+        compiler_type = select({
+            "prelude//os:linux": "gcc",
+            "DEFAULT": "clang",
+        }),
+        cxx_compiler = select({
+            "prelude//os:linux": "/usr/bin/g++",
+            "DEFAULT": "/usr/bin/clang++",
+        }),
+        # The helper assumes absolute compiler paths need LLD. Preserve GNU ld on
+        # Linux; build-script shims require absolute tools because they use execl.
+        link_flags = select({
+            "prelude//os:linux": ["-fuse-ld=bfd"],
+            "DEFAULT": [],
+        }),
+        linker = select({
+            "prelude//os:linux": "/usr/bin/g++",
+            "DEFAULT": "/usr/bin/clang++",
+        }),
+        visibility = ["PUBLIC"],
+    )
+    for name in [
+        "native_cxx",
+        "native_cxx_no_default_deps",
+    ]
+]
+
+wasm_cxx_toolchain(
+    name = "wasm_cxx",
+    visibility = ["PUBLIC"],
+)
+
+[toolchain_alias(
+    name = name,
+    actual = select({
+        "prelude//cpu:wasm32": ":wasm_cxx",
+        "DEFAULT": ":native_" + name,
+    }),
+    visibility = ["PUBLIC"],
+) for name in [
+    "cxx",
+    "cxx_no_default_deps",
+]]
+
+pinned_rust_toolchain(
+    name = "rust",
+    visibility = ["PUBLIC"],
+)
+
+clang_tools(
+    name = "clang_tools",
+    headers = {
+        "opencl-c.h": "root//third_party:opencl_c",
+        "opencl-c-base.h": "root//third_party:opencl_c_base",
+    },
+)
+
+cxx_tools_info_toolchain(
+    name = "clang",
+    cxx_tools_info = ":clang_tools",
+    link_flags = [
+        "-nostdlib++",
+        "-lm",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+# Required by the bundled Python toolchain's libpython symbol action.
+system_genrule_toolchain(
+    name = "genrule",
+    visibility = ["PUBLIC"],
+)
+
+noop_test_toolchain(
+    name = "test",
+    visibility = ["PUBLIC"],
+)
+
+remote_test_execution_toolchain(
+    name = "remote_test_execution",
+    default_profile = test_profile(),
+    profiles = test_profiles(),
+    visibility = ["PUBLIC"],
+)

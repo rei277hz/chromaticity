@@ -1,0 +1,26 @@
+{
+  "inputs": {
+    "docs/data/photo-grades.json": "f4514664b76c0119a9178b3e5ff424724fa83807c36239b5d6336e9893aaefb9",
+    "src/blender/model/color.py": "44463b3b4f3586cf089a80cc556691107054bde8365cd4a954777fb15b0fc1b6",
+    "src/blender/model/linear.py": "65162fb3c700b68cf90a76fe56d483e4431f3a9b500deb228c546d3c5168f9da",
+    "src/blender/model/lut.py": "6e5f27e18b8e65c66c669221ded3ecaf46dd4efe14aaac2dc772169f7ea3e89c",
+    "src/blender/model/tone.py": "991f7c1398a9ec294ebce0a533cfe307f0c43af6230b016034cf3bef886449a7",
+    "tests/blender/fixtures/hk-pq/IMG_0221.PNG": "3eb585ed5de1037a9cd6b628f1cd00a46c591de33bc8ad3f84f9945c807f5c13",
+    "tests/blender/fixtures/hk-pq/metadata.json": "0f9ed28d1964121f907e77ada652f22b1bd1afb13032bd5516061410ffb848c9",
+    "tests/blender/fixtures/hk-real-world/IMG_0436-rec2020.samples.npy": "5b7b06c037c07d9f7e9f507a056a593e9aed3546cdcd4161a2d5f114d1f498ce",
+    "tests/blender/fixtures/hk-real-world/IMG_0441-rec2020.samples.npy": "b41e4f3e4bab6a698ab788b4833aaa48bf7cabdd3e98db3a4c80201ced53ee5e",
+    "tests/blender/fixtures/hk-real-world/IMG_0446-rec2020.samples.npy": "158c5a0dac1c7734ae7864ae110bd6d6aa2e14a1b4181f80cd096aaa875ba8e6",
+    "tests/blender/fixtures/hk-real-world/IMG_0472-rec2020.samples.npy": "5d37c387785bada48f33663e62906f0a02864d7070857f9b048443a3f3c20743",
+    "tests/blender/fixtures/hk-real-world/metadata.json": "819af10a02a5400a4f5ef3ec6b0ad2f20123e11632cf9f27e45d6eaa082c199a",
+    "tools/docs/photos.py": "5bd6524b461319ba3a6d2b1b9b120da3223cf1436b59eb41e169bcb1c1456caf"
+  },
+  "invocation": "buck2",
+  "outputs": {
+    "images/photo-chroma-8x.png": "ad58c2124c7adfd9fc41f7de99a353f24cfde355d2c510236ec9f0aa7423c3dd",
+    "images/photo-dark-chroma.png": "2aa88c993a05fb24ffd970344b9d579a8f1946498322a6bcac0d7a5063d869e3",
+    "images/photo-practical.png": "b04fc6ac5d3d2368ab54072ca536d32052f1ba2db3c81f00c81e898c52d79e98",
+    "metrics.json": "383dc7af9920352453c3a6174e4a52b13f5df96e038b406e156a0bea8bb4b77b"
+  },
+  "producer": "sampled-fixture guard and current-LUT comparisons",
+  "schema": 1
+}

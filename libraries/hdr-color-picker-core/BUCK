@@ -1,0 +1,48 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool", "source_tree")
+load("//build_defs:python_packages.bzl", "component_library")
+
+PACKAGE = "hdr_color_picker_core"
+
+PREFIX = "src/" + PACKAGE + "/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+component_library(
+    name = "runtime",
+    srcs = SOURCES,
+    external_deps = ["//third_party:numpy"],
+    package = PACKAGE,
+    deps = ["//libraries/color-core:runtime"],
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "radius_fit_source",
+    src = "tools/fit_radius.py",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "radius_fit_tool",
+    srcs = {"picker_tools/fit_radius.py": "tools/fit_radius.py"},
+    main_module = "picker_tools.fit_radius",
+    deps = [":runtime"],
+)
+
+generate(
+    name = "radius_fit",
+    outputs = {"report": "radius_fit.json"},
+    tool = ":radius_fit_tool",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)

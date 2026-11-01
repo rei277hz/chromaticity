@@ -1,0 +1,3 @@
+# Generate target vector implementations in OUT_DIR.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_VERSION_MAJOR", "CARGO_PKG_VERSION_MINOR", "CARGO_PKG_VERSION_PATCH"]

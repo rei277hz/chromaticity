@@ -1,0 +1,2 @@
+# Derive sanitizer cfg from the target supplied by Buck.
+buildscript.run = true

@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "description": "Unbounded production owner worklist decision. Blender owner discovery and native payload validation remain adapter premises.",
+  "state": "ReadinessState",
+  "event": "ReadinessEvent",
+  "initializers": ["new_readiness"],
+  "step": "readiness_step",
+  "invariants": {"revision_nonnegative": "state.revision >= 0"},
+  "contracts": {
+    "_count": {"ensures": ["result == sum_range(i,0,len(values),1 if values[i] == value else 0)"]},
+    "_unique": {"ensures": ["result == forall_range(i,0,len(values),forall_range(j,0,i,values[i] != values[j]))"]},
+    "_index": {
+      "ensures": ["(result == -1) == forall_range(i,0,len(values),values[i] != value)", "result == -1 or (0 <= result < len(values) and values[result] == value and forall_range(i,0,result,values[i] != value))"]
+    },
+    "_owner_artifact_matches": {
+      "ensures": ["result == (_index(state.evaluator_owners,owner) >= 0 and _index(state.evaluator_owners,owner) < len(state.evaluators) and _index(state.artifact_owners,owner) >= 0 and _index(state.artifact_owners,owner) < len(state.artifact_evaluators) and state.artifact_evaluators[_index(state.artifact_owners,owner)] == state.evaluators[_index(state.evaluator_owners,owner)])"]
+    },
+    "_ready_entry_matches": {
+      "ensures": ["result == (owner != 0 and owner != '' and evaluator in ('native_grade_graph','stack_65_lut') and artifact_revision == revision and artifact_evaluator == evaluator and artifact_id != 0 and artifact_id != '' and manifest_id != 0 and manifest_id != '')"]
+    },
+    "owners_ready": {
+      "ensures": [
+        "not result or state.evaluator_owners == state.owners",
+        "not result or len(state.evaluators) == len(state.evaluator_owners)",
+        "not result or state.ready_owners == state.owners",
+        "not result or state.artifact_owners == state.owners",
+        "not result or len(state.artifact_revisions) == len(state.artifact_owners)",
+        "not result or len(state.artifact_evaluators) == len(state.artifact_owners)",
+        "not result or len(state.artifact_ids) == len(state.artifact_owners)",
+        "not result or len(state.manifest_ids) == len(state.artifact_owners)",
+        "not result or state.repair_owners == ()",
+        "not result or forall_range(i,0,len(state.owners),state.owners[i] != 0 and state.owners[i] != '' and state.evaluators[i] in ('native_grade_graph','stack_65_lut') and state.artifact_revisions[i] == state.revision and state.artifact_evaluators[i] == state.evaluators[i] and state.artifact_ids[i] != 0 and state.artifact_ids[i] != '' and state.manifest_ids[i] != 0 and state.manifest_ids[i] != '')"
+      ]
+    }
+  },
+  "properties": [
+    {"name":"T01_unbounded_worklist_covers_every_owner","variables":{"state":"ReadinessState"},"assert":"not owners_ready(state) or (state.evaluator_owners == state.owners and len(state.evaluators) == len(state.owners) and state.ready_owners == state.owners and state.artifact_owners == state.owners and len(state.artifact_revisions) == len(state.owners) and len(state.artifact_evaluators) == len(state.owners) and len(state.artifact_ids) == len(state.owners) and len(state.manifest_ids) == len(state.owners) and forall_range(i,0,len(state.owners),state.owners[i] != 0 and state.owners[i] != ''))"},
+    {"name":"T02_unbounded_artifacts_match_revision_and_evaluator","variables":{"state":"ReadinessState"},"assert":"not owners_ready(state) or forall_range(i,0,len(state.owners),state.artifact_revisions[i] == state.revision and state.artifact_evaluators[i] in ('native_grade_graph','stack_65_lut') and state.artifact_ids[i] != 0 and state.artifact_ids[i] != '' and state.manifest_ids[i] != 0 and state.manifest_ids[i] != '')"},
+    {"name":"T03_unbounded_artifact_evaluator_matches_required_owner","variables":{"state":"ReadinessState"},"assert":"not owners_ready(state) or (state.evaluator_owners == state.owners and forall_range(i,0,len(state.owners),state.artifact_evaluators[i] == state.evaluators[i]) and state.evaluator_owners == state.artifact_owners)"},
+    {"name":"J07_unbounded_repair_debt_blocks_readiness","variables":{"state":"ReadinessState"},"assert":"not owners_ready(state) or state.repair_owners == ()"}
+  ],
+  "witnesses": [
+    {"name":"five_aligned_ready_owners_are_accepted","assert":"owners_ready(ReadinessState(revision=1,owners=('a','b','c','d','e'),evaluator_owners=('a','b','c','d','e'),evaluators=('native_grade_graph','stack_65_lut','native_grade_graph','stack_65_lut','native_grade_graph'),ready_owners=('a','b','c','d','e'),artifact_owners=('a','b','c','d','e'),artifact_revisions=(1,1,1,1,1),artifact_evaluators=('native_grade_graph','stack_65_lut','native_grade_graph','stack_65_lut','native_grade_graph'),artifact_ids=('ga','sb','gc','sd','ge'),manifest_ids=('ma','mb','mc','md','me')))"}
+  ],
+  "mutations": [
+    {"name":"ignore_artifact_revision","function":"_ready_entry_matches","target":"artifact_revision == revision","replacement":"True","detects":["contract._ready_entry_matches.0"]}
+    ,{"name":"ignore_required_evaluator_match","function":"_ready_entry_matches","target":"artifact_evaluator == evaluator","replacement":"True","detects":["contract._ready_entry_matches.0"]}
+    ,{"name":"accept_artifact_tail","function":"owners_ready","target":"len(state.artifact_revisions) != len(state.artifact_owners)","replacement":"len(state.artifact_revisions) < len(state.artifact_owners)","detects":["contract.owners_ready.4.return.2"]}
+    ,{"name":"ignore_repair_debt","function":"owners_ready","target":"state.repair_owners != ()","replacement":"False","detects":["property.J07_unbounded_repair_debt_blocks_readiness"]}
+  ],
+  "loops": [
+    {"name":"count_matching_values","function":"_count","target":"item","iter":"values","cursor":"processed","invariants":["total == sum_range(i,0,processed,1 if values[i] == value else 0)"],"decreases":"len(values)-processed"},
+    {"name":"find_identity_index","function":"_index","target":"item","iter":"values","cursor":"processed","invariants":["index == processed","forall_range(i,0,processed,values[i] != value)"],"decreases":"len(values)-processed"},
+    {"name":"unique_values_prefix","function":"_unique","target":"item","iter":"values","cursor":"processed","invariants":["len(seen) == processed", "forall_range(i,0,processed,seen[i] == values[i])", "forall_range(i,0,processed,forall_range(j,0,i,values[i] != values[j]))"],"decreases":"len(values)-processed"},
+    {"name":"ready_owner_prefix","function":"owners_ready","target":"index","iter":"range(count)","cursor":"processed","invariants":["forall_range(i,0,processed,state.owners[i] != 0 and state.owners[i] != '' and state.evaluators[i] in ('native_grade_graph','stack_65_lut') and state.artifact_revisions[i] == state.revision and state.artifact_evaluators[i] == state.evaluators[i] and state.artifact_ids[i] != 0 and state.artifact_ids[i] != '' and state.manifest_ids[i] != 0 and state.manifest_ids[i] != '')"],"decreases":"count-processed"}
+  ]
+}

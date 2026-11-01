@@ -1,0 +1,86 @@
+python_test(
+    name = "scheduling",
+    srcs = [
+        "test_channel.py",
+        "test_scheduling.py",
+    ],
+    base_module = "tests.policies",
+    deps = [
+        "//libraries/blender-runtime:abi",
+        "//libraries/blender-runtime/tests:policy_fixture",
+        "//libraries/perceptual-grade-core:runtime",
+    ],
+)
+
+python_test(
+    name = "output",
+    srcs = ["test_output.py"],
+    base_module = "tests.policies",
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)
+
+python_test(
+    name = "bake_image",
+    srcs = ["test_bake_image.py"],
+    base_module = "tests.policies",
+    deps = [
+        "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
+        "//libraries/perceptual-grade-core:machines",
+    ],
+)
+
+python_test(
+    name = "scope_input",
+    srcs = ["test_scope_input.py"],
+    base_module = "tests.policies",
+    deps = [
+        "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
+        "//libraries/perceptual-grade-core:machines",
+    ],
+)
+
+python_test(
+    name = "bake_queue",
+    srcs = ["test_bake_queue.py"],
+    base_module = "tests.policies",
+    deps = [
+        "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
+        "//libraries/perceptual-grade-core:machines",
+    ],
+)
+
+python_test(
+    name = "scope_playback",
+    srcs = ["test_scope_playback.py"],
+    base_module = "tests.policies",
+    deps = [
+        "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
+        "//libraries/perceptual-grade-core:runtime",
+    ],
+)
+
+python_test(
+    name = "recovery",
+    srcs = ["test_recovery.py"],
+    base_module = "tests.policies",
+    deps = [
+        "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
+        "//libraries/perceptual-grade-core:machines",
+    ],
+)
+
+python_test(
+    name = "scope_demand",
+    srcs = ["test_scope_demand.py"],
+    base_module = "tests.policies",
+    deps = [
+        "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
+        "//libraries/perceptual-grade-core:machines",
+    ],
+)

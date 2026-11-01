@@ -1,0 +1,44 @@
+typedef struct { float3 a; float3 b; float3 c; } ColorMat;
+__DEVICE__ int color_finite(float x) { return x==x && _fabs(x)<=3.4028234663852886e38f; }
+__DEVICE__ int color_finite3(float3 v) { return color_finite(v.x)&&color_finite(v.y)&&color_finite(v.z); }
+__DEVICE__ float color_dot(float3 a,float3 b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
+__DEVICE__ float3 color_cross(float3 a,float3 b) { return make_float3(a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x); }
+__DEVICE__ ColorMat color_mat(float3 a,float3 b,float3 c) { ColorMat m; m.a=a; m.b=b; m.c=c; return m; }
+__DEVICE__ ColorMat color_id() { return color_mat(make_float3(1.0f,0.0f,0.0f),make_float3(0.0f,1.0f,0.0f),make_float3(0.0f,0.0f,1.0f)); }
+__DEVICE__ float3 color_zero3() { return make_float3(0.0f,0.0f,0.0f); }
+__DEVICE__ ColorMat color_zero() { float3 z=color_zero3(); return color_mat(z,z,z); }
+__DEVICE__ float3 color_mv(ColorMat m,float3 v) { return make_float3(color_dot(m.a,v),color_dot(m.b,v),color_dot(m.c,v)); }
+__DEVICE__ ColorMat color_cols(float3 a,float3 b,float3 c) { return color_mat(make_float3(a.x,b.x,c.x),make_float3(a.y,b.y,c.y),make_float3(a.z,b.z,c.z)); }
+__DEVICE__ ColorMat color_inv(ColorMat m) {
+    float3 u=color_cross(m.b,m.c),v=color_cross(m.c,m.a),w=color_cross(m.a,m.b);
+    float d=color_dot(m.a,u); return color_cols(u/d,v/d,w/d);
+}
+__DEVICE__ ColorMat color_mul(ColorMat a,ColorMat b) {
+    ColorMat t=color_cols(b.a,b.b,b.c); return color_cols(color_mv(a,t.a),color_mv(a,t.b),color_mv(a,t.c));
+}
+__DEVICE__ ColorMat color_add(ColorMat a,ColorMat b) { return color_mat(a.a+b.a,a.b+b.b,a.c+b.c); }
+__DEVICE__ ColorMat color_cat() { return color_mat(make_float3(.401288f,.650173f,-.051461f),make_float3(-.250268f,1.204414f,.045854f),make_float3(-.002079f,.048952f,.953127f)); }
+__DEVICE__ ColorMat color_icat() { return color_mat(make_float3(1.862067855087f,-1.011254630532f,.149186775444f),make_float3(.387526543236f,.621447441931f,-.008973985167f),make_float3(-.015841498849f,-.034122938029f,1.049964436878f)); }
+__DEVICE__ float3 color_xyz(float x,float y,float Y) { return make_float3(x*Y/y,Y,(1.0f-x-y)*Y/y); }
+__DEVICE__ float3 color_xy(float3 v) {
+    float s=v.x+v.y+v.z;
+    if(_fabs(s)<1e-15f) return make_float3(-100.0f,-100.0f,0.0f);
+    return make_float3(v.x/s,v.y/s,0.0f);
+}
+__DEVICE__ float3 color_adapt(float3 xyz,float3 from,float3 to) {
+    return color_mv(color_icat(),color_mv(color_cat(),xyz)*color_mv(color_cat(),to)/color_mv(color_cat(),from));
+}
+__DEVICE__ ColorMat color_adaptation(float3 from,float3 to) {
+    float3 a=color_mv(color_cat(),from);
+    float3 d=color_mv(color_cat(),to)/a-make_float3(1.0f,1.0f,1.0f);
+    ColorMat c=color_cat(); c.a=c.a*d.x; c.b=c.b*d.y; c.c=c.c*d.z;
+    return color_add(color_id(),color_mul(color_icat(),c));
+}
+__DEVICE__ float3 color_rgb_xyz(float3 v) {
+    return color_mv(color_mat(make_float3(.4123907993f,.3575843394f,.1804807884f),make_float3(.2126390059f,.7151686788f,.0721923154f),make_float3(.0193308187f,.1191947798f,.9505321522f)),v);
+}
+__DEVICE__ float3 color_xyz_rgb(float3 v) {
+    return color_mv(color_mat(make_float3(3.2409699419f,-1.5373831776f,-.4986107603f),make_float3(-.9692436363f,1.8759675015f,.0415550574f),make_float3(.0556300797f,-.2039769589f,1.0569715142f)),v);
+}
+__DEVICE__ float color_decode(float v) { if(v<=.04045f)return v/12.92f; return _powf((v+.055f)/1.055f,2.4f); }
+__DEVICE__ float color_encode(float v) { if(v<=.0031308f)return 12.92f*v; return 1.055f*_powf(v,1.0f/2.4f)-.055f; }

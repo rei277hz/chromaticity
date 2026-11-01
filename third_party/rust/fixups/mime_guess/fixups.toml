@@ -1,0 +1,2 @@
+# Generate MIME lookup tables from the package's checked-in data.
+buildscript.run = true

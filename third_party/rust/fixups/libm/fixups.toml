@@ -1,0 +1,2 @@
+# Generate the target-specific math implementation cfg.
+buildscript.run = true

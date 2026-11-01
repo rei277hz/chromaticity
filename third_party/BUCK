@@ -1,0 +1,552 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool")
+load(":gui_software_packages.bzl", "GUI_SOFTWARE_PACKAGES")
+load(":proof_sources.bzl", "PROOF_SOURCES")
+
+alias(
+    name = "mdbook",
+    actual = "//third_party/rust:mdbook-mdbook",
+    visibility = ["PUBLIC"],
+)
+
+# Native installed-extension acceptance uses Blender's own Python and launcher,
+# independently of the bpy wheel used by the fast integration suites.
+http_file(
+    name = "blender_linux_archive",
+    out = "blender-5.2.2-linux-x64.tar.xz",
+    sha256 = "84098912789dc450e95697c4184fb8a90acbe5111c2ba4aede3fecb57806a168",
+    urls = ["https://download.blender.org/release/Blender5.2/blender-5.2.2-linux-x64.tar.xz"],
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "unpack_blender",
+    srcs = {"tools/build/unpack_blender.py": "//tools/blender-build:unpack_blender_source"},
+    main_module = "tools.build.unpack_blender",
+)
+
+generate(
+    name = "blender_linux",
+    args = [
+        "--archive",
+        "$(location :blender_linux_archive)",
+    ],
+    outputs = {"binary": "blender"},
+    tool = ":unpack_blender",
+    visibility = ["PUBLIC"],
+)
+
+# Official Blender5.2/blender-5.2.2.sha256, verified against two release mirrors.
+http_file(
+    name = "blender_macos_archive",
+    out = "blender-5.2.2-macos-arm64.dmg",
+    sha256 = "dc4125399b8bfefe283cc1624d6cfc7809d1cac20ace51072127eb371f31f210",
+    target_compatible_with = [
+        "prelude//os:macos",
+        "prelude//cpu:arm64",
+    ],
+    urls = ["https://download.blender.org/release/Blender5.2/blender-5.2.2-macos-arm64.dmg"],
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "blender_macos",
+    args = [
+        "--archive",
+        "$(location :blender_macos_archive)",
+    ],
+    outputs = {"binary": "Blender.app/Contents/MacOS/Blender"},
+    target_compatible_with = [
+        "prelude//os:macos",
+        "prelude//cpu:arm64",
+    ],
+    tool = ":unpack_blender",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "blender_native",
+    actual = select({
+        "prelude//os:linux": ":blender_linux",
+        "prelude//os:macos": ":blender_macos",
+    }),
+    visibility = ["PUBLIC"],
+)
+
+# Test-only Debian 13 amd64 virtual display; hashes from Debian's signed package
+# indexes. Core libc/X11/Mesa remain the native Linux platform ABI, as for Blender.
+XVFB_PACKAGES = {
+    "xvfb": ("https://security.debian.org/debian-security/pool/updates/main/x/xorg-server/xvfb_21.1.16-1.3+deb13u4_amd64.deb", "893d87bf159b6de077a929fc796a73c39f837d45310b2076e3eeebebb80552b6"),
+    "xserver_common": ("https://security.debian.org/debian-security/pool/updates/main/x/xorg-server/xserver-common_21.1.16-1.3+deb13u4_all.deb", "94bc0dcceeefabd4f706af19b3424de7f827758d0ebad5c18c52e73365d7f3ab"),
+    "libxfont": ("https://deb.debian.org/debian/pool/main/libx/libxfont/libxfont2_2.0.6-1+deb13u1_amd64.deb", "79a7f56e4a0c7b1defa706c7b1f3076f7d80aaeea9de253b2a87406253319681"),
+    "libfontenc": ("https://deb.debian.org/debian/pool/main/libf/libfontenc/libfontenc1_1.1.8-1+b2_amd64.deb", "49f7330e1bbe3f48946fee5c07870df660374f9f77b378840d6edf1a3b3444cd"),
+    "libunwind": ("https://deb.debian.org/debian/pool/main/libu/libunwind/libunwind8_1.8.1-0.1_amd64.deb", "db21a86dd05c93413f0ef36282a9c64d32410d240f332273a53be1408bec1f62"),
+    "libxkbfile": ("https://deb.debian.org/debian/pool/main/libx/libxkbfile/libxkbfile1_1.1.0-1+b4_amd64.deb", "989b61e0eb7f1f99d0e969a5957e9a857a95941d5c0e86d5e2b502008b4ac28e"),
+    "xkb_utils": ("https://deb.debian.org/debian/pool/main/x/x11-xkb-utils/x11-xkb-utils_7.7+9_amd64.deb", "745e29c79bb435d057cdbf8bb59a35fa33e818e566cb754674f44d381ccd4317"),
+    "xkb_data": ("https://deb.debian.org/debian/pool/main/x/xkeyboard-config/xkb-data_2.42-1_all.deb", "196ff18533382f64e057ea49df2bb486bd4275a4cc0917361edb560b8756dada"),
+}
+
+[
+    http_file(
+        name = "xvfb_" + name + "_archive",
+        out = name + ".deb",
+        sha256 = spec[1],
+        urls = [spec[0]],
+    )
+    for name, spec in XVFB_PACKAGES.items()
+]
+
+python_tool(
+    name = "unpack_xvfb",
+    srcs = {"tools/build/unpack_xvfb.py": "//tools/blender-build:unpack_xvfb_source"},
+    main_module = "tools.build.unpack_xvfb",
+)
+
+generate(
+    name = "xvfb_linux",
+    args = [arg for name in XVFB_PACKAGES for arg in [
+        "--archive",
+        "$(location :xvfb_" + name + "_archive)",
+    ]],
+    outputs = {"binary": "usr/bin/Xvfb"},
+    tool = ":unpack_xvfb",
+    visibility = ["PUBLIC"],
+)
+
+# Blender's manylinux bpy wheel intentionally excludes Linux/X11 ABI libraries.
+# Pin the Debian 13 X11/GL loader closure so native CPU evaluators do not rely
+# on developer-shell packages. These libraries require glibc >= 2.38; libc and
+# GPU drivers remain platform dependencies. CPU acceptance covers Debian 13.
+BPY_NATIVE_ABI_PACKAGES = {
+    "x11": ("pool/main/libx/libx11/libx11-6_1.8.12-1_amd64.deb", "b5a3fd3bf8c8fd0364bfb9bea00dcba7fc301229bd02dded084632d31f5b0fb3"),
+    "xrender": ("pool/main/libx/libxrender/libxrender1_0.9.12-1_amd64.deb", "9d042dfd5e613be1e02e6ddd0c5c4adef19c5eb08f6db838c2eba672c496dca4"),
+    "xfixes": ("pool/main/libx/libxfixes/libxfixes3_6.0.0-2+b4_amd64.deb", "3fdd95d86d8e9d63e11f52070935c8f9f912c36aa3b17338d969f7685f3ed4fb"),
+    "xi": ("pool/main/libx/libxi/libxi6_1.8.2-1_amd64.deb", "093d0903f35bb7a9f6815180ee040e6951fecf9b66c128cd72f064710210606e"),
+    "xkbcommon": ("pool/main/libx/libxkbcommon/libxkbcommon0_1.7.0-2_amd64.deb", "f75ee544f55acc6a271debfab3ea4ae0458afc89d81cfe1a71137e07d4895b86"),
+    "sm": ("pool/main/libs/libsm/libsm6_1.2.6-1_amd64.deb", "03038b3002e6f44322554e335d60d8ff87acfcf2e21c904b6866610a9913ee00"),
+    "ice": ("pool/main/libi/libice/libice6_1.1.1-1_amd64.deb", "38185997162793b5dfb768644badc57852879784a2f9d83c6c4e47efa5e36698"),
+    "xext": ("pool/main/libx/libxext/libxext6_1.3.4-1+b3_amd64.deb", "fc618ec40465e5ce48622606299cb47833efc3fb235ba15543b81f850722f443"),
+    "gl": ("pool/main/libg/libglvnd/libgl1_1.7.0-1+b2_amd64.deb", "87fa2f6e5abaed4ed385fac879c8dd735af719ee2300222d901793c66e041678"),
+    "glx": ("pool/main/libg/libglvnd/libglx0_1.7.0-1+b2_amd64.deb", "2721fdca0fe3bd963cb39482eabc253af52b88f4a7f6dbb69e475549daf5af3b"),
+    "glvnd": ("pool/main/libg/libglvnd/libglvnd0_1.7.0-1+b2_amd64.deb", "887f74008166549ce9e100c906aa937e95d6e5ce1c8d86efe8c95fd953359b9c"),
+    "xcb": ("pool/main/libx/libxcb/libxcb1_1.17.0-2+b1_amd64.deb", "5c222a72d11b866447da31693254f738430726e3e065a384e82687b2fd2f978b"),
+    "xau": ("pool/main/libx/libxau/libxau6_1.0.11-1_amd64.deb", "689a9f0e0ba3e2c65431f864871e303ee904de69dd28abfc462663fae030227f"),
+    "xdmcp": ("pool/main/libx/libxdmcp/libxdmcp6_1.1.5-1_amd64.deb", "0740dc760916b2008b45417a42a8fd7dd5de370fb57d31373f15034cda8acf0b"),
+    "bsd": ("pool/main/libb/libbsd/libbsd0_0.12.2-2_amd64.deb", "e5a85986fa6bec3307ab1bc860736b478b331882bc45e17675a7bdf88eecb43a"),
+    "md": ("pool/main/libm/libmd/libmd0_1.1.0-2+b1_amd64.deb", "7244ec3839b61fac0c1884fe08aaa040f26e8f1f35f1f5d3482eacefd30d1b44"),
+    "uuid": ("pool/main/u/util-linux/libuuid1_2.41.5-0+deb13u1_amd64.deb", "c1bf4c4c3ff48c57fabf93307dfb56996b60cfa33927afc4158b5db36fb2721e"),
+}
+
+BPY_NATIVE_ABI_SONAMES = [
+    "libX11.so.6",
+    "libXrender.so.1",
+    "libXfixes.so.3",
+    "libXi.so.6",
+    "libxkbcommon.so.0",
+    "libSM.so.6",
+    "libICE.so.6",
+    "libXext.so.6",
+    "libGL.so.1",
+    "libGLX.so.0",
+    "libGLdispatch.so.0",
+    "libxcb.so.1",
+    "libXau.so.6",
+    "libXdmcp.so.6",
+    "libbsd.so.0",
+    "libmd.so.0",
+    "libuuid.so.1",
+]
+
+[http_file(
+    name = "bpy_native_abi_" + name + "_archive",
+    out = spec[0].split("/")[-1],
+    sha256 = spec[1],
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    urls = ["https://deb.debian.org/debian/" + spec[0]],
+    visibility = [],
+) for name, spec in BPY_NATIVE_ABI_PACKAGES.items()]
+
+python_tool(
+    name = "unpack_bpy_native_abi",
+    srcs = {"blender_build/unpack_native_libraries.py": "//tools/blender-build:unpack_native_libraries_source"},
+    main_module = "blender_build.unpack_native_libraries",
+)
+
+generate(
+    name = "bpy_native_abi_linux",
+    args = [arg for name in BPY_NATIVE_ABI_PACKAGES for arg in [
+        "--archive",
+        "$(location :bpy_native_abi_" + name + "_archive)",
+    ]],
+    outputs = {soname: "usr/lib/x86_64-linux-gnu/" + soname for soname in BPY_NATIVE_ABI_SONAMES},
+    tool = ":unpack_bpy_native_abi",
+    visibility = ["PUBLIC"],
+)
+
+prebuilt_cxx_library_group(
+    name = "bpy_native_abi_linux_libraries",
+    shared_libs = {soname: ":bpy_native_abi_linux[" + soname + "]" for soname in BPY_NATIVE_ABI_SONAMES},
+    shared_link = ["$(lib " + soname + ")" for soname in BPY_NATIVE_ABI_SONAMES],
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+# A complete software OpenGL fixture for synthetic native GUI timing. Kept
+# separate from CPU bpy admission so these drivers are never runtime imports.
+[
+    http_file(
+        name = "gui_software_" + name + "_archive",
+        out = spec[0].split("/")[-1],
+        sha256 = spec[1],
+        target_compatible_with = [
+            "prelude//os:linux",
+            "prelude//cpu:x86_64",
+        ],
+        urls = [spec[0]],
+    )
+    for name, spec in GUI_SOFTWARE_PACKAGES.items()
+]
+
+generate(
+    name = "xvfb_software_linux",
+    args = [arg for name in XVFB_PACKAGES for arg in [
+               "--archive",
+               "$(location :xvfb_" + name + "_archive)",
+           ]] +
+           [arg for name in BPY_NATIVE_ABI_PACKAGES for arg in [
+               "--archive",
+               "$(location :bpy_native_abi_" + name + "_archive)",
+           ]] +
+           [arg for name in GUI_SOFTWARE_PACKAGES for arg in [
+               "--archive",
+               "$(location :gui_software_" + name + "_archive)",
+           ]],
+    outputs = {
+        "binary": "usr/bin/Xvfb",
+        "glx": "usr/lib/x86_64-linux-gnu/libGLX_mesa.so.0",
+        "swrast": "usr/lib/x86_64-linux-gnu/dri/swrast_dri.so",
+    },
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    tool = ":unpack_xvfb",
+    visibility = ["PUBLIC"],
+)
+
+# Header revision matches Clang 22.1.4 bundled with Lean 4.34.1.
+[
+    http_file(
+        name = name,
+        out = filename,
+        sha256 = sha256,
+        urls = ["https://raw.githubusercontent.com/llvm/llvm-project/35990504507d79e0b9deb809c8ee5e1b34ceef20/clang/lib/Headers/" + filename],
+        visibility = ["PUBLIC"],
+    )
+    for name, filename, sha256 in [
+        ("opencl_c", "opencl-c.h", "aa7e871a8f7d961aa4126a9fadc2196f822c21811946c90147dc7415fe677de9"),
+        ("opencl_c_base", "opencl-c-base.h", "673c4720f879c2f101504979edbd0216c9cb6a982ce2b62bd467b81fd53d8e33"),
+    ]
+]
+
+[
+    http_file(
+        name = name + "_source",
+        out = name + ".tar.gz",
+        sha256 = spec[2],
+        urls = ["https://codeload.github.com/" + spec[0] + "/tar.gz/" + spec[1]],
+        visibility = ["PUBLIC"],
+    )
+    for name, spec in PROOF_SOURCES.items()
+]
+
+http_file(
+    name = "lean_archive",
+    out = "lean-4.34.1.tar.zst",
+    sha256 = select({
+        "prelude//os:linux": "47bf4bbd78f70c2e9670598ab7124d92b6efb7330ff33e5fbb4030f6fd72e4e4",
+        "prelude//os:macos": "65f22a4f047738ec742667b3247e836a86ebf06eabc12655c3dee00637e37866",
+    }),
+    urls = select({
+        "prelude//os:linux": ["https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux.tar.zst"],
+        "prelude//os:macos": ["https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-darwin_aarch64.tar.zst"],
+    }),
+    visibility = ["PUBLIC"],
+)
+
+WHEELS = {
+    # Build-only machine verification; never a runtime bundle dependency.
+    "z3-solver": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/21/c9/bb51a96af0091324c81b803f16c49f719f9f6ea0b0bb52200f5c97ec4892/z3_solver-4.15.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/63/33/a3d5d2eaeb0f7b3174d57d405437eabb2075d4d50bd9ea0957696c435c7b/z3_solver-4.15.4.0-py3-none-macosx_13_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "7e103a6f203f505b8b8b8e5c931cc407c95b61556512d4921c1ddc0b3f41b08e",
+            "prelude//os:macos": "407e825cc9211f95ef46bdc8d151bf630e7ab2d62a21d24cd74c09cc5b73f3aa",
+        }),
+        "filename": select({
+            "prelude//os:linux": "z3_solver-4.15.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+            "prelude//os:macos": "z3_solver-4.15.4.0-py3-none-macosx_13_0_arm64.whl",
+        }),
+        "dependencies": [],
+    },
+    "babel": {
+        "url": "https://files.pythonhosted.org/packages/b7/b8/3fe70c75fe32afc4bb507f75563d39bc5642255d1d94f1f23604725780bf/babel-2.17.0-py3-none-any.whl",
+        "sha256": "4d0b53093fdfb4b21c92b5213dba5a1b23885afa8383709427046b21c366e5f2",
+        "filename": "babel-2.17.0-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "colour-science": {
+        "url": "https://files.pythonhosted.org/packages/6d/9e/ce54e33f383d7e1432be9fb39557477779ccb155c60033c491609936dacf/colour_science-0.4.7-py3-none-any.whl",
+        "sha256": "fe2383d86e507fc11a4b5206ff31a7399031e0dce527e22ec06eeb491d45d9a7",
+        "filename": "colour_science-0.4.7-py3-none-any.whl",
+        "dependencies": ["numpy"],
+    },
+    "numpy": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/3a/1b/3b16a9bc514a440a7a0883684111dcb1ef1aee960af2ca95da8fc775f124/numpy-2.5.3-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/2f/06/9dc9e48b5e5e941c8b10350c5ff2d721da42a20517d911d15544246775ff/numpy-2.5.3-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "a5fa86b80fd24bcd1aff83ad23be44ea323de3f787be8f8b15d4a65621e25321",
+            "prelude//os:macos": "92f30e89b8ee0ecf363033576c422b2f58fed6a80bed0aa48dff6d14c654663e",
+        }),
+        "filename": select({
+            "prelude//os:linux": "numpy-2.5.3-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "numpy-2.5.3-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "dependencies": [],
+    },
+    "pillow": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/f7/62/de5bdd77d935331f4f802edc11e4d82950f642caad6cb2f949837b8560e2/pillow-12.3.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/10/76/8803c13605b763d33d156c4678fc77f8443389c0c51c8aef707bb02015f4/pillow-12.3.0-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "0847a763afefb695bc912d7c131e7e0632d4edc1d8698f58ddabec8e46b8b6d3",
+            "prelude//os:macos": "d69141514cc30b774ceea5e3ed3a6635c8d8a96edf664689b890f4089111fb35",
+        }),
+        "filename": select({
+            "prelude//os:linux": "pillow-12.3.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "pillow-12.3.0-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "dependencies": [],
+    },
+    "contourpy": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/68/77/8f93ecbde1a4d11dfd460cd19a0c159f5487352e751fa87f5d78cc9db08e/contourpy-1.4.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/3f/2f/103cdc5b7077cd569989d3ddb99ee3d4e96ee31bde8df2a6e426b2dc6195/contourpy-1.4.0-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "f1219a8898523cba821085f2da8a1b962cc696325763f09d7f93538ba43b2d70",
+            "prelude//os:macos": "196759a3e4db60e1546167e361090ebb6d199aa3aafc9e34ea17a5ac3b23e814",
+        }),
+        "filename": select({
+            "prelude//os:linux": "contourpy-1.4.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "contourpy-1.4.0-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "dependencies": ["numpy"],
+    },
+    "cycler": {
+        "url": "https://files.pythonhosted.org/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl",
+        "sha256": "85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30",
+        "filename": "cycler-0.12.1-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "fonttools": {
+        "url": "https://files.pythonhosted.org/packages/f6/10/d45b74135d5d642cb3a4fb0a957c1613ef93de4c8548671dfc3a5bf38299/fonttools-4.66.1-py3-none-any.whl",
+        "sha256": "7234ae9e28db64273fbbfa72caebd0a97e3bdba6b05064114741b9539ef339d0",
+        "filename": "fonttools-4.66.1-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "kiwisolver": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/ab/43/86aacc027959108b4c66eeae8b73cedb057dfa6eb3a335d05ad65197081c/kiwisolver-1.5.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/47/8b/40d33ffd2f378094ed462e9a9a0907e59d4de9845e65a59561272da350d4/kiwisolver-1.5.1-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "74ad5c3dad54a4641b4c28cd15ded70899d04459c6c7aeacafea716be97cce6d",
+            "prelude//os:macos": "77a4c8187a5948d7f8795adb765a3c7b553d07d86d88e43038fc32fc1fb9a3f3",
+        }),
+        "filename": select({
+            "prelude//os:linux": "kiwisolver-1.5.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+            "prelude//os:macos": "kiwisolver-1.5.1-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "dependencies": [],
+    },
+    "matplotlib": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/75/97/a471f1c3eb1fd6f6c24a31a5858f443891d5127e63a7788678d14e249aea/matplotlib-3.10.8-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/8d/a0/2ba3473c1b66b9c74dc7107c67e9008cb1782edbe896d4c899d39ae9cf78/matplotlib-3.10.8-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "a0a7f52498f72f13d4a25ea70f35f4cb60642b466cbb0a9be951b5bc3f45a486",
+            "prelude//os:macos": "56271f3dac49a88d7fca5060f004d9d22b865f743a12a23b1e937a0be4818ee1",
+        }),
+        "filename": select({
+            "prelude//os:linux": "matplotlib-3.10.8-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+            "prelude//os:macos": "matplotlib-3.10.8-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "dependencies": [
+            "contourpy",
+            "cycler",
+            "fonttools",
+            "kiwisolver",
+            "numpy",
+            "packaging",
+            "pillow",
+            "pyparsing",
+            "python-dateutil",
+        ],
+    },
+    "packaging": {
+        "url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",
+        "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+        "filename": "packaging-26.3-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "pyparsing": {
+        "url": "https://files.pythonhosted.org/packages/38/bb/d215ee7c73b61497b28a5503f9f53523f294fcc936762b7caf90e0c1c2b5/pyparsing-3.3.3-py3-none-any.whl",
+        "sha256": "ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4",
+        "filename": "pyparsing-3.3.3-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "python-dateutil": {
+        "url": "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+        "sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
+        "filename": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+        "dependencies": ["six"],
+    },
+    "six": {
+        "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
+        "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+        "filename": "six-1.17.0-py2.py3-none-any.whl",
+        "dependencies": [],
+    },
+    "attrs": {
+        "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
+        "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+        "filename": "attrs-26.1.0-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "bpy": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/e0/a7/a26dc1a04934445b1f549969dee2ad3313d4ee1df5205c166df0e336a9ae/bpy-5.2.2-cp313-cp313-manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "3dfd1a9e7a5aec0f0fe95a1b01d10cd66e212b16ea38b77d132159dc9a666d45",
+            "prelude//os:macos": "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7",
+        }),
+        "filename": select({
+            "prelude//os:linux": "bpy-5.2.2-cp313-cp313-manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "dependencies": [
+            "cattrs",
+            "cython",
+            "numpy",
+            "requests",
+            "zstandard",
+        ],
+    },
+    "cattrs": {
+        "url": "https://files.pythonhosted.org/packages/e8/cf/22794a399d99480486120e26e879ef008e21f5e85274c2ed591d568bb326/cattrs-26.2.1-py3-none-any.whl",
+        "sha256": "a12aaa3453dc8f633a815293179f08b7421ed18d2575c459c3c736f840beac24",
+        "filename": "cattrs-26.2.1-py3-none-any.whl",
+        "dependencies": [
+            "attrs",
+            "typing-extensions",
+        ],
+    },
+    "certifi": {
+        "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+        "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+        "filename": "certifi-2026.7.22-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "charset-normalizer": {
+        "url": "https://files.pythonhosted.org/packages/fc/ad/d07d7862a62ffa6d79d68074d14823243dd235a77c45262acbf6adeb28bf/charset_normalizer-3.5.2-py3-none-any.whl",
+        "sha256": "b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685",
+        "filename": "charset_normalizer-3.5.2-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "cython": {
+        "url": "https://files.pythonhosted.org/packages/bf/77/67b0b24e45073a699610e50f00c18474ff9b09ea29ecc95083bdf5e60acd/cython-3.3.0-py3-none-any.whl",
+        "sha256": "9b24b5c8cd536946b62086fcafee6d5509d3f549f72d553d2336af87ffbe0da1",
+        "filename": "cython-3.3.0-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "idna": {
+        "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+        "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+        "filename": "idna-3.20-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "requests": {
+        "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+        "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+        "filename": "requests-2.34.2-py3-none-any.whl",
+        "dependencies": [
+            "certifi",
+            "charset-normalizer",
+            "idna",
+            "urllib3",
+        ],
+    },
+    "typing-extensions": {
+        "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+        "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+        "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "urllib3": {
+        "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+        "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+        "filename": "urllib3-2.8.0-py3-none-any.whl",
+        "dependencies": [],
+    },
+    "zstandard": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/63/4b/e3678b4e776db00f9f7b2fe58e547e8928ef32727d7a1ff01dea010f3f13/zstandard-0.25.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/3f/06/9ae96a3e5dcfd119377ba33d4c42a7d89da1efabd5cb3e366b156c45ff4d/zstandard-0.25.0-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "8e735494da3db08694d26480f1493ad2cf86e99bdd53e8e9771b2752a5c0246a",
+            "prelude//os:macos": "a1a4ae2dec3993a32247995bdfe367fc3266da832d82f8438c8570f989753de1",
+        }),
+        "filename": select({
+            "prelude//os:linux": "zstandard-0.25.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+            "prelude//os:macos": "zstandard-0.25.0-cp313-cp313-macosx_11_0_arm64.whl",
+        }),
+        "dependencies": [],
+    },
+}
+
+[http_file(
+    name = name + "_wheel",
+    out = spec["filename"],
+    sha256 = spec["sha256"],
+    urls = [spec["url"]],
+    visibility = ["PUBLIC"] if name == "z3-solver" else [],
+) for name, spec in WHEELS.items()]
+
+[prebuilt_python_library(
+    name = name,
+    binary_src = ":" + name + "_wheel",
+    target_compatible_with = select({
+        "prelude//os:linux": ["prelude//cpu:x86_64"],
+        "prelude//os:macos": ["prelude//cpu:arm64"],
+    }),
+    visibility = ["PUBLIC"],
+    deps = [":" + dependency for dependency in spec["dependencies"]] + (select({
+        "prelude//os:linux": [":bpy_native_abi_linux_libraries"],
+        "DEFAULT": [],
+    }) if name == "bpy" else []),
+) for name, spec in WHEELS.items()]

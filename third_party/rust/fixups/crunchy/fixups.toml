@@ -1,0 +1,2 @@
+# Generate the unrolled loop implementation in OUT_DIR.
+buildscript.run = true

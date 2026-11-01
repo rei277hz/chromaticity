@@ -1,0 +1,2 @@
+# Probe the declared rustc for ABI and raw syscall implementation cfg.
+buildscript.run = true

@@ -1,0 +1,65 @@
+alias(
+    name = "archive",
+    actual = "//tools/verification/tests:archive",
+)
+
+NATIVE_RESOURCES = {
+    "blender": "//third_party:blender_native",
+    "hdr_color_picker.zip": "//products/hdr-color-picker-blender:extension[zip]",
+    "perceptual_grade.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "native_runner.py": "native_runner.py",
+    "gui_runner.py": "gui_runner.py",
+    "test_display_blender.py": "test_display_blender.py",
+    "test_gpu_blender.py": "test_gpu_blender.py",
+    "test_integration_blender.py": "test_integration_blender.py",
+    "gui_display.py": "//products/perceptual-grade-blender/tests/installed:gui_display_source",
+}
+
+python_test(
+    name = "native",
+    srcs = ["test_native.py"],
+    base_module = "tests.hdr_picker",
+    labels = [
+        "gpu",
+        "installed",
+        "native",
+    ],
+    resources = select({
+        "prelude//os:linux": NATIVE_RESOURCES | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": NATIVE_RESOURCES,
+    }),
+)
+
+python_test(
+    name = "packaging",
+    srcs = ["test_packaging.py"],
+    base_module = "tests.hdr_picker",
+    resources = {
+        "hdr_color_picker.zip": "//products/hdr-color-picker-blender:extension[zip]",
+        "perceptual_grade.zip": "//products/perceptual-grade-blender:extension[zip]",
+        "color_core": "//libraries/color-core:sources",
+    },
+)
+
+VIEWPORT_RESOURCES = {
+    "blender": "//third_party:blender_native",
+    "hdr_color_picker.zip": "//products/hdr-color-picker-blender:extension[zip]",
+    "viewport_runner.py": "viewport_runner.py",
+    "gui_display.py": "//products/perceptual-grade-blender/tests/installed:gui_display_source",
+}
+
+python_test(
+    name = "viewport",
+    srcs = ["test_viewport.py"],
+    base_module = "tests.hdr_picker",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": VIEWPORT_RESOURCES | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": VIEWPORT_RESOURCES,
+    }),
+)

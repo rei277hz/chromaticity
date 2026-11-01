@@ -1,0 +1,1584 @@
+{
+  "version": 1,
+  "canonical_document": "products/perceptual-grade-next-blender/STATE_MACHINE_DESIGN.md",
+  "canonical_section": 13,
+  "status_definitions": {
+    "proved": "The complete canonical claim is proved over the production transition or checked helper, subject only to listed native input premises.",
+    "partial": "Historical or partial formal evidence supports only part of the canonical claim; declared unproved proposals may also be referenced, and their scope and remaining gaps must not be read as valid proof receipts.",
+    "adapter_premise": "Native adapter evidence exists, but the behavior is an explicit external premise rather than a proved conclusion.",
+    "open": "No matching formal property establishes the canonical claim."
+  },
+  "gap_catalog": {
+    "unformalized": "The canonical claim has no complete source-bound property over the production transition or checked helper.",
+    "scope_adapter": "ScopeState omits native request/resource incarnation, producer handles and adapter delivery; the adapter-to-model correspondence is unproved.",
+    "composed_adapter": "composed.py is a reduced model; the production scope, view, project and native gateway functions are not composed by this proof.",
+    "project_unbounded": "project_unbounded_proof passes 170 obligations and 4 mutation checks in build e458d854-a0f2-474f-9ee4-e903e6da13b7. The receipt covers project_unbounded.py; production owner/evaluator/artifact record conversion and native admission remain outside the proof.",
+    "project_adapter": "Blender owner discovery, worklist projection, evaluator extraction and readiness receipt delivery are adapter premises; no formal correspondence proof connects those values to the unbounded readiness kernel.",
+    "native_admission": "The readiness proofs do not establish that every Blender native operation path checks current readiness and acquires the correct physical reader/writer lease.",
+    "preparation_adapter": "preparation.inv proves the policy helper. Actual Blender image mutation, graph publication, manifest validation and crash rollback are adapter behavior.",
+    "recovery_adapter": "recovery_policy.inv proves a policy helper. Opened datablock discovery, validation and scheduling correspondences remain external premises.",
+    "restart_adapter": "restart.inv proves obligation accounting. Supervisor placement, native preservation and teardown receipt correctness remain adapter behavior.",
+    "native_content": "Actual Blender content, graph bindings, packed images and rendering outcomes are native adapter premises, not conclusions from validated flags.",
+    "preflight_partial": "Existing preflight properties cover receipt/failure cases; this exact full canonical obligation needs an explicit source-bound property.",
+    "statistics_visual": "S09 requires exact statistics/visual identity; the formal states omit statistics and pixel provenance.",
+    "batch_coherence": "S10 requires primary/reference/environment coherence; those batch members are absent from the current formal states.",
+    "older_batch_ownership": "S14 needs referenced batch/resource lifetime accounting absent from the scope proof state.",
+    "pending_service": "S16 needs pending-reason and live-service correspondence absent from the current formal state.",
+    "semantic_progress": "S18 requires compatible semantic-key progress; the proof has opaque identities rather than a compatibility relation.",
+    "service_incarnation": "S19 requires helper/service incarnation identity, which ScopeState does not represent.",
+    "terminal_read": "Physical retirement accounting is not a proof of one terminal producer read; producer state and read permission are absent.",
+    "preview_occurrence": "One-shot foreground display consumption is not a proof of preview-input occurrence identity.",
+    "control_ack": "Begin monotonicity is not a proof of once-only control acknowledgement; acknowledgement events are adapter-owned.",
+    "scope_view_unproved": "scope_view.inv declares five joint scope/view properties but has no Buck target or proof receipt and omits the required invariants key; validate_requirements requires a nonempty invariants mapping. Actual production composition remains unproved.",
+    "readiness_ledger": "Grade and Stack now reject both JSON and retained-pointer transaction debt. Complete recovery/admission correspondence remains open: partial backup cleanup can strand restoration, snapshot inventories are incomplete, and in-place field publication has no durable committed marker.",
+    "grade_manifest": "Grade acceptance now checks prepared pixels through the live controller and records graph/image contents; admission compares current contents against the accepted manifest. Full native-content correspondence and initial/update/recovery/output acceptance remain incomplete."
+  },
+  "proof_catalog": {
+    "foreground:S01_close_revokes_view_authority": {
+      "target": "//libraries/perceptual-grade-next-core:foreground_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/foreground.inv",
+      "property": "S01_close_revokes_view_authority",
+      "scope": "Production foreground policy; draw/effect delivery remains an adapter premise."
+    },
+    "foreground:S01_close_is_admitted_for_current_owner": {
+      "target": "//libraries/perceptual-grade-next-core:foreground_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/foreground.inv",
+      "property": "S01_close_is_admitted_for_current_owner",
+      "scope": "Production foreground policy; draw/effect delivery remains an adapter premise."
+    },
+    "foreground:stale_display_is_not_adopted": {
+      "target": "//libraries/perceptual-grade-next-core:foreground_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/foreground.inv",
+      "property": "stale_display_is_not_adopted",
+      "scope": "Production foreground policy; draw/effect delivery remains an adapter premise."
+    },
+    "scope:cancelled_completion_preserves_prior_accepted_input": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "cancelled_completion_preserves_prior_accepted_input",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:cancelled_attempt_cannot_begin_again": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "cancelled_attempt_cannot_begin_again",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:operation_receipt_matches_owner_generation_serial": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "operation_receipt_matches_owner_generation_serial",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:retirement_consumes_matching_physical_debt": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "retirement_consumes_matching_physical_debt",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "foreground:display_receipt_is_consumed_once": {
+      "target": "//libraries/perceptual-grade-next-core:foreground_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/foreground.inv",
+      "property": "display_receipt_is_consumed_once",
+      "scope": "Production foreground policy; draw/effect delivery remains an adapter premise."
+    },
+    "scope:begin_advances_request_and_submission_once": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "begin_advances_request_and_submission_once",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:display_adoption_requires_current_healthy_scope": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "display_adoption_requires_current_healthy_scope",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:display_issue_requires_current_accepted_input": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "display_issue_requires_current_accepted_input",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:scope_display_receipt_is_consumed_once": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "scope_display_receipt_is_consumed_once",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "foreground:foreground_adoption_matches_issued_token": {
+      "target": "//libraries/perceptual-grade-next-core:foreground_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/foreground.inv",
+      "property": "foreground_adoption_matches_issued_token",
+      "scope": "Production foreground policy; draw/effect delivery remains an adapter premise."
+    },
+    "scope:old_settlement_preserves_latest_demand": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "old_settlement_preserves_latest_demand",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:cancel_retains_physical_retirement_debt": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "cancel_retains_physical_retirement_debt",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:new_demand_retains_old_physical_debt": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "new_demand_retains_old_physical_debt",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:close_without_physical_work_is_destroyable": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "close_without_physical_work_is_destroyable",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:playback_blocks_acquisition_and_publication": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "playback_blocks_acquisition_and_publication",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:playback_start_revokes_prior_display_tokens": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "playback_start_revokes_prior_display_tokens",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "scope:failure_is_bound_to_exact_physical_submission": {
+      "target": "//libraries/perceptual-grade-next-core:scope_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/scope.inv",
+      "property": "failure_is_bound_to_exact_physical_submission",
+      "scope": "Production scope policy; native resource and delivery premises are external."
+    },
+    "composed:C05_publication_hold_blocks_bake_start": {
+      "target": "//libraries/perceptual-grade-next-core:composition_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/composed.inv",
+      "property": "C05_publication_hold_blocks_bake_start",
+      "scope": "Reduced composition model, not composition of production transitions."
+    },
+    "project:render_completion_requires_invoked_operation": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "render_completion_requires_invoked_operation",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "preparation:failure_retains_repair_debt": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "failure_retains_repair_debt",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "project:save_start_requires_complete_current_owner_readiness": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "save_start_requires_complete_current_owner_readiness",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "project:render_start_requires_complete_current_owner_readiness": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "render_start_requires_complete_current_owner_readiness",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "project:bake_completion_matches_admitted_receipt": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "bake_completion_matches_admitted_receipt",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "project:save_completion_requires_invoked_operation": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "save_completion_requires_invoked_operation",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "project:owner_worklist_has_exact_evaluator_slots": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "owner_worklist_has_exact_evaluator_slots",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "project:owner_worklist_rejects_duplicate_or_unpaired_entries": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "owner_worklist_rejects_duplicate_or_unpaired_entries",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "project:every_required_owner_has_current_matching_artifact": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "every_required_owner_has_current_matching_artifact",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "project:ready_artifact_evaluator_matches_its_required_owner": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "ready_artifact_evaluator_matches_its_required_owner",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "project:owner_ready_receipt_matches_required_evaluator": {
+      "target": "//libraries/perceptual-grade-next-core:project_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project.inv",
+      "property": "owner_ready_receipt_matches_required_evaluator",
+      "scope": "Four-slot project projection, not the unbounded production worklist."
+    },
+    "preparation:candidate_is_not_ready_before_commit": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "candidate_is_not_ready_before_commit",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "preparation:manifest_is_required_for_ready": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "manifest_is_required_for_ready",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "preparation:stale_preparation_revision_is_rejected": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "stale_preparation_revision_is_rejected",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "preparation:candidate_binds_owner_revision": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "candidate_binds_owner_revision",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "preparation:commit_requires_manifest": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "commit_requires_manifest",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "preparation:candidate_manifest_requires_validation": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "candidate_manifest_requires_validation",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "preparation:prior_identity_is_retained_until_commit": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "prior_identity_is_retained_until_commit",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "preparation:transaction_has_distinct_candidate": {
+      "target": "//libraries/perceptual-grade-next-core:preparation_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preparation.inv",
+      "property": "transaction_has_distinct_candidate",
+      "scope": "Preparation policy helper, not the Blender publication transaction."
+    },
+    "recovery_policy:reuse_requires_derived_validation": {
+      "target": "//libraries/perceptual-grade-next-core:recovery_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/recovery_policy.inv",
+      "property": "reuse_requires_derived_validation",
+      "scope": "Recovery policy helper, not opened-datablock discovery or validation."
+    },
+    "recovery_policy:reopen_discards_prior_authority": {
+      "target": "//libraries/perceptual-grade-next-core:recovery_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/recovery_policy.inv",
+      "property": "reopen_discards_prior_authority",
+      "scope": "Recovery policy helper, not opened-datablock discovery or validation."
+    },
+    "recovery_policy:recovery_generation_must_be_fresh": {
+      "target": "//libraries/perceptual-grade-next-core:recovery_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/recovery_policy.inv",
+      "property": "recovery_generation_must_be_fresh",
+      "scope": "Recovery policy helper, not opened-datablock discovery or validation."
+    },
+    "recovery_policy:queue_creates_preparation_demand": {
+      "target": "//libraries/perceptual-grade-next-core:recovery_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/recovery_policy.inv",
+      "property": "queue_creates_preparation_demand",
+      "scope": "Recovery policy helper, not opened-datablock discovery or validation."
+    },
+    "recovery_policy:settled_recovery_does_not_requeue": {
+      "target": "//libraries/perceptual-grade-next-core:recovery_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/recovery_policy.inv",
+      "property": "settled_recovery_does_not_requeue",
+      "scope": "Recovery policy helper, not opened-datablock discovery or validation."
+    },
+    "recovery_policy:ready_receipt_preserves_generation": {
+      "target": "//libraries/perceptual-grade-next-core:recovery_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/recovery_policy.inv",
+      "property": "ready_receipt_preserves_generation",
+      "scope": "Recovery policy helper, not opened-datablock discovery or validation."
+    },
+    "recovery_policy:queue_does_not_replay_operations": {
+      "target": "//libraries/perceptual-grade-next-core:recovery_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/recovery_policy.inv",
+      "property": "queue_does_not_replay_operations",
+      "scope": "Recovery policy helper, not opened-datablock discovery or validation."
+    },
+    "recovery_policy:discard_drops_explicit_operations": {
+      "target": "//libraries/perceptual-grade-next-core:recovery_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/recovery_policy.inv",
+      "property": "discard_drops_explicit_operations",
+      "scope": "Recovery policy helper, not opened-datablock discovery or validation."
+    },
+    "restart:R01_fresh_generation_starts_drain": {
+      "target": "//libraries/perceptual-grade-next-core:restart_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/restart.inv",
+      "property": "R01_fresh_generation_starts_drain",
+      "scope": "Restart obligation policy, not native preservation/teardown implementation."
+    },
+    "restart:R02_retirement_is_owner_bound": {
+      "target": "//libraries/perceptual-grade-next-core:restart_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/restart.inv",
+      "property": "R02_retirement_is_owner_bound",
+      "scope": "Restart obligation policy, not native preservation/teardown implementation."
+    },
+    "restart:R03_completion_requires_all_obligations": {
+      "target": "//libraries/perceptual-grade-next-core:restart_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/restart.inv",
+      "property": "R03_completion_requires_all_obligations",
+      "scope": "Restart obligation policy, not native preservation/teardown implementation."
+    },
+    "restart:R04_stale_restart_receipt_is_rejected": {
+      "target": "//libraries/perceptual-grade-next-core:restart_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/restart.inv",
+      "property": "R04_stale_restart_receipt_is_rejected",
+      "scope": "Restart obligation policy, not native preservation/teardown implementation."
+    },
+    "restart:R05_duplicate_obligations_are_rejected": {
+      "target": "//libraries/perceptual-grade-next-core:restart_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/restart.inv",
+      "property": "R05_duplicate_obligations_are_rejected",
+      "scope": "Restart obligation policy, not native preservation/teardown implementation."
+    },
+    "preflight:completion_requires_exact_active_check": {
+      "target": "//libraries/perceptual-grade-next-core:preflight_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preflight.inv",
+      "property": "completion_requires_exact_active_check",
+      "scope": "Production preflight policy; native eligibility inputs are external."
+    },
+    "preflight:retry_requires_a_failed_source": {
+      "target": "//libraries/perceptual-grade-next-core:preflight_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preflight.inv",
+      "property": "retry_requires_a_failed_source",
+      "scope": "Production preflight policy; native eligibility inputs are external."
+    },
+    "preflight:equal_observation_keeps_failed_verdict": {
+      "target": "//libraries/perceptual-grade-next-core:preflight_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preflight.inv",
+      "property": "equal_observation_keeps_failed_verdict",
+      "scope": "Production preflight policy; native eligibility inputs are external."
+    },
+    "preflight:failure_requires_explicit_retry": {
+      "target": "//libraries/perceptual-grade-next-core:preflight_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preflight.inv",
+      "property": "failure_requires_explicit_retry",
+      "scope": "Production preflight policy; native eligibility inputs are external."
+    },
+    "preflight:closed_owner_cannot_restore_authority": {
+      "target": "//libraries/perceptual-grade-next-core:preflight_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preflight.inv",
+      "property": "closed_owner_cannot_restore_authority",
+      "scope": "Production preflight policy; native eligibility inputs are external."
+    },
+    "preflight:closed_completion_cannot_become_ready": {
+      "target": "//libraries/perceptual-grade-next-core:preflight_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/preflight.inv",
+      "property": "closed_completion_cannot_become_ready",
+      "scope": "Production preflight policy; native eligibility inputs are external."
+    },
+    "project_unbounded:T01_unbounded_worklist_covers_every_owner": {
+      "target": "//libraries/perceptual-grade-next-core:project_unbounded_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project_unbounded.inv",
+      "property": "T01_unbounded_worklist_covers_every_owner",
+      "scope": "KERNEL PROVED, PRODUCTION CORRESPONDENCE OPEN: the fresh unbounded receipt covers the arbitrary-length kernel; Blender source projection, native content and admission remain additional gaps.",
+      "verification_status": "kernel_proved_production_open"
+    },
+    "project_unbounded:T02_unbounded_artifacts_match_revision_and_evaluator": {
+      "target": "//libraries/perceptual-grade-next-core:project_unbounded_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project_unbounded.inv",
+      "property": "T02_unbounded_artifacts_match_revision_and_evaluator",
+      "scope": "KERNEL PROVED, PRODUCTION CORRESPONDENCE OPEN: the fresh unbounded receipt covers revision/evaluator/artifact equality in the kernel; Blender source projection, native content and admission remain additional gaps.",
+      "verification_status": "kernel_proved_production_open"
+    },
+    "project_unbounded:T03_unbounded_artifact_evaluator_matches_required_owner": {
+      "target": "//libraries/perceptual-grade-next-core:project_unbounded_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project_unbounded.inv",
+      "property": "T03_unbounded_artifact_evaluator_matches_required_owner",
+      "scope": "KERNEL PROVED, PRODUCTION CORRESPONDENCE OPEN: the fresh unbounded receipt covers evaluator binding in the kernel; Blender source projection, native content and admission remain additional gaps.",
+      "verification_status": "kernel_proved_production_open"
+    },
+    "project_unbounded:J07_unbounded_repair_debt_blocks_readiness": {
+      "target": "//libraries/perceptual-grade-next-core:project_unbounded_proof",
+      "requirements": "libraries/perceptual-grade-next-core/requirements/project_unbounded.inv",
+      "property": "J07_unbounded_repair_debt_blocks_readiness",
+      "scope": "KERNEL PROVED, PRODUCTION CORRESPONDENCE OPEN: the fresh unbounded receipt covers repair-debt exclusion in the kernel; Blender source projection, native content and admission remain additional gaps.",
+      "verification_status": "kernel_proved_production_open"
+    }
+  },
+  "requirements": [
+    {
+      "id": "S01",
+      "claim": "Foreground close revokes view authority and stale draw/effect envelopes.",
+      "status": "partial",
+      "proofs": [
+        "foreground:S01_close_revokes_view_authority",
+        "foreground:S01_close_is_admitted_for_current_owner",
+        "foreground:stale_display_is_not_adopted"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "composed_adapter",
+        "scope_view_unproved"
+      ]
+    },
+    {
+      "id": "S02",
+      "claim": "A cancelled request identity stays cancelled.",
+      "status": "partial",
+      "proofs": [
+        "scope:cancelled_completion_preserves_prior_accepted_input",
+        "scope:cancelled_attempt_cannot_begin_again"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S03",
+      "claim": "Grants and receipts bind exact lifetime, request, submission and resource.",
+      "status": "partial",
+      "proofs": [
+        "scope:operation_receipt_matches_owner_generation_serial"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S04",
+      "claim": "Cancelled attempts cannot obtain a new read or advance; existing work is accounting-only.",
+      "status": "partial",
+      "proofs": [
+        "scope:cancelled_attempt_cannot_begin_again"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S05",
+      "claim": "The matching producer permits one terminal read after retirement.",
+      "status": "partial",
+      "proofs": [
+        "scope:retirement_consumes_matching_physical_debt"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "terminal_read",
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S06",
+      "claim": "Preview occurrences are bound and consumed once.",
+      "status": "partial",
+      "proofs": [
+        "foreground:display_receipt_is_consumed_once"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "preview_occurrence",
+        "scope_adapter",
+        "scope_view_unproved"
+      ]
+    },
+    {
+      "id": "S07",
+      "claim": "Control acknowledgement advances once to a new submission identity.",
+      "status": "partial",
+      "proofs": [
+        "scope:begin_advances_request_and_submission_once"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "control_ack",
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S08",
+      "claim": "Publication requires staged success, live actor acceptance and current foreground adoption.",
+      "status": "partial",
+      "proofs": [
+        "scope:display_adoption_requires_current_healthy_scope",
+        "scope:display_issue_requires_current_accepted_input",
+        "scope:scope_display_receipt_is_consumed_once",
+        "foreground:foreground_adoption_matches_issued_token"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "composed_adapter",
+        "scope_view_unproved"
+      ]
+    },
+    {
+      "id": "S09",
+      "claim": "Statistics exactly match the displayed visual.",
+      "status": "open",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "statistics_visual",
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S10",
+      "claim": "Primary, reference and environment batch members are coherent.",
+      "status": "open",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "batch_coherence",
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S11",
+      "claim": "Old settlement preserves newer demand, including equal semantic keys.",
+      "status": "partial",
+      "proofs": [
+        "scope:old_settlement_preserves_latest_demand"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S12",
+      "claim": "Cancellation retains physical debt, including handles returned during cancelled submission.",
+      "status": "partial",
+      "proofs": [
+        "scope:cancel_retains_physical_retirement_debt",
+        "scope:new_demand_retains_old_physical_debt"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S13",
+      "claim": "Destroyable owners have no remaining obligations.",
+      "status": "partial",
+      "proofs": [
+        "scope:close_without_physical_work_is_destroyable"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S14",
+      "claim": "Referenced older batches remain owned.",
+      "status": "open",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "older_batch_ownership",
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S15",
+      "claim": "Playback prevents acquisition/publication and resume does not restore prior authority.",
+      "status": "partial",
+      "proofs": [
+        "scope:playback_blocks_acquisition_and_publication",
+        "scope:playback_start_revokes_prior_display_tokens"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S16",
+      "claim": "Pending work has a reason and matching live service or defined wait/failure.",
+      "status": "open",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "pending_service",
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S17",
+      "claim": "Local failure is scoped to its exact request and components.",
+      "status": "partial",
+      "proofs": [
+        "scope:failure_is_bound_to_exact_physical_submission"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S18",
+      "claim": "Compatible progress does not fulfill newer demand.",
+      "status": "open",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "semantic_progress",
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "S19",
+      "claim": "Service failure matches the service incarnation.",
+      "status": "open",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/scope_runtime.py",
+        "products/perceptual-grade-next-blender/tests/test_scope_runtime.py"
+      ],
+      "adapter_premises": [
+        "Blender events and capture adapters preserve owner, request, resource and view identities; physical producer readiness and terminal reads are observed correctly."
+      ],
+      "remaining_gaps": [
+        "service_incarnation",
+        "scope_adapter"
+      ]
+    },
+    {
+      "id": "J01",
+      "claim": "Accepted Save cancels unfinished explicit Bakes and excludes new Bake admission.",
+      "status": "partial",
+      "proofs": [
+        "composed:C05_publication_hold_blocks_bake_start"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native output callbacks and retirement observations are authentic; Blender publication effects and physical reader/writer admission follow the gateway protocol."
+      ],
+      "remaining_gaps": [
+        "composed_adapter"
+      ]
+    },
+    {
+      "id": "J02",
+      "claim": "Image publication exclusion persists throughout a render.",
+      "status": "partial",
+      "proofs": [
+        "project:render_completion_requires_invoked_operation"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native output callbacks and retirement observations are authentic; Blender publication effects and physical reader/writer admission follow the gateway protocol."
+      ],
+      "remaining_gaps": [
+        "project_unbounded"
+      ]
+    },
+    {
+      "id": "J03",
+      "claim": "Native effect tickets require current lifecycle and exact receipts.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native output callbacks and retirement observations are authentic; Blender publication effects and physical reader/writer admission follow the gateway protocol."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "J04",
+      "claim": "Same-destination ordering conserves physical leases.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native output callbacks and retirement observations are authentic; Blender publication effects and physical reader/writer admission follow the gateway protocol."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "J05",
+      "claim": "Replacement revokes old semantic work.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native output callbacks and retirement observations are authentic; Blender publication effects and physical reader/writer admission follow the gateway protocol."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "J06",
+      "claim": "Partial native effects retain repair debt.",
+      "status": "partial",
+      "proofs": [
+        "preparation:failure_retains_repair_debt"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native output callbacks and retirement observations are authentic; Blender publication effects and physical reader/writer admission follow the gateway protocol."
+      ],
+      "remaining_gaps": [
+        "preparation_adapter"
+      ]
+    },
+    {
+      "id": "J07",
+      "claim": "Preparation readiness does not bypass native operation guards.",
+      "status": "partial",
+      "proofs": [
+        "project:save_start_requires_complete_current_owner_readiness",
+        "project:render_start_requires_complete_current_owner_readiness",
+        "project_unbounded:J07_unbounded_repair_debt_blocks_readiness"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py",
+        "products/perceptual-grade-next-blender/tests/test_project_readiness.py"
+      ],
+      "adapter_premises": [
+        "Blender owner discovery and readiness receipt delivery correspond to the unbounded state inputs; native operation paths check the current readiness and physical admission protocol."
+      ],
+      "remaining_gaps": [
+        "project_adapter",
+        "native_admission",
+        "project_unbounded",
+        "readiness_ledger"
+      ]
+    },
+    {
+      "id": "J08",
+      "claim": "Old receipts cannot finish or release a successor output operation.",
+      "status": "partial",
+      "proofs": [
+        "project:bake_completion_matches_admitted_receipt",
+        "project:save_completion_requires_invoked_operation",
+        "project:render_completion_requires_invoked_operation"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native output callbacks and retirement observations are authentic; Blender publication effects and physical reader/writer admission follow the gateway protocol."
+      ],
+      "remaining_gaps": [
+        "project_unbounded"
+      ]
+    },
+    {
+      "id": "T01",
+      "claim": "The ready worklist covers every required owner.",
+      "status": "partial",
+      "proofs": [
+        "project:owner_worklist_has_exact_evaluator_slots",
+        "project:owner_worklist_rejects_duplicate_or_unpaired_entries",
+        "project:every_required_owner_has_current_matching_artifact",
+        "project_unbounded:T01_unbounded_worklist_covers_every_owner"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/preparation_ledger.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py",
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/project_readiness.py",
+        "products/perceptual-grade-next-blender/tests/test_project_readiness.py"
+      ],
+      "adapter_premises": [
+        "Blender owner discovery, evaluator and artifact extraction, and ready-receipt projection faithfully populate the unbounded readiness inputs; native payloads, bindings and manifest validation are accurate."
+      ],
+      "remaining_gaps": [
+        "project_adapter",
+        "project_unbounded",
+        "readiness_ledger"
+      ]
+    },
+    {
+      "id": "T02",
+      "claim": "Static descriptors bind evaluator fields or LUT, both matrices and native bindings.",
+      "status": "partial",
+      "proofs": [
+        "project:ready_artifact_evaluator_matches_its_required_owner",
+        "project:owner_ready_receipt_matches_required_evaluator",
+        "project_unbounded:T02_unbounded_artifacts_match_revision_and_evaluator",
+        "project_unbounded:T03_unbounded_artifact_evaluator_matches_required_owner"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/preparation_ledger.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py",
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/project_readiness.py",
+        "products/perceptual-grade-next-blender/tests/test_project_readiness.py"
+      ],
+      "adapter_premises": [
+        "Blender owner discovery, evaluator and artifact extraction, and ready-receipt projection faithfully populate the unbounded readiness inputs; native payloads, bindings and manifest validation are accurate."
+      ],
+      "remaining_gaps": [
+        "native_content",
+        "project_adapter",
+        "project_unbounded",
+        "grade_manifest"
+      ]
+    },
+    {
+      "id": "T03",
+      "claim": "A staged candidate is never the current output.",
+      "status": "partial",
+      "proofs": [
+        "preparation:candidate_is_not_ready_before_commit",
+        "preparation:manifest_is_required_for_ready"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/preparation_ledger.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Discovered owners, packed assets, backup copies and manifest digests accurately describe opened Blender datablocks."
+      ],
+      "remaining_gaps": [
+        "preparation_adapter",
+        "readiness_ledger"
+      ]
+    },
+    {
+      "id": "T04",
+      "claim": "Equal recipes reuse immutable payloads without reusing request authority.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/preparation_ledger.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Discovered owners, packed assets, backup copies and manifest digests accurately describe opened Blender datablocks."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "T05",
+      "claim": "Meaningful authored revisions invalidate readiness.",
+      "status": "partial",
+      "proofs": [
+        "preparation:stale_preparation_revision_is_rejected",
+        "preparation:candidate_binds_owner_revision"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/preparation_ledger.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Discovered owners, packed assets, backup copies and manifest digests accurately describe opened Blender datablocks."
+      ],
+      "remaining_gaps": [
+        "preparation_adapter"
+      ]
+    },
+    {
+      "id": "T06",
+      "claim": "Frame changes alone preserve static preparation.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/preparation_ledger.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Discovered owners, packed assets, backup copies and manifest digests accurately describe opened Blender datablocks."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "T07",
+      "claim": "Packed assets and installed kernels satisfy the committed manifest.",
+      "status": "partial",
+      "proofs": [
+        "preparation:commit_requires_manifest",
+        "preparation:candidate_manifest_requires_validation"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/preparation_ledger.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Discovered owners, packed assets, backup copies and manifest digests accurately describe opened Blender datablocks."
+      ],
+      "remaining_gaps": [
+        "native_content",
+        "readiness_ledger",
+        "grade_manifest"
+      ]
+    },
+    {
+      "id": "T08",
+      "claim": "Admission and repair retain prior/candidate references and resource obligations.",
+      "status": "partial",
+      "proofs": [
+        "preparation:prior_identity_is_retained_until_commit",
+        "preparation:transaction_has_distinct_candidate",
+        "preparation:failure_retains_repair_debt"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/preparation_ledger.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Discovered owners, packed assets, backup copies and manifest digests accurately describe opened Blender datablocks."
+      ],
+      "remaining_gaps": [
+        "preparation_adapter",
+        "readiness_ledger"
+      ]
+    },
+    {
+      "id": "T09",
+      "claim": "Grade binds one forward native graph and fixed fields with no preview transform.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/native_grade.py",
+        "products/perceptual-grade-next-blender/tests/test_native_grade.py"
+      ],
+      "adapter_premises": [
+        "The built native graph and installed table contents match the authored descriptor and evaluate with the expected Blender semantics."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content",
+        "grade_manifest"
+      ]
+    },
+    {
+      "id": "T10",
+      "claim": "Stack separates 33-cubed interactive and 65-cubed final identities with exact even-vertex reuse.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/stack.py",
+        "products/perceptual-grade-next-blender/tests/test_native_stack.py"
+      ],
+      "adapter_premises": [
+        "Generated LUT contents, directed recipe evaluation and even-vertex reuse match the numerical reference; native image storage preserves them."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "T11",
+      "claim": "Directed Stack recipes bind current-reference equations and endpoint ordering.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/stack.py",
+        "products/perceptual-grade-next-blender/tests/test_native_stack.py"
+      ],
+      "adapter_premises": [
+        "Generated LUT contents, directed recipe evaluation and even-vertex reuse match the numerical reference; native image storage preserves them."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "F01",
+      "claim": "Finished requires matching actual completion and publication receipts.",
+      "status": "partial",
+      "proofs": [
+        "project:bake_completion_matches_admitted_receipt",
+        "project:save_completion_requires_invoked_operation",
+        "project:render_completion_requires_invoked_operation"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native completion/serialization callbacks report the actual operation outcome and retain exact operation identity."
+      ],
+      "remaining_gaps": [
+        "project_unbounded"
+      ]
+    },
+    {
+      "id": "F02",
+      "claim": "Payload readiness differs from output commitment and serialization.",
+      "status": "partial",
+      "proofs": [
+        "project:save_completion_requires_invoked_operation"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/output_gateway.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native completion/serialization callbacks report the actual operation outcome and retain exact operation identity."
+      ],
+      "remaining_gaps": [
+        "project_unbounded"
+      ]
+    },
+    {
+      "id": "F03",
+      "claim": "Saved flags alone grant no readiness.",
+      "status": "partial",
+      "proofs": [
+        "recovery_policy:reuse_requires_derived_validation"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/recovery.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Opened data discovery and content validation are correct; the adapter supplies only fresh generation inputs to the recovery policy."
+      ],
+      "remaining_gaps": [
+        "recovery_adapter",
+        "readiness_ledger"
+      ]
+    },
+    {
+      "id": "F04",
+      "claim": "Reopening derives fresh authority from opened data.",
+      "status": "partial",
+      "proofs": [
+        "recovery_policy:reopen_discards_prior_authority",
+        "recovery_policy:recovery_generation_must_be_fresh"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/recovery.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Opened data discovery and content validation are correct; the adapter supplies only fresh generation inputs to the recovery policy."
+      ],
+      "remaining_gaps": [
+        "recovery_adapter"
+      ]
+    },
+    {
+      "id": "F05",
+      "claim": "Missing or mismatched derived preparation is requeued.",
+      "status": "partial",
+      "proofs": [
+        "recovery_policy:queue_creates_preparation_demand"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/recovery.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Opened data discovery and content validation are correct; the adapter supplies only fresh generation inputs to the recovery policy."
+      ],
+      "remaining_gaps": [
+        "recovery_adapter"
+      ]
+    },
+    {
+      "id": "F06",
+      "claim": "Repeated recovery is idempotent and old-session grants never replay.",
+      "status": "partial",
+      "proofs": [
+        "recovery_policy:settled_recovery_does_not_requeue",
+        "recovery_policy:ready_receipt_preserves_generation"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/recovery.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Opened data discovery and content validation are correct; the adapter supplies only fresh generation inputs to the recovery policy."
+      ],
+      "remaining_gaps": [
+        "recovery_adapter"
+      ]
+    },
+    {
+      "id": "F07",
+      "claim": "Derived recovery never resumes explicit Bake, Save/Render or hidden Gizmo demand.",
+      "status": "partial",
+      "proofs": [
+        "recovery_policy:queue_does_not_replay_operations",
+        "recovery_policy:discard_drops_explicit_operations"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/recovery.py",
+        "products/perceptual-grade-next-blender/tests/test_recovery.py"
+      ],
+      "adapter_premises": [
+        "Opened data discovery and content validation are correct; the adapter supplies only fresh generation inputs to the recovery policy."
+      ],
+      "remaining_gaps": [
+        "recovery_adapter"
+      ]
+    },
+    {
+      "id": "F08",
+      "claim": "Bake binds the accepted native Grade graph or Stack final LUT, never a separate pixel grader.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/native_capture.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Native capture evaluates the bound graph or final LUT; Blender returns the accepted evaluator output."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "R01",
+      "claim": "Restart admission remains outside the failed App.",
+      "status": "partial",
+      "proofs": [
+        "restart:R01_fresh_generation_starts_drain"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/restart.py",
+        "products/perceptual-grade-next-blender/tests/test_restart.py"
+      ],
+      "adapter_premises": [
+        "The supervisor observes authentic preservation and terminal cleanup receipts before admitting a fresh App."
+      ],
+      "remaining_gaps": [
+        "restart_adapter"
+      ]
+    },
+    {
+      "id": "R02",
+      "claim": "Preservation precedes detach.",
+      "status": "partial",
+      "proofs": [
+        "restart:R02_retirement_is_owner_bound"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/restart.py",
+        "products/perceptual-grade-next-blender/tests/test_restart.py"
+      ],
+      "adapter_premises": [
+        "The supervisor observes authentic preservation and terminal cleanup receipts before admitting a fresh App."
+      ],
+      "remaining_gaps": [
+        "restart_adapter"
+      ]
+    },
+    {
+      "id": "R03",
+      "claim": "Fresh App creation follows terminal teardown.",
+      "status": "partial",
+      "proofs": [
+        "restart:R03_completion_requires_all_obligations"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/restart.py",
+        "products/perceptual-grade-next-blender/tests/test_restart.py"
+      ],
+      "adapter_premises": [
+        "The supervisor observes authentic preservation and terminal cleanup receipts before admitting a fresh App."
+      ],
+      "remaining_gaps": [
+        "restart_adapter"
+      ]
+    },
+    {
+      "id": "R04",
+      "claim": "Failed or duplicate Restart retains exact retirement debt.",
+      "status": "partial",
+      "proofs": [
+        "restart:R04_stale_restart_receipt_is_rejected",
+        "restart:R05_duplicate_obligations_are_rejected"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/restart.py",
+        "products/perceptual-grade-next-blender/tests/test_restart.py"
+      ],
+      "adapter_premises": [
+        "The supervisor observes authentic preservation and terminal cleanup receipts before admitting a fresh App."
+      ],
+      "remaining_gaps": [
+        "restart_adapter"
+      ]
+    },
+    {
+      "id": "B01",
+      "claim": "READY requires the current receipt.",
+      "status": "partial",
+      "proofs": [
+        "preflight:completion_requires_exact_active_check"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/bake.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Observed source, eligibility and final evaluator metadata are accurate and receipt identities survive native delivery."
+      ],
+      "remaining_gaps": [
+        "native_content"
+      ]
+    },
+    {
+      "id": "B02",
+      "claim": "Preflight rejects stale revisions.",
+      "status": "partial",
+      "proofs": [
+        "preflight:completion_requires_exact_active_check"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/bake.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Observed source, eligibility and final evaluator metadata are accurate and receipt identities survive native delivery."
+      ],
+      "remaining_gaps": [
+        "preflight_partial"
+      ]
+    },
+    {
+      "id": "B03",
+      "claim": "Only one preflight check is active.",
+      "status": "partial",
+      "proofs": [
+        "preflight:completion_requires_exact_active_check"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/bake.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Observed source, eligibility and final evaluator metadata are accurate and receipt identities survive native delivery."
+      ],
+      "remaining_gaps": [
+        "preflight_partial"
+      ]
+    },
+    {
+      "id": "B04",
+      "claim": "Preflight attempt identities increase monotonically.",
+      "status": "partial",
+      "proofs": [
+        "preflight:retry_requires_a_failed_source"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/bake.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Observed source, eligibility and final evaluator metadata are accurate and receipt identities survive native delivery."
+      ],
+      "remaining_gaps": [
+        "preflight_partial"
+      ]
+    },
+    {
+      "id": "B05",
+      "claim": "Equal observations preserve the preflight verdict.",
+      "status": "partial",
+      "proofs": [
+        "preflight:equal_observation_keeps_failed_verdict"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/bake.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Observed source, eligibility and final evaluator metadata are accurate and receipt identities survive native delivery."
+      ],
+      "remaining_gaps": [
+        "preflight_partial"
+      ]
+    },
+    {
+      "id": "B06",
+      "claim": "Preflight failure requires Retry or new intent.",
+      "status": "partial",
+      "proofs": [
+        "preflight:failure_requires_explicit_retry",
+        "preflight:retry_requires_a_failed_source"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/bake.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Observed source, eligibility and final evaluator metadata are accurate and receipt identities survive native delivery."
+      ],
+      "remaining_gaps": [
+        "preflight_partial"
+      ]
+    },
+    {
+      "id": "B07",
+      "claim": "Closed owners cannot publish a preflight verdict.",
+      "status": "partial",
+      "proofs": [
+        "preflight:closed_owner_cannot_restore_authority",
+        "preflight:closed_completion_cannot_become_ready"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/bake.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Observed source, eligibility and final evaluator metadata are accurate and receipt identities survive native delivery."
+      ],
+      "remaining_gaps": [
+        "native_content"
+      ]
+    },
+    {
+      "id": "B08",
+      "claim": "Stack preview cannot satisfy Bake or final readiness.",
+      "status": "partial",
+      "proofs": [
+        "project:owner_ready_receipt_matches_required_evaluator"
+      ],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/bake.py",
+        "products/perceptual-grade-next-blender/tests/test_bake_lifecycle.py"
+      ],
+      "adapter_premises": [
+        "Observed source, eligibility and final evaluator metadata are accurate and receipt identities survive native delivery."
+      ],
+      "remaining_gaps": [
+        "native_content",
+        "project_unbounded"
+      ]
+    },
+    {
+      "id": "U01",
+      "claim": "Authored settings and UI use reference identities, defaults, units and fixed D65/203-nit context.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/controls.py",
+        "products/perceptual-grade-next-blender/tests/test_controls.py"
+      ],
+      "adapter_premises": [
+        "Blender RNA values, callbacks, reset and persistence preserve the declared control identities and domains."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    },
+    {
+      "id": "U02",
+      "claim": "Tone Fit [-2, 2] and Color Fits [-2, 6] agree through edits, preparation, persistence and reset.",
+      "status": "adapter_premise",
+      "proofs": [],
+      "adapter_evidence": [
+        "products/perceptual-grade-next-blender/src/perceptual_grade_next_blender/controls.py",
+        "products/perceptual-grade-next-blender/tests/test_controls.py"
+      ],
+      "adapter_premises": [
+        "Blender RNA values, callbacks, reset and persistence preserve the declared control identities and domains."
+      ],
+      "remaining_gaps": [
+        "unformalized",
+        "native_content"
+      ]
+    }
+  ],
+  "inventory_validation": {
+    "build_id": "980c3184-ac08-4aa6-9abe-cb5fa9793d68",
+    "tests_passed": 6,
+    "scope": "ID/property/target/evidence consistency only. This historical receipt predates the current documentation correction; it does not prove referenced targets or certify the aggregate.",
+    "canonical_id_count": 60,
+    "status_counts": {
+      "partial": 43,
+      "adapter_premise": 11,
+      "open": 6
+    },
+    "aggregate_status": "Unbounded kernel receipt passes; no fresh passing aggregate proof/package receipt after the target was added."
+  },
+  "machine_status": {
+    "project_unbounded": {
+      "status": "kernel_proved_production_open",
+      "target": "//libraries/perceptual-grade-next-core:project_unbounded_proof",
+      "inventory": "libraries/perceptual-grade-next-core/requirements/project_unbounded.inv",
+      "valid_receipt": true,
+      "receipt": {
+        "build_id": "e458d854-a0f2-474f-9ee4-e903e6da13b7",
+        "obligations": 170,
+        "mutations": 4,
+        "scope": "project_unbounded.py kernel only; production record conversion and native admission remain open."
+      },
+      "blockers": [
+        "Production owner/evaluator/artifact record conversion is outside the proof target.",
+        "Native content correspondence and operation admission remain adapter premises.",
+        "Actual preparation, recovery and composed transitions remain outside this kernel."
+      ]
+    },
+    "scope_view": {
+      "status": "inventory_invalid_and_unproved",
+      "target": null,
+      "inventory": "libraries/perceptual-grade-next-core/requirements/scope_view.inv",
+      "declared_property_count": 5,
+      "valid_receipt": false,
+      "blockers": [
+        "No Buck proof target is declared.",
+        "The required nonempty invariants key is missing."
+      ]
+    }
+  }
+}

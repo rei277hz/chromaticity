@@ -1,0 +1,2 @@
+# Select integer arithmetic width for the configured target.
+buildscript.run = true

@@ -1,0 +1,2 @@
+# document_features! reads the invoking crate's Cargo.toml.
+cargo_env = ["CARGO_MANIFEST_DIR"]

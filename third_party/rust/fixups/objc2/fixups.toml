@@ -1,0 +1,3 @@
+# Derive Objective-C ABI cfg from target properties.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_VERSION"]

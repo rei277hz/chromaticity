@@ -1,0 +1,1129 @@
+// Perceptual Grade 1.23.2 | Linear XYZ in/out, reference-white Y=1.
+// Exposure + CAT16 + linear 3x3 -> modCAM16-UCS -> tone remap -> driver contributions -> XYZ.
+// 52 tonal values + 3 global contributions. 62 float sliders, 13 int sliders,
+// 1 whole-nit value box and 5 dropdowns. No RPCC, hue masks or web dependency.
+// J_HK=sqrt(J_A^2+66*C), dark surround, D=1, eccentricity -.1475*sin(h).
+// Reference/background defaults 203/20.3 nits. Hard black plateau; no toe smoothing.
+// Additive J; bounded tonal hue concentration, scalar hue rotation and positive scalar log-radius gain; weighted Adaptance last.
+// Complementary p=2 drivers: s=75*C/J_A, midpoint s=35, neutral fade C^2/(C^2+4).
+// Input levels: neutral nits. All chroma gains: log2 stops.
+// Driver labels: C_l=lower-saturation response; C_h=higher-saturation response. Output C=chroma. Canonical UI edition.
+// Stage 2 preserves modCAM16 saturation C/J_A and hue while remapping J_HK.
+// Exact reset bypass. H-K repair preserves hue, caps H lift at 20%, and reduces C.
+// Fourth-root achromatic energy; fixed global engineering constants.
+// No inverse round-trip accuracy test. Necessary domain/finite guards remain.
+// Remaining inverse-domain failures fall back to stage 2, then stage-1 XYZ.
+// Curves are analytic. No sampled value table or Quintic-2048 interpolation.
+DEFINE_UI_PARAMS(globalExposure, 全局曝光, DCTLUI_SLIDER_FLOAT, 0.0f, -6.0f, 6.0f, 0.01f)
+DEFINE_UI_PARAMS(srcX, 源白点 x, DCTLUI_SLIDER_FLOAT, 0.3127f, 0.0f, 0.9f, 0.0001f)
+DEFINE_UI_PARAMS(srcY, 源白点 y, DCTLUI_SLIDER_FLOAT, 0.329f, 0.0f, 0.9f, 0.0001f)
+DEFINE_UI_PARAMS(le, 青–红轴色重, DCTLUI_SLIDER_FLOAT, 0.0f, -2.0f, 2.0f, 0.01f)
+DEFINE_UI_PARAMS(be, 黄–蓝轴色重, DCTLUI_SLIDER_FLOAT, 0.0f, -2.0f, 2.0f, 0.01f)
+DEFINE_UI_PARAMS(ls, 青–红轴展度, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 150.0f, 0.1f)
+DEFINE_UI_PARAMS(bs, 黄–蓝轴展度, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 150.0f, 0.1f)
+DEFINE_UI_PARAMS(la, 青–红轴朝向, DCTLUI_SLIDER_FLOAT, 0.0f, -180.0f, 180.0f, 0.1f)
+DEFINE_UI_PARAMS(ba, 黄–蓝轴朝向, DCTLUI_SLIDER_FLOAT, 0.0f, -180.0f, 180.0f, 0.1f)
+DEFINE_UI_PARAMS(srcWhite, 源白点, DCTLUI_COMBO_BOX, 8, {S_D65, S_D60, S_ACES, S_D50, S_D55, S_D75, S_DCI, S_E, S_CUSTOM}, {D65, D60 日光, ACES, D50, D55, D75, DCI 白点, 等能白 E, 自定义 xy})
+DEFINE_UI_PARAMS(dstWhite, 目标白点, DCTLUI_COMBO_BOX, 0, {D_D65, D_D60, D_ACES, D_D50, D_D55, D_D75, D_DCI, D_E}, {D65, D60 日光, ACES, D50, D55, D75, DCI 白点, 等能白 E})
+DEFINE_UI_PARAMS(inputBlack, 输入黑（尼特）, DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 2.0f, 0.001f)
+DEFINE_UI_PARAMS(inputShadows, 输入暗部（尼特）, DCTLUI_SLIDER_FLOAT, 7.54216597754f, 0.01f, 50.0f, 0.01f)
+DEFINE_UI_PARAMS(inputMidtones, 输入中间调（尼特）, DCTLUI_SLIDER_FLOAT, 36.54f, 0.1f, 250.0f, 0.1f)
+DEFINE_UI_PARAMS(inputWhite, 输入白（尼特）, DCTLUI_SLIDER_FLOAT, 203.0f, 10.0f, 1000.0f, 0.1f)
+DEFINE_UI_PARAMS(inputHighlights, 输入高光（尼特）, DCTLUI_SLIDER_FLOAT, 1000.0f, 100.0f, 10000.0f, 0.1f)
+DEFINE_UI_PARAMS(globalChromaGain, 全局 C 增益, DCTLUI_SLIDER_FLOAT, 0.0f, -3.0f, 3.0f, 0.01f)
+DEFINE_UI_PARAMS(toneSLowToJ, 暗部 Cₗ → J, DCTLUI_SLIDER_FLOAT, 0.0f, -30.0f, 30.0f, 0.1f)
+DEFINE_UI_PARAMS(toneSLowToC, 暗部 Cₗ → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneSHighToJ, 暗部 Cₕ → J, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneSHighToC, 暗部 Cₕ → C, DCTLUI_SLIDER_FLOAT, 0.0f, -16.0f, 16.0f, 0.01f)
+DEFINE_UI_PARAMS(toneSaToJ, 暗部 a → J, DCTLUI_SLIDER_FLOAT, 0.0f, -50.0f, 50.0f, 0.1f)
+DEFINE_UI_PARAMS(toneSbToJ, 暗部 b → J, DCTLUI_SLIDER_FLOAT, 0.0f, -50.0f, 50.0f, 0.1f)
+DEFINE_UI_PARAMS(toneSaToC, 暗部 a → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneSbToC, 暗部 b → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneMLowToJ, 中间调 Cₗ → J, DCTLUI_SLIDER_FLOAT, 0.0f, -50.0f, 50.0f, 0.1f)
+DEFINE_UI_PARAMS(toneMLowToC, 中间调 Cₗ → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneMHighToJ, 中间调 Cₕ → J, DCTLUI_SLIDER_FLOAT, 0.0f, -200.0f, 200.0f, 0.1f)
+DEFINE_UI_PARAMS(toneMHighToC, 中间调 Cₕ → C, DCTLUI_SLIDER_FLOAT, 0.0f, -16.0f, 16.0f, 0.01f)
+DEFINE_UI_PARAMS(toneMaToJ, 中间调 a → J, DCTLUI_SLIDER_FLOAT, 0.0f, -50.0f, 50.0f, 0.1f)
+DEFINE_UI_PARAMS(toneMbToJ, 中间调 b → J, DCTLUI_SLIDER_FLOAT, 0.0f, -50.0f, 50.0f, 0.1f)
+DEFINE_UI_PARAMS(toneMaToC, 中间调 a → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneMbToC, 中间调 b → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneWLowToJ, 白 Cₗ → J, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneWLowToC, 白 Cₗ → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneWHighToJ, 白 Cₕ → J, DCTLUI_SLIDER_FLOAT, 0.0f, -400.0f, 400.0f, 0.1f)
+DEFINE_UI_PARAMS(toneWHighToC, 白 Cₕ → C, DCTLUI_SLIDER_FLOAT, 0.0f, -16.0f, 16.0f, 0.01f)
+DEFINE_UI_PARAMS(toneWaToJ, 白 a → J, DCTLUI_SLIDER_FLOAT, 0.0f, -50.0f, 50.0f, 0.1f)
+DEFINE_UI_PARAMS(toneWbToJ, 白 b → J, DCTLUI_SLIDER_FLOAT, 0.0f, -50.0f, 50.0f, 0.1f)
+DEFINE_UI_PARAMS(toneWaToC, 白 a → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneWbToC, 白 b → C, DCTLUI_SLIDER_FLOAT, 0.0f, -4.0f, 4.0f, 0.01f)
+DEFINE_UI_PARAMS(toneHLowToJ, 高光 Cₗ → J, DCTLUI_SLIDER_INT, 0, -200, 200, 1)
+DEFINE_UI_PARAMS(toneHLowToC, 高光 Cₗ → C, DCTLUI_SLIDER_INT, 0, -4, 4, 1)
+DEFINE_UI_PARAMS(toneHHighToJ, 高光 Cₕ → J, DCTLUI_SLIDER_INT, 0, -700, 700, 1)
+DEFINE_UI_PARAMS(toneHHighToC, 高光 Cₕ → C, DCTLUI_SLIDER_INT, 0, -16, 16, 1)
+DEFINE_UI_PARAMS(toneHaToJ, 高光 a → J, DCTLUI_SLIDER_INT, 0, -50, 50, 1)
+DEFINE_UI_PARAMS(toneHbToJ, 高光 b → J, DCTLUI_SLIDER_INT, 0, -50, 50, 1)
+DEFINE_UI_PARAMS(toneHaToC, 高光 a → C, DCTLUI_SLIDER_INT, 0, -4, 4, 1)
+DEFINE_UI_PARAMS(toneHbToC, 高光 b → C, DCTLUI_SLIDER_INT, 0, -4, 4, 1)
+DEFINE_UI_PARAMS(toneSAdaptanceA, 暗部 a 白偏, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneSAdaptanceB, 暗部 b 白偏, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneMAdaptanceA, 中间调 a 白偏, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneMAdaptanceB, 中间调 b 白偏, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneWAdaptanceA, 白 a 白偏, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneWAdaptanceB, 白 b 白偏, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneHAdaptanceA, 高光 a 白偏, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(toneHAdaptanceB, 高光 b 白偏, DCTLUI_SLIDER_FLOAT, 0.0f, -100.0f, 100.0f, 0.1f)
+DEFINE_UI_PARAMS(adaptanceStrength, 白偏强度, DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.05f)
+DEFINE_UI_PARAMS(toneSHue, 暗部色相, DCTLUI_SLIDER_FLOAT, 0.0f, -90.0f, 90.0f, 0.1f)
+DEFINE_UI_PARAMS(toneMHue, 中间调色相, DCTLUI_SLIDER_FLOAT, 0.0f, -90.0f, 90.0f, 0.1f)
+DEFINE_UI_PARAMS(toneWHue, 白色相, DCTLUI_SLIDER_FLOAT, 0.0f, -90.0f, 90.0f, 0.1f)
+DEFINE_UI_PARAMS(toneHHue, 高光色相, DCTLUI_SLIDER_FLOAT, 0.0f, -90.0f, 90.0f, 0.1f)
+DEFINE_UI_PARAMS(toneSConcentrationA, 暗部 a 色相聚拢, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(toneSConcentrationB, 暗部 b 色相聚拢, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(toneMConcentrationA, 中间调 a 色相聚拢, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(toneMConcentrationB, 中间调 b 色相聚拢, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(toneWConcentrationA, 白 a 色相聚拢, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(toneWConcentrationB, 白 b 色相聚拢, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(toneHConcentrationA, 高光 a 色相聚拢, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(toneHConcentrationB, 高光 b 色相聚拢, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(globalLowChromaHue, 全局 Cₗ → 色相, DCTLUI_SLIDER_FLOAT, 0.0f, -90.0f, 90.0f, 0.1f)
+DEFINE_UI_PARAMS(globalHighChromaHue, 全局 Cₕ → 色相, DCTLUI_SLIDER_FLOAT, 0.0f, -360.0f, 360.0f, 0.1f)
+DEFINE_UI_PARAMS(referenceNits, 参考亮度（尼特）, DCTLUI_VALUE_BOX, 203)
+DEFINE_UI_PARAMS(peakNits, 峰值锚点, DCTLUI_COMBO_BOX, 1, {P_500, P_1000, P_2000, P_4000}, {500 尼特, 1000 尼特, 2000 尼特, 4000 尼特})
+DEFINE_UI_PARAMS(overlayMode, 辅助图, DCTLUI_COMBO_BOX, 0, {O_OFF, O_INSET, O_FULL}, {关闭, 右下角, 全画面})
+DEFINE_UI_PARAMS(refTriangle, 参考三角形, DCTLUI_COMBO_BOX, 0, {T_709, T_P3, T_2020, T_AP1}, {Rec 709, P3, Rec 2020, AP1})
+DEFINE_UI_PARAMS(remapFit, 影调贴合度, DCTLUI_SLIDER_INT, 0, -2, 6, 1)
+DEFINE_UI_PARAMS(lightnessFit, 明度贴合度, DCTLUI_SLIDER_INT, 0, -2, 6, 1)
+DEFINE_UI_PARAMS(chromaFit, 彩度贴合度, DCTLUI_SLIDER_INT, 0, -2, 6, 1)
+DEFINE_UI_PARAMS(adaptanceFit, 白偏贴合度, DCTLUI_SLIDER_INT, 0, -2, 6, 1)
+DEFINE_UI_PARAMS(hueFit, 色相贴合度, DCTLUI_SLIDER_INT, 0, -2, 6, 1)
+DEFINE_UI_TOOLTIP(全局曝光, "\u66dd\u5149\u6863\u6570\u3002+1 \u5c06\u7ebf\u6027 RGB \u503c\u52a0\u500d\u3002")
+DEFINE_UI_TOOLTIP(源白点 x, "\u6307\u5b9a\u7684\u6e90\u767d\u70b9 CIE x \u5750\u6807\u3002\u8272\u9002\u5e94\u5c06\u6e90\u767d\u70b9\u6620\u5c04\u5230\u9009\u5b9a\u7684\u76ee\u6807\u767d\u70b9\u3002\u6e90\u767d\u70b9\u9009\u4e3a\u81ea\u5b9a\u4e49 xy \u65f6\u751f\u6548\u3002")
+DEFINE_UI_TOOLTIP(源白点 y, "\u6307\u5b9a\u7684\u6e90\u767d\u70b9 CIE y \u5750\u6807\u3002\u8272\u9002\u5e94\u5c06\u6e90\u767d\u70b9\u6620\u5c04\u5230\u9009\u5b9a\u7684\u76ee\u6807\u767d\u70b9\u3002\u6e90\u767d\u70b9\u9009\u4e3a\u81ea\u5b9a\u4e49 xy \u65f6\u751f\u6548\u3002")
+DEFINE_UI_TOOLTIP(青–红轴色重, "\u9752\u2013\u7ea2\u8f74\u65b9\u5411\u4e24\u4fa7\u7684\u66dd\u5149\u5e73\u8861\u3002\u6b63\u503c\u5728\u964d\u4f4e\u7ea2\u8272\u65b9\u5411\u660e\u5ea6\u7684\u540c\u65f6\u63d0\u9ad8\u9752\u8272\u65b9\u5411\u660e\u5ea6\uff0c\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(黄–蓝轴色重, "\u9ec4\u2013\u84dd\u8f74\u65b9\u5411\u4e24\u4fa7\u7684\u66dd\u5149\u5e73\u8861\u3002\u6b63\u503c\u5728\u964d\u4f4e\u84dd\u8272\u65b9\u5411\u660e\u5ea6\u7684\u540c\u65f6\u63d0\u9ad8\u9ec4\u8272\u65b9\u5411\u660e\u5ea6\uff0c\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(青–红轴展度, "\u9752\u2013\u7ea2\u8f74\u53c2\u8003\u70b9\u76f8\u5bf9\u4e8e\u76ee\u6807\u767d\u70b9\u7684 CIE xy \u4f4d\u79fb\u767e\u5206\u6bd4\u3002-100 \u5c06\u8be5\u65b9\u5411\u6536\u62e2\u5230\u767d\u70b9\uff0c+100 \u5c06\u8be5\u65b9\u5411\u4f4d\u79fb\u7ffb\u500d\u3002")
+DEFINE_UI_TOOLTIP(黄–蓝轴展度, "\u9ec4\u2013\u84dd\u8f74\u53c2\u8003\u70b9\u76f8\u5bf9\u4e8e\u76ee\u6807\u767d\u70b9\u7684 CIE xy \u4f4d\u79fb\u767e\u5206\u6bd4\u3002-100 \u5c06\u8be5\u65b9\u5411\u6536\u62e2\u5230\u767d\u70b9\uff0c+100 \u5c06\u8be5\u65b9\u5411\u4f4d\u79fb\u7ffb\u500d\u3002")
+DEFINE_UI_TOOLTIP(青–红轴朝向, "\u9752\u2013\u7ea2\u8f74\u5728 CIE xy \u5e73\u9762\u5185\u7684\u9006\u65f6\u9488\u89d2\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(黄–蓝轴朝向, "\u9ec4\u2013\u84dd\u8f74\u5728 CIE xy \u5e73\u9762\u5185\u7684\u9006\u65f6\u9488\u89d2\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(源白点, "\u9009\u62e9 CAT16 \u8272\u9002\u5e94\u7684\u6e90\u767d\u70b9\u3002\u81ea\u5b9a\u4e49 xy \u4f7f\u7528\u6e90\u767d\u70b9 x \u548c y \u63a7\u4ef6\u3002")
+DEFINE_UI_TOOLTIP(目标白点, "\u9009\u62e9 CAT16 \u548c\u5916\u89c2\u6a21\u578b\u7684\u76ee\u6807\u767d\u70b9\u3002D60 \u65e5\u5149\u4e0e ACES \u4f7f\u7528\u4e0d\u540c\u7684\u767d\u70b9\u5750\u6807\u3002")
+DEFINE_UI_TOOLTIP(输入黑（尼特）, "\u8be5\u5c3c\u7279\u503c\u7684\u8f93\u5165\u88ab\u6620\u5c04\u5230\u9ed1\u4f4d\u3002\u4f4e\u4e8e\u8be5\u503c\u7684\u8f93\u5165\u5f62\u6210\u7eaf\u9ed1\u3002")
+DEFINE_UI_TOOLTIP(输入暗部（尼特）, "\u8be5\u5c3c\u7279\u503c\u7684\u8f93\u5165\u88ab\u6620\u5c04\u540e\u4e0e\u6697\u90e8\u4e2d\u6027\u8272\u7b49\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(输入中间调（尼特）, "\u8be5\u5c3c\u7279\u503c\u7684\u8f93\u5165\u88ab\u6620\u5c04\u540e\u4e0e18%\u7070\u7b49\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(输入白（尼特）, "\u8be5\u5c3c\u7279\u503c\u7684\u8f93\u5165\u88ab\u6620\u5c04\u540e\u4e0e\u767d\u7b49\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(输入高光（尼特）, "\u8be5\u5c3c\u7279\u503c\u7684\u8f93\u5165\u88ab\u6620\u5c04\u540e\u4e0e\u5cf0\u503c\u951a\u70b9\u4e2d\u6027\u8272\u7b49\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(全局 C 增益, "\u5168\u5c40\u5f69\u5ea6\u589e\u76ca\u6863\u6570\u3002+1 \u5c06 C \u52a0\u500d\uff0c-1 \u5c06 C \u51cf\u534a\u3002")
+DEFINE_UI_TOOLTIP(暗部 Cₗ → J, "\u6697\u90e8\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u4f4e\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u63d0\u9ad8\u611f\u77e5\u660e\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(暗部 Cₗ → C, "\u6697\u90e8\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u4f4e\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u589e\u52a0\u5f69\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u5f69\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(暗部 Cₕ → J, "\u6697\u90e8\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u9ad8\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u63d0\u9ad8\u611f\u77e5\u660e\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(暗部 Cₕ → C, "\u6697\u90e8\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u9ad8\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u589e\u52a0\u5f69\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u5f69\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(暗部 a → J, "\u6697\u90e8\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002a \u5bf9\u611f\u77e5\u660e\u5ea6\u7684\u589e\u91cf\u3002\u6b63\u503c\u63d0\u4eae a \u4e3a\u6b63\u7684\u4e00\u4fa7\uff0c\u5e76\u538b\u6697 a \u4e3a\u8d1f\u7684\u4e00\u4fa7\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(暗部 b → J, "\u6697\u90e8\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002b \u5bf9\u611f\u77e5\u660e\u5ea6\u7684\u589e\u91cf\u3002\u6b63\u503c\u63d0\u4eae b \u4e3a\u6b63\u7684\u4e00\u4fa7\uff0c\u5e76\u538b\u6697 b \u4e3a\u8d1f\u7684\u4e00\u4fa7\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(暗部 a → C, "\u6697\u90e8\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002a \u5bf9\u5f69\u5ea6\u7684\u5bf9\u6570\u589e\u76ca\u3002\u6b63\u503c\u589e\u52a0 a \u4e3a\u6b63\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\uff0c\u5e76\u964d\u4f4e a \u4e3a\u8d1f\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(暗部 b → C, "\u6697\u90e8\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002b \u5bf9\u5f69\u5ea6\u7684\u5bf9\u6570\u589e\u76ca\u3002\u6b63\u503c\u589e\u52a0 b \u4e3a\u6b63\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\uff0c\u5e76\u964d\u4f4e b \u4e3a\u8d1f\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(中间调 Cₗ → J, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u4f4e\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u63d0\u9ad8\u611f\u77e5\u660e\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(中间调 Cₗ → C, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u4f4e\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u589e\u52a0\u5f69\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u5f69\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(中间调 Cₕ → J, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u9ad8\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u63d0\u9ad8\u611f\u77e5\u660e\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(中间调 Cₕ → C, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u9ad8\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u589e\u52a0\u5f69\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u5f69\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(中间调 a → J, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002a \u5bf9\u611f\u77e5\u660e\u5ea6\u7684\u589e\u91cf\u3002\u6b63\u503c\u63d0\u4eae a \u4e3a\u6b63\u7684\u4e00\u4fa7\uff0c\u5e76\u538b\u6697 a \u4e3a\u8d1f\u7684\u4e00\u4fa7\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(中间调 b → J, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002b \u5bf9\u611f\u77e5\u660e\u5ea6\u7684\u589e\u91cf\u3002\u6b63\u503c\u63d0\u4eae b \u4e3a\u6b63\u7684\u4e00\u4fa7\uff0c\u5e76\u538b\u6697 b \u4e3a\u8d1f\u7684\u4e00\u4fa7\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(中间调 a → C, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002a \u5bf9\u5f69\u5ea6\u7684\u5bf9\u6570\u589e\u76ca\u3002\u6b63\u503c\u589e\u52a0 a \u4e3a\u6b63\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\uff0c\u5e76\u964d\u4f4e a \u4e3a\u8d1f\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(中间调 b → C, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002b \u5bf9\u5f69\u5ea6\u7684\u5bf9\u6570\u589e\u76ca\u3002\u6b63\u503c\u589e\u52a0 b \u4e3a\u6b63\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\uff0c\u5e76\u964d\u4f4e b \u4e3a\u8d1f\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(白 Cₗ → J, "\u767d\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u4f4e\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u63d0\u9ad8\u611f\u77e5\u660e\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(白 Cₗ → C, "\u767d\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u4f4e\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u589e\u52a0\u5f69\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u5f69\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(白 Cₕ → J, "\u767d\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u9ad8\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u63d0\u9ad8\u611f\u77e5\u660e\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(白 Cₕ → C, "\u767d\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u9ad8\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u589e\u52a0\u5f69\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u5f69\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(白 a → J, "\u767d\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002a \u5bf9\u611f\u77e5\u660e\u5ea6\u7684\u589e\u91cf\u3002\u6b63\u503c\u63d0\u4eae a \u4e3a\u6b63\u7684\u4e00\u4fa7\uff0c\u5e76\u538b\u6697 a \u4e3a\u8d1f\u7684\u4e00\u4fa7\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(白 b → J, "\u767d\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002b \u5bf9\u611f\u77e5\u660e\u5ea6\u7684\u589e\u91cf\u3002\u6b63\u503c\u63d0\u4eae b \u4e3a\u6b63\u7684\u4e00\u4fa7\uff0c\u5e76\u538b\u6697 b \u4e3a\u8d1f\u7684\u4e00\u4fa7\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(白 a → C, "\u767d\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002a \u5bf9\u5f69\u5ea6\u7684\u5bf9\u6570\u589e\u76ca\u3002\u6b63\u503c\u589e\u52a0 a \u4e3a\u6b63\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\uff0c\u5e76\u964d\u4f4e a \u4e3a\u8d1f\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(白 b → C, "\u767d\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002b \u5bf9\u5f69\u5ea6\u7684\u5bf9\u6570\u589e\u76ca\u3002\u6b63\u503c\u589e\u52a0 b \u4e3a\u6b63\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\uff0c\u5e76\u964d\u4f4e b \u4e3a\u8d1f\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(高光 Cₗ → J, "\u9ad8\u5149\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u4f4e\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u63d0\u9ad8\u611f\u77e5\u660e\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(高光 Cₗ → C, "\u9ad8\u5149\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u4f4e\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u589e\u52a0\u5f69\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u5f69\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(高光 Cₕ → J, "\u9ad8\u5149\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u9ad8\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u63d0\u9ad8\u611f\u77e5\u660e\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u611f\u77e5\u660e\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(高光 Cₕ → C, "\u9ad8\u5149\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002\u4e3b\u8981\u4f5c\u7528\u4e8e\u8f83\u9ad8\u5f69\u5ea6\u7684\u989c\u8272\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u589e\u52a0\u5f69\u5ea6\uff0c\u8d1f\u503c\u964d\u4f4e\u5f69\u5ea6\u3002")
+DEFINE_UI_TOOLTIP(高光 a → J, "\u9ad8\u5149\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002a \u5bf9\u611f\u77e5\u660e\u5ea6\u7684\u589e\u91cf\u3002\u6b63\u503c\u63d0\u4eae a \u4e3a\u6b63\u7684\u4e00\u4fa7\uff0c\u5e76\u538b\u6697 a \u4e3a\u8d1f\u7684\u4e00\u4fa7\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(高光 b → J, "\u9ad8\u5149\u9644\u8fd1\u7684\u611f\u77e5\u660e\u5ea6\u8c03\u8282\u3002b \u5bf9\u611f\u77e5\u660e\u5ea6\u7684\u589e\u91cf\u3002\u6b63\u503c\u63d0\u4eae b \u4e3a\u6b63\u7684\u4e00\u4fa7\uff0c\u5e76\u538b\u6697 b \u4e3a\u8d1f\u7684\u4e00\u4fa7\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(高光 a → C, "\u9ad8\u5149\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002a \u5bf9\u5f69\u5ea6\u7684\u5bf9\u6570\u589e\u76ca\u3002\u6b63\u503c\u589e\u52a0 a \u4e3a\u6b63\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\uff0c\u5e76\u964d\u4f4e a \u4e3a\u8d1f\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(高光 b → C, "\u9ad8\u5149\u9644\u8fd1\u7684\u5f69\u5ea6\u8c03\u8282\u3002b \u5bf9\u5f69\u5ea6\u7684\u5bf9\u6570\u589e\u76ca\u3002\u6b63\u503c\u589e\u52a0 b \u4e3a\u6b63\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\uff0c\u5e76\u964d\u4f4e b \u4e3a\u8d1f\u7684\u4e00\u4fa7\u7684\u5f69\u5ea6\u3002\u8d1f\u503c\u53cd\u4e4b\u3002")
+DEFINE_UI_TOOLTIP(暗部 a 白偏, "\u6697\u90e8\u9644\u8fd1\u7684\u767d\u504f\u8c03\u8282\u3002\u6cbf a \u65b9\u5411\u7684\u8272\u9002\u5e94\u504f\u79fb\u3002\u6b63\u503c\u5411 a \u6b63\u65b9\u5411\u79fb\u52a8\uff0c\u8d1f\u503c\u5411 a \u8d1f\u65b9\u5411\u79fb\u52a8\u3002\u4f5c\u7528\u5f3a\u5ea6\u7531\u767d\u504f\u5f3a\u5ea6\u3001\u8f93\u5165\u660e\u5ea6\u548c\u5f69\u5ea6\u5171\u540c\u51b3\u5b9a\u3002")
+DEFINE_UI_TOOLTIP(暗部 b 白偏, "\u6697\u90e8\u9644\u8fd1\u7684\u767d\u504f\u8c03\u8282\u3002\u6cbf b \u65b9\u5411\u7684\u8272\u9002\u5e94\u504f\u79fb\u3002\u6b63\u503c\u5411 b \u6b63\u65b9\u5411\u79fb\u52a8\uff0c\u8d1f\u503c\u5411 b \u8d1f\u65b9\u5411\u79fb\u52a8\u3002\u4f5c\u7528\u5f3a\u5ea6\u7531\u767d\u504f\u5f3a\u5ea6\u3001\u8f93\u5165\u660e\u5ea6\u548c\u5f69\u5ea6\u5171\u540c\u51b3\u5b9a\u3002")
+DEFINE_UI_TOOLTIP(中间调 a 白偏, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u767d\u504f\u8c03\u8282\u3002\u6cbf a \u65b9\u5411\u7684\u8272\u9002\u5e94\u504f\u79fb\u3002\u6b63\u503c\u5411 a \u6b63\u65b9\u5411\u79fb\u52a8\uff0c\u8d1f\u503c\u5411 a \u8d1f\u65b9\u5411\u79fb\u52a8\u3002\u4f5c\u7528\u5f3a\u5ea6\u7531\u767d\u504f\u5f3a\u5ea6\u3001\u8f93\u5165\u660e\u5ea6\u548c\u5f69\u5ea6\u5171\u540c\u51b3\u5b9a\u3002")
+DEFINE_UI_TOOLTIP(中间调 b 白偏, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u767d\u504f\u8c03\u8282\u3002\u6cbf b \u65b9\u5411\u7684\u8272\u9002\u5e94\u504f\u79fb\u3002\u6b63\u503c\u5411 b \u6b63\u65b9\u5411\u79fb\u52a8\uff0c\u8d1f\u503c\u5411 b \u8d1f\u65b9\u5411\u79fb\u52a8\u3002\u4f5c\u7528\u5f3a\u5ea6\u7531\u767d\u504f\u5f3a\u5ea6\u3001\u8f93\u5165\u660e\u5ea6\u548c\u5f69\u5ea6\u5171\u540c\u51b3\u5b9a\u3002")
+DEFINE_UI_TOOLTIP(白 a 白偏, "\u767d\u9644\u8fd1\u7684\u767d\u504f\u8c03\u8282\u3002\u6cbf a \u65b9\u5411\u7684\u8272\u9002\u5e94\u504f\u79fb\u3002\u6b63\u503c\u5411 a \u6b63\u65b9\u5411\u79fb\u52a8\uff0c\u8d1f\u503c\u5411 a \u8d1f\u65b9\u5411\u79fb\u52a8\u3002\u4f5c\u7528\u5f3a\u5ea6\u7531\u767d\u504f\u5f3a\u5ea6\u3001\u8f93\u5165\u660e\u5ea6\u548c\u5f69\u5ea6\u5171\u540c\u51b3\u5b9a\u3002")
+DEFINE_UI_TOOLTIP(白 b 白偏, "\u767d\u9644\u8fd1\u7684\u767d\u504f\u8c03\u8282\u3002\u6cbf b \u65b9\u5411\u7684\u8272\u9002\u5e94\u504f\u79fb\u3002\u6b63\u503c\u5411 b \u6b63\u65b9\u5411\u79fb\u52a8\uff0c\u8d1f\u503c\u5411 b \u8d1f\u65b9\u5411\u79fb\u52a8\u3002\u4f5c\u7528\u5f3a\u5ea6\u7531\u767d\u504f\u5f3a\u5ea6\u3001\u8f93\u5165\u660e\u5ea6\u548c\u5f69\u5ea6\u5171\u540c\u51b3\u5b9a\u3002")
+DEFINE_UI_TOOLTIP(高光 a 白偏, "\u9ad8\u5149\u9644\u8fd1\u7684\u767d\u504f\u8c03\u8282\u3002\u6cbf a \u65b9\u5411\u7684\u8272\u9002\u5e94\u504f\u79fb\u3002\u6b63\u503c\u5411 a \u6b63\u65b9\u5411\u79fb\u52a8\uff0c\u8d1f\u503c\u5411 a \u8d1f\u65b9\u5411\u79fb\u52a8\u3002\u4f5c\u7528\u5f3a\u5ea6\u7531\u767d\u504f\u5f3a\u5ea6\u3001\u8f93\u5165\u660e\u5ea6\u548c\u5f69\u5ea6\u5171\u540c\u51b3\u5b9a\u3002")
+DEFINE_UI_TOOLTIP(高光 b 白偏, "\u9ad8\u5149\u9644\u8fd1\u7684\u767d\u504f\u8c03\u8282\u3002\u6cbf b \u65b9\u5411\u7684\u8272\u9002\u5e94\u504f\u79fb\u3002\u6b63\u503c\u5411 b \u6b63\u65b9\u5411\u79fb\u52a8\uff0c\u8d1f\u503c\u5411 b \u8d1f\u65b9\u5411\u79fb\u52a8\u3002\u4f5c\u7528\u5f3a\u5ea6\u7531\u767d\u504f\u5f3a\u5ea6\u3001\u8f93\u5165\u660e\u5ea6\u548c\u5f69\u5ea6\u5171\u540c\u51b3\u5b9a\u3002")
+DEFINE_UI_TOOLTIP(白偏强度, "\u8272\u9002\u5e94\u504f\u79fb\u5f3a\u5ea6\u30020 \u8868\u793a\u96f6\u504f\u79fb\u30021 \u5728\u540c\u4e00\u611f\u77e5\u660e\u5ea6\u4e0b\u5bf9\u6240\u6709\u5f69\u5ea6\u5e94\u7528\u76f8\u540c\u504f\u79fb\u3002\u4e2d\u95f4\u503c\u4fdd\u62a4\u9ad8\u5f69\u5ea6\u989c\u8272\u3002")
+DEFINE_UI_TOOLTIP(暗部色相, "\u6697\u90e8\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u5f53\u524d\u5f71\u8c03\u7684\u8272\u76f8\u65cb\u8f6c\u89d2\u5ea6\u3002\u6b63\u503c\u4f7f a/b \u5e73\u9762\u5185\u7684\u8272\u76f8\u9006\u65f6\u9488\u65cb\u8f6c\uff0c\u8d1f\u503c\u987a\u65f6\u9488\u65cb\u8f6c\u3002")
+DEFINE_UI_TOOLTIP(中间调色相, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u5f53\u524d\u5f71\u8c03\u7684\u8272\u76f8\u65cb\u8f6c\u89d2\u5ea6\u3002\u6b63\u503c\u4f7f a/b \u5e73\u9762\u5185\u7684\u8272\u76f8\u9006\u65f6\u9488\u65cb\u8f6c\uff0c\u8d1f\u503c\u987a\u65f6\u9488\u65cb\u8f6c\u3002")
+DEFINE_UI_TOOLTIP(白色相, "\u767d\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u5f53\u524d\u5f71\u8c03\u7684\u8272\u76f8\u65cb\u8f6c\u89d2\u5ea6\u3002\u6b63\u503c\u4f7f a/b \u5e73\u9762\u5185\u7684\u8272\u76f8\u9006\u65f6\u9488\u65cb\u8f6c\uff0c\u8d1f\u503c\u987a\u65f6\u9488\u65cb\u8f6c\u3002")
+DEFINE_UI_TOOLTIP(高光色相, "\u9ad8\u5149\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u5f53\u524d\u5f71\u8c03\u7684\u8272\u76f8\u65cb\u8f6c\u89d2\u5ea6\u3002\u6b63\u503c\u4f7f a/b \u5e73\u9762\u5185\u7684\u8272\u76f8\u9006\u65f6\u9488\u65cb\u8f6c\uff0c\u8d1f\u503c\u987a\u65f6\u9488\u65cb\u8f6c\u3002")
+DEFINE_UI_TOOLTIP(暗部 a 色相聚拢, "\u6697\u90e8\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u6b63\u503c\u4f7f\u8272\u76f8\u5411 a \u6b63\u65b9\u5411\u805a\u62e2\uff0c\u8d1f\u503c\u4f7f\u8272\u76f8\u5411 a \u8d1f\u65b9\u5411\u805a\u62e2\u3002")
+DEFINE_UI_TOOLTIP(暗部 b 色相聚拢, "\u6697\u90e8\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u6b63\u503c\u4f7f\u8272\u76f8\u5411 b \u6b63\u65b9\u5411\u805a\u62e2\uff0c\u8d1f\u503c\u4f7f\u8272\u76f8\u5411 b \u8d1f\u65b9\u5411\u805a\u62e2\u3002")
+DEFINE_UI_TOOLTIP(中间调 a 色相聚拢, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u6b63\u503c\u4f7f\u8272\u76f8\u5411 a \u6b63\u65b9\u5411\u805a\u62e2\uff0c\u8d1f\u503c\u4f7f\u8272\u76f8\u5411 a \u8d1f\u65b9\u5411\u805a\u62e2\u3002")
+DEFINE_UI_TOOLTIP(中间调 b 色相聚拢, "\u4e2d\u95f4\u8c03\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u6b63\u503c\u4f7f\u8272\u76f8\u5411 b \u6b63\u65b9\u5411\u805a\u62e2\uff0c\u8d1f\u503c\u4f7f\u8272\u76f8\u5411 b \u8d1f\u65b9\u5411\u805a\u62e2\u3002")
+DEFINE_UI_TOOLTIP(白 a 色相聚拢, "\u767d\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u6b63\u503c\u4f7f\u8272\u76f8\u5411 a \u6b63\u65b9\u5411\u805a\u62e2\uff0c\u8d1f\u503c\u4f7f\u8272\u76f8\u5411 a \u8d1f\u65b9\u5411\u805a\u62e2\u3002")
+DEFINE_UI_TOOLTIP(白 b 色相聚拢, "\u767d\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u6b63\u503c\u4f7f\u8272\u76f8\u5411 b \u6b63\u65b9\u5411\u805a\u62e2\uff0c\u8d1f\u503c\u4f7f\u8272\u76f8\u5411 b \u8d1f\u65b9\u5411\u805a\u62e2\u3002")
+DEFINE_UI_TOOLTIP(高光 a 色相聚拢, "\u9ad8\u5149\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u6b63\u503c\u4f7f\u8272\u76f8\u5411 a \u6b63\u65b9\u5411\u805a\u62e2\uff0c\u8d1f\u503c\u4f7f\u8272\u76f8\u5411 a \u8d1f\u65b9\u5411\u805a\u62e2\u3002")
+DEFINE_UI_TOOLTIP(高光 b 色相聚拢, "\u9ad8\u5149\u9644\u8fd1\u7684\u8272\u76f8\u8c03\u8282\u3002\u6b63\u503c\u4f7f\u8272\u76f8\u5411 b \u6b63\u65b9\u5411\u805a\u62e2\uff0c\u8d1f\u503c\u4f7f\u8272\u76f8\u5411 b \u8d1f\u65b9\u5411\u805a\u62e2\u3002")
+DEFINE_UI_TOOLTIP(全局 Cₗ → 色相, "\u65cb\u8f6c\u8f83\u4f4e\u5f69\u5ea6\u989c\u8272\u7684\u8272\u76f8\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u4f7f a/b \u5e73\u9762\u5185\u7684\u8272\u76f8\u9006\u65f6\u9488\u65cb\u8f6c\uff0c\u8d1f\u503c\u987a\u65f6\u9488\u65cb\u8f6c\u3002")
+DEFINE_UI_TOOLTIP(全局 Cₕ → 色相, "\u65cb\u8f6c\u8f83\u9ad8\u5f69\u5ea6\u989c\u8272\u7684\u8272\u76f8\uff0c\u6309\u5f69\u5ea6\u5e73\u6ed1\u52a0\u6743\u3002\u6b63\u503c\u4f7f a/b \u5e73\u9762\u5185\u7684\u8272\u76f8\u9006\u65f6\u9488\u65cb\u8f6c\uff0c\u8d1f\u503c\u987a\u65f6\u9488\u65cb\u8f6c\u3002")
+DEFINE_UI_TOOLTIP(参考亮度（尼特）, "\u8f93\u5165 Y = 1 \u5bf9\u5e94\u7684\u4eae\u5ea6\uff0c\u5355\u4f4d\u4e3a\u5c3c\u7279\u3002\u6b64\u503c\u6807\u5b9a\u5916\u89c2\u6a21\u578b\u548c\u5f71\u8c03\u76ee\u6807\u3002\u9002\u5e94\u4eae\u5ea6\u548c\u80cc\u666f\u4eae\u5ea6\u5747\u4e3a\u5176 10%\u3002")
+DEFINE_UI_TOOLTIP(峰值锚点, "\u9ad8\u5149\u7684\u4e2d\u6027\u8272\u4eae\u5ea6\u76ee\u6807\u3002\u6709\u6548\u5cf0\u503c\u7684\u53d6\u503c\u81f3\u5c11\u4e3a\u53c2\u8003\u4eae\u5ea6\u7684\u4e24\u500d\u3002")
+DEFINE_UI_TOOLTIP(辅助图, "\u663e\u793a CIE xy \u8f85\u52a9\u56fe\uff0c\u5305\u62ec\u53c2\u8003\u8fb9\u754c\u3001\u53d8\u6362\u540e\u8fb9\u754c\u3001\u767d\u70b9\u6807\u8bb0\u548c\u5f71\u8c03\u951a\u70b9\u3002")
+DEFINE_UI_TOOLTIP(参考三角形, "\u9009\u62e9\u8f85\u52a9\u56fe\u7ed8\u5236\u7684\u53c2\u8003\u4e09\u89d2\u5f62\u3002")
+DEFINE_UI_TOOLTIP(影调贴合度, "\u503c\u8d8a\u5927\uff0c\u66f2\u7ebf\u8d8a\u8d34\u8fd1\u63a7\u5236\u70b9\uff0c\u63a7\u5236\u70b9\u7684\u63a7\u5236\u8303\u56f4\u8d8a\u96c6\u4e2d\u3002")
+DEFINE_UI_TOOLTIP(明度贴合度, "\u660e\u5ea6\u8c03\u8282\u66f2\u7ebf\u7684\u8d34\u5408\u5ea6\u3002\u503c\u8d8a\u5927\uff0c\u66f2\u7ebf\u8d8a\u8d34\u8fd1\u63a7\u5236\u70b9\uff0c\u63a7\u5236\u70b9\u7684\u63a7\u5236\u8303\u56f4\u8d8a\u96c6\u4e2d\u3002")
+DEFINE_UI_TOOLTIP(彩度贴合度, "\u5f69\u5ea6\u8c03\u8282\u66f2\u7ebf\u7684\u8d34\u5408\u5ea6\u3002\u503c\u8d8a\u5927\uff0c\u66f2\u7ebf\u8d8a\u8d34\u8fd1\u63a7\u5236\u70b9\uff0c\u63a7\u5236\u70b9\u7684\u63a7\u5236\u8303\u56f4\u8d8a\u96c6\u4e2d\u3002")
+DEFINE_UI_TOOLTIP(白偏贴合度, "\u767d\u504f\u8c03\u8282\u66f2\u7ebf\u7684\u8d34\u5408\u5ea6\u3002\u503c\u8d8a\u5927\uff0c\u66f2\u7ebf\u8d8a\u8d34\u8fd1\u63a7\u5236\u70b9\uff0c\u63a7\u5236\u70b9\u7684\u63a7\u5236\u8303\u56f4\u8d8a\u96c6\u4e2d\u3002")
+DEFINE_UI_TOOLTIP(色相贴合度, "\u8272\u76f8\u8c03\u8282\u66f2\u7ebf\u7684\u8d34\u5408\u5ea6\u3002\u503c\u8d8a\u5927\uff0c\u66f2\u7ebf\u8d8a\u8d34\u8fd1\u63a7\u5236\u70b9\uff0c\u63a7\u5236\u70b9\u7684\u63a7\u5236\u8303\u56f4\u8d8a\u96c6\u4e2d\u3002")
+
+typedef struct { float3 a; float3 b; float3 c; } PGMat;
+typedef struct { float fl; float aw; float pivotJ; float lowJ; } PGViewing;
+typedef struct { float s; float m; float w; float h; } PGFour;
+typedef struct { float a; float b; float c; float d; float e; } PGWeights;
+typedef struct { PGFour z; PGFour norm; float width; } PGKernel;
+typedef struct { PGFour a; PGFour b; PGKernel curveKernel; int zeroBlack; } PGFamily;
+typedef struct { PGFour c; PGFour q; PGFour a; PGFour b; PGKernel curveKernel; } PGResponseFamily;
+typedef struct { float c; float q; float a; float b; } PGCoefficients;
+typedef struct { float c; float q; float a; float b; float adaptanceWeight; } PGDrivers;
+typedef struct { float3 adaptance; float3 concentration; PGCoefficients light; PGCoefficients radius; float hue; float adaptanceStrength; } PGAdjustment;
+typedef struct {
+    float3 ws; float3 wd; float3 wc;
+    PGMat adapt; PGMat lin; PGViewing view;
+    PGFour input; PGFour target; PGFour residual; PGKernel remap;
+    PGFamily adaptance; PGResponseFamily light; PGResponseFamily radius;
+    PGFour hueHeights; PGFour concentrationAHeights; PGFour concentrationBHeights; PGKernel hueCurve;
+    float radiusBase; float hueByChroma; float hueByBend; float adaptanceStrength;
+    float black; float qHigh; float tailSlope; float exposure;
+    float highJ; float effectiveRefNits; float effectivePeakNits;
+    int remapActive; int tonalActive; int active; int linearActive; int ordered;
+} PGModel;
+typedef struct { float3 v; int valid; float ja; } PGValue;
+__DEVICE__ float pg_dot(float3 a,float3 b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
+__DEVICE__ float3 pg_cross(float3 a,float3 b) { return make_float3(a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x); }
+__DEVICE__ PGMat pg_mat(float3 a,float3 b,float3 c) { PGMat m; m.a=a; m.b=b; m.c=c; return m; }
+__DEVICE__ PGMat pg_id() { return pg_mat(make_float3(1.0f,0.0f,0.0f),make_float3(0.0f,1.0f,0.0f),make_float3(0.0f,0.0f,1.0f)); }
+__DEVICE__ float3 pg_zero3() { return make_float3(0.0f,0.0f,0.0f); }
+__DEVICE__ PGMat pg_zero() { float3 z=pg_zero3(); return pg_mat(z,z,z); }
+__DEVICE__ float3 pg_mv(PGMat m,float3 v) { return make_float3(pg_dot(m.a,v),pg_dot(m.b,v),pg_dot(m.c,v)); }
+__DEVICE__ PGMat pg_cols(float3 a,float3 b,float3 c) { return pg_mat(make_float3(a.x,b.x,c.x),make_float3(a.y,b.y,c.y),make_float3(a.z,b.z,c.z)); }
+__DEVICE__ PGMat pg_inv(PGMat m) {
+    float3 u=pg_cross(m.b,m.c),v=pg_cross(m.c,m.a),w=pg_cross(m.a,m.b);
+    float d=pg_dot(m.a,u); return pg_cols(u/d,v/d,w/d);
+}
+__DEVICE__ PGMat pg_mul(PGMat a,PGMat b) {
+    PGMat t=pg_cols(b.a,b.b,b.c); return pg_cols(pg_mv(a,t.a),pg_mv(a,t.b),pg_mv(a,t.c));
+}
+__DEVICE__ PGMat pg_add(PGMat a,PGMat b) { return pg_mat(a.a+b.a,a.b+b.b,a.c+b.c); }
+__DEVICE__ PGMat pg_cat() { return pg_mat(make_float3(.401288f,.650173f,-.051461f),make_float3(-.250268f,1.204414f,.045854f),make_float3(-.002079f,.048952f,.953127f)); }
+__DEVICE__ PGMat pg_icat() { return pg_mat(make_float3(1.862067855087f,-1.011254630532f,.149186775444f),make_float3(.387526543236f,.621447441931f,-.008973985167f),make_float3(-.015841498849f,-.034122938029f,1.049964436878f)); }
+__DEVICE__ float3 pg_xyz(float x,float y,float Y) { return make_float3(x*Y/y,Y,(1.0f-x-y)*Y/y); }
+__DEVICE__ float3 pg_xy(float3 v) {
+    float s=v.x+v.y+v.z;
+    if(_fabs(s)<1e-15f) return make_float3(-100.0f,-100.0f,0.0f);
+    return make_float3(v.x/s,v.y/s,0.0f);
+}
+// Generated from model.linear.WHITE_PLANES and WHITE_POLYGON.
+__DEVICE__ float3 pg_source_vertex(int i) {
+    if(i==0)return make_float3(0.114252683494f,0.002f,0.0f);
+    if(i==1)return make_float3(0.154596788052f,0.002f,0.0f);
+    if(i==2)return make_float3(0.829814339192f,0.174582146526f,0.0f);
+    if(i==3)return make_float3(0.143151265819f,0.9f,0.0f);
+    if(i==4)return make_float3(0.0f,0.9f,0.0f);
+    if(i==5)return make_float3(0.0f,0.0757247456637f,0.0f);
+    return make_float3(0.3127f,0.329f,0.0f);
+}
+__DEVICE__ float3 pg_safe_source_xy(float x,float y) {
+    x=_fminf(.9f,_fmaxf(0.0f,x)); y=_fminf(.9f,_fmaxf(0.0f,y));
+    float3 p=make_float3(x,y,0.0f);
+    if((1.0f*x+0.0f*y+0.0f>=0.0f)&&(-1.0f*x+0.0f*y+0.9f>=0.0f)&&(0.0f*x+1.0f*y+-0.002f>=0.0f)&&(0.0f*x+-1.0f*y+0.9f>=0.0f)&&(0.452749f*x+0.701634f*y+-0.053131056199f>=0.0f)&&(-0.296122f*x+1.15856f*y+0.0434623900715f>=0.0f)&&(-0.955206f*x+-0.904175f*y+0.950496448018f>=0.0f))return p;
+    float distance=1e20f; float3 best=p;
+    for(int i=0;i<6;i++) {
+        float3 a=pg_source_vertex(i),b=pg_source_vertex((i+1)%6);
+        float3 d=b-a; float t=_fminf(1.0f,_fmaxf(0.0f,pg_dot(p-a,d)/pg_dot(d,d)));
+        // Fused projection avoids amplifying xy rounding in small CAT16 cones.
+        float3 q=make_float3(_fmaf(d.x,t,a.x),_fmaf(d.y,t,a.y),0.0f); float e=pg_dot(p-q,p-q);
+        if(e<distance){distance=e;best=q;}
+    }
+    return best;
+}
+__DEVICE__ float3 pg_white(int p,float x,float y) {
+    if(p==0)return pg_xyz(.3127f,.3290f,1.0f);
+    if(p==1)return pg_xyz(.32161671f,.33761992f,1.0f);
+    if(p==2)return pg_xyz(.32168f,.33767f,1.0f);
+    if(p==3)return pg_xyz(.34567f,.35850f,1.0f);
+    if(p==4)return pg_xyz(.33242f,.34743f,1.0f);
+    if(p==5)return pg_xyz(.29903f,.31488f,1.0f);
+    if(p==6)return pg_xyz(.314f,.351f,1.0f);
+    if(p==7)return make_float3(1.0f,1.0f,1.0f);
+    float3 safe=pg_safe_source_xy(x,y);
+    return pg_xyz(safe.x,safe.y,1.0f);
+}
+__DEVICE__ float3 pg_adapt(float3 xyz,float3 from,float3 to) {
+    return pg_mv(pg_icat(),pg_mv(pg_cat(),xyz)*pg_mv(pg_cat(),to)/pg_mv(pg_cat(),from));
+}
+__DEVICE__ PGMat pg_adaptation(float3 from,float3 to) {
+    float3 a=pg_mv(pg_cat(),from);
+    float3 d=pg_mv(pg_cat(),to)/a-make_float3(1.0f,1.0f,1.0f);
+    PGMat c=pg_cat(); c.a=c.a*d.x; c.b=c.b*d.y; c.c=c.c*d.z;
+    return pg_add(pg_id(),pg_mul(pg_icat(),c));
+}
+__DEVICE__ float3 pg_primary(int t,int p) {
+    if(t==1) { if(p==0)return pg_xyz(.680f,.320f,1.0f); if(p==1)return pg_xyz(.265f,.690f,1.0f); return pg_xyz(.150f,.060f,1.0f); }
+    if(t==2) { if(p==0)return pg_xyz(.708f,.292f,1.0f); if(p==1)return pg_xyz(.170f,.797f,1.0f); return pg_xyz(.131f,.046f,1.0f); }
+    if(t==3) { if(p==0)return pg_xyz(.713f,.293f,1.0f); if(p==1)return pg_xyz(.165f,.830f,1.0f); return pg_xyz(.128f,.044f,1.0f); }
+    if(p==0)return pg_xyz(.640f,.330f,1.0f);
+    if(p==1)return pg_xyz(.300f,.600f,1.0f);
+    return pg_xyz(.150f,.060f,1.0f);
+}
+// Fixed Rec.709 defining references and target construction.
+__DEVICE__ float3 pg_anchor(float3 wd,int p,float reach) {
+    float3 wxy=pg_xy(wd),pxy=pg_xy(pg_adapt(pg_primary(0,p),pg_white(0,0.0f,0.0f),wd));
+    float3 a=wxy+(pxy-wxy)*reach; return pg_mv(pg_cat(),pg_xyz(a.x,a.y,1.0f));
+}
+__DEVICE__ float3 pg_move(float3 c,float3 wd,float degrees,float percent) {
+    if(degrees==0.0f && percent==0.0f)return c;
+    float3 xyz=pg_mv(pg_icat(),c),w=pg_xy(wd),p=pg_xy(xyz)-w;
+    float a=degrees*.0174532925199433f,cs=_cosf(a),sn=_sinf(a),k=1.0f+percent*.01f;
+    float x=w.x+k*(cs*p.x-sn*p.y),y=w.y+k*(sn*p.x+cs*p.y);
+    return pg_mv(pg_cat(),pg_xyz(x,_fmaxf(y,.01f),xyz.y));
+}
+__DEVICE__ float3 pg_target(float3 c,float3 wd,float degrees,float percent,float stops) {
+    return pg_move(c,wd,degrees,percent)*_exp2f(stops);
+}
+// modCAM16 with H-K compensation: normalized Yw=100, Yb=10; dark c=.525, Nc=.8; D=1.
+// LA is absolute, 10% of Reference Nits. cz=.525*(1.48+sqrt(.1)).
+// Response offsets +0.1 cancel algebraically; retaining only s improves black precision.
+__DEVICE__ int pg_finite(float x) { return x==x && _fabs(x)<3.4028234663852886e38f; }
+__DEVICE__ int pg_finite3(float3 v) { return pg_finite(v.x)&&pg_finite(v.y)&&pg_finite(v.z); }
+__DEVICE__ PGValue pg_value(float3 v,int valid) { PGValue r; r.v=v; r.valid=valid; r.ja=0.0f; return r; }
+__DEVICE__ float pg_hypot(float a,float b) {
+    float scale=_fmaxf(_fabs(a),_fabs(b));if(scale==0.0f)return 0.0f;
+    a/=scale;b/=scale;return scale*_sqrtf(a*a+b*b);
+}
+__DEVICE__ float pg_log1p(float x) {
+    if(_fabs(x)<.001f)return x*(1.0f+x*(-.5f+x/3.0f));
+    return _logf(1.0f+x);
+}
+__DEVICE__ float pg_expm1(float x) {
+    if(_fabs(x)<.001f)return x*(1.0f+x*(.5f+x/6.0f));
+    return _expf(x)-1.0f;
+}
+__DEVICE__ float pg_response(float n,PGViewing view) {
+    float t=_powf(view.fl*_fabs(n),.42f);
+    float s=400.0f*t/(27.13f+t); return n<0.0f?-s:s;
+}
+__DEVICE__ float pg_unresponse(float s,PGViewing view) {
+    float a=_fabs(s),n=_powf(27.13f*a/(400.0f-a),1.0f/.42f)/view.fl;
+    return s<0.0f?-n:n;
+}
+__DEVICE__ float pg_neutral_j(float Y,PGViewing view) {
+    return 100.0f*_powf(3.05f*pg_response(Y,view)/view.aw,.943019577159f);
+}
+__DEVICE__ PGViewing pg_viewing(float refNits) {
+    PGViewing v;
+    float adaptLum=.1f*_fmaxf(refNits,1.0f),k=1.0f/(5.0f*adaptLum+1.0f),k4=k*k*k*k;
+    v.fl=.2f*k4*5.0f*adaptLum+.1f*(1.0f-k4)*(1.0f-k4)*_powf(5.0f*adaptLum,1.0f/3.0f);
+    // Initialize fields before passing the struct by value on all GPU backends.
+    v.aw=1.0f; v.pivotJ=0.0f; v.lowJ=0.0f;
+    float sw=pg_response(1.0f,v); v.aw=3.05f*sw;
+    v.pivotJ=pg_neutral_j(.18f,v);
+    // Low anchor luminance: 7.542166 nits at reference 203.
+    v.lowJ=pg_neutral_j(.037153526983f,v);
+    return v;
+}
+__DEVICE__ float pg_eccentricity(float ch,float sh) {
+    // Original Hellwig-Fairchild 2022 Eq. 28 / Appendix A: -.1475*sin(h).
+    // Use the original fit and Colour coefficient in both directions; see guide.
+    float c2=ch*ch-sh*sh,s2=2.0f*ch*sh;
+    float c3=c2*ch-s2*sh,s3=s2*ch+c2*sh;
+    float c4=c2*c2-s2*s2,s4=2.0f*c2*s2;
+    return 1.0f-.0582f*ch-.0258f*c2-.1347f*c3+.0289f*c4
+               -.1475f*sh-.0308f*s2+.0385f*s3+.0096f*s4;
+}
+__DEVICE__ float3 pg_normalized_cones(float3 xyz,float3 wc) {
+    float3 n=pg_mv(pg_cat(),xyz)/wc;
+    // Zero only numerically indeterminate cancellation, before the steep 0.42 power.
+    // The bound scales with each dot product, not with a fixed exposure threshold.
+    float3 a=make_float3(_fabs(xyz.x),_fabs(xyz.y),_fabs(xyz.z));
+    PGMat absolute=pg_mat(make_float3(.401288f,.650173f,.051461f),
+                         make_float3(.250268f,1.204414f,.045854f),
+                         make_float3(.002079f,.048952f,.953127f));
+    float3 uncertainty=pg_mv(absolute,a)/wc*4.0e-7f;
+    if(_fabs(n.x)<=uncertainty.x)n.x=0.0f;
+    if(_fabs(n.y)<=uncertainty.y)n.y=0.0f;
+    if(_fabs(n.z)<=uncertainty.z)n.z=0.0f;
+    return n;
+}
+__DEVICE__ PGValue pg_cam_cones(float3 n,PGViewing view) {
+    if(!pg_finite3(n))return pg_value(pg_zero3(),0);
+    float3 s=make_float3(pg_response(n.x,view),pg_response(n.y,view),pg_response(n.z,view));
+    float ach=2.0f*s.x+s.y+.05f*s.z;
+    if(ach<=0.0f) return pg_value(pg_zero3(),ach==0.0f && pg_dot(s,s)==0.0f);
+    float JA=100.0f*_powf(ach/view.aw,.943019577159f);
+    float a=(s.x-s.y)+(s.z-s.y)/11.0f,b=((s.x-s.z)+(s.y-s.z))/9.0f;
+    float radius=_sqrtf(a*a+b*b),C=0.0f,ac=0.0f,bc=0.0f;
+    if(radius>0.0f) {
+        float ch=a/radius,sh=b/radius;
+        // M=43*Nc*e*radius, C=35*M/Aw; 35*43*.8=1204.
+        C=1204.0f*pg_eccentricity(ch,sh)*radius/view.aw;
+        ac=C*ch; bc=C*sh;
+    }
+    float JHK=_sqrtf(JA*JA+66.0f*C);
+    float3 q=make_float3(JHK,ac,bc);PGValue result=pg_value(q,pg_finite3(q));result.ja=JA;return result;
+}
+__DEVICE__ PGValue pg_cam(float3 xyz,float3 wc,PGViewing view) {
+    return pg_cam_cones(pg_normalized_cones(xyz,wc),view);
+}
+__DEVICE__ PGValue pg_uncam_energy(float3 q,float jaSquared,float3 wc,PGViewing view) {
+    PGValue bad=pg_value(pg_zero3(),0);
+    if(!pg_finite3(q) || q.x<0.0f)return bad;
+    float C=_sqrtf(q.y*q.y+q.z*q.z);
+    if(!pg_finite(C))return bad;
+    if(!pg_finite(jaSquared) || jaSquared<0.0f)return bad;
+    float JA=_sqrtf(jaSquared);
+    float ach=view.aw*_powf(JA*.01f,1.0f/.943019577159f),a=0.0f,b=0.0f;
+    if(C>0.0f) {
+        float ch=q.y/C,sh=q.z/C;
+        float radius=C*view.aw/(1204.0f*pg_eccentricity(ch,sh));
+        a=radius*ch; b=radius*sh;
+    }
+    float3 s=make_float3((460.0f*ach+451.0f*a+288.0f*b)/1403.0f,
+                        (460.0f*ach-891.0f*a-261.0f*b)/1403.0f,
+                        (460.0f*ach-220.0f*a-6300.0f*b)/1403.0f);
+    if(!pg_finite3(s) || _fmaxf(_fabs(s.x),_fmaxf(_fabs(s.y),_fabs(s.z)))>=399.998f)return bad;
+    float3 n=make_float3(pg_unresponse(s.x,view),pg_unresponse(s.y,view),pg_unresponse(s.z,view));
+    float3 v=pg_mv(pg_icat(),n*wc); return pg_value(v,pg_finite3(v));
+}
+__DEVICE__ PGValue pg_uncam(float3 q,float3 wc,PGViewing view) {
+    PGValue bad=pg_value(pg_zero3(),0);
+    if(!pg_finite3(q) || q.x<0.0f)return bad;
+    float C=_sqrtf(q.y*q.y+q.z*q.z);
+    if(!pg_finite(C))return bad;
+    if(q.x==0.0f)return pg_value(pg_zero3(),C==0.0f);
+    // J_HK^2 >= 66*C is necessary. Never clamp a negative radicand silently.
+    // Compensated difference of products retains precision near the HK boundary.
+    float chromatic=66.0f*C;
+    float jaSquared=_fmaf(q.x,q.x,-chromatic)-_fmaf(66.0f,C,-chromatic);
+    if(!pg_finite(jaSquared) || jaSquared<0.0f)return bad;
+    float JA=_sqrtf(jaSquared);
+    float ach=view.aw*_powf(JA*.01f,1.0f/.943019577159f),a=0.0f,b=0.0f;
+    if(C>0.0f) {
+        float ch=q.y/C,sh=q.z/C;
+        float radius=C*view.aw/(1204.0f*pg_eccentricity(ch,sh));
+        a=radius*ch; b=radius*sh;
+    }
+    float3 s=make_float3((460.0f*ach+451.0f*a+288.0f*b)/1403.0f,
+                        (460.0f*ach-891.0f*a-261.0f*b)/1403.0f,
+                        (460.0f*ach-220.0f*a-6300.0f*b)/1403.0f);
+    if(!pg_finite3(s) || _fmaxf(_fabs(s.x),_fmaxf(_fabs(s.y),_fabs(s.z)))>=399.998f)return bad;
+    float3 n=make_float3(pg_unresponse(s.x,view),pg_unresponse(s.y,view),pg_unresponse(s.z,view));
+    float3 v=pg_mv(pg_icat(),n*wc); return pg_value(v,pg_finite3(v));
+}
+__DEVICE__ float pg_selected_peak(int index,float refNitsLocal) {
+    float peak=index==0?500.0f:(index==2?2000.0f:(index==3?4000.0f:1000.0f));
+    float ref=pg_finite(refNitsLocal)?_floorf(_fminf(1000.0f,_fmaxf(48.0f,refNitsLocal))+.5f):203.0f;
+    if(peak<2.0f*ref)peak=2.0f*ref<=1000.0f?1000.0f:2000.0f;
+    return peak;
+}
+// Four heights are always ordered Shadows, Midtones, White, Highlights.
+__DEVICE__ PGFour pg_four(float s,float m,float w,float h) { PGFour v; v.s=s;v.m=m;v.w=w;v.h=h;return v; }
+__DEVICE__ float pg_four_energy(PGFour v) { return v.s*v.s+v.m*v.m+v.w*v.w+v.h*v.h; }
+__DEVICE__ float pg_sigmoid(float x) {
+    float e=_expf(-_fabs(x)); return x>=0.0f?1.0f/(1.0f+e):e/(1.0f+e);
+}
+__DEVICE__ float pg_sigmoid_delta(float x,float d) {
+    if(d<1.0f) { float a=_expf(x),e=pg_expm1(d); return a*e/((1.0f+a)*(1.0f+a*(1.0f+e))); }
+    return pg_sigmoid(x+d)-pg_sigmoid(x);
+}
+__DEVICE__ float pg_softplus_delta(float x,float t,float w) {
+    // phi(x+t)-phi(x), t>=0. Avoid cancellation for near-black t.
+    float d=t/w;
+    if(d<1.0f)return w*pg_log1p(pg_sigmoid(x/w)*pg_expm1(d));
+    if(x>=0.0f)return t+w*pg_log1p(pg_sigmoid(-x/w)*pg_expm1(-d));
+    if(x+t<=0.0f)return w*pg_log1p(_expf((x+t)/w)*(-pg_expm1(-d))/(1.0f+_expf(x/w)));
+    return x+t+w*(pg_log1p(_expf(-(x+t)/w))-pg_log1p(_expf(x/w)));
+}
+__DEVICE__ float pg_kernel_integral(float t,float left,float right,float w) {
+    // Integral_left^right [sigmoid((t-s)/w)-sigmoid(-s/w)] ds.
+    // Tiny intervals use three-point Gauss quadrature (sixth-order error) to
+    // avoid subtracting nearly equal softplus terms; relative error <1e-9
+    // in double for interval/width < .1. No output-color clipping here.
+    float delta=right-left;
+    if(delta<.1f*w) {
+        float mid=.5f*(left+right),d=.387298334621f*delta;
+        float a=pg_sigmoid_delta(-(mid-d)/w,t/w);
+        float b=pg_sigmoid_delta(-mid/w,t/w);
+        float c=pg_sigmoid_delta(-(mid+d)/w,t/w);
+        return delta*(.277777777778f*(a+c)+.444444444444f*b);
+    }
+    if(t>=right) {
+        float dt=delta+w*(pg_log1p(_expf(-(t-left)/w))-pg_log1p(_expf(-(t-right)/w)));
+        float d0=w*(pg_log1p(_expf(-left/w))-pg_log1p(_expf(-right/w)));
+        return dt-d0;
+    }
+    return pg_softplus_delta(-left,t,w)-pg_softplus_delta(-right,t,w);
+}
+__DEVICE__ PGKernel pg_kernel(PGFour z,float fit) {
+    PGKernel k;k.z=z;k.width=.05f*_exp2f(-fit);
+    k.norm=pg_four(pg_kernel_integral(1.0f,0.0f,z.s,k.width),
+                   pg_kernel_integral(1.0f,z.s,z.m,k.width),
+                   pg_kernel_integral(1.0f,z.m,z.w,k.width),
+                   pg_kernel_integral(1.0f,z.w,1.0f,k.width));
+    return k;
+}
+__DEVICE__ PGFour pg_transitions(float t,PGKernel k) {
+    if(t<=0.0f)return pg_four(0.0f,0.0f,0.0f,0.0f);
+    if(t==1.0f)return pg_four(1.0f,1.0f,1.0f,1.0f);
+    return pg_four(pg_kernel_integral(t,0.0f,k.z.s,k.width)/k.norm.s,
+                   pg_kernel_integral(t,k.z.s,k.z.m,k.width)/k.norm.m,
+                   pg_kernel_integral(t,k.z.m,k.z.w,k.width)/k.norm.w,
+                   pg_kernel_integral(t,k.z.w,1.0f,k.width)/k.norm.h);
+}
+__DEVICE__ PGWeights pg_weights(float t,PGKernel k) {
+    PGFour v=pg_transitions(t,k);
+    // Repair only float roundoff in analytically ordered cumulative weights.
+    v.s=_fminf(1.0f,_fmaxf(0.0f,v.s));
+    v.m=_fminf(v.s,_fmaxf(0.0f,v.m));
+    v.w=_fminf(v.m,_fmaxf(0.0f,v.w));
+    v.h=_fminf(v.w,_fmaxf(0.0f,v.h));
+    PGWeights b;b.a=1.0f-v.s;b.b=v.s-v.m;b.c=v.m-v.w;b.d=v.w-v.h;b.e=v.h;return b;
+}
+__DEVICE__ float pg_blend(PGFour c,int zeroBlack,PGWeights w) {
+    float out=(zeroBlack==1?0.0f:w.a*c.s)+w.b*c.s+w.c*c.m+w.d*c.w+w.e*c.h;
+    float lo=_fminf(_fminf(c.s,c.m),_fminf(c.w,c.h));
+    float hi=_fmaxf(_fmaxf(c.s,c.m),_fmaxf(c.w,c.h));
+    if(zeroBlack==1) { lo=_fminf(lo,0.0f);hi=_fmaxf(hi,0.0f); }
+    // The convex combination already has these bounds analytically. Enforce
+    // them against final dot-product rounding, particularly at +/-45 degrees.
+    // This bounds a control coefficient, never image lightness or chroma.
+    return _fminf(hi,_fmaxf(lo,out));
+}
+__DEVICE__ float3 pg_pair(PGFamily f,PGWeights w) {
+    return make_float3(pg_blend(f.a,f.zeroBlack,w),pg_blend(f.b,f.zeroBlack,w),0.0f);
+}
+__DEVICE__ float pg_smoother(float r) {
+    if(r<=0.0f)return 0.0f;
+    if(r>=1.0f)return 1.0f;
+    return r*r*r*(10.0f+r*(-15.0f+6.0f*r));
+}
+__DEVICE__ PGFamily pg_family(PGFour a,PGFour b,PGKernel k,int zeroBlack) {
+    PGFamily f;f.a=a;f.b=b;f.curveKernel=k;f.zeroBlack=zeroBlack;return f;
+}
+__DEVICE__ PGResponseFamily pg_response_family(PGFour c,PGFour q,PGFour a,PGFour b,PGKernel k) {
+    PGResponseFamily f;f.c=c;f.q=q;f.a=a;f.b=b;f.curveKernel=k;return f;
+}
+__DEVICE__ PGFour pg_log_stops(PGFour p) {
+    return pg_four(p.s*.693147180560f,p.m*.693147180560f,p.w*.693147180560f,p.h*.693147180560f);
+}
+__DEVICE__ float pg_neutral_nits(float j,PGModel m) {
+    if(j<=0.0f)return 0.0f;
+    float response=m.view.aw*_powf(j,1.0f/.943019577159f)/3.05f;
+    return pg_unresponse(response,m.view)*m.effectiveRefNits;
+}
+__DEVICE__ PGCoefficients pg_response_coefficients(PGResponseFamily f,PGWeights w) {
+    PGCoefficients c;c.c=pg_blend(f.c,0,w);c.q=pg_blend(f.q,0,w);
+    c.a=pg_blend(f.a,0,w);c.b=pg_blend(f.b,0,w);return c;
+}
+__DEVICE__ float pg_contribution(PGCoefficients c,PGDrivers d) {
+    return c.c*d.c+c.q*d.q+c.a*d.a+c.b*d.b;
+}
+__DEVICE__ float pg_whole_nits(float x,float lo,float hi,float fallback) {
+    if(!pg_finite(x))return fallback;
+    return _floorf(_fminf(hi,_fmaxf(lo,x))+.5f);
+}
+__DEVICE__ float pg_remap(float j,PGModel m) {
+    if(m.remapActive==0)return j;
+    if(j<=m.black)return 0.0f;
+    float t=(j-m.black)/m.qHigh;
+    if(t==1.0f)return m.target.h;
+    PGFour v=pg_transitions(t,m.remap);
+    return m.tailSlope*t+m.residual.s*v.s+m.residual.m*v.m+m.residual.w*v.w+m.residual.h*v.h;
+}
+__DEVICE__ float pg_saturation_gain(float H,float JA,float C,float H2) {
+    // Positive root of JA^2*g^2 + 66*C*g = H2^2, with C2=g*C.
+    // Normalize before squaring; rationalize to avoid cancellation and C/JA.
+    if(H<=0.0f || H2<=0.0f)return 0.0f;
+    float r=H2/H,scale=_fmaxf(1.0f,r);
+    float x=(JA/H)*(r/scale),y=((33.0f*C/H)/H)/scale;
+    float hscale=_fmaxf(x,y);
+    if(hscale<=0.0f)return 0.0f;
+    float xn=x/hscale,yn=y/hscale;
+    float denominator=hscale*_sqrtf(xn*xn+yn*yn)+y;
+    return ((r/scale)/denominator)*r;
+}
+__DEVICE__ float pg_ja_squared(float3 q) {
+    float C=pg_hypot(q.y,q.z),chromatic=66.0f*C;
+    return _fmaf(q.x,q.x,-chromatic)-_fmaf(66.0f,C,-chromatic);
+}
+__DEVICE__ PGValue pg_stage2_appearance(float3 q,float JA,PGModel m) {
+    PGValue result=pg_value(q,1);result.ja=JA;
+    if(m.remapActive==0)return result;
+    if(q.x<=0.0f)return pg_value(pg_zero3(),1);
+    float j2=100.0f*pg_remap(q.x*.01f,m);
+    if(j2<=0.0f)return pg_value(pg_zero3(),1);
+    if(j2==q.x)return result;
+    float C=pg_hypot(q.y,q.z),gain=pg_saturation_gain(q.x,JA,C,j2);
+    result.v=make_float3(j2,q.y*gain,q.z*gain);result.ja=JA*gain;return result;
+}
+__DEVICE__ float3 pg_stage2(float3 q,PGModel m) {
+    if(m.remapActive==0)return q;
+    if(q.x<=0.0f || pg_remap(q.x*.01f,m)<=0.0f)return pg_zero3();
+    float jaSquared=pg_ja_squared(q);
+    // Undefined incoming saturation: retain the existing no-fit fallback.
+    if(jaSquared<0.0f)return q;
+    return pg_stage2_appearance(q,_sqrtf(jaSquared),m).v;
+}
+__DEVICE__ float pg_adaptance_weight(float H,float C,float strength) {
+    // Engineering adaptance envelope on modCAM16 H-K lightness H and true modCAM16 C.
+    // gamma=1, C0=30, p=2, rho=.25; H=100 at reference white, HDR unbounded.
+    float light=_fmaxf(0.0f,H)*.01f;
+    if(strength<=0.0f)return 0.0f;
+    if(strength>=1.0f)return light;
+    float c=C/30.0f,rate=.25f+.75f/(1.0f+c*c),ar=strength*rate;
+    return light*ar/(1.0f-strength+ar);
+}
+__DEVICE__ PGAdjustment pg_adjustments(float3 q,PGModel m) {
+    float t=pg_smoother(q.x/m.highJ);
+    PGWeights w=pg_weights(t,m.adaptance.curveKernel);
+    PGAdjustment a;a.adaptance=pg_pair(m.adaptance,w);
+    if(m.light.curveKernel.width!=m.adaptance.curveKernel.width)w=pg_weights(t,m.light.curveKernel);
+    a.light=pg_response_coefficients(m.light,w);
+    if(m.radius.curveKernel.width!=m.light.curveKernel.width)w=pg_weights(t,m.radius.curveKernel);
+    a.radius=pg_response_coefficients(m.radius,w);
+    if(m.hueCurve.width!=m.radius.curveKernel.width)w=pg_weights(t,m.hueCurve);
+    a.hue=pg_blend(m.hueHeights,0,w);
+    a.concentration=make_float3(pg_blend(m.concentrationAHeights,0,w),pg_blend(m.concentrationBHeights,0,w),0.0f);
+    a.adaptanceStrength=m.adaptanceStrength;
+    return a;
+}
+__DEVICE__ PGDrivers pg_drivers_ja(float3 q,float JA,PGAdjustment a) {
+    // p=2, s=75*C/JA, s0=35; carry JA to avoid H²-66C cancellation.
+    float C=pg_hypot(q.y,q.z),denom=pg_hypot(C,2.0f),fade=C/denom;fade*=fade;
+    float boundary=(35.0f/75.0f)*_fmaxf(JA,0.0f),scale=_fmaxf(C,boundary);
+    float cn=0.0f,sn=0.0f;if(scale>0.0f) {cn=C/scale;sn=boundary/scale;}
+    cn*=cn;sn*=sn;float sum=cn+sn;
+    PGDrivers d;d.c=sum>0.0f?fade*(cn/sum):0.0f;d.q=sum>0.0f?fade*(sn/sum):0.0f;
+    d.a=q.y/denom;d.b=q.z/denom;
+    d.adaptanceWeight=pg_adaptance_weight(q.x,C,a.adaptanceStrength);
+    return d;
+}
+__DEVICE__ PGDrivers pg_drivers(float3 q,PGAdjustment a) {
+    return pg_drivers_ja(q,_sqrtf(_fmaxf(0.0f,pg_ja_squared(q))),a);
+}
+__DEVICE__ float3 pg_attributes(PGAdjustment a,PGDrivers d,PGModel m) {
+    // Matrix rows: additive J_HK, radians, natural-log radius. No d_a/d_b -> hue.
+    float deltaJ=pg_contribution(a.light,d);
+    float theta=(a.hue+m.hueByChroma*d.c+m.hueByBend*d.q)*.0174532925199433f;
+    float sigma=m.radiusBase+pg_contribution(a.radius,d);
+    return make_float3(deltaJ,theta,sigma);
+}
+__DEVICE__ float3 pg_hue_concentration(float3 q,float3 v) {
+    if(v.x==0.0f && v.y==0.0f)return q;
+    float C=_sqrtf(q.y*q.y+q.z*q.z);
+    if(C==0.0f)return q;
+    float t=_sqrtf(v.x*v.x+v.y*v.y)/.6f;
+    float e=_expf(-2.0f*t),t2=t*t;
+    float scale=t<.001f ? 1.0f+t2*(-1.0f/3.0f+2.0f*t2/15.0f) : (1.0f-e)/((1.0f+e)*t);
+    float fade=C*C/(C*C+4.0f),p=v.x*scale*fade,r=v.y*scale*fade;
+    float co=q.y/C,si=q.z/C,dr=1.0f+p*co+r*si,di=p*si-r*co;
+    float nr=co+p,ni=si+r,den=dr*dr+di*di;
+    return make_float3(q.x,C*(nr*dr+ni*di)/den,C*(ni*dr-nr*di)/den);
+}
+__DEVICE__ float3 pg_stage3_ja(float3 q,float JA,PGModel m) {
+    if(m.tonalActive==0 || q.x==0.0f)return q;
+    PGAdjustment a=pg_adjustments(q,m);PGDrivers d=pg_drivers_ja(q,JA,a);
+    float3 v=pg_attributes(a,d,m);float gain=_expf(v.z),cs=_cosf(v.y),sn=_sinf(v.y);
+    float3 f=pg_hue_concentration(q,a.concentration);
+    return make_float3(q.x+v.x,
+        d.adaptanceWeight*a.adaptance.x+gain*(cs*f.y-sn*f.z),
+        d.adaptanceWeight*a.adaptance.y+gain*(sn*f.y+cs*f.z));
+}
+__DEVICE__ float3 pg_stage3(float3 q,PGModel m) {
+    return pg_stage3_ja(q,_sqrtf(_fmaxf(0.0f,pg_ja_squared(q))),m);
+}
+__DEVICE__ PGModel pg_model(float3 ws,float3 wd,float exposureStops,
+                          float lra,float lrs,float lre,float lba,float lbs,float lbe,
+                          float sourceBlack,PGFour sourceLevels,int toneFit,
+                          PGFour aAdaptance,PGFour bAdaptance,int adaptanceFit,float adaptanceStrength,
+                          PGFour lightC,PGFour lightQ,PGFour lightA,PGFour lightB,int lightnessFit,
+                          PGFour radiusC,PGFour radiusQ,PGFour radiusA,PGFour radiusB,int chromaFit,
+                          PGFour hueHeights,PGFour concentrationAHeights,PGFour concentrationBHeights,int hueFit,float radiusStops,float hueC,float hueQ,
+                          float refNits,float highNits) {
+    PGModel m;m.ws=ws;m.wd=wd;m.wc=pg_mv(pg_cat(),wd);m.adapt=pg_adaptation(ws,wd);
+    float3 cr=pg_anchor(wd,0,.30f),cb=pg_anchor(wd,2,.30f),z=pg_zero3();
+    PGMat delta=pg_mul(pg_cols(z,pg_target(cr,wd,lra,lrs,lre)-cr,pg_target(cb,wd,lba, lbs,lbe)-cb),pg_inv(pg_cols(m.wc,cr,cb)));
+    m.lin=pg_add(pg_id(),pg_mul(pg_mul(pg_icat(),delta),pg_cat()));
+    m.exposure=_exp2f(exposureStops);
+    m.linearActive=(ws.x!=wd.x || ws.y!=wd.y || ws.z!=wd.z || exposureStops!=0.0f || lra!=0.0f || lrs!=0.0f || lre!=0.0f || lba!=0.0f || lbs!=0.0f || lbe!=0.0f);
+    m.effectiveRefNits=pg_whole_nits(refNits,48.0f,1000.0f,203.0f);
+    m.effectivePeakNits=_fmaxf(pg_whole_nits(highNits,100.0f,10000.0f,1000.0f),2.0f*m.effectiveRefNits);
+    m.view=pg_viewing(m.effectiveRefNits);
+    m.highJ=pg_neutral_j(m.effectivePeakNits/m.effectiveRefNits,m.view);
+    m.target=pg_four(m.view.lowJ*.01f,m.view.pivotJ*.01f,1.0f,m.highJ*.01f);
+    // UI source landmarks are absolute NEUTRAL nits. Parameter guards do not
+    // change pixel XYZ. Convert first, then preserve the original J ordering.
+    float jb=pg_neutral_j(_fmaxf(0.0f,sourceBlack)/m.effectiveRefNits,m.view)*.01f;
+    PGFour sj=pg_four(pg_neutral_j(_fmaxf(0.0f,sourceLevels.s)/m.effectiveRefNits,m.view)*.01f,
+                      pg_neutral_j(_fmaxf(0.0f,sourceLevels.m)/m.effectiveRefNits,m.view)*.01f,
+                      pg_neutral_j(_fmaxf(0.0f,sourceLevels.w)/m.effectiveRefNits,m.view)*.01f,
+                      pg_neutral_j(_fmaxf(0.0f,sourceLevels.h)/m.effectiveRefNits,m.view)*.01f);
+    m.black=jb;
+    m.input.s=_fmaxf(sj.s,m.black+.001f);
+    m.input.m=_fmaxf(sj.m,m.input.s+.001f);
+    m.input.w=_fmaxf(sj.w,m.input.m+.001f);
+    m.input.h=_fmaxf(sj.h,m.input.w+.001f);
+    m.ordered=(sourceBlack<0.0f || m.input.s!=sj.s || m.input.m!=sj.m || m.input.w!=sj.w || m.input.h!=sj.h);
+    float eps=3.0e-7f;
+    m.remapActive=!(m.black==0.0f && _fabs(m.input.s-m.target.s)<eps && _fabs(m.input.m-m.target.m)<eps && _fabs(m.input.w-m.target.w)<eps && _fabs(m.input.h-m.target.h)<eps);
+    m.qHigh=m.input.h-m.black;
+    PGFour knots=pg_four((m.input.s-m.black)/m.qHigh,(m.input.m-m.black)/m.qHigh,(m.input.w-m.black)/m.qHigh,1.0f);
+    m.remap=pg_kernel(knots,(float)toneFit);
+    float s0=m.target.s/knots.s,s1=(m.target.m-m.target.s)/(knots.m-knots.s);
+    float s2=(m.target.w-m.target.m)/(knots.w-knots.m),s3=(m.target.h-m.target.w)/(1.0f-knots.w);
+    m.tailSlope=_fminf(_fminf(s0,s1),_fminf(s2,s3));
+    m.residual=pg_four(_fmaxf(0.0f,m.target.s-m.tailSlope*knots.s),
+                       _fmaxf(0.0f,m.target.m-m.target.s-m.tailSlope*(knots.m-knots.s)),
+                       _fmaxf(0.0f,m.target.w-m.target.m-m.tailSlope*(knots.w-knots.m)),
+                       _fmaxf(0.0f,m.target.h-m.target.w-m.tailSlope*(1.0f-knots.w)));
+    PGFour tz=pg_four(pg_smoother(m.view.lowJ/m.highJ),pg_smoother(m.view.pivotJ/m.highJ),pg_smoother(100.0f/m.highJ),1.0f);
+    PGKernel kb=pg_kernel(tz,(float)adaptanceFit);
+    PGKernel kl=lightnessFit==adaptanceFit?kb:pg_kernel(tz,(float)lightnessFit);
+    PGKernel kr=chromaFit==lightnessFit?kl:pg_kernel(tz,(float)chromaFit);
+    m.hueCurve=hueFit==chromaFit?kr:pg_kernel(tz,(float)hueFit);
+    m.adaptance=pg_family(aAdaptance,bAdaptance,kb,1);
+    m.light=pg_response_family(lightC,lightQ,lightA,lightB,kl);
+    m.radius=pg_response_family(pg_log_stops(radiusC),pg_log_stops(radiusQ),pg_log_stops(radiusA),pg_log_stops(radiusB),kr);
+    m.concentrationAHeights=concentrationAHeights;m.concentrationBHeights=concentrationBHeights;
+    m.hueHeights=hueHeights;m.radiusBase=radiusStops*.693147180560f;
+    m.hueByChroma=hueC;m.hueByBend=hueQ;m.adaptanceStrength=_fminf(1.0f,_fmaxf(0.0f,adaptanceStrength));
+    m.tonalActive=(pg_four_energy(aAdaptance)+pg_four_energy(bAdaptance)+pg_four_energy(lightC)+pg_four_energy(lightQ)+pg_four_energy(lightA)+pg_four_energy(lightB)+pg_four_energy(radiusC)+pg_four_energy(radiusQ)+pg_four_energy(radiusA)+pg_four_energy(radiusB)+pg_four_energy(hueHeights)+pg_four_energy(concentrationAHeights)+pg_four_energy(concentrationBHeights))>0.0f || radiusStops!=0.0f || hueC!=0.0f || hueQ!=0.0f;
+    m.active=m.remapActive || m.tonalActive;
+    return m;
+}
+// Fixed engineering constants, shared with the extension; no image fitting.
+#define PG_HK_KNEE 1.0f
+#define PG_HK_H_LIFT 0.20f
+#define PG_HK_ENERGY_POWER 0.25f
+__DEVICE__ float pg_chroma(float3 q) {
+    float m=_fmaxf(_fabs(q.y),_fabs(q.z));
+    if(m==0.0f)return 0.0f;
+    float a=q.y/m,b=q.z/m;return m*_sqrtf(a*a+b*b);
+}
+__DEVICE__ float pg_achromatic_square(float H,float C) {
+    float chromatic=66.0f*C;
+    return _fmaf(H,H,-chromatic)-_fmaf(66.0f,C,-chromatic);
+}
+__DEVICE__ float pg_hk_energy(float3 q,float3 reference) {
+    float C=pg_chroma(q),D=pg_achromatic_square(q.x,C);
+    if(!pg_finite3(q) || q.x<0.0f || !pg_finite(C))return D;
+    float E0=_fmaxf(0.0f,pg_achromatic_square(reference.x,pg_chroma(reference)));
+    float h2=q.x*q.x,lo=_fminf(E0,h2),hi=_fmaxf(E0,h2);
+    float delta=hi>0.0f?PG_HK_KNEE*lo/(1.0f+lo/hi):0.0f;
+    if(D>=delta)return D;
+    if(delta==0.0f)return 0.0f;
+    // E=delta/(1+4*t+10*t*t)^(1/4), evaluated in bounded v=1/(1+t).
+    float v=delta/(delta+_fmaxf(0.0f,delta-D));
+    float u=1.0f-v;
+    return delta*_sqrtf(v)/_sqrtf(_sqrtf(v*v+4.0f*v*u+10.0f*u*u));
+}
+__DEVICE__ float3 pg_project_energy(float3 q,float E) {
+    float C=pg_chroma(q),D=pg_achromatic_square(q.x,C);
+    if(!pg_finite3(q) || q.x<0.0f || !(E>D))return q;
+    float X=q.x*q.x,Z=_fmaxf(E-D,0.0f);
+    float cap=1.0f+PG_HK_H_LIFT,L=(cap*cap-1.0f)*X;
+    float m=_fmaxf(2.0f*L,Z),G=0.0f;
+    if(m>0.0f) {
+        float l=2.0f*L/m,z=Z/m;
+        G=L*z/_sqrtf(l*l+z*z);
+    }
+    float Cout=_fminf(C,_fmaxf(0.0f,(X+G-E)/66.0f)),gain=C>0.0f?Cout/C:1.0f;
+    q.x=_sqrtf(_fmaxf(0.0f,X+G));q.y*=gain;q.z*=gain;
+    return q;
+}
+__DEVICE__ float3 pg_project_reference(float3 q,float3 reference) {
+    return pg_project_energy(q,pg_hk_energy(q,reference));
+}
+__DEVICE__ float3 pg_project_hk(float3 q) {
+    return pg_project_reference(q,make_float3(q.x,0.0f,0.0f));
+}
+__DEVICE__ PGValue pg_decode_reference(float3 q,float3 reference,float3 wc,PGViewing view) {
+    // Carry J_A^2 into the inverse: recomputing H^2-66C loses it near the edge.
+    float E=pg_hk_energy(q,reference);
+    return pg_uncam_energy(pg_project_energy(q,E),E,wc,view);
+}
+__DEVICE__ PGValue pg_decode_target(float3 q,float3 wc,PGViewing view) {
+    return pg_decode_reference(q,make_float3(q.x,0.0f,0.0f),wc,view);
+}
+__DEVICE__ PGValue pg_core(float3 v,float3 n,PGModel m,int level) {
+    PGValue input=pg_cam_cones(n,m.view);if(input.valid==0)return pg_value(v,0);
+    PGValue tone=pg_stage2_appearance(input.v,input.ja,m);float3 q=tone.v;
+    float3 reference=q;
+    if(level==2)q=pg_stage3_ja(q,tone.ja,m);
+    if(q.x==input.v.x && q.y==input.v.y && q.z==input.v.z)return pg_value(v,1);
+    PGValue out=pg_decode_reference(q,reference,m.wc,m.view);
+    return out.valid?out:pg_value(v,0);
+}
+__DEVICE__ PGValue pg_nonlinear_eval(float3 v,PGModel m) {
+    // Status: 2 full grade, 1 stage-2-only fallback, 0 unchanged stage-1 XYZ.
+    if(m.active==0)return pg_value(v,2);
+    float3 n=pg_normalized_cones(v,m.wc);
+    float lift=_fmaxf(0.0f,-_fminf(n.x,_fminf(n.y,n.z)));
+    float3 offset=m.wd*lift,offsetCones=make_float3(lift,lift,lift),lifted=n+offsetCones;
+    if(lift>0.0f) {
+        if(_fabs(lifted.x)<=4.0e-7f*(_fabs(n.x)+lift))lifted.x=0.0f;
+        if(_fabs(lifted.y)<=4.0e-7f*(_fabs(n.y)+lift))lifted.y=0.0f;
+        if(_fabs(lifted.z)<=4.0e-7f*(_fabs(n.z)+lift))lifted.z=0.0f;
+    }
+    for(int level=2;level>=1;level--) {
+        PGValue a=pg_core(v+offset,lifted,m,level);
+        if(a.valid==0)continue;
+        if(lift==0.0f)return pg_value(a.v,level);
+        PGValue b=pg_core(offset,offsetCones,m,level);
+        if(b.valid==0)continue;
+        // White-offset extension G(v+dW)-G(dW)+G(0), where G(0)=0.
+        // Both terms always use the SAME fallback level.
+        float3 result=a.v-b.v;
+        if(pg_finite3(result))return pg_value(result,level);
+    }
+    return pg_value(v,0);
+}
+__DEVICE__ float3 pg_nonlinear(float3 v,PGModel m) { return pg_nonlinear_eval(v,m).v; }
+__DEVICE__ float3 pg_linear(float3 xyz,PGModel m) {
+    if(m.linearActive==0)return xyz;
+    float sc=_fmaxf(_fabs(xyz.x),_fmaxf(_fabs(xyz.y),_fabs(xyz.z)));
+    if(sc==0.0f)return xyz;
+    return pg_mv(m.lin,pg_mv(m.adapt,xyz/sc))*sc*m.exposure;
+}
+__DEVICE__ float3 pg_grade(float3 xyz,PGModel m) { return pg_nonlinear(pg_linear(xyz,m),m); }
+__DEVICE__ float3 pg_rgb_xyz(float3 v) {
+    return pg_mv(pg_mat(make_float3(.4123907993f,.3575843394f,.1804807884f),make_float3(.2126390059f,.7151686788f,.0721923154f),make_float3(.0193308187f,.1191947798f,.9505321522f)),v);
+}
+__DEVICE__ float3 pg_xyz_rgb(float3 v) {
+    return pg_mv(pg_mat(make_float3(3.2409699419f,-1.5373831776f,-.4986107603f),make_float3(-.9692436363f,1.8759675015f,.0415550574f),make_float3(.0556300797f,-.2039769589f,1.0569715142f)),v);
+}
+__DEVICE__ float pg_decode(float v) { if(v<=.04045f)return v/12.92f; return _powf((v+.055f)/1.055f,2.4f); }
+__DEVICE__ float pg_encode(float v) { if(v<=.0031308f)return 12.92f*v; return 1.055f*_powf(v,1.0f/2.4f)-.055f; }
+__DEVICE__ float3 pg_palette(float3 rgb,float3 wd) {
+    float3 lin=make_float3(pg_decode(rgb.x),pg_decode(rgb.y),pg_decode(rgb.z));
+    return pg_adapt(pg_rgb_xyz(lin),pg_white(0,0.0f,0.0f),wd);
+}
+// Derived from CIE 2019, DOI 10.25039/CIE.DS.xvudnb9b.
+#define PG_LOCUS_COUNT 66
+__DEVICE__ float3 pg_locus(int i) {
+    if(i==0)return make_float3(0.174112234f,0.004963726f,0.0f);
+    if(i==1)return make_float3(0.174007918f,0.004980549f,0.0f);
+    if(i==2)return make_float3(0.173800773f,0.004915412f,0.0f);
+    if(i==3)return make_float3(0.173559907f,0.004923203f,0.0f);
+    if(i==4)return make_float3(0.173336865f,0.004796743f,0.0f);
+    if(i==5)return make_float3(0.173020965f,0.004775050f,0.0f);
+    if(i==6)return make_float3(0.172576551f,0.004799302f,0.0f);
+    if(i==7)return make_float3(0.172086631f,0.004832524f,0.0f);
+    if(i==8)return make_float3(0.171407434f,0.005102171f,0.0f);
+    if(i==9)return make_float3(0.170300989f,0.005788505f,0.0f);
+    if(i==10)return make_float3(0.168877521f,0.006900244f,0.0f);
+    if(i==11)return make_float3(0.166895290f,0.008555606f,0.0f);
+    if(i==12)return make_float3(0.164411756f,0.010857558f,0.0f);
+    if(i==13)return make_float3(0.161104580f,0.013793359f,0.0f);
+    if(i==14)return make_float3(0.156640933f,0.017704805f,0.0f);
+    if(i==15)return make_float3(0.150985408f,0.022740193f,0.0f);
+    if(i==16)return make_float3(0.143960396f,0.029702970f,0.0f);
+    if(i==17)return make_float3(0.135502671f,0.039879121f,0.0f);
+    if(i==18)return make_float3(0.124118477f,0.057802513f,0.0f);
+    if(i==19)return make_float3(0.109594324f,0.086842511f,0.0f);
+    if(i==20)return make_float3(0.091293507f,0.132702042f,0.0f);
+    if(i==21)return make_float3(0.068705921f,0.200723218f,0.0f);
+    if(i==22)return make_float3(0.045390735f,0.294975965f,0.0f);
+    if(i==23)return make_float3(0.023459943f,0.412703479f,0.0f);
+    if(i==24)return make_float3(0.008168028f,0.538423071f,0.0f);
+    if(i==25)return make_float3(0.003858521f,0.654823151f,0.0f);
+    if(i==26)return make_float3(0.013870246f,0.750186428f,0.0f);
+    if(i==27)return make_float3(0.038851802f,0.812016021f,0.0f);
+    if(i==28)return make_float3(0.074302425f,0.833803091f,0.0f);
+    if(i==29)return make_float3(0.114160720f,0.826206960f,0.0f);
+    if(i==30)return make_float3(0.154722061f,0.805863545f,0.0f);
+    if(i==31)return make_float3(0.192876098f,0.781629216f,0.0f);
+    if(i==32)return make_float3(0.229619673f,0.754329090f,0.0f);
+    if(i==33)return make_float3(0.265775085f,0.724323925f,0.0f);
+    if(i==34)return make_float3(0.301603799f,0.692307762f,0.0f);
+    if(i==35)return make_float3(0.337363333f,0.658848290f,0.0f);
+    if(i==36)return make_float3(0.373101544f,0.624450860f,0.0f);
+    if(i==37)return make_float3(0.408736256f,0.589606869f,0.0f);
+    if(i==38)return make_float3(0.444062464f,0.554713903f,0.0f);
+    if(i==39)return make_float3(0.478774791f,0.520202307f,0.0f);
+    if(i==40)return make_float3(0.512486367f,0.486590788f,0.0f);
+    if(i==41)return make_float3(0.544786506f,0.454434115f,0.0f);
+    if(i==42)return make_float3(0.575151311f,0.424232235f,0.0f);
+    if(i==43)return make_float3(0.602932786f,0.396496634f,0.0f);
+    if(i==44)return make_float3(0.627036600f,0.372491145f,0.0f);
+    if(i==45)return make_float3(0.648233106f,0.351394916f,0.0f);
+    if(i==46)return make_float3(0.665763576f,0.334010651f,0.0f);
+    if(i==47)return make_float3(0.680078850f,0.319747217f,0.0f);
+    if(i==48)return make_float3(0.691503973f,0.308342261f,0.0f);
+    if(i==49)return make_float3(0.700606061f,0.299300699f,0.0f);
+    if(i==50)return make_float3(0.707917792f,0.292027109f,0.0f);
+    if(i==51)return make_float3(0.714031597f,0.285928874f,0.0f);
+    if(i==52)return make_float3(0.719032942f,0.280934952f,0.0f);
+    if(i==53)return make_float3(0.723031603f,0.276948358f,0.0f);
+    if(i==54)return make_float3(0.725992318f,0.274007682f,0.0f);
+    if(i==55)return make_float3(0.728271728f,0.271728272f,0.0f);
+    if(i==56)return make_float3(0.729969013f,0.270030987f,0.0f);
+    if(i==57)return make_float3(0.731089396f,0.268910604f,0.0f);
+    if(i==58)return make_float3(0.731993300f,0.268006700f,0.0f);
+    if(i==59)return make_float3(0.732718894f,0.267281106f,0.0f);
+    if(i==60)return make_float3(0.733416967f,0.266583033f,0.0f);
+    if(i==61)return make_float3(0.734047300f,0.265952700f,0.0f);
+    if(i==62)return make_float3(0.734390165f,0.265609835f,0.0f);
+    if(i==63)return make_float3(0.734591662f,0.265408338f,0.0f);
+    if(i==64)return make_float3(0.734690023f,0.265309977f,0.0f);
+    if(i==65)return make_float3(0.734689984f,0.265310016f,0.0f);
+    return make_float3(0.0f,0.0f,0.0f);
+}
+__DEVICE__ int pg_glyph(int ch) {
+    if(ch==48)return 31599;
+    if(ch==49)return 11415;
+    if(ch==50)return 29671;
+    if(ch==51)return 29647;
+    if(ch==52)return 23497;
+    if(ch==53)return 31183;
+    if(ch==54)return 31215;
+    if(ch==55)return 29330;
+    if(ch==56)return 31727;
+    if(ch==57)return 31695;
+    if(ch==46)return 2;
+    if(ch==65)return 11245;
+    if(ch==66)return 27566;
+    if(ch==67)return 31015;
+    if(ch==68)return 27502;
+    if(ch==69)return 31143;
+    if(ch==70)return 31140;
+    if(ch==71)return 31087;
+    if(ch==72)return 23533;
+    if(ch==73)return 29847;
+    if(ch==74)return 4719;
+    if(ch==75)return 23469;
+    if(ch==76)return 18727;
+    if(ch==77)return 24557;
+    if(ch==78)return 24573;
+    if(ch==79)return 31599;
+    if(ch==80)return 31716;
+    if(ch==81)return 31609;
+    if(ch==82)return 27565;
+    if(ch==83)return 31183;
+    if(ch==84)return 29842;
+    if(ch==85)return 23407;
+    if(ch==86)return 23402;
+    if(ch==87)return 23549;
+    if(ch==88)return 23213;
+    if(ch==89)return 23186;
+    if(ch==90)return 29351;
+    return 0;
+}
+__DEVICE__ int pg_label(int label,int i) {
+    if(label==0) {
+        if(i==0)return 67;
+        if(i==1)return 73;
+        if(i==2)return 69;
+        if(i==3)return 32;
+        if(i==4)return 49;
+        if(i==5)return 57;
+        if(i==6)return 51;
+        if(i==7)return 49;
+        if(i==8)return 32;
+        if(i==9)return 88;
+        if(i==10)return 89;
+    }
+    if(label==1) {
+        if(i==0)return 82;
+        if(i==1)return 69;
+        if(i==2)return 70;
+    }
+    if(label==2) {
+        if(i==0)return 84;
+        if(i==1)return 82;
+        if(i==2)return 65;
+        if(i==3)return 78;
+        if(i==4)return 83;
+        if(i==5)return 70;
+        if(i==6)return 79;
+        if(i==7)return 82;
+        if(i==8)return 77;
+    }
+    if(label==3) {
+        if(i==0)return 83;
+        if(i==1)return 79;
+        if(i==2)return 85;
+        if(i==3)return 82;
+        if(i==4)return 67;
+        if(i==5)return 69;
+    }
+    if(label==4) {
+        if(i==0)return 84;
+        if(i==1)return 65;
+        if(i==2)return 82;
+        if(i==3)return 71;
+        if(i==4)return 69;
+        if(i==5)return 84;
+    }
+    return 0;
+}
+// Diagram coordinates are a square 1000-unit panel, upper-left origin.
+// pg_locus and pg_glyph are generated from the attributed CMF data / bitmap font.
+__DEVICE__ float pg_sat(float v) { return _fminf(1.0f,_fmaxf(0.0f,v)); }
+__DEVICE__ float pg_len(float3 v) { return _sqrtf(pg_dot(v,v)); }
+__DEVICE__ float pg_segment(float3 p,float3 a,float3 b) {
+    float3 d=b-a; float t=pg_sat(pg_dot(p-a,d)/_fmaxf(pg_dot(d,d),.00001f));
+    return pg_len(p-a-d*t);
+}
+__DEVICE__ float3 pg_plot(float3 xy) { return make_float3(92.0f+xy.x*920.0f,890.0f-xy.y*920.0f,0.0f); }
+__DEVICE__ float pg_stroke(float d,float width,float aa) { return pg_sat((width+aa-d)/(2.0f*aa)); }
+__DEVICE__ float pg_letter(float3 p,float x,float y,float scale,int ch) {
+    int col=(int)(_floorf((p.x-x)/scale)), row=(int)(_floorf((p.y-y)/scale));
+    if(col<0 || col>2 || row<0 || row>4) return 0.0f;
+    int bits=pg_glyph(ch); return (float)((bits>>(14-row*3-col))&1);
+}
+__DEVICE__ float pg_tick(float3 p,float x,float y,int n) {
+    return _fmaxf(pg_letter(p,x,y,3.7f,48),_fmaxf(pg_letter(p,x+15.0f,y,3.7f,46),pg_letter(p,x+27.0f,y,3.7f,48+n)));
+}
+__DEVICE__ float pg_word(float3 p,float x,float y,int label) {
+    float v=0.0f;
+    for(int i=0;i<15;i++) { int ch=pg_label(label,i); if(ch>0) v=_fmaxf(v,pg_letter(p,x+(float)(i)*17.0f,y,4.0f,ch)); }
+    return v;
+}
+__DEVICE__ float3 pg_ink(float3 base,float3 ink,float alpha) { return base*(1.0f-alpha)+ink*alpha; }
+__DEVICE__ float3 pg_edge_xy(PGModel m,int tri,int edge,float t,float Y) {
+    float3 a=pg_xy(pg_primary(tri,edge));
+    float3 b=pg_xy(pg_primary(tri,(edge+1)%3));
+    float3 xy=a+(b-a)*t;
+    return pg_xy(pg_grade(pg_xyz(xy.x,xy.y,Y),m));
+}
+__DEVICE__ float3 pg_diagram(float3 p,float pixels,PGModel m,int tri,float Y) {
+    float aa=1000.0f/_fmaxf(pixels,64.0f)*.65f;
+    float3 bg=make_float3(.058f,.071f,.085f), grid=make_float3(.14f,.17f,.195f);
+    float3 muted=make_float3(.47f,.53f,.57f), ref=make_float3(.66f,.70f,.74f);
+    float3 trace=make_float3(.38f,.94f,.77f), src=make_float3(1.0f,.72f,.35f), dst=make_float3(.96f,.97f,.99f);
+    float3 color=bg;
+    int inside=(p.x>=92.0f && p.x<=920.0f && p.y>=62.0f && p.y<=890.0f)?1:0;
+    if(inside==1) {
+        float gx=(p.x-92.0f)/92.0f, gy=(890.0f-p.y)/92.0f;
+        float gd=_fminf(_fabs(gx-_floorf(gx+.5f)),_fabs(gy-_floorf(gy+.5f)))*92.0f;
+        color=pg_ink(color,grid,pg_stroke(gd,.6f,aa));
+        float locus=1e6f; int crossings=0;
+        for(int i=0;i<PG_LOCUS_COUNT;i++) {
+            float3 a=pg_plot(pg_locus(i)), b=pg_plot(pg_locus((i+1)%PG_LOCUS_COUNT));
+            locus=_fminf(locus,pg_segment(p,a,b));
+            if((a.y>p.y)!=(b.y>p.y)) { if(p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x) crossings++; }
+        }
+        if((crossings%2)==1) color=color+make_float3(.019f,.024f,.027f);
+        color=pg_ink(color,muted,pg_stroke(locus,1.15f,aa));
+        float dr=1e6f, dt=1e6f;
+        for(int e=0;e<3;e++) {
+            float3 a=pg_plot(pg_xy(pg_primary(tri,e))), b=pg_plot(pg_xy(pg_primary(tri,(e+1)%3)));
+            float3 ab=b-a;
+            float pos=pg_dot(p-a,ab)/_fmaxf(pg_len(ab),.00001f);
+            if((int)(_floorf(pos/9.0f))%2==0) dr=_fminf(dr,pg_segment(p,a,b));
+            int steps=m.active==1?48:1;
+            float3 prev=pg_plot(pg_edge_xy(m,tri,e,0.0f,Y));
+            for(int j=1;j<=steps;j++) {
+                float3 next=pg_plot(pg_edge_xy(m,tri,e,(float)(j)/(float)(steps),Y));
+                // Skip segments crossing the projective horizon or wildly off chart.
+                if(pg_len(next-prev)<600.0f) dt=_fminf(dt,pg_segment(p,prev,next));
+                prev=next;
+            }
+        }
+        color=pg_ink(color,ref,pg_stroke(dr,1.3f,aa));
+        color=pg_ink(color,trace,pg_stroke(dt,1.6f,aa));
+        // Source = amber ring; destination = white cross. Both remain readable if equal.
+        float3 sp=pg_plot(pg_xy(m.ws)), dp=pg_plot(pg_xy(m.wd));
+        float ds=_fabs(pg_len(p-sp)-8.0f);
+        float dd=_fminf(pg_segment(p,dp+make_float3(-4.0f,0.0f,0.0f),dp+make_float3(4.0f,0.0f,0.0f)),pg_segment(p,dp+make_float3(0.0f,-4.0f,0.0f),dp+make_float3(0.0f,4.0f,0.0f)));
+        color=pg_ink(color,src,pg_stroke(ds,1.6f,aa)); color=pg_ink(color,dst,pg_stroke(dd,1.5f,aa));
+        // Graded source-white ray at Y=1 (W) and Y=.18 (G).
+        for(int k=0;k<2;k++) {
+            float level=k==0?1.0f:.18f;
+            float3 last=pg_plot(pg_xy(pg_grade(m.ws*level,m)));
+            float3 tint=k==0?make_float3(.82f,.65f,1.0f):make_float3(.46f,.76f,1.0f);
+            color=pg_ink(color,tint,pg_stroke(pg_segment(p,dp,last),.7f,aa));
+            color=pg_ink(color,tint,pg_stroke(_fabs(pg_len(p-last)-(k==0?5.0f:3.0f)),.9f,aa));
+            color=pg_ink(color,tint,pg_letter(p,last.x+10.0f,last.y+(k==0?-20.0f:5.0f),3.0f,k==0?87:71));
+        }
+    }
+    float ax=_fminf(pg_segment(p,make_float3(92.0f,62.0f,0.0f),make_float3(92.0f,890.0f,0.0f)),pg_segment(p,make_float3(92.0f,890.0f,0.0f),make_float3(920.0f,890.0f,0.0f)));
+    color=pg_ink(color,muted,pg_stroke(ax,1.0f,aa));
+    float numbers=0.0f;
+    for(int n=0;n<=9;n++) {
+        float x=92.0f+(float)(n)*92.0f, y=890.0f-(float)(n)*92.0f;
+        numbers=_fmaxf(numbers,pg_tick(p,x-18.0f,902.0f,n));
+        numbers=_fmaxf(numbers,pg_tick(p,38.0f,y-8.0f,n));
+        float tick=_fminf(pg_segment(p,make_float3(x,890.0f,0.0f),make_float3(x,897.0f,0.0f)),pg_segment(p,make_float3(85.0f,y,0.0f),make_float3(92.0f,y,0.0f)));
+        color=pg_ink(color,muted,pg_stroke(tick,.7f,aa));
+    }
+    numbers=_fmaxf(numbers,pg_letter(p,940.0f,882.0f,5.0f,88));
+    numbers=_fmaxf(numbers,pg_letter(p,85.0f,26.0f,5.0f,89));
+    color=pg_ink(color,ref,numbers);
+    color=pg_ink(color,muted,pg_word(p,153.0f,23.0f,0));
+    // Input triangle luminance, printed to two decimal places.
+    int lum=(int)(_floorf(Y*100.0f+.5f));
+    float caption=pg_letter(p,640.0f,23.0f,4.0f,89);
+    if(lum>=10000)caption=_fmaxf(caption,pg_letter(p,675.0f,23.0f,4.0f,48+(lum/10000)%10));
+    if(lum>=1000)caption=_fmaxf(caption,pg_letter(p,692.0f,23.0f,4.0f,48+(lum/1000)%10));
+    caption=_fmaxf(caption,pg_letter(p,709.0f,23.0f,4.0f,48+(lum/100)%10));
+    caption=_fmaxf(caption,pg_letter(p,726.0f,23.0f,4.0f,46));
+    caption=_fmaxf(caption,pg_letter(p,743.0f,23.0f,4.0f,48+(lum/10)%10));
+    caption=_fmaxf(caption,pg_letter(p,760.0f,23.0f,4.0f,48+lum%10));
+    color=pg_ink(color,muted,caption);
+    color=pg_ink(color,ref,pg_word(p,70.0f,958.0f,1));
+    color=pg_ink(color,trace,pg_word(p,280.0f,958.0f,2));
+    color=pg_ink(color,src,pg_word(p,570.0f,958.0f,3));
+    color=pg_ink(color,dst,pg_word(p,775.0f,958.0f,4));
+    // Effective source NEUTRAL NITS: B/S/M/W/H. Amber means ordering repair.
+    float levels[5]={m.black,m.input.s,m.input.m,m.input.w,m.input.h};
+    int names[5]={66,83,77,87,72};
+    float diagnostic=0.0f;
+    for(int i=0;i<5;i++) {
+        float x=78.0f+175.0f*(float)(i);
+        int n=(int)(_floorf(pg_neutral_nits(levels[i],m)*100.0f+.5f));
+        diagnostic=_fmaxf(diagnostic,pg_letter(p,x,934.0f,2.6f,names[i]));
+        int divisor=1000000,started=0,col=0;
+        for(int digit=6;digit>=0;digit--) {
+            int value=(n/divisor)%10;
+            if(value!=0 || digit<=2)started=1;
+            if(started)diagnostic=_fmaxf(diagnostic,pg_letter(p,x+17.0f+11.0f*(float)(col),934.0f,2.6f,48+value));
+            col++;
+            if(digit==2) {
+                diagnostic=_fmaxf(diagnostic,pg_letter(p,x+17.0f+11.0f*(float)(col),934.0f,2.6f,46));
+                col++;
+            }
+            divisor/=10;
+        }
+    }
+    int units[4]={78,73,84,83};
+    for(int i=0;i<4;i++)diagnostic=_fmaxf(diagnostic,pg_letter(p,926.0f+11.0f*(float)(i),934.0f,2.6f,units[i]));
+    color=pg_ink(color,m.ordered?src:muted,diagnostic);
+    return pg_palette(color,m.wd);
+}
+__DEVICE__ float3 pg_overlay(float3 xyz,int width,int height,int px,int py,int mode,PGModel m,int tri,float Y) {
+    if(mode==0) return xyz;
+    float size=_fminf((float)(width),(float)(height));
+    float left=((float)(width)-size)*.5f, top=((float)(height)-size)*.5f;
+    if(mode==1) { size=size*.46f; float margin=_fminf((float)(width),(float)(height))*.02f; left=(float)(width)-size-margin; top=(float)(height)-size-margin; }
+    float3 p=make_float3(((float)(px)+.5f-left)/size*1000.0f,((float)(py)+.5f-top)/size*1000.0f,0.0f);
+    if(p.x<0.0f || p.x>=1000.0f || p.y<0.0f || p.y>=1000.0f) {
+        if(mode==2)return pg_palette(make_float3(.058f,.071f,.085f),m.wd);
+        return xyz;
+    }
+    return pg_diagram(p,size,m,tri,Y);
+}
+
+__DEVICE__ float3 transform(int p_Width,int p_Height,int p_X,int p_Y,float p_R,float p_G,float p_B) {
+    // Resolve UI globals are referenced only here, never by helper functions.
+    PGModel m=pg_model(pg_white(srcWhite,srcX,srcY),pg_white(dstWhite,0.0f,0.0f),globalExposure,
+        la,ls,-le,ba,bs,-be,inputBlack,pg_four(inputShadows,inputMidtones,inputWhite,inputHighlights),remapFit,
+        pg_four(toneSAdaptanceA,toneMAdaptanceA,toneWAdaptanceA,toneHAdaptanceA),pg_four(toneSAdaptanceB,toneMAdaptanceB,toneWAdaptanceB,toneHAdaptanceB),adaptanceFit,adaptanceStrength,
+        pg_four(toneSHighToJ,toneMHighToJ,toneWHighToJ,toneHHighToJ),pg_four(toneSLowToJ,toneMLowToJ,toneWLowToJ,toneHLowToJ),pg_four(toneSaToJ,toneMaToJ,toneWaToJ,toneHaToJ),pg_four(toneSbToJ,toneMbToJ,toneWbToJ,toneHbToJ),lightnessFit,
+        pg_four(toneSHighToC,toneMHighToC,toneWHighToC,toneHHighToC),pg_four(toneSLowToC,toneMLowToC,toneWLowToC,toneHLowToC),pg_four(toneSaToC,toneMaToC,toneWaToC,toneHaToC),pg_four(toneSbToC,toneMbToC,toneWbToC,toneHbToC),chromaFit,
+        pg_four(toneSHue,toneMHue,toneWHue,toneHHue),pg_four(toneSConcentrationA,toneMConcentrationA,toneWConcentrationA,toneHConcentrationA),pg_four(toneSConcentrationB,toneMConcentrationB,toneWConcentrationB,toneHConcentrationB),hueFit,globalChromaGain,globalHighChromaHue,globalLowChromaHue,referenceNits,pg_selected_peak(peakNits,referenceNits));
+    float3 result=pg_grade(make_float3(p_R,p_G,p_B),m);
+    float3 output=pg_overlay(result,p_Width,p_Height,p_X,p_Y,overlayMode,m,refTriangle,1.0f);
+    return output;
+}

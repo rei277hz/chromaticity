@@ -1,0 +1,3 @@
+# The build script only compiles windows.c on Windows. None of the configured
+# Linux, Darwin, or Wasm platforms needs that native library or any script cfgs.
+buildscript.run = false

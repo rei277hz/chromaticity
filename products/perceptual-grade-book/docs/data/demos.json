@@ -1,0 +1,212 @@
+{
+  "schema": 1,
+  "input": {
+    "primaries": "Rec.709",
+    "transfer": "Rec.709-A",
+    "power_exponent": 1.961,
+    "content": "Square screen recordings of image plus the Perceptual Grade extension gizmo in Blender"
+  },
+  "output": {
+    "panel_size": 640,
+    "fps": 20,
+    "end_hold_ms": 700,
+    "loop": 0
+  },
+  "demos": [
+    {
+      "name": "linear-white-balance",
+      "sequence": 1,
+      "starts_from": "original source",
+      "sdr": {
+        "file": "linear-white-balance/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Neutralize the SDR image by dragging the vectorscope, reset Source White, then repeat by dragging the source-white point."
+      },
+      "hdr": {
+        "file": "linear-white-balance/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Neutralize the HDR image by dragging the vectorscope, reset Source White, then repeat by dragging the source-white point."
+      }
+    },
+    {
+      "name": "linear-correction",
+      "sequence": 2,
+      "starts_from": "linear-white-balance",
+      "sdr": {
+        "file": "linear-correction/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Balance opposite color brightness, widen muted color relationships and refine hue with both Spread and Heading controls."
+      },
+      "hdr": {
+        "file": "linear-correction/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Balance a different pair of color brightness relationships, restrain stronger color and refine hue with both Spread and Heading controls."
+      }
+    },
+    {
+      "name": "colorchecker-match",
+      "sequence": 3,
+      "starts_from": "linear-correction",
+      "sdr": {
+        "file": "colorchecker-match/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Align a photographed chart with the EXR reference."
+      },
+      "hdr": {
+        "file": "colorchecker-match/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Align a photographed chart with the EXR reference."
+      }
+    },
+    {
+      "name": "tone-curve",
+      "sequence": 4,
+      "starts_from": "colorchecker-match",
+      "sdr": {
+        "file": "tone-curve/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Raise contrast with an S curve."
+      },
+      "hdr": {
+        "file": "tone-curve/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Open darker regions with a gamma-like curve."
+      }
+    },
+    {
+      "name": "color-j",
+      "sequence": 5,
+      "starts_from": "tone-curve",
+      "sdr": {
+        "file": "color-j/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Adjust Shadows and White with the J curve."
+      },
+      "hdr": {
+        "file": "color-j/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Adjust Midtones and Highlights with the J curve."
+      }
+    },
+    {
+      "name": "color-jc-curves",
+      "sequence": 6,
+      "starts_from": "color-j",
+      "sdr": {
+        "file": "color-jc-curves/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Combine J and C curves in Midtones."
+      },
+      "hdr": {
+        "file": "color-jc-curves/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Combine J and C curves in Midtones."
+      }
+    },
+    {
+      "name": "color-jc-pads",
+      "sequence": 7,
+      "starts_from": "color-jc-curves",
+      "sdr": {
+        "file": "color-jc-pads/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Combine J and C a/b pads in Midtones."
+      },
+      "hdr": {
+        "file": "color-jc-pads/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Combine J and C a/b pads in Midtones."
+      }
+    },
+    {
+      "name": "color-adaptance",
+      "sequence": 8,
+      "starts_from": "color-jc-pads",
+      "sdr": {
+        "file": "color-adaptance/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Refine Shadows and White with Adaptance."
+      },
+      "hdr": {
+        "file": "color-adaptance/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Refine Midtones and Highlights with Adaptance."
+      }
+    },
+    {
+      "name": "color-hue-pad",
+      "sequence": 9,
+      "starts_from": "color-adaptance",
+      "sdr": {
+        "file": "color-hue-pad/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Concentrate hues in Shadows and White."
+      },
+      "hdr": {
+        "file": "color-hue-pad/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Concentrate hues in Midtones and Highlights."
+      }
+    },
+    {
+      "name": "color-hue-rotation",
+      "sequence": 10,
+      "starts_from": "color-hue-pad",
+      "sdr": {
+        "file": "color-hue-rotation/sdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Rotate hues in Shadows and White."
+      },
+      "hdr": {
+        "file": "color-hue-rotation/hdr.mov",
+        "start": 0,
+        "end": null,
+        "range": "auto",
+        "goal": "Rotate hues in Midtones and Highlights."
+      }
+    }
+  ],
+  "bundled_dummy": {
+    "source_name": "Screen Recording 2026-10-04 at 12.34.22.mov",
+    "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+    "notice": "This supplied screen recording is copied to every SDR/HDR slot as a replaceable dummy; it is not a grading demonstration."
+  }
+}

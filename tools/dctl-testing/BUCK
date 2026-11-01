@@ -1,0 +1,21 @@
+python_library(
+    name = "parser",
+    srcs = {
+        "__init__.py": "src/dctl_testing/__init__.py",
+        "parser.py": "src/dctl_testing/parser.py",
+    },
+    base_module = "dctl_testing",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "float3_shim",
+    src = "src/float3.h",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)

@@ -1,0 +1,108 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool")
+load("//build_defs:test_tools.bzl", "compilers")
+
+python_library(
+    name = "dctl_parser",
+    srcs = {"dctl.py": "support/dctl.py"},
+    base_module = "tests.support",
+    visibility = ["PUBLIC"],
+    deps = ["//tools/dctl-testing:parser"],
+)
+
+python_tool(
+    name = "host_generator",
+    srcs = {"tests/support/generate_host.py": "support/generate_host.py"},
+    main_module = "tests.support.generate_host",
+    deps = [":dctl_parser"],
+)
+
+generate(
+    name = "host_source",
+    args = [
+        "--dctl",
+        "$(location //products/perceptual-grade-dctl:dctl[en])",
+    ],
+    outputs = {
+        "cpp": "host.cpp",
+        "kernel": "kernel.h",
+    },
+    tool = ":host_generator",
+)
+
+cxx_binary(
+    name = "oracle",
+    srcs = [":host_source[cpp]"],
+    _cxx_toolchain = "toolchains//:clang",
+    compiler_flags = [
+        "-std=c++17",
+        "-ffp-contract=off",
+    ],
+    header_namespace = "",
+    headers = {
+        "kernel.h": ":host_source[kernel]",
+        "float3.h": "//tools/dctl-testing:float3_shim",
+    },
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "dctl_reference",
+    srcs = {
+        "dctl_reference.py": "support/dctl_reference.py",
+        "dctl_controls.py": "support/dctl_controls.py",
+    },
+    base_module = "tests.support",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//libraries/color-core:runtime",
+        "//libraries/perceptual-grade-core:runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+    ],
+)
+
+python_library(
+    name = "support",
+    srcs = {"oracle.py": "support/oracle.py"},
+    base_module = "tests.support",
+    resources = {
+        "oracle": ":oracle",
+        "Perceptual-Grade.dctl": "//products/perceptual-grade-dctl:dctl[en]",
+        "Perceptual-Grade-zh-HANS.dctl": "//products/perceptual-grade-dctl:dctl[zh_HANS]",
+    },
+    visibility = ["PUBLIC"],
+    deps = [
+        ":dctl_parser",
+        ":dctl_reference",
+        "//libraries/perceptual-grade-core/tests:common_support",
+    ],
+)
+
+compilers(
+    name = "compilers",
+    toolchain = "toolchains//:clang",
+)
+
+python_test(
+    name = "interface",
+    srcs = ["test_interface.py"],
+    base_module = "tests.dctl",
+    deps = [":support"],
+)
+
+python_test(
+    name = "numerical",
+    srcs = ["test_numerical.py"],
+    base_module = "tests.dctl",
+    deps = [":support"],
+)
+
+python_test(
+    name = "portability",
+    srcs = ["test_portability.py"],
+    base_module = "tests.dctl",
+    resources = {
+        "float3.h": "//tools/dctl-testing:float3_shim",
+        "compilers.json": ":compilers",
+    },
+    deps = [":support"],
+)

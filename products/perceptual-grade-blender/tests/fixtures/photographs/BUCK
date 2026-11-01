@@ -1,0 +1,9 @@
+python_library(
+    name = "data",
+    base_module = "perceptual_grade_photographs",
+    resources = glob([
+        "*.npy",
+        "manifest.json",
+    ]),
+    visibility = ["PUBLIC"],
+)

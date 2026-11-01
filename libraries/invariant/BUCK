@@ -1,0 +1,118 @@
+load("//build_defs:artifacts.bzl", "source_tree", "verification_group")
+load("//build_defs:invariant.bzl", "invariant_proof")
+load("//build_defs:python_packages.bzl", "component_library")
+
+PREFIX = "src/invariant/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+CONTRACTS = {
+    "verification/__init__.py": "verification/__init__.py",
+    "verification/runtime_contracts.py": "verification/runtime_contracts.py",
+}
+
+component_library(
+    name = "runtime",
+    srcs = SOURCES | CONTRACTS | {"_lifecycle_contracts.py": ":lifecycle_proof[validators]"},
+    package = "invariant",
+)
+
+python_library(
+    name = "contracts",
+    srcs = {
+        "__init__.py": "verification/__init__.py",
+        "runtime_contracts.py": "verification/runtime_contracts.py",
+    },
+    base_module = "color_tools.invariant.verification",
+    visibility = ["PUBLIC"],
+)
+
+VERIFIER = {path[len("verification/"):]: path for path in glob(["verification/*.py"])}
+
+python_library(
+    name = "verification",
+    srcs = {name: path for name, path in VERIFIER.items() if name not in [
+        "__init__.py",
+        "runtime_contracts.py",
+    ]},
+    base_module = "color_tools.invariant.verification",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":contracts",
+        "//third_party:z3-solver",
+    ],
+)
+
+python_binary(
+    name = "verifier",
+    main_module = "color_tools.invariant.verification.cli",
+    visibility = ["PUBLIC"],
+    deps = [":verification"],
+)
+
+source_tree(
+    name = "verifier_sources",
+    srcs = VERIFIER,
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES | CONTRACTS,
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "lifecycle_proof",
+    required_mutations = [
+        "early_reclaim",
+        "admit_busy_worker",
+        "drop_generation_fence",
+    ],
+    required_properties = [
+        "cancellation_retains_occupancy",
+        "terminal_is_not_quiescence",
+        "reclaim_waits_for_terminal",
+        "no_double_start",
+        "stale_event_ignored",
+        "closed_is_absorbing",
+    ],
+    required_witnesses = ["admit_initial_worker"],
+    requirements = "requirements/lifecycle.inv",
+    runtime_contracts = "invariant/_lifecycle_contracts.py",
+    runtime_source = "invariant/lifecycle.py",
+    source = "src/invariant/lifecycle.py",
+    visibility = ["PUBLIC"],
+)
+
+verification_group(
+    name = "verify",
+    visibility = ["PUBLIC"],
+    deps = [":lifecycle_proof"],
+)
+
+# Upstream tests retain the public import name; products use their private copy.
+python_library(
+    name = "test_runtime",
+    srcs = SOURCES | {"_lifecycle_contracts.py": ":lifecycle_proof[validators]"},
+    base_module = "invariant",
+    deps = [":test_verification"],
+)
+
+python_library(
+    name = "test_verification",
+    srcs = VERIFIER,
+    base_module = "invariant.verification",
+    deps = ["//third_party:z3-solver"],
+)
+
+python_test(
+    name = "tests",
+    srcs = glob(["tests/test_*.py"]),
+    base_module = "invariant_tests",
+    resources = {
+        "lifecycle.py": "src/invariant/lifecycle.py",
+        "lifecycle.inv": "requirements/lifecycle.inv",
+    },
+    deps = [":test_runtime"],
+)

@@ -1,0 +1,52 @@
+load(":dependencies.bzl", "NPM", "TOOLS")
+
+export_file(
+    name = "manifest",
+    src = "dependencies.json",
+    visibility = ["PUBLIC"],
+)
+
+[http_file(
+    name = spec["target"],
+    out = spec["filename"],
+    sha256 = spec["sha256"],
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    urls = [spec["url"]],
+    visibility = ["PUBLIC"],
+) for spec in TOOLS.values()]
+
+[http_file(
+    name = spec["target"],
+    out = spec["target"] + ".tgz",
+    sha256 = spec["sha256"],
+    urls = [spec["url"]],
+    visibility = ["PUBLIC"],
+) for spec in NPM]
+
+prebuilt_python_library(
+    name = "opencolorio",
+    binary_src = ":opencolorio_archive",
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "manifest_consistency",
+    srcs = [
+        "test_manifest.py",
+        "update.py",
+    ],
+    base_module = "web_dependency_tests",
+    resources = {
+        "dependencies.json": "dependencies.json",
+        "dependencies.bzl": "dependencies.bzl",
+        "product": "//products/hdr-color-picker-web:sources",
+    },
+    visibility = ["PUBLIC"],
+)

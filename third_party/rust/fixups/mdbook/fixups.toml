@@ -1,0 +1,2 @@
+# clap's exported macros expand to the invoking package's Cargo metadata.
+cargo_env = ["CARGO_PKG_AUTHORS", "CARGO_PKG_DESCRIPTION", "CARGO_PKG_NAME", "CARGO_PKG_VERSION"]

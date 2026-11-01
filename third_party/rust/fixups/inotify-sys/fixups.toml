@@ -1,0 +1,2 @@
+# Preserve platform linking behavior; configured Linux uses libc.
+buildscript.run = true

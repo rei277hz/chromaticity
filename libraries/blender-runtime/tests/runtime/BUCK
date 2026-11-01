@@ -1,0 +1,13 @@
+python_test(
+    name = "ownership",
+    srcs = ["test_ownership.py"],
+    base_module = "tests.blender_runtime.runtime",
+    deps = ["//libraries/blender-runtime/tests:machine_fixture"],
+)
+
+python_test(
+    name = "diagnostics",
+    srcs = ["test_diagnostics.py"],
+    base_module = "tests.blender_runtime.runtime",
+    deps = ["//libraries/blender-runtime:runtime"],
+)

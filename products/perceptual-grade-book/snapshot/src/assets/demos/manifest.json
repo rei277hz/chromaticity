@@ -1,0 +1,488 @@
+{
+  "color": {
+    "decode": "16-bit full-range RGB",
+    "input_power_exponent": 1.961,
+    "input_primaries": "Rec.709 / D65",
+    "input_transfer": "Rec.709-A",
+    "output_icc": "sRGB",
+    "output_transfer": "piecewise sRGB",
+    "primary_conversion": "none; Rec.709 and sRGB share primaries",
+    "ycbcr_matrix": "bt709"
+  },
+  "demos": [
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "linear-white-balance/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "linear-white-balance/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "linear-white-balance",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "linear-correction/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "linear-correction/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "linear-correction",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "colorchecker-match/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "colorchecker-match/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "colorchecker-match",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "tone-curve/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "tone-curve/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "tone-curve",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-j/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-j/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "color-j",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-jc-curves/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-jc-curves/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "color-jc-curves",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-jc-pads/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-jc-pads/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "color-jc-pads",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-adaptance/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-adaptance/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "color-adaptance",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-hue-pad/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-hue-pad/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "color-hue-pad",
+      "timeline_frames": 85
+    },
+    {
+      "clips": {
+        "hdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-hue-rotation/hdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        },
+        "sdr": {
+          "decode_matrix": "bt709",
+          "decoded_frames": 85,
+          "dummy_recording": true,
+          "end": null,
+          "file": "color-hue-rotation/sdr.mov",
+          "playback_seconds": 4.25,
+          "range": "auto",
+          "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+          "source_duration_seconds": 4.22,
+          "source_fps": 60.0,
+          "source_pixel_format": "yuv420p(tv, bt709, progressive)",
+          "source_size": [
+            1024,
+            1024
+          ],
+          "start": 0
+        }
+      },
+      "dummy_recording": true,
+      "duration_ms": 4950,
+      "name": "color-hue-rotation",
+      "timeline_frames": 85
+    }
+  ],
+  "ffmpeg": "ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/  Copyright (c) 2000-2024 the FFmpeg developers",
+  "generator_sha256": "f536f4a0d0573811813b4c7fe640be8908c987b93ffe57f34954e051b482a8e3",
+  "invocation": "buck2",
+  "outputs": {
+    "images/color-adaptance-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/color-adaptance.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/color-hue-pad-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/color-hue-pad.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/color-hue-rotation-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/color-hue-rotation.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/color-j-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/color-j.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/color-jc-curves-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/color-jc-curves.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/color-jc-pads-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/color-jc-pads.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/colorchecker-match-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/colorchecker-match.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/linear-correction-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/linear-correction.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/linear-white-balance-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/linear-white-balance.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60",
+    "images/tone-curve-still.webp": "ab21da0859c376359a438a10083eeb0fa0af0a05d677696111addb703cad6cad",
+    "images/tone-curve.webp": "8e3f930b171134b6205d296eee93de806a73730d9930cfc89a196353adb1ba60"
+  },
+  "producer": "paired screen-recording demonstrations",
+  "schema": 1,
+  "settings": {
+    "end_hold_ms": 700,
+    "fps": 20,
+    "loop": 0,
+    "panel_size": 640
+  },
+  "spec_sha256": "5dcc23869dc272848e364edb6dfcf464c96169f9af56bd35f06ab769af92ead0"
+}

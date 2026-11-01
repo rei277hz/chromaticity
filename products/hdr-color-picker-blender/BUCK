@@ -1,0 +1,119 @@
+load("//build_defs:artifacts.bzl", "generate", "source_tree")
+load("//build_defs:invariant.bzl", "invariant_bundle")
+load("//build_defs:python_packages.bzl", "component_library", "extension_tree")
+load("//libraries/blender-runtime/requirements:inventory.bzl", COMMON_PROOFS = "LEAF_PROOFS")
+load("//libraries/blender-runtime/requirements/coordinators:inventory.bzl", HOST_WORKFLOWS = "COORDINATOR_PROOFS")
+
+invariant_bundle(
+    name = "proofs",
+    visibility = ["PUBLIC"],
+    deps = [
+        proof
+        for proof in COMMON_PROOFS
+        if not proof.endswith(":proof_edge_effect")
+    ] + HOST_WORKFLOWS + ["//libraries/invariant:lifecycle_proof"],
+)
+
+extension_tree(
+    name = "extension_tree",
+    entrypoints = {
+        "__init__.py": "src/__init__.py",
+        "blender_manifest.toml": "blender_manifest.toml",
+        "LICENSE": "LICENSE",
+    },
+    visibility = ["PUBLIC"],
+    deps = ["//products/hdr-color-picker-blender:runtime_bundle"],
+)
+
+python_library(
+    name = "packager_sources",
+    srcs = {"hdr_color_picker_package.py": "tools/package.py"},
+    base_module = "product_build",
+    visibility = ["PUBLIC"],
+    deps = ["//tools/verification:packaging"],
+)
+
+python_binary(
+    name = "package",
+    main_module = "product_build.hdr_color_picker_package",
+    deps = [":packager_sources"],
+)
+
+export_file(
+    name = "package_inventory",
+    src = "tools/package_inventory.json",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "extension",
+    args = [
+        "--tree",
+        "$(location :extension_tree)",
+        "--inventory",
+        "$(location :package_inventory)",
+        "--proofs",
+        "$(location :proofs)",
+    ],
+    outputs = {
+        "zip": "hdr_color_picker.zip",
+        "report": "package-report.json",
+    },
+    tool = ":package",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "readme",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "display_contract",
+    src = "DISPLAY.md",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "assurance",
+    src = "ASSURANCE.md",
+    visibility = ["PUBLIC"],
+)
+
+PACKAGE = "hdr_color_picker_blender"
+
+PREFIX = "src/" + PACKAGE + "/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+component_library(
+    name = "runtime",
+    srcs = SOURCES,
+    package = PACKAGE,
+    resources = {},
+    deps = [
+        "//libraries/blender-runtime:blender",
+        "//libraries/blender-runtime:machines",
+        "//libraries/color-core:runtime",
+        "//libraries/hdr-color-picker-core:runtime",
+    ],
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "documentation",
+    src = "IMPLEMENTATION.md",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "machine_bindings_source",
+    src = "src/hdr_color_picker_blender/machines.py",
+    visibility = ["PUBLIC"],
+)

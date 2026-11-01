@@ -1,0 +1,26 @@
+load("@prelude//:prelude.bzl", "native")
+load("@toolchains//:remote_execution.bzl", "nativelink_platform", "nativelink_platforms", "platform_properties")
+
+# Keep the public platform labels stable when reorganizing implementation files.
+
+nativelink_platform(
+    name = "linux",
+    constraints = [
+        "prelude//cpu:x86_64",
+        "prelude//os:linux",
+    ],
+    properties = platform_properties(),
+    visibility = ["PUBLIC"],
+)
+
+nativelink_platforms(
+    name = "platforms",
+    platforms = [":linux"],
+    visibility = ["PUBLIC"],
+)
+
+native.alias(
+    name = "smoke",
+    actual = "//remote_execution/tests:smoke",
+    visibility = ["PUBLIC"],
+)

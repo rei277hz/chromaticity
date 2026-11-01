@@ -1,0 +1,2 @@
+# Probe the declared rustc for procedural macro APIs.
+buildscript.run = true

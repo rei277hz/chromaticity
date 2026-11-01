@@ -1,0 +1,2 @@
+# whereat's exported macro reads metadata in the invoking crate.
+cargo_env = ["CARGO_PKG_NAME", "CARGO_PKG_REPOSITORY", "CARGO_PKG_VERSION"]

@@ -1,0 +1,2 @@
+# Preserve the crate's links metadata handling.
+buildscript.run = true

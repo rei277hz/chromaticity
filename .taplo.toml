@@ -1,0 +1,28 @@
+include = ["**/*.toml", ".taplo.toml"]
+exclude = [
+    "buck-out/**",
+    "prelude/**",
+    "**/.cargo/**",
+    "**/.state/**",
+    "**/.venv/**",
+    "**/node_modules/**",
+    "**/target/**",
+    "**/dist/**",
+    "**/vendor/**",
+    "products/perceptual-grade-book/docs/**",
+]
+
+[formatting]
+align_comments = false
+array_auto_collapse = false
+array_auto_expand = false
+indent_string = "    "
+reorder_arrays = false
+reorder_keys = false
+
+[[rule]]
+include = ["**/Cargo.toml"]
+keys = ["dependencies", "dev-dependencies", "build-dependencies", "target.*.dependencies", "target.*.dev-dependencies", "target.*.build-dependencies"]
+
+[rule.formatting]
+reorder_keys = true

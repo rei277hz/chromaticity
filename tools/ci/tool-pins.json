@@ -1,0 +1,26 @@
+{
+  "buck2": {
+    "version": "2026-10-15",
+    "url": "https://github.com/meta/buck2/releases/download/2026-10-15/buck2-x86_64-unknown-linux-gnu.zst",
+    "sha256": "f0f21a31ed2e2428b6a0b4722a82372861051002d4c0cc95db7906e33119e3a3",
+    "compression": "zstd",
+    "version_args": ["--version"],
+    "version_pattern": "^buck2 2026-10-14-9a1876786f32806f6b65fc51f4c1c3077efc38a5\\s*$"
+  },
+  "buildifier": {
+    "version": "10.2.0",
+    "url": "https://github.com/bazel-contrib/buildtools/releases/download/v10.2.0/buildifier-linux-amd64",
+    "sha256": "470844069d710d0b7740e55007071c63e4d00be89a833dce5d1a91790e84dc28",
+    "compression": "none",
+    "version_args": ["-version"],
+    "version_pattern": "(?m)^buildifier version: 10\\.2\\.0\\s*$"
+  },
+  "taplo": {
+    "version": "0.10.0",
+    "url": "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz",
+    "sha256": "8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156",
+    "compression": "gzip",
+    "version_args": ["--version"],
+    "version_pattern": "^taplo 0\\.10\\.0\\s*$"
+  }
+}

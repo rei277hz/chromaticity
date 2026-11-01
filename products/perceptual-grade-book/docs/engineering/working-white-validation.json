@@ -1,0 +1,380 @@
+{
+  "version": "1.15.0",
+  "blender": "5.2.2 LTS",
+  "mode": "authoring-preview",
+  "fixtures": [
+    {
+      "suite": "NUMERICAL",
+      "name": "test_core",
+      "status": "passed",
+      "log_sha256": "213ad331a1b7ee919e221eac7742f78d86326165025c17a0115925bd7564087f",
+      "last_output_line": "OK"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_inverse_math",
+      "status": "passed",
+      "log_sha256": "e76e88ec62e972fb2550ab911f784d455ed9e0bfadb353337726a5af8d4761c2",
+      "last_output_line": "PASS 15 production inverse checks"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_inverse_solver",
+      "status": "passed",
+      "log_sha256": "0c7f0dc06a2383e735534ad92f7034d5acd0fb8e0dcc5f4e50eca511d7b16067",
+      "last_output_line": "PASS 24 inverse solver checks"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_chroma_drivers",
+      "status": "passed",
+      "log_sha256": "858d98d7faa5e727c4121ae71fcbbe3718ed6965649b69ce571e10b055ae4af4",
+      "last_output_line": "OK"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_forward_inverse",
+      "status": "passed",
+      "log_sha256": "63f14b551e6197ad194d9c28a558b579d18603a6c3047cb78289b356f9c17dda",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_adaptance_weight",
+      "status": "passed",
+      "log_sha256": "a459e3374273a516ca1e7f276d08e195fd7afa10e9f42150b867cc39b79af3e0",
+      "last_output_line": "PASS 48"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_hk_lift",
+      "status": "passed",
+      "log_sha256": "efa2a95e94217e5edcb73256ecb2599a170295d8938a43daec54f3f1acb702c0",
+      "last_output_line": "PASS 20 H-K guard checks"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_hk_native",
+      "status": "passed",
+      "log_sha256": "189f4227cdc7de4b8bb37e4bdeff7e5fd8d67e40de9f73c46394a3f74f8e5d4b",
+      "last_output_line": "]"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_cube_math",
+      "status": "passed",
+      "log_sha256": "54f2b78cb9fba0957d8fef91cc278bb9b1c00273eed05b4224c4648d88e0cc29",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_cube_native",
+      "status": "passed",
+      "log_sha256": "29a97cf60e2e82b349900a753df5913f4dbaf5de8bd888ca8ef651738ea5fbef",
+      "last_output_line": "]"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_control_parity",
+      "status": "passed",
+      "log_sha256": "0cb935cc98c9aa985fe36e81ec2c69867c6531369eb7dbac3a7d36ec7d74a07b",
+      "last_output_line": "PASS 60 shared controls and preset/step parity"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_control_schema",
+      "status": "passed",
+      "log_sha256": "d77e69ab22492ad5c6a7a973243b3f1dce1402f09e53989fccad95dba84c3c9e",
+      "last_output_line": "PASS 18 model cases and control-name audit; bit-identical: False"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_source_white",
+      "status": "passed",
+      "log_sha256": "058770c91d352748df6df46d60f41422b1b4f6c187c7b7f10233de709612fc22",
+      "last_output_line": "OK"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_linear_spread",
+      "status": "passed",
+      "log_sha256": "5cf9ca7ad287340d203166941d8e1229545c2cf442f9e3ede90fbac27cd2351c",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_white_drag_centroid",
+      "status": "passed",
+      "log_sha256": "84eb24089e51d0323cd2cb3876dd40a2ef3d50453a9d67009494713da67a011b",
+      "last_output_line": "{\"grid\": [16, 16], \"maximum_samples\": 256, \"selected_samples\": 228, \"initial_fit_median_ms\": 21.63484199991217, \"motion_median_ms\": 0.4442390018084552, \"motion_p95_ms\": 0.7998165019671433, \"scope\": \"Python sample selection, initial fit and direction evaluation. Excludes image readback, graph update and Blender rendering.\"}"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_white_drag_boundary",
+      "status": "passed",
+      "log_sha256": "4bfc23f40bd56262079e2bb2fa951eae3081ee3cd671bb4fae1e8129369b0794",
+      "last_output_line": "OK"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_hue_concentration",
+      "status": "passed",
+      "log_sha256": "d689839a5c5df72b317a9cc0030a90a3e366162a5ee9dee99d9a7d1e0cf566bd",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_hk_fixture_regression",
+      "status": "passed",
+      "log_sha256": "7f722ce601ad7873bc656f26e24a05d643942a58cdc5c2ba4b0bb8e8f826e620",
+      "last_output_line": "]"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_lut_grid_regression",
+      "status": "passed",
+      "log_sha256": "56eb8b5996c6ecd35921580f9e832cd1ab05f88ad1fe309f22c55fe8b43f56e4",
+      "last_output_line": "peak4000 P99 0.0987818648010173 previous 0.585233876746945"
+    },
+    {
+      "suite": "NUMERICAL",
+      "name": "test_i18n_terms",
+      "status": "passed",
+      "log_sha256": "eeee2cf74787032c3886181709064b7da9e4bc79c45b4dbf22859dd1dbd4c9a8",
+      "last_output_line": "PASS 395 IDs across 2 locales, native tooltips and DCTL parity"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_working_white",
+      "status": "passed",
+      "log_sha256": "335057369ffb6ff18f2958063e2f48c881e859a326b9045f90b6f7555ec48905",
+      "last_output_line": "PASS 102 working white checks"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_grade_stack",
+      "status": "passed",
+      "log_sha256": "c003a328e1556717589b0a295b9763ee73afee8690ec91bc65d98240aa4c3fcb",
+      "last_output_line": "PASS 36 inverse/Stack Blender checks"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_shared_grades",
+      "status": "passed",
+      "log_sha256": "4fd2435e93ee64d9530e3e33c1e5a105117751d6bdf91baafd5b76e1b625ee6c",
+      "last_output_line": "PASS 56 shared Grade checks"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_shared_grade_undo",
+      "status": "passed",
+      "log_sha256": "de2b699da914ba2fc33a0117818a3935f583942e83e509114aea5b84477027c6",
+      "last_output_line": "PASS 15 real undo/redo checks"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "blender_registration_test",
+      "status": "passed",
+      "log_sha256": "92cf723f705dd70c2d589c67582aefb3faa8706b71532ce6c997844d4dbbc718",
+      "last_output_line": "PERCEPTUAL GRADE: 34 registration checks passed"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_full_graph_template",
+      "status": "passed",
+      "log_sha256": "d62ddcddcd91dcc4e10184fd541e9b6effef7617cfd46f292df399a56da89d87",
+      "last_output_line": "PASS 16"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_node_presentation",
+      "status": "passed",
+      "log_sha256": "0ef68229b1342f3a444eb08ad5b917584733fa4fcbd0a52450720790f1d43343",
+      "last_output_line": "{\"checks\": 45, \"seconds\": 19.477, \"owned_groups\": 22}"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_ui",
+      "status": "passed",
+      "log_sha256": "0f2cf3d8fb1c949ff55da7616ae127295f0c3e5a7953cd6d9ccadd0f9edab17e",
+      "last_output_line": "{\"checks\": 1648, \"seconds\": 12.248, \"blender\": \"5.2.2 LTS\"}"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_comparison_scopes",
+      "status": "passed",
+      "log_sha256": "ca0d8942c16710919a624991e80d5ac90f10ce02d2ff4070f59547e233712b00",
+      "last_output_line": "{\"checks\": 33}"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_scope_framebuffer",
+      "status": "passed",
+      "log_sha256": "1a73ca5e2e2d357e1a92002c861f63e837ab5fb9617c4b1b2d54ab4fb1ee31e9",
+      "last_output_line": "PASS 10 scope framebuffer checks"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_stage3_scopes",
+      "status": "passed",
+      "log_sha256": "d59b4ed76bd6d73ebf5ec46051bf6591b9559ca0241675c42f82e3dc663e059e",
+      "last_output_line": "STATS 26 passed"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_extension_namespace",
+      "status": "passed",
+      "log_sha256": "00788b4524a78f61f6d206b41563357dfda8bff62cb5bebe318673db36a7682b",
+      "last_output_line": "PASS 6"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_graph_updates",
+      "status": "passed",
+      "log_sha256": "223aff7d62d584575e2ba5d463183163a84cbb2a7dcdd12509bd675f81120137",
+      "last_output_line": "PASS 10"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_white_drag_sampling",
+      "status": "passed",
+      "log_sha256": "1e4c72e4c806e01c3eb5bb00e1ea511b860e2738e7fd01b73a2c14df3ac3ba26",
+      "last_output_line": "PASS 26 sparse sampling checks"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_white_and_render_ui",
+      "status": "passed",
+      "log_sha256": "0fd51806c2a2549182ccbc8da12b9c14cd7c3f7489fa5304da37f8be6d3a0869",
+      "last_output_line": "PASS 48 RNA/routing checks and 4 CPU renders"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_concentration_graph",
+      "status": "passed",
+      "log_sha256": "fbdfd5b181990db85a625f8c6cb33deb90f470552135a1e71255373ba283a17e",
+      "last_output_line": "{\"grade\": \"combined\", \"route\": \"cube\", \"full_vs_python\": {\"maximum\": 7.926342221307639e-07, \"p99\": 5.863971475613841e-07}, \"half_vs_full\": {\"maximum\": 0.0012564812786877155, \"p99\": 0.0009206139948219061}, \"finite\": true, \"overflows\": 0}"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_graph_regressions",
+      "status": "passed",
+      "log_sha256": "bb26743f61922b84ca6fd281730f036209f81356f2535204a973ea75329c3a5f",
+      "last_output_line": "PASS 23 [{\"backend\": \"ShaderNodeTree\", \"initialization_ms\": 7857.284800000343, \"nodes\": 864, \"links\": 1562}, {\"backend\": \"CompositorNodeTree\", \"initialization_ms\": 8284.92138799993, \"nodes\": 596, \"links\": 1182}]"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "blender_half_precision_test",
+      "status": "passed",
+      "log_sha256": "3e2adbbba404b389345d7d16b94d1b90a8e06988bab780654699b75dfe30415f",
+      "last_output_line": "PASS: Auto preserved; signed/HDR outputs finite in both routes; no half-buffer overflow"
+    },
+    {
+      "suite": "BLENDER",
+      "name": "test_optimized_curves",
+      "status": "passed",
+      "log_sha256": "5c779e76fd72e7552eab556da2e3b07ae176d10f9f08d63de45a338d84226444",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "RENDERS",
+      "name": "blender_stage2_test",
+      "status": "passed",
+      "log_sha256": "534f67a0f5f9fb8b71f1df72d1a290ed666eef2c96961545183e2e63eed5e8c0",
+      "last_output_line": "STAGE2 108 checks passed"
+    },
+    {
+      "suite": "RENDERS",
+      "name": "blender_stage3_render_test",
+      "status": "passed",
+      "log_sha256": "a2ff11b458c74738ac747ff8197885e2022491171a2953b8dca390d43ef10587",
+      "last_output_line": "DONE 24"
+    },
+    {
+      "suite": "RENDERS",
+      "name": "blender_cube_test",
+      "status": "passed",
+      "log_sha256": "04963e0d7e33ee2b9d597afcaa6ec285d34b7dd56be0395e59bbd6b369b495e9",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "RENDERS",
+      "name": "blender_compositor_test",
+      "status": "passed",
+      "log_sha256": "441c2c7845b054ce1c75f12dc1f5e19b1fd42fb1c43b3b0d3cf02c958e31561b",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "DCTL",
+      "name": "test_chroma_drivers",
+      "status": "passed",
+      "log_sha256": "52787c831e5e9d0f86e0e0d2a7a306e631bbdf8fa82272e03ae147f5aed7dc4d",
+      "last_output_line": "PASS 2376 p=2 DCTL samples; maximum error 2.4653757701997847e-07"
+    },
+    {
+      "suite": "DCTL",
+      "name": "test_interface",
+      "status": "passed",
+      "log_sha256": "a0744e361c665d43999ba4a45da7d3d0a467a2f5aed88606f5c657eb43a56a53",
+      "last_output_line": "PASS 52 405.06107399999973"
+    },
+    {
+      "suite": "DCTL",
+      "name": "test_hk_guard",
+      "status": "passed",
+      "log_sha256": "068f7c82f49633961388aafac671707fe466568883cab4161231064ecd921f57",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "DCTL",
+      "name": "test_saturation",
+      "status": "passed",
+      "log_sha256": "b36ef6120f1c9cbe0b2114a1e95bf99f0c2eec4009ac782433f3baf68550f35a",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "DCTL",
+      "name": "run_tests",
+      "status": "passed",
+      "log_sha256": "eda568d8877bf152a7d6379f161661b2945299bde8a0e261df1166f2ddac4e49",
+      "last_output_line": "PASS {'version': '1.13.0', 'host_cases': 131799, 'elapsed_seconds': 12.12, 'DCTL_sha256': 'e93521782d58040fadbeaec276f2a9b8b0aec4df8217ae747d3e790317a1b35f', 'Colour_version': '0.4.7', 'tested': 'delivered canonical DCTL in float CPU shim; independent Colour/NumPy float64 references; static portability guards', 'not_tested': ['Resolve 21 UI parser', 'Metal/CUDA/OpenCL runtime or Resolve compilation', 'GPU playback/performance']}"
+    },
+    {
+      "suite": "DCTL",
+      "name": "portability",
+      "status": "passed",
+      "log_sha256": "2de6c1da26509e23c7f47b9429dc3a5a314a3a6f1e6b44733e0b05b2f6f540ba",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "DCTL",
+      "name": "test_helper_scope",
+      "status": "passed",
+      "log_sha256": "e7806ad3a29770e6c67878627a5a36d737ce7945f57bb20f6c905908fd2b6292",
+      "last_output_line": "PASS helper scope positive and negative controls"
+    },
+    {
+      "suite": "PARITY",
+      "name": "compare_dctl",
+      "status": "passed",
+      "log_sha256": "e56b63f50036581ca9ea64c0631042a14557ac9d647a81ec222878ddcb888441",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "PARITY",
+      "name": "compare_stage2_dctl",
+      "status": "passed",
+      "log_sha256": "01b87aa743f8d05a463e08720f925032257624d7d48fd4a2bd88b187d57fd8e7",
+      "last_output_line": "}"
+    },
+    {
+      "suite": "PARITY",
+      "name": "compare_stage3_dctl",
+      "status": "passed",
+      "log_sha256": "f0de8e54b17b3c9d76a6d1511a86ec360f8c840c689ceb3612dd55ebff20d1d4",
+      "last_output_line": "{'cases': 39432, 'control_configs': 62, 'spaces': ['Linear Rec.709', 'Linear Rec.2020', 'ACEScg'], 'max_XYZ_relative_error': 2.8647201383499515e-05, 'dctl_version': '1.13.0', 'limitations': ['C++ float host; not Resolve GPU compilation']}"
+    }
+  ],
+  "scope": "Latest successful run of each fixture, including focused reruns after fixes. Buck2 release gate unavailable. Native CPU only; desktop interaction and GPU/Metal not exercised.",
+  "new_working_white_checks": 102
+}

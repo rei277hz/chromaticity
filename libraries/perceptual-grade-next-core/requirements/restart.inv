@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "state": "RestartState",
+  "event": "RestartEvent",
+  "initializers": ["new_restart"],
+  "step": "restart_step",
+  "invariants": {
+    "generation_nonnegative": "state.generation >= 0",
+    "failed_or_active_has_no_partial_completion": "state.phase in ('active','failed') or state.generation > 0"
+  },
+  "contracts": {"new_restart": {"ensures": ["result.generation == 0 and result.phase == 'active'"]}},
+  "properties": [
+    {"name":"R01_fresh_generation_starts_drain","variables":{"state":"RestartState","event":"RestartEvent"},"lets":{"after":"restart_step(state,event)"},"assert":"not after[1] or event.kind != 'request' or (event.generation > state.generation and after[0].phase == 'draining' and after[0].generation == event.generation and after[0].retired == ())"},
+    {"name":"R05_duplicate_obligations_are_rejected","variables":{"state":"RestartState","event":"RestartEvent"},"lets":{"after":"restart_step(state,event)"},"assert":"not after[1] or event.kind != 'request' or _unique(event.obligations)"},
+    {"name":"R02_retirement_is_owner_bound","variables":{"state":"RestartState","event":"RestartEvent"},"lets":{"after":"restart_step(state,event)"},"assert":"not after[1] or event.kind != 'retire' or (event.generation == state.generation and event.identity in state.obligations)"},
+    {"name":"R03_completion_requires_all_obligations","variables":{"state":"RestartState","event":"RestartEvent"},"lets":{"after":"restart_step(state,event)"},"assert":"not after[1] or event.kind != 'complete' or (_same_members(state.retired,state.obligations) and after[0].phase == 'active')"},
+    {"name":"R04_stale_restart_receipt_is_rejected","variables":{"state":"RestartState","event":"RestartEvent"},"assume":["event.generation != state.generation and event.kind != 'request'"],"lets":{"after":"restart_step(state,event)"},"assert":"after[0] == state and not after[1]"}
+  ],
+  "witnesses": [
+    {"name":"restart_drains_then_completes","lets":{"started":"restart_step(new_restart(),RestartEvent('request',generation=1,obligations=('scope',)))","retired":"restart_step(started[0],RestartEvent('retire',generation=1,identity='scope'))","done":"restart_step(retired[0],RestartEvent('complete',generation=1))"},"assert":"started[1] and retired[1] and done[1] and done[0].phase == 'active'"},
+    {"name":"restart_accepts_receipts_in_any_order","lets":{"started":"restart_step(new_restart(),RestartEvent('request',generation=1,obligations=('scope','updates'))) ","first":"restart_step(started[0],RestartEvent('retire',generation=1,identity='updates'))","second":"restart_step(first[0],RestartEvent('retire',generation=1,identity='scope'))","done":"restart_step(second[0],RestartEvent('complete',generation=1))"},"assert":"started[1] and first[1] and second[1] and done[1] and done[0].phase == 'active'"}
+  ],
+  "mutations": [
+    {"name":"restart_accepts_stale_generation","function":"restart_step","target":"event.generation > state.generation","replacement":"event.generation >= state.generation","detects":["property.R01_fresh_generation_starts_drain"]},
+    {"name":"restart_completes_without_retirement","function":"restart_step","target":"_same_members(state.retired, state.obligations)","replacement":"True","detects":["property.R03_completion_requires_all_obligations"]},
+    {"name":"restart_accepts_duplicate_obligations","function":"restart_step","target":"_unique(event.obligations)","replacement":"True","detects":["property.R05_duplicate_obligations_are_rejected"]}
+  ],
+  "loops": []
+}

@@ -1,0 +1,116 @@
+{
+  "generator_sha256": "741cbc93a53d6b7849d6eae09a1481e35b486ecafd2aaee4bbe0cd9f48fada36",
+  "invocation": "buck2",
+  "maskable": {
+    "canvas": [
+      512,
+      512
+    ],
+    "offset": [
+      128,
+      128
+    ],
+    "safe_radius": 204.8,
+    "source": "perceptual-grade-256-opaque.png"
+  },
+  "outputs": {
+    "android-192.png": "d44cf59888d3a84a9043061fcbb8adbef138e3fb01a006b5304b1730b461d216",
+    "android-512-maskable.png": "d13cc0a902ed2e7be02f5f961915c0113f673067a8149bf7ec5dd14d22e2cc28",
+    "android-512.png": "a9acd7703ed4d7591eae5f17c1dd82deaf4a2f2dff985b1949c1aecbe9bdb3b6",
+    "apple-touch-icon.png": "bdcf7116d0d5341adf205bfa3753ded2e0d076c2e4d4be3f9ea230d46eaba286",
+    "favicon.ico": "e23a4d3b5568b3bf72a9ee090ec36e4dc6ff0e45a2651427ea4464133c02d60e",
+    "site.webmanifest": "3db625b3a4bfe15d48e8ac890fa2ddca33513da85b60c4a6148c22a65b407e63"
+  },
+  "pillow_version": "12.3.0",
+  "producer": "Exact-size PNG packaging and native-pixel maskable composition",
+  "resampling": false,
+  "schema": 3,
+  "sizes": [
+    [
+      16,
+      16
+    ],
+    [
+      32,
+      32
+    ],
+    [
+      48,
+      48
+    ],
+    [
+      64,
+      64
+    ],
+    [
+      256,
+      256
+    ]
+  ],
+  "sources": {
+    "perceptual-grade-16-opaque.png": {
+      "role": "opaque artwork",
+      "sha256": "408ddc2af8ae31754fb99fe620b5b1086d99ea5fbf5e9353e4397f86b5b11d3d"
+    },
+    "perceptual-grade-16-transparent.png": {
+      "role": "transparent artwork",
+      "sha256": "37c6bdc086a4cf23980749dda72fa5d6f11c3b91b72e7e86b912258f88228c99"
+    },
+    "perceptual-grade-180-opaque.png": {
+      "role": "opaque artwork",
+      "sha256": "bdcf7116d0d5341adf205bfa3753ded2e0d076c2e4d4be3f9ea230d46eaba286"
+    },
+    "perceptual-grade-180-transparent.png": {
+      "role": "transparent artwork",
+      "sha256": "f089446150e9e8fc55090d82ebdb2ceb49d70654d1d3c1fa892159b50ffc6757"
+    },
+    "perceptual-grade-192-opaque.png": {
+      "role": "opaque artwork",
+      "sha256": "5f2311db4b91b9aa3419277987630351774e3e1bfeefefc2d25ac8e79a6d8935"
+    },
+    "perceptual-grade-192-transparent.png": {
+      "role": "transparent artwork",
+      "sha256": "d44cf59888d3a84a9043061fcbb8adbef138e3fb01a006b5304b1730b461d216"
+    },
+    "perceptual-grade-256-opaque.png": {
+      "role": "opaque artwork",
+      "sha256": "8872cde6e861276a0d3809e5e2bab0f921643b5f79a6b001709955d020a8766b"
+    },
+    "perceptual-grade-256-transparent.png": {
+      "role": "transparent artwork",
+      "sha256": "f92d40c4a51c66f3c52a5d18603e23e40897284a8b97facb54eec35b06bf9890"
+    },
+    "perceptual-grade-32-opaque.png": {
+      "role": "opaque artwork",
+      "sha256": "2a233026dbcd300318c2c5a96e6a518804ce78ee25672ccd5dd76f831bce3f62"
+    },
+    "perceptual-grade-32-transparent.png": {
+      "role": "transparent artwork",
+      "sha256": "c6dbf25ff026d1fa6e7cf70f819f23ccaff472331e81fba65578bde2c8b6d1a5"
+    },
+    "perceptual-grade-48-opaque.png": {
+      "role": "opaque artwork",
+      "sha256": "edc863a02299d4be3a6478a962178d3d6bc6ed67fafcd350569b80caae692f12"
+    },
+    "perceptual-grade-48-transparent.png": {
+      "role": "transparent artwork",
+      "sha256": "f48b0ae7ba193d0462a63c58a08c16c2481a6abf6bec5bce7339d78c213c9e19"
+    },
+    "perceptual-grade-512-opaque.png": {
+      "role": "opaque artwork",
+      "sha256": "966a54bb8ac4867daa3d92efd114ac62088007ed2fa5a88f08578464ae9002d1"
+    },
+    "perceptual-grade-512-transparent.png": {
+      "role": "transparent artwork",
+      "sha256": "a9acd7703ed4d7591eae5f17c1dd82deaf4a2f2dff985b1949c1aecbe9bdb3b6"
+    },
+    "perceptual-grade-64-opaque.png": {
+      "role": "opaque artwork",
+      "sha256": "8ba9d625f1245e1b81ac5597eec442ba286d64591fd7915260d9e5ce1712e2fd"
+    },
+    "perceptual-grade-64-transparent.png": {
+      "role": "transparent artwork",
+      "sha256": "1409d5e241734bd0b5667c6180861b739a52506eaf3e52285140f43fc616036c"
+    }
+  }
+}

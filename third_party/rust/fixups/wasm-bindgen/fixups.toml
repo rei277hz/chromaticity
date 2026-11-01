@@ -1,0 +1,3 @@
+# Derive diagnostic and reference-types cfg for the configured target.
+buildscript.run = true
+cargo_env = ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "CARGO_PKG_VERSION"]

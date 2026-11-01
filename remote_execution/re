@@ -1,0 +1,3 @@
+#!/bin/sh
+# Keep the public command independent of the caller's working directory.
+exec python3 "$(dirname "$0")/cli/main.py" "$@"

@@ -1,0 +1,54 @@
+typedef struct { int first; float a; float b; float c; float d; } PGStencil;
+__DEVICE__ float pg_weight(PGStencil w,int i) { return i==0?w.a:(i==1?w.b:(i==2?w.c:w.d)); }
+__DEVICE__ PGStencil pg_stencil(__CONSTANTREF__ float* knots,int count,float x) {
+    int lo=3,hi=count-4;
+    for(int step=0;step<9;step++) {
+        if(lo<hi) {int mid=(lo+hi+1)/2;if(knots[mid]<=x)lo=mid;else hi=mid-1;}
+    }
+    int span=lo<count-4?lo:count-5;
+    float w[4]={1.0f,0.0f,0.0f,0.0f},left[4],right[4];
+    for(int order=1;order<=3;order++) {
+        left[order]=x-knots[span+1-order];right[order]=knots[span+order]-x;
+        float saved=0.0f;
+        for(int r=0;r<order;r++) {
+            float term=w[r]/(right[r+1]+left[order-r]);
+            w[r]=saved+right[r+1]*term;saved=left[order-r]*term;
+        }
+        w[order]=saved;
+    }
+    PGStencil result;result.first=span-3;result.a=w[0];result.b=w[1];result.c=w[2];result.d=w[3];return result;
+}
+__DEVICE__ float pg_wrap(float angle) {
+    float tau=6.283185307179586f;
+    return angle-tau*_floorf(angle/tau);
+}
+__DEVICE__ float pg_edge(float t,int edge,int channel) {
+    unsigned int pair=PG_EDGES[edge];float low=PG_VERTEX_T[pair&255u],high=PG_VERTEX_T[pair>>8u];
+    float x=_fminf(1.0f,_fmaxf(0.0f,(t-low)/(high-low)));
+    PGStencil w=pg_stencil(PG_EDGE_KNOTS,PG_EDGE_KNOT_COUNT,x);float sum=0.0f;
+    for(int i=0;i<4;i++)sum+=PG_EDGE_COEFFICIENTS[(edge*PG_EDGE_COEFFICIENT_COUNT+w.first+i)*2+channel]*pg_weight(w,i);
+    return sum;
+}
+__DEVICE__ float pg_capacity(float t,float hue) {
+    int region=t==0.0f?0:1;
+    for(int i=1;i<8;i++)if(t>=PG_HEIGHTS[i])region=2*i+(t>PG_HEIGHTS[i]?1:0);
+    unsigned int chosen=PG_TOPOLOGY[region*5];float dl=1.0e30f;
+    for(int i=0;i<5;i++) {
+        unsigned int candidate=PG_TOPOLOGY[region*5+i];int edge=candidate&255u;
+        float d=pg_wrap(hue-pg_wrap(pg_edge(t,edge,0)));
+        if(d<dl) {chosen=candidate;dl=d;}
+    }
+    int left=chosen&255u,right=(chosen>>8u)&255u,other=(chosen>>16u)&255u,face=chosen>>24u;
+    float dr=pg_wrap(pg_wrap(pg_edge(t,right,0))-hue);
+    if(other!=right) {float d=pg_wrap(pg_wrap(pg_edge(t,other,0))-hue);if(d<dr){dr=d;right=other;}}
+    float s=dl+dr>0.0f?dl/(dl+dr):0.0f;
+    float x=(t-PG_FACE_BOUNDS[2*face])/PG_FACE_BOUNDS[2*face+1];
+    PGStencil a=pg_stencil(PG_SECTOR_T+face*PG_HEIGHT_KNOT_COUNT,PG_HEIGHT_KNOT_COUNT,x),b=pg_stencil(PG_SECTOR_S,PG_HUE_KNOT_COUNT,s);
+    float correction=0.0f;
+    for(int i=0;i<4;i++) {
+        float row=0.0f;
+        for(int j=0;j<4;j++)row+=PG_SECTORS[(face*PG_HEIGHT_COEFFICIENT_COUNT+a.first+i)*PG_HUE_COEFFICIENT_COUNT+b.first+j]*pg_weight(b,j);
+        correction+=row*pg_weight(a,i);
+    }
+    return 1.0f/((1.0f-s)*pg_edge(t,left,1)+s*pg_edge(t,right,1)+s*(1.0f-s)*correction);
+}

@@ -1,0 +1,119 @@
+load("//build_defs:artifacts.bzl", "generate", "source_tree")
+load(":rules.bzl", "documentation")
+
+source_tree(
+    name = "docs",
+    srcs = {path.removeprefix("docs/"): path for path in glob(["docs/**"])},
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "snapshot",
+    srcs = {path.removeprefix("snapshot/"): path for path in glob(["snapshot/**"])},
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "import_manifest",
+    src = "import-manifest.json",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "tool_pins",
+    src = "tool-pins.bzl",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "build_support",
+    srcs = {path.removeprefix("tools/"): path for path in glob(["tools/*.py"])},
+    base_module = "pg_book_build",
+    visibility = ["PUBLIC"],
+)
+
+[
+    python_binary(
+        name = name,
+        main_module = "pg_book_build." + module,
+        deps = [":build_support"],
+    )
+    for name, module in [
+        ("assemble_tool", "assemble"),
+        ("site_tool", "site"),
+        ("archive_tool", "deploy"),
+    ]
+]
+
+generate(
+    name = "book_inputs",
+    args = [
+        "--docs",
+        "$(location :docs)",
+        "--snapshot",
+        "$(location :snapshot)",
+        "--manifest",
+        "$(location :import_manifest)",
+    ],
+    outputs = {},
+    tool = ":assemble_tool",
+    visibility = ["PUBLIC"],
+)
+
+documentation(
+    name = "site",
+    book = ":book_inputs",
+    mdbook = "//third_party/rust:mdbook-mdbook",
+    pins = ":tool_pins",
+    rust_versions = "//third_party/rust/tools:versions",
+    tool = ":site_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "archive",
+    args = [
+        "--site",
+        "$(location :site[html])",
+    ],
+    outputs = {
+        "zip": "perceptual-grade-site.zip",
+        "checksums": "SHA256.json",
+    },
+    tool = ":archive_tool",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "preview_resources",
+    base_module = "pg_book_build",
+    resources = {"site": ":site[html]"},
+)
+
+python_binary(
+    name = "preview",
+    main_module = "pg_book_build.serve",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":build_support",
+        ":preview_resources",
+    ],
+)
+
+python_library(
+    name = "publish_resources",
+    base_module = "pg_book_build",
+    resources = {"perceptual-grade-site.zip": ":archive[zip]"},
+)
+
+# Buck builds the completed ZIP through NativeLink; `buck2 run` launches the
+# publisher on the client so it can replace the local website checkout's files.
+python_binary(
+    name = "publish",
+    main_module = "pg_book_build.publish",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":build_support",
+        ":publish_resources",
+    ],
+)

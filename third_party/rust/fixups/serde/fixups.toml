@@ -1,0 +1,3 @@
+# Generate the private module name and compiler compatibility cfg.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_VERSION_PATCH"]

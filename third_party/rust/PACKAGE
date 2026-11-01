@@ -1,0 +1,17 @@
+load("@prelude//rust:cargo_package.bzl", "set_reindeer_platforms")
+
+set_reindeer_platforms(select({
+    "DEFAULT": None,
+    "prelude//os:linux": select({
+        "DEFAULT": None,
+        "prelude//cpu:x86_64": "linux-x86_64",
+    }),
+    "prelude//os:macos": select({
+        "DEFAULT": None,
+        "prelude//cpu:arm64": "macos-aarch64",
+    }),
+    "prelude//os:none": select({
+        "DEFAULT": None,
+        "prelude//cpu:wasm32": "wasm32",
+    }),
+}))

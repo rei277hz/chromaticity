@@ -1,0 +1,106 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool", "source_tree")
+load("//build_defs:python_packages.bzl", "component_library", "extension_tree")
+
+PREFIX = "src/perceptual_grade_next_blender/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+component_library(
+    name = "runtime",
+    srcs = SOURCES,
+    package = "perceptual_grade_next_blender",
+    visibility = ["PUBLIC"],
+    deps = [
+        # Temporary development shortcut: skip only the unbounded project proof.
+        "//libraries/perceptual-grade-next-core:unsafe_runtime",
+        "//libraries/perceptual-grade-nodes:runtime",
+    ],
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "canonical_adapter_evidence",
+    srcs = {
+        "products/perceptual-grade-next-blender/" + path: path
+        for path in glob([PREFIX + "**/*.py"])
+    },
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "state_machine_design",
+    src = "STATE_MACHINE_DESIGN.md",
+    visibility = ["PUBLIC"],
+)
+
+extension_tree(
+    name = "extension_tree",
+    entrypoints = {
+        "__init__.py": "entrypoint.py",
+        "blender_manifest.toml": "blender_manifest.toml",
+        "LICENSE": "LICENSE",
+        "README.md": "package/README.md",
+    },
+    visibility = ["PUBLIC"],
+    deps = [":runtime_bundle"],
+)
+
+python_tool(
+    name = "packager",
+    srcs = {"product_build/package.py": "tools/package.py"},
+    main_module = "product_build.package",
+    deps = ["//tools/verification:packaging"],
+)
+
+generate(
+    name = "extension",
+    args = [
+        "--tree",
+        "$(location :extension_tree)",
+        "--inventory",
+        "$(location :package_inventory)",
+    ],
+    outputs = {
+        "zip": "perceptual_grade_next.zip",
+        "report": "package-report.json",
+    },
+    tool = ":packager",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "package_inventory",
+    src = "tools/package_inventory.json",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "workspace_install_code",
+    srcs = {"install_workspace.py": "tools/install_workspace.py"},
+    base_module = "product_install",
+    visibility = ["PUBLIC"],
+)
+
+# Build the actual ZIP before the local installer can start clearing its target.
+python_library(
+    name = "workspace_install_archive",
+    base_module = "product_install",
+    resources = {"perceptual_grade_next.zip": ":extension[zip]"},
+)
+
+# buck2 run launches this command on the client; its ZIP dependencies still build
+# through the configured NativeLink execution platform.
+python_binary(
+    name = "install_workspace",
+    main_module = "product_install.install_workspace",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":workspace_install_archive",
+        ":workspace_install_code",
+    ],
+)

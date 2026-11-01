@@ -1,0 +1,2 @@
+# Probe the declared rustc for available error/backtrace APIs.
+buildscript.run = true

@@ -1,0 +1,464 @@
+{
+  "version": "1.18.0",
+  "scope": "Cold Stack preview/refinement timings with identical explicit Grade settings.\n\nNumerical work only: no Blender publication, debounce, imports or rendering.\nUse the fixture runner in authoring-preview mode or the Buck test environment.\n",
+  "environment": {
+    "python": "3.13.15",
+    "numpy": "2.5.3",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "blas_threads": "1"
+  },
+  "grade_parameters": {
+    "A": {
+      "matrix": [
+        [
+          1.2199392059633214,
+          -0.07336062759138064,
+          -0.00016242637150630098
+        ],
+        [
+          0.058098968457466024,
+          1.1013284383935156,
+          -0.007892022736843151
+        ],
+        [
+          0.04703201788554098,
+          -0.035697353029217053,
+          1.2057767571525202
+        ]
+      ],
+      "tone": {
+        "input_black": 0.0,
+        "input_shadows": 7.542165977549,
+        "input_midtones": 36.54,
+        "input_white": 210,
+        "input_highlights": 1000.0,
+        "fit": 0,
+        "reference_nits": 203,
+        "peak_nits": 1000
+      },
+      "color": {
+        "adaptance_a_0": 0.0,
+        "adaptance_a_1": 0.0,
+        "adaptance_a_2": 0.0,
+        "adaptance_a_3": 0.0,
+        "adaptance_b_0": 0.0,
+        "adaptance_b_1": 0.0,
+        "adaptance_b_2": 0.0,
+        "adaptance_b_3": 0.0,
+        "adaptance_strength": 0.5,
+        "adaptance_fit": 0,
+        "j_low_0": 0.0,
+        "j_low_1": 0.0,
+        "j_low_2": 0.0,
+        "j_low_3": 0.0,
+        "j_high_0": 0.0,
+        "j_high_1": 0.0,
+        "j_high_2": 0.0,
+        "j_high_3": 0.0,
+        "j_a_0": 0.0,
+        "j_a_1": 0.0,
+        "j_a_2": 0.0,
+        "j_a_3": 0.0,
+        "j_b_0": 0.0,
+        "j_b_1": 0.0,
+        "j_b_2": 0.0,
+        "j_b_3": 0.0,
+        "j_fit": 0,
+        "c_low_0": 0.0,
+        "c_low_1": 0.0,
+        "c_low_2": 0.0,
+        "c_low_3": 0.0,
+        "c_high_0": 0.0,
+        "c_high_1": 0.0,
+        "c_high_2": 0.0,
+        "c_high_3": 0.0,
+        "c_a_0": 0.0,
+        "c_a_1": 0.0,
+        "c_a_2": 0.0,
+        "c_a_3": 0.0,
+        "c_b_0": 0.0,
+        "c_b_1": 0.0,
+        "c_b_2": 0.0,
+        "c_b_3": 0.0,
+        "c_fit": 0,
+        "hue_0": 0.0,
+        "hue_1": 0.0,
+        "hue_2": 3,
+        "hue_3": 0.0,
+        "concentration_a_0": 0.0,
+        "concentration_b_0": 0.0,
+        "concentration_a_1": 0.0,
+        "concentration_b_1": 0.0,
+        "concentration_a_2": 0.0,
+        "concentration_b_2": 0.0,
+        "concentration_a_3": 0.0,
+        "concentration_b_3": 0.0,
+        "hue_fit": 0,
+        "global_gain": 0.0,
+        "global_low_hue": 0.0,
+        "global_high_hue": 0.0
+      },
+      "space": "Linear Rec.2020"
+    },
+    "B": {
+      "matrix": [
+        [
+          0.8555514405492795,
+          0.028569063584351576,
+          0.01365018777391742
+        ],
+        [
+          2.001178029089235e-16,
+          0.9012504626108282,
+          1.0005890145446175e-16
+        ],
+        [
+          -0.018325920698372848,
+          -0.051242548715114786,
+          0.9642962731875908
+        ]
+      ],
+      "tone": {
+        "input_black": 0.0,
+        "input_shadows": 7.542165977549,
+        "input_midtones": 40,
+        "input_white": 235,
+        "input_highlights": 1150,
+        "fit": 0,
+        "reference_nits": 203,
+        "peak_nits": 1000
+      },
+      "color": {
+        "adaptance_a_0": 0.0,
+        "adaptance_a_1": 0.4,
+        "adaptance_a_2": 0.0,
+        "adaptance_a_3": 0.0,
+        "adaptance_b_0": 0.0,
+        "adaptance_b_1": 0.0,
+        "adaptance_b_2": -0.25,
+        "adaptance_b_3": 0.0,
+        "adaptance_strength": 0.5,
+        "adaptance_fit": 0,
+        "j_low_0": 0.0,
+        "j_low_1": 0.0,
+        "j_low_2": 0.0,
+        "j_low_3": 0.0,
+        "j_high_0": 0.0,
+        "j_high_1": -2,
+        "j_high_2": 0.0,
+        "j_high_3": 0.0,
+        "j_a_0": 0.0,
+        "j_a_1": 0.0,
+        "j_a_2": 0.0,
+        "j_a_3": 0.0,
+        "j_b_0": 0.0,
+        "j_b_1": 0.0,
+        "j_b_2": 0.0,
+        "j_b_3": 0.0,
+        "j_fit": 0,
+        "c_low_0": 0.0,
+        "c_low_1": 0.0,
+        "c_low_2": 0.0,
+        "c_low_3": 0.0,
+        "c_high_0": 0.0,
+        "c_high_1": 0.0,
+        "c_high_2": 0.1,
+        "c_high_3": 0.0,
+        "c_a_0": 0.0,
+        "c_a_1": 0.0,
+        "c_a_2": 0.0,
+        "c_a_3": 0.0,
+        "c_b_0": 0.0,
+        "c_b_1": 0.0,
+        "c_b_2": 0.0,
+        "c_b_3": 0.0,
+        "c_fit": 0,
+        "hue_0": 0.0,
+        "hue_1": 5,
+        "hue_2": 0.0,
+        "hue_3": 0.0,
+        "concentration_a_0": 0.0,
+        "concentration_b_0": 0.0,
+        "concentration_a_1": 0.0,
+        "concentration_b_1": 0.0,
+        "concentration_a_2": 0.06,
+        "concentration_b_2": 0.0,
+        "concentration_a_3": 0.0,
+        "concentration_b_3": 0.0,
+        "hue_fit": 0,
+        "global_gain": 0.2,
+        "global_low_hue": 8,
+        "global_high_hue": -6
+      },
+      "space": "Linear Rec.2020"
+    },
+    "C": {
+      "matrix": [
+        [
+          0.9190995824279408,
+          0.02827735421312186,
+          -0.013804835355219515
+        ],
+        [
+          -0.013110256098114129,
+          0.9596397862282243,
+          -0.012989278179169466
+        ],
+        [
+          -0.025756399626343303,
+          0.05227168956270894,
+          0.9075142650423215
+        ]
+      ],
+      "tone": {
+        "input_black": 0.0,
+        "input_shadows": 7.542165977549,
+        "input_midtones": 36.54,
+        "input_white": 203.0,
+        "input_highlights": 1000.0,
+        "fit": 0,
+        "reference_nits": 203,
+        "peak_nits": 1000
+      },
+      "color": {
+        "adaptance_a_0": 0.0,
+        "adaptance_a_1": 0.0,
+        "adaptance_a_2": 0.0,
+        "adaptance_a_3": 0.0,
+        "adaptance_b_0": 0.0,
+        "adaptance_b_1": 0.0,
+        "adaptance_b_2": 0.0,
+        "adaptance_b_3": 0.0,
+        "adaptance_strength": 0.5,
+        "adaptance_fit": 0,
+        "j_low_0": 0.0,
+        "j_low_1": 0.0,
+        "j_low_2": 0.0,
+        "j_low_3": 0.0,
+        "j_high_0": 0.0,
+        "j_high_1": 0.0,
+        "j_high_2": 0.0,
+        "j_high_3": 0.0,
+        "j_a_0": 0.0,
+        "j_a_1": 0.0,
+        "j_a_2": 0.0,
+        "j_a_3": 0.0,
+        "j_b_0": 0.0,
+        "j_b_1": 0.0,
+        "j_b_2": 0.0,
+        "j_b_3": 0.0,
+        "j_fit": 0,
+        "c_low_0": 0.0,
+        "c_low_1": 0.0,
+        "c_low_2": 0.0,
+        "c_low_3": 0.0,
+        "c_high_0": 0.0,
+        "c_high_1": 0.0,
+        "c_high_2": 0.0,
+        "c_high_3": 0.0,
+        "c_a_0": 0.0,
+        "c_a_1": 0.0,
+        "c_a_2": 0.0,
+        "c_a_3": 0.0,
+        "c_b_0": 0.0,
+        "c_b_1": 0.0,
+        "c_b_2": 0.0,
+        "c_b_3": 0.0,
+        "c_fit": 0,
+        "hue_0": 0.0,
+        "hue_1": 0.0,
+        "hue_2": 0.0,
+        "hue_3": 0.0,
+        "concentration_a_0": 0.0,
+        "concentration_b_0": 0.0,
+        "concentration_a_1": 0.0,
+        "concentration_b_1": 0.0,
+        "concentration_a_2": 0.0,
+        "concentration_b_2": -0.05,
+        "concentration_a_3": 0.0,
+        "concentration_b_3": 0.0,
+        "hue_fit": 0,
+        "global_gain": 0.12,
+        "global_low_hue": 0.0,
+        "global_high_hue": 0.0
+      },
+      "space": "Linear Rec.2020"
+    }
+  },
+  "lut_space": "Linear Rec.2020",
+  "bounds": [
+    -4.0,
+    64.0
+  ],
+  "preview_vertices": 35937,
+  "refinement_vertices": 238688,
+  "summary": [
+    {
+      "case": "forward-stack",
+      "single_65_seconds": 1.0158298930000456,
+      "preview_33_seconds": 0.12074392199974682,
+      "refinement_seconds": 0.859926514000108,
+      "progressive_total_seconds": 0.9787276960014424
+    },
+    {
+      "case": "inverse",
+      "single_65_seconds": 4.246667135001189,
+      "preview_33_seconds": 0.9957590520007216,
+      "refinement_seconds": 3.765840453999772,
+      "progressive_total_seconds": 4.829825689001154
+    },
+    {
+      "case": "mixed-stack",
+      "single_65_seconds": 4.693248409999796,
+      "preview_33_seconds": 1.0902605279989075,
+      "refinement_seconds": 4.191592618000868,
+      "progressive_total_seconds": 5.281853145999776
+    }
+  ],
+  "runs": [
+    {
+      "case": "forward-stack",
+      "repeat": 1,
+      "single_65_seconds": 0.9895106010008021,
+      "preview_33_seconds": 0.12143859699972381,
+      "refinement_seconds": 0.8493815359997825,
+      "progressive_total_seconds": 0.9708201329995063,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 0,
+        "approximate": 0,
+        "max_residual": 0.0,
+        "singular_matrices": 0
+      }
+    },
+    {
+      "case": "forward-stack",
+      "repeat": 2,
+      "single_65_seconds": 1.0390167469995504,
+      "preview_33_seconds": 0.11880118200133438,
+      "refinement_seconds": 0.859926514000108,
+      "progressive_total_seconds": 0.9787276960014424,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 0,
+        "approximate": 0,
+        "max_residual": 0.0,
+        "singular_matrices": 0
+      }
+    },
+    {
+      "case": "forward-stack",
+      "repeat": 3,
+      "single_65_seconds": 1.0158298930000456,
+      "preview_33_seconds": 0.12074392199974682,
+      "refinement_seconds": 0.8789926179997565,
+      "progressive_total_seconds": 0.9997365399995033,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 0,
+        "approximate": 0,
+        "max_residual": 0.0,
+        "singular_matrices": 0
+      }
+    },
+    {
+      "case": "inverse",
+      "repeat": 1,
+      "single_65_seconds": 4.336001637000663,
+      "preview_33_seconds": 0.9857682599995314,
+      "refinement_seconds": 3.916401866999877,
+      "progressive_total_seconds": 4.902170126999408,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 274625,
+        "approximate": 86,
+        "max_residual": 0.028815268861731788,
+        "singular_matrices": 0
+      }
+    },
+    {
+      "case": "inverse",
+      "repeat": 2,
+      "single_65_seconds": 4.246667135001189,
+      "preview_33_seconds": 1.1194299930011766,
+      "refinement_seconds": 3.7103956959999778,
+      "progressive_total_seconds": 4.829825689001154,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 274625,
+        "approximate": 86,
+        "max_residual": 0.028815268861731788,
+        "singular_matrices": 0
+      }
+    },
+    {
+      "case": "inverse",
+      "repeat": 3,
+      "single_65_seconds": 4.1687543709995225,
+      "preview_33_seconds": 0.9957590520007216,
+      "refinement_seconds": 3.765840453999772,
+      "progressive_total_seconds": 4.761599506000493,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 274625,
+        "approximate": 86,
+        "max_residual": 0.028815268861731788,
+        "singular_matrices": 0
+      }
+    },
+    {
+      "case": "mixed-stack",
+      "repeat": 1,
+      "single_65_seconds": 4.693248409999796,
+      "preview_33_seconds": 1.0209249189992988,
+      "refinement_seconds": 4.116063299999951,
+      "progressive_total_seconds": 5.1369882189992495,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 274625,
+        "approximate": 88,
+        "max_residual": 0.028782391178015485,
+        "singular_matrices": 0
+      }
+    },
+    {
+      "case": "mixed-stack",
+      "repeat": 2,
+      "single_65_seconds": 4.654456389998813,
+      "preview_33_seconds": 1.0902605279989075,
+      "refinement_seconds": 4.191592618000868,
+      "progressive_total_seconds": 5.281853145999776,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 274625,
+        "approximate": 88,
+        "max_residual": 0.028782391178015485,
+        "singular_matrices": 0
+      }
+    },
+    {
+      "case": "mixed-stack",
+      "repeat": 3,
+      "single_65_seconds": 4.94758340000044,
+      "preview_33_seconds": 1.1100854319993232,
+      "refinement_seconds": 4.246769948000292,
+      "progressive_total_seconds": 5.356855379999615,
+      "shared_vertices_identical": true,
+      "final_vs_single_65_max_normalized_error": 0.0,
+      "diagnostics": {
+        "samples": 274625,
+        "approximate": 88,
+        "max_residual": 0.028782391178015485,
+        "singular_matrices": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+python_test(
+    name = "spindle",
+    srcs = ["test_spindle.py"],
+    base_module = "tests.reference",
+    deps = [
+        "//libraries/color-core:runtime",
+        "//libraries/perceptual-grade-core:runtime",
+        "//libraries/perceptual-grade-reference:appearance_certificate",
+        "//libraries/perceptual-grade-reference:boundary_oracle",
+        "//libraries/perceptual-grade-reference:runtime",
+    ],
+)
+
+[
+    python_test(
+        name = name,
+        srcs = ["test_" + name + ".py"],
+        base_module = "tests.reference",
+        deps = ["//libraries/perceptual-grade-reference:model_code"],
+    )
+    for name in [
+        "pole_spindle",
+        "piecewise_spindle",
+        "boundary_curves",
+    ]
+]
+
+python_library(
+    name = "legacy_capacity_support",
+    srcs = {"legacy_capacity.py": "support/legacy_capacity.py"},
+    base_module = "tests.reference",
+    visibility = ["PUBLIC"],
+    deps = ["//libraries/perceptual-grade-reference:runtime"],
+)
+
+python_library(
+    name = "legacy_inverse_baking_cases",
+    srcs = ["test_legacy_inverse_baking.py"],
+    base_module = "tests.reference",
+    visibility = ["PUBLIC"],
+    deps = [":legacy_capacity_support"],
+)
+
+python_test(
+    name = "legacy_inverse_baking",
+    srcs = ["test_legacy_inverse_baking.py"],
+    base_module = "tests.reference",
+    deps = [":legacy_capacity_support"],
+)
+
+[
+    python_test(
+        name = name,
+        srcs = ["test_" + name + ".py"],
+        base_module = "tests.reference",
+        deps = [
+            "//libraries/color-core:runtime",
+            "//libraries/perceptual-grade-reference:runtime",
+        ],
+    )
+    for name in [
+        "inverse_baking",
+        "tone_table",
+        "appearance",
+        "grading",
+        "model",
+        "inverse",
+        "guards",
+        "cube_guard",
+        "hk_baking",
+        "hk_guard",
+        "tonal_web",
+        "web_model",
+        "selective_adaptance",
+        "guarded_warp",
+    ]
+]
+
+python_test(
+    name = "cli",
+    srcs = ["test_cli.py"],
+    base_module = "tests.reference",
+    resources = {"evaluate": "//libraries/perceptual-grade-reference:evaluate"},
+    deps = ["//libraries/perceptual-grade-reference:runtime"],
+)
+
+python_test(
+    name = "boundary_tools",
+    srcs = ["test_boundary_tools.py"],
+    base_module = "tests.reference",
+    resources = {
+        "candidate_report.json": "//libraries/perceptual-grade-reference:boundary_acceleration_audit[report]",
+        "rebuilt_report.json": "//libraries/perceptual-grade-reference:rebuild_d65_boundary[report]",
+        "rebuilt_boundary.npz": "//libraries/perceptual-grade-reference:rebuild_d65_boundary[context]",
+    },
+    deps = ["//libraries/perceptual-grade-reference:boundary_table_code"],
+)

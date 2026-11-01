@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "status": "illustrative",
+  "environment": {
+    "device": "Placeholder workstation",
+    "blender": "Replace with measured version"
+  },
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "samples": 64,
+    "trials": 3
+  },
+  "cases": [
+    {
+      "workload": "shader-small",
+      "method": "LUT",
+      "prepare_seconds": 0.9,
+      "render_seconds": [
+        3.4299999999999997,
+        3.5,
+        3.5700000000000003
+      ]
+    },
+    {
+      "workload": "shader-small",
+      "method": "DIRECT",
+      "prepare_seconds": 0.4,
+      "render_seconds": [
+        9.212,
+        9.4,
+        9.588000000000001
+      ]
+    },
+    {
+      "workload": "shader-full",
+      "method": "LUT",
+      "prepare_seconds": 0.9,
+      "render_seconds": [
+        5.4879999999999995,
+        5.6,
+        5.712
+      ]
+    },
+    {
+      "workload": "shader-full",
+      "method": "DIRECT",
+      "prepare_seconds": 0.4,
+      "render_seconds": [
+        16.855999999999998,
+        17.2,
+        17.544
+      ]
+    },
+    {
+      "workload": "compositor-full",
+      "method": "LUT",
+      "prepare_seconds": 0.9,
+      "render_seconds": [
+        0.4704,
+        0.48,
+        0.4896
+      ]
+    },
+    {
+      "workload": "compositor-full",
+      "method": "DIRECT",
+      "prepare_seconds": 0.4,
+      "render_seconds": [
+        0.6076,
+        0.62,
+        0.6324
+      ]
+    }
+  ]
+}

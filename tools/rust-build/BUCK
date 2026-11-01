@@ -1,0 +1,40 @@
+load("//build_defs:rust.bzl", "rust_distribution")
+
+python_library(
+    name = "build_lib",
+    srcs = ["build.py"],
+    base_module = "rust_build",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "builder",
+    main_module = "rust_build.build",
+    visibility = ["PUBLIC"],
+    deps = [":build_lib"],
+)
+
+rust_distribution(
+    name = "distribution",
+    archives = select({
+        "prelude//os:linux": {
+            "rustc": "//third_party/rust/toolchain:rustc_archive_linux_x86_64",
+            "cargo": "//third_party/rust/toolchain:cargo_archive_linux_x86_64",
+            "clippy-preview": "//third_party/rust/toolchain:clippy_archive_linux_x86_64",
+            "rust-std-x86_64-unknown-linux-gnu": "//third_party/rust/toolchain:host_std_archive_linux_x86_64",
+            "rust-std-wasm32-unknown-unknown": "//third_party/rust/toolchain:wasm_std_archive",
+        },
+        "prelude//os:macos": {
+            "rustc": "//third_party/rust/toolchain:rustc_archive_darwin_arm64",
+            "cargo": "//third_party/rust/toolchain:cargo_archive_darwin_arm64",
+            "clippy-preview": "//third_party/rust/toolchain:clippy_archive_darwin_arm64",
+            "rust-std-aarch64-apple-darwin": "//third_party/rust/toolchain:host_std_archive_darwin_arm64",
+            "rust-std-wasm32-unknown-unknown": "//third_party/rust/toolchain:wasm_std_archive",
+        },
+    }),
+    host = select({
+        "prelude//os:linux": "x86_64-unknown-linux-gnu",
+        "prelude//os:macos": "aarch64-apple-darwin",
+    }),
+    visibility = ["PUBLIC"],
+)

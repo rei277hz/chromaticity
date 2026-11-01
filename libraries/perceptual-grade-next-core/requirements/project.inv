@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "description": "Bounded source-bound owner readiness gates output start; output receipts settle only the admitted operation and frozen identities.",
+  "state": "ProjectState",
+  "event": "ProjectEvent",
+  "initializers": [
+    "new_project"
+  ],
+  "step": "project_step",
+  "invariants": {
+    "native_output_hold_is_scoped": "state.phase != 'rendering' or state.publication_hold"
+  },
+  "contracts": {
+    "new_project": {
+      "ensures": [
+        "result.phase == 'active' and result.generation == 0 and result.bake_phase == 'idle'"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "owner_worklist_has_exact_evaluator_slots",
+      "variables": {"state": "ProjectState", "event": "ProjectEvent"},
+      "lets": {"after": "project_step(state,event)"},
+      "assert": "not after[1] or event.kind != 'open' or (after[0].required_owners == event.owners and after[0].required_evaluators == event.evaluators and _owner_set_valid(after[0]))"
+    },
+    {
+      "name": "owner_worklist_rejects_duplicate_or_unpaired_entries",
+      "variables": {"state": "ProjectState", "event": "ProjectEvent"},
+      "assume": ["event.kind == 'open'"],
+      "lets": {
+        "after": "project_step(state,event)",
+        "candidate": "replace(state,generation=event.generation,required_owners=event.owners,required_evaluators=event.evaluators)"
+      },
+      "assert": "not after[1] or event.generation <= state.generation or (len(candidate.required_owners) == len(candidate.required_evaluators) and _unique(candidate.required_owners) and (len(candidate.required_owners) < 1 or _owner_slot_valid(candidate,0)) and (len(candidate.required_owners) < 2 or _owner_slot_valid(candidate,1)) and (len(candidate.required_owners) < 3 or _owner_slot_valid(candidate,2)) and (len(candidate.required_owners) < 4 or _owner_slot_valid(candidate,3)))"
+    },
+    {
+      "name": "every_required_owner_has_current_matching_artifact",
+      "variables": {"state": "ProjectState"},
+      "lets": {},
+      "assert": "not project_owners_ready(state) or (_owner_set_valid(state) and (len(state.required_owners) < 1 or (state.ready[0] and not state.repair[0] and state.ready_revisions[0] == state.revision and state.ready_evaluators[0] == _str_at(state.required_evaluators,0) and state.ready_evaluator_ids[0] and state.ready_manifest_ids[0])) and (len(state.required_owners) < 2 or (state.ready[1] and not state.repair[1] and state.ready_revisions[1] == state.revision and state.ready_evaluators[1] == _str_at(state.required_evaluators,1) and state.ready_evaluator_ids[1] and state.ready_manifest_ids[1])) and (len(state.required_owners) < 3 or (state.ready[2] and not state.repair[2] and state.ready_revisions[2] == state.revision and state.ready_evaluators[2] == _str_at(state.required_evaluators,2) and state.ready_evaluator_ids[2] and state.ready_manifest_ids[2])) and (len(state.required_owners) < 4 or (state.ready[3] and not state.repair[3] and state.ready_revisions[3] == state.revision and state.ready_evaluators[3] == _str_at(state.required_evaluators,3) and state.ready_evaluator_ids[3] and state.ready_manifest_ids[3])))"
+    },
+    {
+      "name": "ready_artifact_evaluator_matches_its_required_owner",
+      "variables": {"state": "ProjectState"},
+      "lets": {},
+      "assert": "not project_owners_ready(state) or ((len(state.required_owners) < 1 or state.ready_evaluators[0] == _str_at(state.required_evaluators,0)) and (len(state.required_owners) < 2 or state.ready_evaluators[1] == _str_at(state.required_evaluators,1)) and (len(state.required_owners) < 3 or state.ready_evaluators[2] == _str_at(state.required_evaluators,2)) and (len(state.required_owners) < 4 or state.ready_evaluators[3] == _str_at(state.required_evaluators,3)))"
+    },
+    {
+      "name": "save_start_requires_complete_current_owner_readiness",
+      "variables": {"state": "ProjectState", "event": "ProjectEvent"},
+      "lets": {"after": "project_step(state,event)"},
+      "assert": "not after[1] or event.kind != 'save_ready' or (state.phase == 'saving' and event.operation == state.save_operation and project_owners_ready(state))"
+    },
+    {
+      "name": "render_start_requires_complete_current_owner_readiness",
+      "variables": {"state": "ProjectState", "event": "ProjectEvent"},
+      "lets": {"after": "project_step(state,event)"},
+      "assert": "not after[1] or event.kind != 'render_started' or (state.phase == 'rendering' and event.operation == state.render_operation and state.publication_hold and project_owners_ready(state))"
+    },
+    {
+      "name": "repair_debt_blocks_ready_receipt_until_fresh_retry",
+      "variables": {"state": "ProjectState", "event": "ProjectEvent"},
+      "lets": {"after": "project_step(state,event)"},
+      "assert": "not after[1] or event.kind != 'owner_ready' or (not _repair_for(state,event.owner) and event.attempt == state.attempt)"
+    },
+    {
+      "name": "owner_ready_receipt_matches_required_evaluator",
+      "variables": {"state": "ProjectState", "event": "ProjectEvent"},
+      "lets": {"after": "project_step(state,event)"},
+      "assert": "not after[1] or event.kind != 'owner_ready' or (event.evaluator == _str_at(state.required_evaluators,_index(state.required_owners,event.owner)) and event.revision == state.revision and event.attempt == state.attempt and event.final_ready)"
+    },
+    {
+      "name": "bake_completion_matches_admitted_receipt",
+      "variables": {
+        "state": "ProjectState",
+        "event": "ProjectEvent"
+      },
+      "lets": {
+        "after": "project_step(state,event)"
+      },
+      "assert": "not after[1] or event.kind != 'bake_complete' or (state.bake_phase == 'publishing' and event.operation == state.bake_operation and event.source_revision == state.bake_source_revision and event.source_id == state.bake_source_id and event.evaluator == state.bake_evaluator and event.evaluator_id == state.bake_evaluator_id and event.manifest_id == state.bake_manifest_id and _identity(event.result_id) and event.committed)"
+    },
+    {
+      "name": "save_completion_requires_invoked_operation",
+      "variables": {
+        "state": "ProjectState",
+        "event": "ProjectEvent"
+      },
+      "lets": {
+        "after": "project_step(state,event)"
+      },
+      "assert": "not after[1] or event.kind not in ('save_complete','save_failed') or (state.phase == 'saving' and state.save_started and event.operation == state.save_operation)"
+    },
+    {
+      "name": "render_completion_requires_invoked_operation",
+      "variables": {
+        "state": "ProjectState",
+        "event": "ProjectEvent"
+      },
+      "lets": {
+        "after": "project_step(state,event)"
+      },
+      "assert": "not after[1] or event.kind not in ('render_complete','render_cancel','render_failed') or (state.phase == 'rendering' and state.render_started and state.publication_hold and event.operation == state.render_operation)"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "all_owners_ready_then_failure_retry_requires_fresh_receipt",
+      "lets": {
+        "opened": "project_step(new_project(),ProjectEvent('open',generation=1,owners=('grade','stack'),evaluators=('native_grade_graph','stack_65_lut'))) ",
+        "intent": "project_step(opened[0],ProjectEvent('intent',generation=1,revision=1))",
+        "attempt": "project_step(intent[0],ProjectEvent('prepare_begin',generation=1,revision=1,attempt=1))",
+        "grade": "project_step(attempt[0],ProjectEvent('owner_ready',generation=1,revision=1,attempt=1,owner='grade',evaluator='native_grade_graph',evaluator_id='graph',manifest_id='grade-manifest',final_ready=True))",
+        "stack": "project_step(grade[0],ProjectEvent('owner_ready',generation=1,revision=1,attempt=1,owner='stack',evaluator='stack_65_lut',evaluator_id='lut',manifest_id='stack-manifest',final_ready=True))",
+        "failed": "project_step(stack[0],ProjectEvent('output_owner_failed',generation=1,revision=1,attempt=1,owner='grade'))",
+        "retried": "project_step(failed[0],ProjectEvent('retry_owner',generation=1,revision=1,attempt=2,owner='grade'))",
+        "stale": "project_step(retried[0],ProjectEvent('owner_ready',generation=1,revision=1,attempt=1,owner='grade',evaluator='native_grade_graph',evaluator_id='old-graph',manifest_id='old-manifest',final_ready=True))",
+        "fresh": "project_step(retried[0],ProjectEvent('owner_ready',generation=1,revision=1,attempt=2,owner='grade',evaluator='native_grade_graph',evaluator_id='new-graph',manifest_id='new-manifest',final_ready=True))"
+      },
+      "assert": "opened[1] and intent[1] and attempt[1] and grade[1] and stack[1] and project_owners_ready(stack[0]) and failed[1] and not project_owners_ready(failed[0]) and retried[1] and not project_owners_ready(retried[0]) and not stale[1] and fresh[1] and project_owners_ready(fresh[0])"
+    },
+    {
+      "name": "accepted_save_holds_publication_until_exact_terminal_receipt",
+      "lets": {
+        "opened": "project_step(new_project(),ProjectEvent('open',generation=1))",
+        "saving": "project_step(opened[0],ProjectEvent('save_request',generation=1,operation=1))",
+        "ready": "project_step(saving[0],ProjectEvent('save_ready',generation=1,operation=1))",
+        "done": "project_step(ready[0],ProjectEvent('save_complete',generation=1,operation=1,committed=True))"
+      },
+      "assert": "saving[1] and saving[0].publication_hold and ready[1] and done[1] and not done[0].publication_hold"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "open_accepts_unpaired_owner_evaluator",
+      "function": "_owner_set_valid",
+      "target": "len(state.required_evaluators) != count",
+      "replacement": "False",
+      "detects": ["property.owner_worklist_rejects_duplicate_or_unpaired_entries"]
+    },
+    {
+      "name": "owner_readiness_ignores_repair_debt",
+      "function": "_owner_slot_ready",
+      "target": "not state.repair[slot]",
+      "replacement": "True",
+      "detects": ["property.every_required_owner_has_current_matching_artifact"]
+    },
+    {
+      "name": "owner_readiness_ignores_expected_evaluator",
+      "function": "_owner_slot_ready",
+      "target": "state.ready_evaluators[slot] == state.required_evaluators[slot]",
+      "replacement": "True",
+      "detects": ["property.ready_artifact_evaluator_matches_its_required_owner"]
+    },
+    {
+      "name": "save_starts_without_owner_readiness",
+      "function": "project_step",
+      "target": "state.phase == 'saving' and event.operation == state.save_operation and project_owners_ready(state)",
+      "replacement": "state.phase == 'saving' and event.operation == state.save_operation and True",
+      "detects": ["property.save_start_requires_complete_current_owner_readiness"]
+    },
+    {
+      "name": "render_starts_without_owner_readiness",
+      "function": "project_step",
+      "target": "state.phase == 'rendering' and event.operation == state.render_operation and state.publication_hold and project_owners_ready(state)",
+      "replacement": "state.phase == 'rendering' and event.operation == state.render_operation and state.publication_hold and True",
+      "detects": ["property.render_start_requires_complete_current_owner_readiness"]
+    },
+    {
+      "name": "owner_ready_accepts_repair_debt",
+      "function": "project_step",
+      "target": "slot < 0 or event.revision != state.revision or event.attempt != state.attempt or not event.final_ready or event.evaluator != _str_at(state.required_evaluators, slot) or _repair_for(state, event.owner) or not _identity(event.evaluator_id) or not _identity(event.manifest_id)",
+      "replacement": "slot < 0 or event.revision != state.revision or event.attempt != state.attempt or not event.final_ready or event.evaluator != _str_at(state.required_evaluators, slot) or False or not _identity(event.evaluator_id) or not _identity(event.manifest_id)",
+      "detects": ["property.repair_debt_blocks_ready_receipt_until_fresh_retry"]
+    },
+    {
+      "name": "save_completion_accepts_stale_operation",
+      "function": "_save_matches",
+      "target": "event.operation == state.save_operation",
+      "replacement": "event.operation >= state.save_operation",
+      "detects": [
+        "property.save_completion_requires_invoked_operation"
+      ]
+    },
+    {
+      "name": "bake_accepts_another_evaluator",
+      "function": "bake_completion_matches",
+      "target": "event.evaluator_id == state.bake_evaluator_id",
+      "replacement": "True",
+      "detects": [
+        "property.bake_completion_matches_admitted_receipt"
+      ]
+    },
+    {
+      "name": "render_accepts_stale_operation",
+      "function": "render_completion_matches",
+      "target": "event.operation == state.render_operation",
+      "replacement": "event.operation >= state.render_operation",
+      "detects": [
+        "property.render_completion_requires_invoked_operation"
+      ]
+    }
+  ]
+}

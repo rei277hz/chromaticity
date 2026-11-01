@@ -1,0 +1,327 @@
+__DEVICE__ float3 pg_palette(float3 rgb,float3 wd) {
+    float3 lin=make_float3(color_decode(rgb.x),color_decode(rgb.y),color_decode(rgb.z));
+    return color_adapt(color_rgb_xyz(lin),pg_white(0,0.0f,0.0f),wd);
+}
+// Derived from CIE 2019, DOI 10.25039/CIE.DS.xvudnb9b.
+#define PG_LOCUS_COUNT 66
+__DEVICE__ float3 pg_locus(int i) {
+    if(i==0)return make_float3(0.174112234f,0.004963726f,0.0f);
+    if(i==1)return make_float3(0.174007918f,0.004980549f,0.0f);
+    if(i==2)return make_float3(0.173800773f,0.004915412f,0.0f);
+    if(i==3)return make_float3(0.173559907f,0.004923203f,0.0f);
+    if(i==4)return make_float3(0.173336865f,0.004796743f,0.0f);
+    if(i==5)return make_float3(0.173020965f,0.004775050f,0.0f);
+    if(i==6)return make_float3(0.172576551f,0.004799302f,0.0f);
+    if(i==7)return make_float3(0.172086631f,0.004832524f,0.0f);
+    if(i==8)return make_float3(0.171407434f,0.005102171f,0.0f);
+    if(i==9)return make_float3(0.170300989f,0.005788505f,0.0f);
+    if(i==10)return make_float3(0.168877521f,0.006900244f,0.0f);
+    if(i==11)return make_float3(0.166895290f,0.008555606f,0.0f);
+    if(i==12)return make_float3(0.164411756f,0.010857558f,0.0f);
+    if(i==13)return make_float3(0.161104580f,0.013793359f,0.0f);
+    if(i==14)return make_float3(0.156640933f,0.017704805f,0.0f);
+    if(i==15)return make_float3(0.150985408f,0.022740193f,0.0f);
+    if(i==16)return make_float3(0.143960396f,0.029702970f,0.0f);
+    if(i==17)return make_float3(0.135502671f,0.039879121f,0.0f);
+    if(i==18)return make_float3(0.124118477f,0.057802513f,0.0f);
+    if(i==19)return make_float3(0.109594324f,0.086842511f,0.0f);
+    if(i==20)return make_float3(0.091293507f,0.132702042f,0.0f);
+    if(i==21)return make_float3(0.068705921f,0.200723218f,0.0f);
+    if(i==22)return make_float3(0.045390735f,0.294975965f,0.0f);
+    if(i==23)return make_float3(0.023459943f,0.412703479f,0.0f);
+    if(i==24)return make_float3(0.008168028f,0.538423071f,0.0f);
+    if(i==25)return make_float3(0.003858521f,0.654823151f,0.0f);
+    if(i==26)return make_float3(0.013870246f,0.750186428f,0.0f);
+    if(i==27)return make_float3(0.038851802f,0.812016021f,0.0f);
+    if(i==28)return make_float3(0.074302425f,0.833803091f,0.0f);
+    if(i==29)return make_float3(0.114160720f,0.826206960f,0.0f);
+    if(i==30)return make_float3(0.154722061f,0.805863545f,0.0f);
+    if(i==31)return make_float3(0.192876098f,0.781629216f,0.0f);
+    if(i==32)return make_float3(0.229619673f,0.754329090f,0.0f);
+    if(i==33)return make_float3(0.265775085f,0.724323925f,0.0f);
+    if(i==34)return make_float3(0.301603799f,0.692307762f,0.0f);
+    if(i==35)return make_float3(0.337363333f,0.658848290f,0.0f);
+    if(i==36)return make_float3(0.373101544f,0.624450860f,0.0f);
+    if(i==37)return make_float3(0.408736256f,0.589606869f,0.0f);
+    if(i==38)return make_float3(0.444062464f,0.554713903f,0.0f);
+    if(i==39)return make_float3(0.478774791f,0.520202307f,0.0f);
+    if(i==40)return make_float3(0.512486367f,0.486590788f,0.0f);
+    if(i==41)return make_float3(0.544786506f,0.454434115f,0.0f);
+    if(i==42)return make_float3(0.575151311f,0.424232235f,0.0f);
+    if(i==43)return make_float3(0.602932786f,0.396496634f,0.0f);
+    if(i==44)return make_float3(0.627036600f,0.372491145f,0.0f);
+    if(i==45)return make_float3(0.648233106f,0.351394916f,0.0f);
+    if(i==46)return make_float3(0.665763576f,0.334010651f,0.0f);
+    if(i==47)return make_float3(0.680078850f,0.319747217f,0.0f);
+    if(i==48)return make_float3(0.691503973f,0.308342261f,0.0f);
+    if(i==49)return make_float3(0.700606061f,0.299300699f,0.0f);
+    if(i==50)return make_float3(0.707917792f,0.292027109f,0.0f);
+    if(i==51)return make_float3(0.714031597f,0.285928874f,0.0f);
+    if(i==52)return make_float3(0.719032942f,0.280934952f,0.0f);
+    if(i==53)return make_float3(0.723031603f,0.276948358f,0.0f);
+    if(i==54)return make_float3(0.725992318f,0.274007682f,0.0f);
+    if(i==55)return make_float3(0.728271728f,0.271728272f,0.0f);
+    if(i==56)return make_float3(0.729969013f,0.270030987f,0.0f);
+    if(i==57)return make_float3(0.731089396f,0.268910604f,0.0f);
+    if(i==58)return make_float3(0.731993300f,0.268006700f,0.0f);
+    if(i==59)return make_float3(0.732718894f,0.267281106f,0.0f);
+    if(i==60)return make_float3(0.733416967f,0.266583033f,0.0f);
+    if(i==61)return make_float3(0.734047300f,0.265952700f,0.0f);
+    if(i==62)return make_float3(0.734390165f,0.265609835f,0.0f);
+    if(i==63)return make_float3(0.734591662f,0.265408338f,0.0f);
+    if(i==64)return make_float3(0.734690023f,0.265309977f,0.0f);
+    if(i==65)return make_float3(0.734689984f,0.265310016f,0.0f);
+    return make_float3(0.0f,0.0f,0.0f);
+}
+__DEVICE__ int pg_glyph(int ch) {
+    if(ch==48)return 31599;
+    if(ch==49)return 11415;
+    if(ch==50)return 29671;
+    if(ch==51)return 29647;
+    if(ch==52)return 23497;
+    if(ch==53)return 31183;
+    if(ch==54)return 31215;
+    if(ch==55)return 29330;
+    if(ch==56)return 31727;
+    if(ch==57)return 31695;
+    if(ch==46)return 2;
+    if(ch==65)return 11245;
+    if(ch==66)return 27566;
+    if(ch==67)return 31015;
+    if(ch==68)return 27502;
+    if(ch==69)return 31143;
+    if(ch==70)return 31140;
+    if(ch==71)return 31087;
+    if(ch==72)return 23533;
+    if(ch==73)return 29847;
+    if(ch==74)return 4719;
+    if(ch==75)return 23469;
+    if(ch==76)return 18727;
+    if(ch==77)return 24557;
+    if(ch==78)return 24573;
+    if(ch==79)return 31599;
+    if(ch==80)return 31716;
+    if(ch==81)return 31609;
+    if(ch==82)return 27565;
+    if(ch==83)return 31183;
+    if(ch==84)return 29842;
+    if(ch==85)return 23407;
+    if(ch==86)return 23402;
+    if(ch==87)return 23549;
+    if(ch==88)return 23213;
+    if(ch==89)return 23186;
+    if(ch==90)return 29351;
+    return 0;
+}
+__DEVICE__ int pg_label(int label,int i) {
+    if(label==0) {
+        if(i==0)return 67;
+        if(i==1)return 73;
+        if(i==2)return 69;
+        if(i==3)return 32;
+        if(i==4)return 49;
+        if(i==5)return 57;
+        if(i==6)return 51;
+        if(i==7)return 49;
+        if(i==8)return 32;
+        if(i==9)return 88;
+        if(i==10)return 89;
+    }
+    if(label==1) {
+        if(i==0)return 82;
+        if(i==1)return 69;
+        if(i==2)return 70;
+    }
+    if(label==2) {
+        if(i==0)return 84;
+        if(i==1)return 82;
+        if(i==2)return 65;
+        if(i==3)return 78;
+        if(i==4)return 83;
+        if(i==5)return 70;
+        if(i==6)return 79;
+        if(i==7)return 82;
+        if(i==8)return 77;
+    }
+    if(label==3) {
+        if(i==0)return 83;
+        if(i==1)return 79;
+        if(i==2)return 85;
+        if(i==3)return 82;
+        if(i==4)return 67;
+        if(i==5)return 69;
+    }
+    if(label==4) {
+        if(i==0)return 84;
+        if(i==1)return 65;
+        if(i==2)return 82;
+        if(i==3)return 71;
+        if(i==4)return 69;
+        if(i==5)return 84;
+    }
+    if(label==5) {
+        if(i==0)return 69;
+        if(i==1||i==2||i==4)return 82;
+        if(i==3)return 79;
+    }
+    return 0;
+}
+// Diagram coordinates are a square 1000-unit panel, upper-left origin.
+// pg_locus and pg_glyph are generated from the attributed CMF data / bitmap font.
+__DEVICE__ float pg_sat(float v) { return _fminf(1.0f,_fmaxf(0.0f,v)); }
+__DEVICE__ float pg_len(float3 v) { return _sqrtf(color_dot(v,v)); }
+__DEVICE__ float pg_segment(float3 p,float3 a,float3 b) {
+    float3 d=b-a; float t=pg_sat(color_dot(p-a,d)/_fmaxf(color_dot(d,d),.00001f));
+    return pg_len(p-a-d*t);
+}
+__DEVICE__ float3 pg_plot(float3 xy) { return make_float3(92.0f+xy.x*920.0f,890.0f-xy.y*920.0f,0.0f); }
+__DEVICE__ float pg_stroke(float d,float width,float aa) { return pg_sat((width+aa-d)/(2.0f*aa)); }
+__DEVICE__ float pg_letter(float3 p,float x,float y,float scale,int ch) {
+    int col=(int)(_floorf((p.x-x)/scale)), row=(int)(_floorf((p.y-y)/scale));
+    if(col<0 || col>2 || row<0 || row>4) return 0.0f;
+    int bits=pg_glyph(ch); return (float)((bits>>(14-row*3-col))&1);
+}
+__DEVICE__ float pg_tick(float3 p,float x,float y,int n) {
+    return _fmaxf(pg_letter(p,x,y,3.7f,48),_fmaxf(pg_letter(p,x+15.0f,y,3.7f,46),pg_letter(p,x+27.0f,y,3.7f,48+n)));
+}
+__DEVICE__ float pg_word(float3 p,float x,float y,int label) {
+    float v=0.0f;
+    for(int i=0;i<15;i++) { int ch=pg_label(label,i); if(ch>0) v=_fmaxf(v,pg_letter(p,x+(float)(i)*17.0f,y,4.0f,ch)); }
+    return v;
+}
+__DEVICE__ float3 pg_ink(float3 base,float3 ink,float alpha) { return base*(1.0f-alpha)+ink*alpha; }
+// Settings errors remain visible even when the optional scopes are disabled.
+__DEVICE__ float3 pg_diagnostic(int width,int height,int x,int y) {
+    float scale=_fmaxf(1.0f,(float)height/500.0f);
+    float3 p=make_float3((float)x/scale,(float)y/scale,0.0f);
+    int stripe=((int)_floorf((p.x+p.y)/24.0f))%2;
+    float3 rgb=stripe?make_float3(1.0f,0.0f,1.0f):make_float3(.06f,0.0f,.06f);
+    float cx=(float)width/(2.0f*scale),cy=(float)height/(2.0f*scale);
+    if(_fabs(p.x-cx)<55.0f&&_fabs(p.y-cy)<20.0f)rgb=color_zero3();
+    float label=pg_word(p,cx-40.0f,cy-10.0f,5);
+    return color_rgb_xyz(pg_ink(rgb,make_float3(1.0f,1.0f,1.0f),label));
+}
+__DEVICE__ float3 pg_edge_xy(PGModel m,int tri,int edge,float t,float Y) {
+    float3 a=color_xy(pg_primary(tri,edge));
+    float3 b=color_xy(pg_primary(tri,(edge+1)%3));
+    float3 xy=a+(b-a)*t;
+    return color_xy(pg_apply_pixel(color_xyz(xy.x,xy.y,Y),m,m.direction));
+}
+__DEVICE__ float3 pg_diagram(float3 p,float pixels,PGModel m,int tri,float Y) {
+    float aa=1000.0f/_fmaxf(pixels,64.0f)*.65f;
+    float3 bg=make_float3(.058f,.071f,.085f), grid=make_float3(.14f,.17f,.195f);
+    float3 muted=make_float3(.47f,.53f,.57f), ref=make_float3(.66f,.70f,.74f);
+    float3 trace=make_float3(.38f,.94f,.77f), src=make_float3(1.0f,.72f,.35f), dst=make_float3(.96f,.97f,.99f);
+    float3 color=bg;
+    int inside=(p.x>=92.0f && p.x<=920.0f && p.y>=62.0f && p.y<=890.0f)?1:0;
+    if(inside==1) {
+        float gx=(p.x-92.0f)/92.0f, gy=(890.0f-p.y)/92.0f;
+        float gd=_fminf(_fabs(gx-_floorf(gx+.5f)),_fabs(gy-_floorf(gy+.5f)))*92.0f;
+        color=pg_ink(color,grid,pg_stroke(gd,.6f,aa));
+        float locus=1e6f; int crossings=0;
+        for(int i=0;i<PG_LOCUS_COUNT;i++) {
+            float3 a=pg_plot(pg_locus(i)), b=pg_plot(pg_locus((i+1)%PG_LOCUS_COUNT));
+            locus=_fminf(locus,pg_segment(p,a,b));
+            if((a.y>p.y)!=(b.y>p.y)) { if(p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x) crossings++; }
+        }
+        if((crossings%2)==1) color=color+make_float3(.019f,.024f,.027f);
+        color=pg_ink(color,muted,pg_stroke(locus,1.15f,aa));
+        float dr=1e6f, dt=1e6f;
+        for(int e=0;e<3;e++) {
+            float3 a=pg_plot(color_xy(pg_primary(tri,e))), b=pg_plot(color_xy(pg_primary(tri,(e+1)%3)));
+            float3 ab=b-a;
+            float pos=color_dot(p-a,ab)/_fmaxf(pg_len(ab),.00001f);
+            if((int)(_floorf(pos/9.0f))%2==0) dr=_fminf(dr,pg_segment(p,a,b));
+            int steps=m.active==1?48:1;
+            float3 prev=pg_plot(pg_edge_xy(m,tri,e,0.0f,Y));
+            for(int j=1;j<=steps;j++) {
+                float3 next=pg_plot(pg_edge_xy(m,tri,e,(float)(j)/(float)(steps),Y));
+                // Skip segments crossing the projective horizon or wildly off chart.
+                if(pg_len(next-prev)<600.0f) dt=_fminf(dt,pg_segment(p,prev,next));
+                prev=next;
+            }
+        }
+        color=pg_ink(color,ref,pg_stroke(dr,1.3f,aa));
+        color=pg_ink(color,trace,pg_stroke(dt,1.6f,aa));
+        // Source = amber ring; destination = white cross. Both remain readable if equal.
+        float3 sp=pg_plot(color_xy(m.ws)), dp=pg_plot(color_xy(m.wd));
+        float ds=_fabs(pg_len(p-sp)-8.0f);
+        float dd=_fminf(pg_segment(p,dp+make_float3(-4.0f,0.0f,0.0f),dp+make_float3(4.0f,0.0f,0.0f)),pg_segment(p,dp+make_float3(0.0f,-4.0f,0.0f),dp+make_float3(0.0f,4.0f,0.0f)));
+        color=pg_ink(color,src,pg_stroke(ds,1.6f,aa)); color=pg_ink(color,dst,pg_stroke(dd,1.5f,aa));
+        // Graded source-white ray at Y=1 (W) and Y=.18 (G).
+        for(int k=0;k<2;k++) {
+            float level=k==0?1.0f:.18f;
+            float3 last=pg_plot(color_xy(pg_apply_pixel(m.ws*level,m,m.direction)));
+            float3 tint=k==0?make_float3(.82f,.65f,1.0f):make_float3(.46f,.76f,1.0f);
+            color=pg_ink(color,tint,pg_stroke(pg_segment(p,dp,last),.7f,aa));
+            color=pg_ink(color,tint,pg_stroke(_fabs(pg_len(p-last)-(k==0?5.0f:3.0f)),.9f,aa));
+            color=pg_ink(color,tint,pg_letter(p,last.x+10.0f,last.y+(k==0?-20.0f:5.0f),3.0f,k==0?87:71));
+        }
+    }
+    float ax=_fminf(pg_segment(p,make_float3(92.0f,62.0f,0.0f),make_float3(92.0f,890.0f,0.0f)),pg_segment(p,make_float3(92.0f,890.0f,0.0f),make_float3(920.0f,890.0f,0.0f)));
+    color=pg_ink(color,muted,pg_stroke(ax,1.0f,aa));
+    float numbers=0.0f;
+    for(int n=0;n<=9;n++) {
+        float x=92.0f+(float)(n)*92.0f, y=890.0f-(float)(n)*92.0f;
+        numbers=_fmaxf(numbers,pg_tick(p,x-18.0f,902.0f,n));
+        numbers=_fmaxf(numbers,pg_tick(p,38.0f,y-8.0f,n));
+        float tick=_fminf(pg_segment(p,make_float3(x,890.0f,0.0f),make_float3(x,897.0f,0.0f)),pg_segment(p,make_float3(85.0f,y,0.0f),make_float3(92.0f,y,0.0f)));
+        color=pg_ink(color,muted,pg_stroke(tick,.7f,aa));
+    }
+    numbers=_fmaxf(numbers,pg_letter(p,940.0f,882.0f,5.0f,88));
+    numbers=_fmaxf(numbers,pg_letter(p,85.0f,26.0f,5.0f,89));
+    color=pg_ink(color,ref,numbers);
+    color=pg_ink(color,muted,pg_word(p,153.0f,23.0f,0));
+    // Input triangle luminance, printed to two decimal places.
+    int lum=(int)(_floorf(Y*100.0f+.5f));
+    float caption=pg_letter(p,640.0f,23.0f,4.0f,89);
+    if(lum>=10000)caption=_fmaxf(caption,pg_letter(p,675.0f,23.0f,4.0f,48+(lum/10000)%10));
+    if(lum>=1000)caption=_fmaxf(caption,pg_letter(p,692.0f,23.0f,4.0f,48+(lum/1000)%10));
+    caption=_fmaxf(caption,pg_letter(p,709.0f,23.0f,4.0f,48+(lum/100)%10));
+    caption=_fmaxf(caption,pg_letter(p,726.0f,23.0f,4.0f,46));
+    caption=_fmaxf(caption,pg_letter(p,743.0f,23.0f,4.0f,48+(lum/10)%10));
+    caption=_fmaxf(caption,pg_letter(p,760.0f,23.0f,4.0f,48+lum%10));
+    color=pg_ink(color,muted,caption);
+    color=pg_ink(color,ref,pg_word(p,70.0f,958.0f,1));
+    color=pg_ink(color,trace,pg_word(p,280.0f,958.0f,2));
+    color=pg_ink(color,src,pg_word(p,570.0f,958.0f,3));
+    color=pg_ink(color,dst,pg_word(p,775.0f,958.0f,4));
+    // Effective source NEUTRAL NITS: B/S/M/W/H. Amber means ordering repair.
+    float levels[5]={m.black,m.input.s,m.input.m,m.input.w,m.input.h};
+    int names[5]={66,83,77,87,72};
+    float diagnostic=0.0f;
+    for(int i=0;i<5;i++) {
+        float x=78.0f+175.0f*(float)(i);
+        int n=(int)(_floorf(pg_neutral_nits(levels[i],m)*100.0f+.5f));
+        diagnostic=_fmaxf(diagnostic,pg_letter(p,x,934.0f,2.6f,names[i]));
+        int divisor=1000000,started=0,col=0;
+        for(int digit=6;digit>=0;digit--) {
+            int value=(n/divisor)%10;
+            if(value!=0 || digit<=2)started=1;
+            if(started)diagnostic=_fmaxf(diagnostic,pg_letter(p,x+17.0f+11.0f*(float)(col),934.0f,2.6f,48+value));
+            col++;
+            if(digit==2) {
+                diagnostic=_fmaxf(diagnostic,pg_letter(p,x+17.0f+11.0f*(float)(col),934.0f,2.6f,46));
+                col++;
+            }
+            divisor/=10;
+        }
+    }
+    int units[4]={78,73,84,83};
+    for(int i=0;i<4;i++)diagnostic=_fmaxf(diagnostic,pg_letter(p,926.0f+11.0f*(float)(i),934.0f,2.6f,units[i]));
+    color=pg_ink(color,m.ordered?src:muted,diagnostic);
+    return pg_palette(color,m.wd);
+}
+__DEVICE__ float3 pg_overlay(float3 xyz,int width,int height,int px,int py,int mode,PGModel m,int tri,float Y) {
+    if(mode==0) return xyz;
+    float size=_fminf((float)(width),(float)(height));
+    float left=((float)(width)-size)*.5f, top=((float)(height)-size)*.5f;
+    if(mode==1) { size=size*.46f; float margin=_fminf((float)(width),(float)(height))*.02f; left=(float)(width)-size-margin; top=(float)(height)-size-margin; }
+    float3 p=make_float3(((float)(px)+.5f-left)/size*1000.0f,((float)(py)+.5f-top)/size*1000.0f,0.0f);
+    if(p.x<0.0f || p.x>=1000.0f || p.y<0.0f || p.y>=1000.0f) {
+        if(mode==2)return pg_palette(make_float3(.058f,.071f,.085f),m.wd);
+        return xyz;
+    }
+    return pg_diagram(p,size,m,tri,Y);
+}
+

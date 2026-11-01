@@ -1,0 +1,563 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool", "source_tree")
+load("//build_defs:invariant.bzl", "invariant_bundle")
+load("//build_defs:python_packages.bzl", "component_library", "extension_tree")
+load("//libraries/blender-runtime/requirements:inventory.bzl", COMMON_PROOFS = "LEAF_PROOFS")
+load("//libraries/blender-runtime/requirements/coordinators:inventory.bzl", HOST_WORKFLOWS = "COORDINATOR_PROOFS")
+load("//libraries/perceptual-grade-core/requirements:inventory.bzl", GRADE_PROOFS = "LEAF_PROOFS")
+load("//libraries/perceptual-grade-core/requirements/coordinators:inventory.bzl", GRADE_WORKFLOWS = "COORDINATOR_PROOFS")
+
+invariant_bundle(
+    name = "proofs",
+    visibility = ["PUBLIC"],
+    deps = COMMON_PROOFS + GRADE_PROOFS + HOST_WORKFLOWS + GRADE_WORKFLOWS + [
+        "//libraries/invariant:lifecycle_proof",
+    ],
+)
+
+extension_tree(
+    name = "extension_tree",
+    entrypoints = {
+        "__init__.py": "entrypoint.py",
+        "blender_manifest.toml": "blender_manifest.toml",
+        "LICENSE": "LICENSE",
+    },
+    visibility = ["PUBLIC"],
+    deps = ["//products/perceptual-grade-blender:runtime_bundle"],
+)
+
+python_library(
+    name = "packager_sources",
+    srcs = {"perceptual_grade_package.py": "tools/package.py"},
+    base_module = "product_build",
+    visibility = ["PUBLIC"],
+    deps = ["//tools/verification:packaging"],
+)
+
+python_binary(
+    name = "package",
+    main_module = "product_build.perceptual_grade_package",
+    deps = [":packager_sources"],
+)
+
+export_file(
+    name = "package_inventory",
+    src = "tools/package_inventory.json",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "extension",
+    args = [
+        "--tree",
+        "$(location :extension_tree)",
+        "--inventory",
+        "$(location :package_inventory)",
+        "--proofs",
+        "$(location :proofs)",
+    ],
+    outputs = {
+        "zip": "perceptual_grade.zip",
+        "report": "package-report.json",
+    },
+    tool = ":package",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)
+
+PREFIX = "src/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+RESOURCES = {
+    "assets/ab_background.png": ":ab_background[png]",
+    "assets/cie_1931_xy_locus.png": ":locus[png]",
+}
+
+component_library(
+    name = "runtime",
+    srcs = SOURCES,
+    package = "perceptual_grade_blender",
+    resources = RESOURCES,
+    deps = [
+        "//libraries/blender-runtime:blender",
+        "//libraries/blender-runtime:edge_effect_machine",
+        "//libraries/color-core:runtime",
+        "//libraries/invariant:runtime",
+        "//libraries/perceptual-grade-core:runtime",
+    ],
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "architecture",
+    src = "ARCHITECTURE.md",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "locus_generator",
+    srcs = ["tools/assets/locus.py"],
+    main_module = "tools.assets.locus",
+    deps = [
+        "//third_party:colour-science",
+        "//third_party:pillow",
+    ],
+)
+
+generate(
+    name = "locus",
+    outputs = {"png": "cie_1931_xy_locus.png"},
+    tool = ":locus_generator",
+)
+
+python_tool(
+    name = "ab_generator",
+    srcs = ["tools/assets/ab_background.py"],
+    main_module = "tools.assets.ab_background",
+    deps = [
+        "//libraries/perceptual-grade-core:model_code",
+        "//third_party:pillow",
+    ],
+)
+
+generate(
+    name = "ab_background",
+    outputs = {"png": "ab_background.png"},
+    tool = ":ab_generator",
+)
+
+alias(
+    name = "gpu_kernels",
+    actual = ":runtime",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_diagnostics",
+    src = "tools/pg_diagnostics.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_minimal_image_undo",
+    src = "tools/pg_minimal_image_undo.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_minimal_image_undo_repro",
+    src = "tools/pg_minimal_image_undo_repro.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_undo_trace",
+    src = "tools/pg_undo_trace.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_undo_trace_macos",
+    src = "tools/pg_undo_trace_macos.command",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_undo_trace_permissions_macos",
+    src = "tools/pg_undo_trace_permissions_macos.command",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_undo_trace_collect",
+    src = "tools/pg_undo_trace_collect.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_undo_trace_pack",
+    src = "tools/pg_undo_trace_pack.command",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_undo_trace_lldb",
+    src = "tools/pg_undo_trace_lldb.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_undo_trace_native",
+    src = "tools/pg_undo_trace_native.py",
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "pg_undo_trace_macos_bundle",
+    srcs = {name: "tools/" + name for name in [
+        "pg_undo_trace.py",
+        "pg_undo_trace_macos.command",
+        "pg_undo_trace_pack.command",
+        "pg_undo_trace_permissions_macos.command",
+        "pg_undo_trace_collect.py",
+        "pg_undo_trace_lldb.py",
+        "pg_undo_trace_native.py",
+        "pg_undo_trace_canary.py",
+        "pg_undo_trace_alloc_canary.c",
+        "README_undo_trace.md",
+    ]},
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "pg_undo_trace_bundle_tool",
+    srcs = ["tools/build/diagnostic_bundle.py"],
+    main_module = "tools.build.diagnostic_bundle",
+)
+
+generate(
+    name = "pg_undo_trace_macos_zip",
+    args = [
+        "--tree",
+        "$(location :pg_undo_trace_macos_bundle)",
+    ],
+    outputs = {"zip": "pg_undo_trace_macos.zip"},
+    tool = ":pg_undo_trace_bundle_tool",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_undo_trace_pack_44389",
+    src = "tools/pg_undo_trace_pack_44389.command",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "pg_scope_trace",
+    src = "tools/pg_scope_trace.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "scope_trace_report_source",
+    src = "tools/analysis/scope_trace_report.py",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "scope_profile",
+    srcs = ["tools/analysis/scope_profile.py"],
+    main_module = "tools.analysis.scope_profile",
+    deps = ["//products/perceptual-grade-blender/tools/diagnostics:project_probe_sources"],
+)
+
+export_file(
+    name = "scope_profile_script",
+    src = "tools/analysis/scope_profile.py",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "scope_trace_report",
+    srcs = ["tools/analysis/scope_trace_report.py"],
+    main_module = "tools.analysis.scope_trace_report",
+)
+
+python_tool(
+    name = "stack_quality_tool",
+    srcs = ["tools/analysis/stack_quality.py"],
+    main_module = "tools.analysis.stack_quality",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_tool(
+    name = "stack_inverse_quality_tool",
+    srcs = ["tools/analysis/stack_inverse_quality.py"],
+    main_module = "tools.analysis.stack_inverse_quality",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_tool(
+    name = "grade_bake_profile",
+    srcs = ["tools/analysis/grade_bake_profile.py"],
+    main_module = "tools.analysis.grade_bake_profile",
+    deps = [
+        ":runtime",
+        "//third_party:bpy",
+    ],
+)
+
+python_tool(
+    name = "interactive_grade_profile",
+    srcs = [
+        "tools/analysis/grade_bake_profile.py",
+        "tools/analysis/interactive_grade_profile.py",
+    ],
+    main_module = "tools.analysis.interactive_grade_profile",
+    deps = [
+        ":runtime",
+        "//third_party:bpy",
+    ],
+)
+
+python_tool(
+    name = "scope_statistics_profile",
+    srcs = ["tools/analysis/scope_statistics_profile.py"],
+    main_module = "tools.analysis.scope_statistics_profile",
+    deps = [
+        ":runtime",
+        "//products/perceptual-grade-blender/tests/fixtures/photographs:data",
+    ],
+)
+
+python_tool(
+    name = "inverse_bake_profile",
+    srcs = ["tools/analysis/inverse_bake_profile.py"],
+    main_module = "tools.analysis.inverse_bake_profile",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//third_party:bpy",
+    ],
+)
+
+python_tool(
+    name = "bake_time_breakdown",
+    srcs = [
+        "tools/analysis/bake_time_breakdown.py",
+        "tools/analysis/hk_bake_gpu_phases.py",
+        "tools/analysis/hk_bake_phases.py",
+        "tools/analysis/inverse_bake_profile.py",
+        "tools/analysis/inverse_gpu_startup.py",
+    ],
+    main_module = "tools.analysis.bake_time_breakdown",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//third_party:bpy",
+    ],
+)
+
+python_tool(
+    name = "inverse_gpu_startup",
+    srcs = [
+        "tools/analysis/inverse_bake_profile.py",
+        "tools/analysis/inverse_gpu_startup.py",
+    ],
+    main_module = "tools.analysis.inverse_gpu_startup",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//third_party:bpy",
+    ],
+)
+
+python_tool(
+    name = "inverse_tolerance_chain",
+    srcs = ["tools/analysis/inverse_tolerance_chain.py"],
+    main_module = "tools.analysis.inverse_tolerance_chain",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//third_party:bpy",
+    ],
+)
+
+python_library(
+    name = "photo_error_code",
+    srcs = [
+        "tools/analysis/photo_io.py",
+        "tools/analysis/photo_stack.py",
+        "tools/analysis/stack_photo_error.py",
+    ],
+    base_module = "",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//products/perceptual-grade-blender/tests/fixtures/photographs:data",
+        "//third_party:bpy",
+    ],
+)
+
+python_tool(
+    name = "production_stack",
+    srcs = ["tools/analysis/production_stack.py"],
+    main_module = "tools.analysis.production_stack",
+    deps = [
+        ":photo_error_code",
+        ":runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_library(
+    name = "grade_photo_error_code",
+    srcs = [
+        "tools/analysis/grade_photo_error.py",
+        "tools/analysis/photo_grade.py",
+    ],
+    base_module = "",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":photo_error_code",
+        ":runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_library(
+    name = "grade_shaper_error_code",
+    srcs = [
+        "tools/analysis/grade_shaper_error.py",
+        "tools/analysis/lut_shapers.py",
+    ],
+    base_module = "",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":grade_photo_error_code",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_tool(
+    name = "shaper_performance",
+    srcs = [
+        "tools/analysis/shaper_graph.py",
+        "tools/analysis/shaper_performance.py",
+    ],
+    main_module = "tools.analysis.shaper_performance",
+    deps = [":grade_shaper_error_code"],
+)
+
+python_library(
+    name = "inverse_tuning_code",
+    srcs = [
+        "tools/analysis/inverse_bake_profile.py",
+        "tools/analysis/inverse_tuning.py",
+    ],
+    base_module = "",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":photo_error_code",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_tool(
+    name = "boundary_gpu_check",
+    srcs = ["tools/analysis/boundary_gpu_check.py"],
+    main_module = "tools.analysis.boundary_gpu_check",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:boundary_oracle",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//third_party:bpy",
+    ],
+)
+
+python_tool(
+    name = "boundary_benchmark",
+    srcs = ["tools/analysis/boundary_benchmark.py"],
+    main_module = "tools.analysis.boundary_benchmark",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//third_party:bpy",
+    ],
+)
+
+python_tool(
+    name = "boundary_profile",
+    srcs = ["tools/analysis/boundary_profile.py"],
+    main_module = "tools.analysis.boundary_profile",
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)
+
+python_tool(
+    name = "boundary_precision",
+    srcs = [
+        "tools/analysis/boundary_precision.py",
+        "tools/analysis/boundary_profile.py",
+    ],
+    main_module = "tools.analysis.boundary_precision",
+    deps = [
+        ":bake_check_code",
+        ":runtime",
+        "//libraries/perceptual-grade-core:runtime",
+        "//libraries/perceptual-grade-reference:boundary_table_code",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_library(
+    name = "bake_check_code",
+    srcs = {"bake_check.py": "tools/analysis/bake_check.py"},
+    base_module = "tools.analysis",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-reference:boundary_oracle",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_binary(
+    name = "inverse_tuning",
+    main_module = "tools.analysis.inverse_tuning",
+    deps = [":inverse_tuning_code"],
+)
+
+python_binary(
+    name = "stack_photo_error",
+    main_module = "tools.analysis.stack_photo_error",
+    deps = [":photo_error_code"],
+)
+
+python_binary(
+    name = "grade_photo_error",
+    main_module = "tools.analysis.grade_photo_error",
+    deps = [":grade_photo_error_code"],
+)
+
+python_binary(
+    name = "grade_shaper_error",
+    main_module = "tools.analysis.grade_shaper_error",
+    deps = [":grade_shaper_error_code"],
+)
+
+python_binary(
+    name = "bake_check",
+    main_module = "tools.analysis.bake_check",
+    deps = [":bake_check_code"],
+)
+
+export_file(
+    name = "machine_bindings_source",
+    src = "src/machines.py",
+    visibility = ["PUBLIC"],
+)

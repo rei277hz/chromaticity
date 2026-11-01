@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "description": "Eligibility observation is owner- and source-revision-bound. Dirty hints do not start repeated checks, explicit retry gets a new check identity, and late receipts cannot certify replacement input.",
+  "state": "PreflightState",
+  "event": "PreflightEvent",
+  "initializers": [
+    "new_preflight"
+  ],
+  "step": "preflight_step",
+  "invariants": {
+    "nonnegative_identity": "state.owner >= 0 and state.incarnation >= 0 and state.source_revision >= 0 and state.source_id >= 0 and state.check_serial >= 0 and state.active_check_id >= 0 and state.active_source_revision >= 0 and state.active_source_id >= 0",
+    "active_check_is_bound": "state.active_check_id == 0 or (state.active_check_id == state.check_serial and state.active_source_revision > 0 and state.active_source_id > 0)",
+    "closed_has_no_observation": "state.verdict != 'CLOSED' or not state.observation_pending",
+    "ready_has_source": "state.verdict != 'READY' or (state.source_revision > 0 and state.source_id > 0)"
+  },
+  "contracts": {
+    "new_preflight": {
+      "ensures": [
+        "result.owner == 0 and result.incarnation == 0 and result.verdict == 'UNKNOWN'"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "completion_requires_exact_active_check",
+      "variables": {
+        "state": "PreflightState",
+        "event": "PreflightEvent"
+      },
+      "lets": {
+        "after": "preflight_step(state,event)"
+      },
+      "assert": "not after[1] or event.kind not in ('complete','fail') or (event.owner == state.owner and event.incarnation == state.incarnation and event.check_id == state.active_check_id and event.source_revision == state.active_source_revision and event.source_id == state.active_source_id and state.active_check_id > 0)"
+    },
+    {
+      "name": "closed_owner_cannot_restore_authority",
+      "variables": {
+        "state": "PreflightState",
+        "event": "PreflightEvent"
+      },
+      "assume": [
+        "state.verdict == 'CLOSED' and event.kind != 'open'"
+      ],
+      "lets": {
+        "after": "preflight_step(state,event)"
+      },
+      "assert": "after[0].verdict == 'CLOSED'"
+    },
+    {
+      "name": "failure_requires_explicit_retry",
+      "variables": {
+        "state": "PreflightState",
+        "event": "PreflightEvent"
+      },
+      "assume": [
+        "state.verdict == 'FAILED' and state.owner > 0 and state.incarnation > 0 and state.source_revision > 0 and state.source_id > 0 and state.active_check_id == 0 and event.kind != 'retry'"
+      ],
+      "lets": {
+        "after": "preflight_step(state,event)"
+      },
+      "assert": "after[0].active_check_id == 0"
+    },
+    {
+      "name": "retry_requires_a_failed_source",
+      "variables": {
+        "state": "PreflightState",
+        "event": "PreflightEvent"
+      },
+      "assume": [
+        "event.kind == 'retry' and state.owner > 0 and state.incarnation > 0 and state.source_revision > 0 and state.source_id > 0 and state.active_check_id == 0"
+      ],
+      "lets": {
+        "after": "preflight_step(state,event)"
+      },
+      "assert": "not after[1] or (state.verdict == 'FAILED' and event.check_id > state.check_serial)"
+    },
+    {
+      "name": "closed_completion_cannot_become_ready",
+      "variables": {
+        "state": "PreflightState",
+        "event": "PreflightEvent"
+      },
+      "assume": [
+        "state.verdict == 'CLOSED' and state.active_check_id > 0 and state.active_check_id == state.check_serial and state.active_source_revision > 0 and state.active_source_id > 0 and event.kind == 'complete' and event.allowed and event.owner == state.owner and event.incarnation == state.incarnation and event.check_id == state.active_check_id and event.source_revision == state.active_source_revision and event.source_id == state.active_source_id"
+      ],
+      "lets": {
+        "after": "preflight_step(state,event)"
+      },
+      "assert": "after[0].verdict == 'CLOSED' and after[0].active_check_id == 0"
+    },
+    {
+      "name": "equal_observation_keeps_failed_verdict",
+      "variables": {
+        "state": "PreflightState",
+        "event": "PreflightEvent"
+      },
+      "assume": [
+        "state.verdict == 'FAILED' and state.owner > 0 and state.incarnation > 0 and state.source_revision > 0 and state.source_id > 0 and state.active_check_id == 0 and event.kind == 'observed' and event.owner == state.owner and event.incarnation == state.incarnation and event.source_id == state.source_id"
+      ],
+      "lets": {
+        "after": "preflight_step(state,event)"
+      },
+      "assert": "after[0].verdict == 'FAILED' and after[0].source_revision == state.source_revision"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "open_owner_for_observation",
+      "lets": {
+        "opened": "preflight_step(new_preflight(),PreflightEvent('open',owner=1,incarnation=1))"
+      },
+      "assert": "opened[1] and opened[0].owner == 1 and opened[0].verdict == 'UNKNOWN'"
+    },
+    {
+      "name": "a_b_a_requires_distinct_source_revisions",
+      "lets": {
+        "opened": "preflight_step(new_preflight(),PreflightEvent('open',owner=1,incarnation=1))",
+        "hint_a": "preflight_step(opened[0],PreflightEvent('hint',owner=1,incarnation=1))",
+        "obs_a": "preflight_step(hint_a[0],PreflightEvent('observed',owner=1,incarnation=1,source_id=2))",
+        "hint_b": "preflight_step(obs_a[0],PreflightEvent('hint',owner=1,incarnation=1))",
+        "obs_b": "preflight_step(hint_b[0],PreflightEvent('observed',owner=1,incarnation=1,source_id=3))",
+        "hint_again": "preflight_step(obs_b[0],PreflightEvent('hint',owner=1,incarnation=1))",
+        "obs_again": "preflight_step(hint_again[0],PreflightEvent('observed',owner=1,incarnation=1,source_id=2))"
+      },
+      "assert": "obs_a[0].source_revision == 1 and obs_b[0].source_revision == 2 and obs_again[0].source_revision == 3"
+    },
+    {
+      "name": "explicit_retry_starts_a_fresh_check",
+      "lets": {
+        "opened": "preflight_step(new_preflight(),PreflightEvent('open',owner=1,incarnation=1))",
+        "hint": "preflight_step(opened[0],PreflightEvent('hint',owner=1,incarnation=1))",
+        "observed": "preflight_step(hint[0],PreflightEvent('observed',owner=1,incarnation=1,source_id=2))",
+        "started": "preflight_step(observed[0],PreflightEvent('start',owner=1,incarnation=1,check_id=1))",
+        "failed": "preflight_step(started[0],PreflightEvent('fail',owner=1,incarnation=1,source_revision=1,source_id=2,check_id=1))",
+        "retried": "preflight_step(failed[0],PreflightEvent('retry',owner=1,incarnation=1,check_id=2))"
+      },
+      "assert": "retried[1] and retried[0].verdict == 'CHECKING' and retried[0].active_check_id == 2 and retried[0].check_serial == 2"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "receipt_without_active_check",
+      "function": "preflight_step",
+      "target": "event.check_id == state.active_check_id",
+      "replacement": "event.check_id >= state.active_check_id",
+      "detects": [
+        "property.completion_requires_exact_active_check"
+      ]
+    },
+    {
+      "name": "retry_accepts_nonfailed_source",
+      "function": "preflight_step",
+      "target": "state.verdict != 'FAILED'",
+      "replacement": "state.verdict == 'FAILED'",
+      "detects": [
+        "property.retry_requires_a_failed_source"
+      ]
+    },
+    {
+      "name": "closed_source_can_become_ready",
+      "function": "preflight_step",
+      "target": "state.verdict == \"CLOSED\" and event.kind in (\"complete\", \"fail\")",
+      "replacement": "False",
+      "detects": [
+        "property.closed_completion_cannot_become_ready"
+      ]
+    }
+  ]
+}

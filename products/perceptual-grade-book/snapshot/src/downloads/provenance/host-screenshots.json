@@ -1,0 +1,28 @@
+{
+  "inputs": {
+    "docs/data/screenshots.json": "0a9cebeda44247d7b7f4c7b2b8b2eef167cf98cf9474eb83b06e01683126bb0a",
+    "docs/media/screenshots/blender-compositing.png": "991774e63ebf333bdb6fd11af40e8c5f6bae3fa56492445df1e38e8e7db59ef1",
+    "docs/media/screenshots/blender-install.png": "adc095fffcdc6ca657cbffdae4d63432cf926ba06822df2db9ba27cd92d18035",
+    "docs/media/screenshots/blender-shading.png": "633a625614870811e6834fe1b5f263f7bd087f4d067edd58f1050b4b3bde08cc",
+    "docs/media/screenshots/colorchecker-connect.png": "3494a9b57bbf884eae87fac3526c389e7a90c0b4c25ccdf8d94b615172179913",
+    "docs/media/screenshots/resolve-cst-input.png": "c20092c9019fbc13af5f25a272d1771ea5af4c271acaf268174882507752dc14",
+    "docs/media/screenshots/resolve-cst-output.png": "e08b5f19875b829fa81a1a22487f94617542770f183e5a25f0c0f2779b655d8b",
+    "docs/media/screenshots/resolve-dctl-white.png": "433ab76554cf4b2e63aa7d564e3a5da5b9504850ae07d4f98438b4361dcf3631",
+    "docs/media/screenshots/resolve-install.png": "b9500b588de89f21efc543dbb2f21501b13b03728ce47ba7c994e338e26356d3",
+    "docs/media/screenshots/waveform-hdr.png": "caaf844bdc06da6d8ee8a730baa1a45dc1ca714c99ef156a73f697488ebcd286",
+    "docs/media/screenshots/waveform-sdr.png": "c3b1fc38c6354d84d1a5cc147a0e74153a922587ae93159b56809b68ca39a74e",
+    "tools/docs/screenshots.py": "6fbf0f6316fa3b1d7db80d2e635691e56929a65059e75f7f813d950de8311118"
+  },
+  "invocation": "buck2",
+  "outputs": {
+    "images/blender-compositing.png": "373711fc434c860d7fdd0978cb7c71e88844304d90478c51dfa385ff515364d3",
+    "images/blender-install.png": "67d2c5d184a26dbfd8fda9de85c755126b461e1c01e8d11a2a425895733d7289",
+    "images/blender-shading.png": "e34af9192fae409740263b70ae911c3ea4b341a863a1448256517547255f42cf",
+    "images/colorchecker-connect.png": "8150f454cc6c7e04a70a231f4ad55821a07573523988f0f2e34b819740537931",
+    "images/resolve-cst.png": "bd8391a7cc899843e586b36ff9077586614c7040efa07c61bc75d4e0b8ab1a2a",
+    "images/resolve-install.png": "e6560845def403f2f7996ee3927a96aec693a38a082b84d63e4688c27cf20c2e",
+    "images/tone-waveforms.png": "681a8090e29aa0a9033300d4c5df331deb7020462e749d85566afd2147ca5637"
+  },
+  "producer": "compound host screenshots",
+  "schema": 1
+}

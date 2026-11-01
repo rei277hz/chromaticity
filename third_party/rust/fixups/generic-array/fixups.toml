@@ -1,0 +1,2 @@
+# Detect the compiler version for optional language capabilities.
+buildscript.run = true

@@ -1,0 +1,47 @@
+[
+    python_test(
+        name = name,
+        srcs = ["test_" + name + ".py"],
+        base_module = "tests.numerical",
+        deps = ["//libraries/perceptual-grade-core/tests:reference_support"] + (["//libraries/perceptual-grade-reference/tests:legacy_capacity_support"] if name == "appearance" else []),
+    )
+    for name in [
+        "linear",
+        "appearance",
+        "boundary_cache",
+    ]
+]
+
+python_test(
+    name = "boundary_acceleration",
+    srcs = ["test_boundary_acceleration.py"],
+    base_module = "tests.numerical",
+    deps = [
+        "//libraries/color-core:runtime",
+        "//libraries/perceptual-grade-core:runtime",
+        "//libraries/perceptual-grade-reference:boundary_table_code",
+        "//libraries/perceptual-grade-reference:runtime",
+    ],
+)
+
+python_test(
+    name = "scope_statistics",
+    srcs = ["test_scope_statistics.py"],
+    base_module = "tests.numerical",
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)
+
+python_test(
+    name = "raster",
+    srcs = ["test_raster.py"],
+    base_module = "tests.numerical",
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)
+
+python_test(
+    name = "shadow_anchor",
+    srcs = ["test_shadow_anchor.py"],
+    base_module = "tests.numerical",
+    resources = {"shadow_anchor.json": "//libraries/perceptual-grade-core:shadow_anchor[report]"},
+    deps = ["//libraries/perceptual-grade-core/tests:reference_support"],
+)

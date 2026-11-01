@@ -1,0 +1,2 @@
+# Generate CPU/feature tables from the crate's packaged data.
+buildscript.run = true

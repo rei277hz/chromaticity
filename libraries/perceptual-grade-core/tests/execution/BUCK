@@ -1,0 +1,13 @@
+python_test(
+    name = "identity",
+    srcs = ["test_identity.py"],
+    base_module = "tests.identity",
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)
+
+python_test(
+    name = "samples",
+    srcs = ["test_samples.py"],
+    base_module = "tests.samples",
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)

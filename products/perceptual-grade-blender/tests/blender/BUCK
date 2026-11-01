@@ -1,0 +1,211 @@
+[
+    python_test(
+        name = name,
+        srcs = ["test_" + name + ".py"],
+        base_module = "tests.blender",
+        deps = ["//products/perceptual-grade-blender/tests:blender_support"] + (["//libraries/color-core:runtime"] if name == "warp" else []),
+    )
+    for name in [
+        "lifecycle",
+        "recovery",
+        "gpu_status",
+        "idle",
+        "stacks",
+        "render",
+        "scopes",
+        "scope_clouds",
+        "scheduler",
+        "output",
+        "bake",
+        "bake_routes",
+        "native_barriers",
+        "warp",
+        "warp_drag",
+        "warp_view",
+        "warp_samples",
+        "warp_hover",
+        "warp_guarded",
+        "warp_sidebar",
+    ]
+]
+
+python_test(
+    name = "public_interface",
+    srcs = ["test_public_interface.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "bake_inputs",
+    srcs = ["test_bake_inputs.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "runtime",
+    srcs = ["test_runtime.py"],
+    base_module = "tests.blender",
+    resources = {"scope_helper_fixture.py": "scope_helper_fixture.py"},
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "ownership",
+    srcs = [
+        "ownership_support.py",
+        "test_ownership.py",
+    ],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "ownership_acceptance",
+    srcs = [
+        "ownership_support.py",
+        "test_ownership_acceptance.py",
+    ],
+    base_module = "tests.blender",
+    labels = ["acceptance"],
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "ownership_premises",
+    srcs = ["test_ownership_premises.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "undo_trace",
+    srcs = [
+        "test_undo_trace.py",
+        "test_undo_trace_lifetimes.py",
+    ],
+    base_module = "tests.blender",
+    resources = {
+        "pg_undo_trace.py": "//products/perceptual-grade-blender:pg_undo_trace",
+        "pg_undo_trace_collect.py": "//products/perceptual-grade-blender:pg_undo_trace_collect",
+    },
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "lut_cache",
+    srcs = ["test_lut_cache.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "output_guard",
+    srcs = ["test_output_guard.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "capture_models",
+    srcs = ["test_capture_models.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "output_evaluation",
+    srcs = ["test_output_evaluation.py"],
+    base_module = "tests.blender",
+    labels = ["diagnostic"],
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "scope_profile",
+    srcs = ["test_scope_profile.py"],
+    base_module = "tests.blender",
+    resources = {"scope_profile.py": "//products/perceptual-grade-blender:scope_profile_script"},
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "scope_trace",
+    srcs = ["test_scope_trace.py"],
+    base_module = "tests.blender",
+    resources = {
+        "pg_scope_trace.py": "//products/perceptual-grade-blender:pg_scope_trace",
+        "scope_trace_report.py": "//products/perceptual-grade-blender:scope_trace_report_source",
+    },
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "scope_context",
+    srcs = ["test_scope_context.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "scope_capture",
+    srcs = ["test_scope_capture.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "scope_camera",
+    srcs = ["test_scope_camera.py"],
+    base_module = "tests.blender",
+    deps = [
+        "//products/perceptual-grade-blender:runtime",
+        "//third_party:bpy",
+    ],
+)
+
+python_library(
+    name = "recovery_cases",
+    srcs = ["test_recovery.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "recovery_retry",
+    srcs = ["test_recovery_retry.py"],
+    base_module = "tests.blender",
+    deps = [":recovery_cases"],
+)
+
+python_test(
+    name = "output_packing",
+    srcs = ["test_output_packing.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "scope_images",
+    srcs = ["test_scope_images.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "scope_sources",
+    srcs = ["test_scope_sources.py"],
+    base_module = "tests.blender",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)
+
+python_test(
+    name = "shader_bake_worker",
+    srcs = ["test_shader_bake_worker.py"],
+    base_module = "tests.blender",
+    deps = [
+        "//products/perceptual-grade-blender:runtime",
+        "//third_party:bpy",
+    ],
+)

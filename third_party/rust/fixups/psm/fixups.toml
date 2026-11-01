@@ -1,0 +1,5 @@
+# Select the target's packaged assembly, compile it with the declared C/C++
+# toolchain, and propagate the static archive and target cfgs to the Rust crate.
+[buildscript.run]
+rustc_link_lib = true
+rustc_link_search = true

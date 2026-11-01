@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="920" viewBox="0 0 1120 920" role="img" aria-labelledby="title desc">
+<title id="title">One current grade, rendering and diagnostic feedback</title>
+<desc id="desc">Control edits update parameter state. That state supplies Direct values, a LUT bake guarded by a matching parameter signature, and scope evaluation. The selected native evaluator transforms input pixels into rendered pixels. Scopes use cached samples and an independent Color Reference.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#74736e"/></marker></defs>
+<rect width="1120" height="920" rx="12" fill="#faf9f6"/>
+<g fill="none" stroke="#74736e" stroke-width="2.2" marker-end="url(#arrow)">
+<path d="M560 113V165"/><path d="M440 255V290H270V335"/><path d="M620 255V335"/><path d="M760 210H1095V710H1080"/>
+<path d="M620 425V475"/><path d="M550 565V620H420V665"/><path d="M270 425V665"/>
+<path d="M380 755V815"/><path d="M115 590V625H210V665"/><path d="M955 560V665"/>
+</g>
+<g font-family="Arial, Helvetica, sans-serif" fill="#282925" text-anchor="middle">
+<text x="56" y="43" font-size="16" text-anchor="start" fill="#716f66" letter-spacing="2">PERCEPTUAL GRADE RUNTIME</text>
+<rect x="385" y="48" width="350" height="65" rx="7" fill="#fff" stroke="#c8c5ba"/>
+<text x="560" y="78" font-size="22">Control edit</text><text x="560" y="100" font-size="15" fill="#716f66">Gizmo or sidebar</text>
+<rect x="360" y="165" width="400" height="90" rx="7" fill="#f3ecd7" stroke="#a48830" stroke-width="2"/>
+<text x="560" y="201" font-size="23">Current parameter state</text><text x="560" y="231" font-size="16">Model equations and grade signature</text>
+<rect x="115" y="335" width="310" height="90" rx="7" fill="#fff" stroke="#c8c5ba"/>
+<text x="270" y="372" font-size="23">Direct values</text><text x="270" y="400" font-size="16">Matrix, coefficients, curve textures</text>
+<rect x="475" y="335" width="290" height="90" rx="7" fill="#fff" stroke="#c8c5ba"/>
+<text x="620" y="372" font-size="23">Analytic LUT bake</text><text x="620" y="400" font-size="16">Signed HDR sample grid</text>
+<rect x="475" y="475" width="290" height="90" rx="7" fill="#fff" stroke="#a48830"/>
+<text x="620" y="511" font-size="21">Signature still matches?</text><text x="620" y="539" font-size="16">Only current results publish</text>
+<text x="564" y="602" font-size="15" fill="#716f66">Ready LUT</text>
+<rect x="40" y="530" width="150" height="60" rx="7" fill="#eeede8" stroke="#c8c5ba"/>
+<text x="115" y="566" font-size="19">Input pixels</text>
+<rect x="190" y="665" width="380" height="90" rx="7" fill="#fff" stroke="#a48830" stroke-width="2"/>
+<text x="380" y="702" font-size="23">Native evaluator</text><text x="380" y="730" font-size="16">Exact Linear + selected Tone / Color path</text>
+<rect x="190" y="815" width="380" height="65" rx="7" fill="#eeede8" stroke="#c8c5ba"/>
+<text x="380" y="854" font-size="23">Rendered pixels</text>
+<rect x="830" y="490" width="250" height="70" rx="7" fill="#eeede8" stroke="#c8c5ba"/>
+<text x="955" y="519" font-size="20">Cached input samples</text><text x="955" y="544" font-size="16">and Color Reference</text>
+<rect x="790" y="665" width="290" height="90" rx="7" fill="#fff" stroke="#c8c5ba"/>
+<text x="935" y="702" font-size="22">Scopes and gizmo</text><text x="935" y="730" font-size="16">Evaluate cached input samples</text>
+<text x="935" y="803" font-size="16" fill="#716f66">Diagnostic feedback only</text>
+<text x="935" y="827" font-size="16" fill="#716f66">Never changes rendered pixels</text>
+
+</g></svg>

@@ -1,0 +1,11 @@
+export_file(
+    name = "linear",
+    src = "src/linear.dctlh",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)

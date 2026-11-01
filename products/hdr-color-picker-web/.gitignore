@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.vite/
+src/wasm/pkg/
+src/wasm/decomposition_pkg/
+__pycache__/
+*.pyc

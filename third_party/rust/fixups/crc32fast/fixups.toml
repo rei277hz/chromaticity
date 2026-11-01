@@ -1,0 +1,2 @@
+# Choose SIMD implementations supported by the declared compiler.
+buildscript.run = true

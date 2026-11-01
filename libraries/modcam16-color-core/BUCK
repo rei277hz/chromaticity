@@ -1,0 +1,60 @@
+load("//build_defs:artifacts.bzl", "source_tree")
+load("//build_defs:rust.bzl", "wasm_package")
+
+_SOURCES = glob([
+    "src/**/*.rs",
+    "references/**/*",
+])
+
+_DEPS = ["//third_party/rust:wasm-bindgen"]
+
+_ENV = {
+    "CARGO_PKG_NAME": "modcam16-color-core",
+    "CARGO_PKG_VERSION": "0.1.0",
+    "CARGO_MANIFEST_DIR": ".",
+}
+
+source_tree(
+    name = "sources",
+    srcs = {p: p for p in _SOURCES},
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "references",
+    srcs = {p[len("references/"):]: p for p in glob(["references/**/*"])},
+    visibility = ["PUBLIC"],
+)
+
+rust_library(
+    name = "lib",
+    srcs = _SOURCES,
+    crate = "modcam16_color_core",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    env = _ENV,
+    soname = select({
+        "prelude//cpu:wasm32": "modcam16_color_core.wasm",
+        "DEFAULT": None,
+    }),
+    visibility = ["PUBLIC"],
+    deps = _DEPS,
+)
+
+rust_test(
+    name = "test",
+    srcs = _SOURCES,
+    crate = "modcam16_color_core",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    env = _ENV,
+    visibility = ["PUBLIC"],
+    deps = _DEPS,
+)
+
+wasm_package(
+    name = "wasm",
+    crate = "modcam16_color_core",
+    library = ":lib[cdylib]",
+    visibility = ["PUBLIC"],
+)

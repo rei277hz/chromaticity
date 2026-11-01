@@ -1,0 +1,22 @@
+{
+  "name": "hdr-color-picker-web",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "buck2 build //:hdr_color_picker_web --show-output",
+    "build:wasm": "buck2 build //libraries/modcam16-color-core:wasm --show-output",
+    "build:wasm:decomposition": "buck2 build //libraries/modcam16-decomposition:wasm --show-output",
+    "test": "buck2 test //products/hdr-color-picker-web:math //products/hdr-color-picker-web:png //products/hdr-color-picker-web:ocio //products/hdr-color-picker-web:browser //products/hdr-color-picker-web:acceptance //libraries/modcam16-color-core:test //libraries/modcam16-decomposition:test //tools/web-build/tests:archive"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "libheif-js": "^1.23.2"
+  }
+}

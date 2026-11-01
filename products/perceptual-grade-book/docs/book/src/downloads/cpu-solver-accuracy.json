@@ -1,0 +1,622 @@
+{
+  "seed": 122128,
+  "fixtures": {
+    "IMG_0436-rec2020.samples.npy": "5b7b06c037c07d9f7e9f507a056a593e9aed3546cdcd4161a2d5f114d1f498ce",
+    "IMG_0441-rec2020.samples.npy": "b41e4f3e4bab6a698ab788b4833aaa48bf7cabdd3e98db3a4c80201ced53ee5e",
+    "IMG_0446-rec2020.samples.npy": "158c5a0dac1c7734ae7864ae110bd6d6aa2e14a1b4181f80cd096aaa875ba8e6",
+    "IMG_0472-rec2020.samples.npy": "5d37c387785bada48f33663e62906f0a02864d7070857f9b048443a3f3c20743"
+  },
+  "checks": [
+    "Finite candidates D65/mixed/baseline",
+    "Finite candidates D65/mixed/optimized",
+    "No material reproduction regression D65/mixed",
+    "Worst reproduction remains within the source safeguard D65/mixed",
+    "Optimized forward matches independent reference D65/mixed",
+    "Finite candidates D65/concentration/baseline",
+    "Finite candidates D65/concentration/optimized",
+    "No material reproduction regression D65/concentration",
+    "Worst reproduction remains within the source safeguard D65/concentration",
+    "Optimized forward matches independent reference D65/concentration",
+    "Finite candidates D65/sharp-curves/baseline",
+    "Finite candidates D65/sharp-curves/optimized",
+    "No material reproduction regression D65/sharp-curves",
+    "Worst reproduction remains within the source safeguard D65/sharp-curves",
+    "Optimized forward matches independent reference D65/sharp-curves",
+    "Finite candidates D65/tone-only/baseline",
+    "Finite candidates D65/tone-only/optimized",
+    "No material reproduction regression D65/tone-only",
+    "Worst reproduction remains within the source safeguard D65/tone-only",
+    "Optimized forward matches independent reference D65/tone-only",
+    "Finite candidates ACES/mixed/baseline",
+    "Finite candidates ACES/mixed/optimized",
+    "No material reproduction regression ACES/mixed",
+    "Worst reproduction remains within the source safeguard ACES/mixed",
+    "Optimized forward matches independent reference ACES/mixed",
+    "Finite candidates ACES/concentration/baseline",
+    "Finite candidates ACES/concentration/optimized",
+    "No material reproduction regression ACES/concentration",
+    "Worst reproduction remains within the source safeguard ACES/concentration",
+    "Optimized forward matches independent reference ACES/concentration",
+    "Finite candidates ACES/sharp-curves/baseline",
+    "Finite candidates ACES/sharp-curves/optimized",
+    "No material reproduction regression ACES/sharp-curves",
+    "Worst reproduction remains within the source safeguard ACES/sharp-curves",
+    "Optimized forward matches independent reference ACES/sharp-curves",
+    "Finite candidates ACES/tone-only/baseline",
+    "Finite candidates ACES/tone-only/optimized",
+    "No material reproduction regression ACES/tone-only",
+    "Worst reproduction remains within the source safeguard ACES/tone-only",
+    "Optimized forward matches independent reference ACES/tone-only",
+    "Finite candidates D50/mixed/baseline",
+    "Finite candidates D50/mixed/optimized",
+    "No material reproduction regression D50/mixed",
+    "Worst reproduction remains within the source safeguard D50/mixed",
+    "Optimized forward matches independent reference D50/mixed",
+    "Finite candidates D50/concentration/baseline",
+    "Finite candidates D50/concentration/optimized",
+    "No material reproduction regression D50/concentration",
+    "Worst reproduction remains within the source safeguard D50/concentration",
+    "Optimized forward matches independent reference D50/concentration",
+    "Finite candidates D50/sharp-curves/baseline",
+    "Finite candidates D50/sharp-curves/optimized",
+    "No material reproduction regression D50/sharp-curves",
+    "Worst reproduction remains within the source safeguard D50/sharp-curves",
+    "Optimized forward matches independent reference D50/sharp-curves",
+    "Finite candidates D50/tone-only/baseline",
+    "Finite candidates D50/tone-only/optimized",
+    "No material reproduction regression D50/tone-only",
+    "Worst reproduction remains within the source safeguard D50/tone-only",
+    "Optimized forward matches independent reference D50/tone-only",
+    "Finite candidates E/mixed/baseline",
+    "Finite candidates E/mixed/optimized",
+    "No material reproduction regression E/mixed",
+    "Worst reproduction remains within the source safeguard E/mixed",
+    "Optimized forward matches independent reference E/mixed",
+    "Finite candidates E/concentration/baseline",
+    "Finite candidates E/concentration/optimized",
+    "No material reproduction regression E/concentration",
+    "Worst reproduction remains within the source safeguard E/concentration",
+    "Optimized forward matches independent reference E/concentration",
+    "Finite candidates E/sharp-curves/baseline",
+    "Finite candidates E/sharp-curves/optimized",
+    "No material reproduction regression E/sharp-curves",
+    "Worst reproduction remains within the source safeguard E/sharp-curves",
+    "Optimized forward matches independent reference E/sharp-curves",
+    "Finite candidates E/tone-only/baseline",
+    "Finite candidates E/tone-only/optimized",
+    "No material reproduction regression E/tone-only",
+    "Worst reproduction remains within the source safeguard E/tone-only",
+    "Optimized forward matches independent reference E/tone-only"
+  ],
+  "samples_per_case": 2114,
+  "cases": [
+    {
+      "white": "D65",
+      "grade": "mixed",
+      "samples": 2114,
+      "forward_reference_max_error": 5.174325706267809e-15,
+      "max_reproduction_increase": 4.327804229645628e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 0.01794970753350649,
+          "p99": 2.8270001247620852e-08,
+          "rms": 0.00039039557400439716,
+          "above_tolerance": 27
+        },
+        "optimized": {
+          "maximum": 0.017949707561343006,
+          "p99": 2.8278583198526392e-08,
+          "rms": 0.0003903955746098405,
+          "above_tolerance": 27
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 27,
+          "max_residual": 0.017949707533506762
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 27,
+          "max_residual": 0.017949707561343006
+        }
+      }
+    },
+    {
+      "white": "D65",
+      "grade": "concentration",
+      "samples": 2114,
+      "forward_reference_max_error": 1.144202738120094e-15,
+      "max_reproduction_increase": 2.942051951685324e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 1.9638079290643037e-07,
+          "p99": 1.9721110204701606e-08,
+          "rms": 8.346139064907857e-09,
+          "above_tolerance": 21
+        },
+        "optimized": {
+          "maximum": 1.963807929314508e-07,
+          "p99": 1.9722856761585757e-08,
+          "rms": 8.346521957725562e-09,
+          "above_tolerance": 21
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 21,
+          "max_residual": 1.9638079290643037e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 21,
+          "max_residual": 1.963807929314508e-07
+        }
+      }
+    },
+    {
+      "white": "D65",
+      "grade": "sharp-curves",
+      "samples": 2114,
+      "forward_reference_max_error": 2.971837920480618e-15,
+      "max_reproduction_increase": 4.3327595852080644e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 1.5975713563376957e-07,
+          "p99": 2.8003127988405714e-08,
+          "rms": 8.292847152234498e-09,
+          "above_tolerance": 26
+        },
+        "optimized": {
+          "maximum": 1.5975713563789573e-07,
+          "p99": 2.8005778018591303e-08,
+          "rms": 8.2935981971073e-09,
+          "above_tolerance": 26
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 1.5975713563376957e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 1.5975713563789573e-07
+        }
+      }
+    },
+    {
+      "white": "D65",
+      "grade": "tone-only",
+      "samples": 2114,
+      "forward_reference_max_error": 0.0,
+      "max_reproduction_increase": 0.0,
+      "errors": {
+        "baseline": {
+          "maximum": 2.2953243914240864e-08,
+          "p99": 1.6801922921690137e-11,
+          "rms": 8.105480908416382e-10,
+          "above_tolerance": 2
+        },
+        "optimized": {
+          "maximum": 2.2953243914240864e-08,
+          "p99": 1.6801922921690137e-11,
+          "rms": 8.105480908416382e-10,
+          "above_tolerance": 2
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 2,
+          "max_residual": 2.2953243914240864e-08
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 2,
+          "max_residual": 2.2953243914240864e-08
+        }
+      }
+    },
+    {
+      "white": "ACES",
+      "grade": "mixed",
+      "samples": 2114,
+      "forward_reference_max_error": 1.9969445489144403e-15,
+      "max_reproduction_increase": 4.5062991964173585e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 3.0181201496035714e-07,
+          "p99": 2.8804660979229194e-08,
+          "rms": 1.0573591003905803e-08,
+          "above_tolerance": 26
+        },
+        "optimized": {
+          "maximum": 3.0181201534086165e-07,
+          "p99": 2.8813037212263128e-08,
+          "rms": 1.0574178034339215e-08,
+          "above_tolerance": 26
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 3.018120149603567e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 3.0181201534086165e-07
+        }
+      }
+    },
+    {
+      "white": "ACES",
+      "grade": "concentration",
+      "samples": 2114,
+      "forward_reference_max_error": 1.4204091054515685e-14,
+      "max_reproduction_increase": 3.2663523779521534e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 1.6542652742799081e-07,
+          "p99": 1.98818118478549e-08,
+          "rms": 8.035725138373503e-09,
+          "above_tolerance": 21
+        },
+        "optimized": {
+          "maximum": 1.654265273819966e-07,
+          "p99": 1.9883517323471142e-08,
+          "rms": 8.036148123108975e-09,
+          "above_tolerance": 22
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 21,
+          "max_residual": 1.6542652742799081e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 22,
+          "max_residual": 1.654265273819966e-07
+        }
+      }
+    },
+    {
+      "white": "ACES",
+      "grade": "sharp-curves",
+      "samples": 2114,
+      "forward_reference_max_error": 3.1618180062812795e-15,
+      "max_reproduction_increase": 4.511032228968375e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 3.020380599494485e-07,
+          "p99": 2.881348588149631e-08,
+          "rms": 1.0577343019100682e-08,
+          "above_tolerance": 26
+        },
+        "optimized": {
+          "maximum": 3.020380597520793e-07,
+          "p99": 2.882189393042484e-08,
+          "rms": 1.0577931429220084e-08,
+          "above_tolerance": 26
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 3.020380599494485e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 3.020380597520793e-07
+        }
+      }
+    },
+    {
+      "white": "ACES",
+      "grade": "tone-only",
+      "samples": 2114,
+      "forward_reference_max_error": 0.0,
+      "max_reproduction_increase": 0.0,
+      "errors": {
+        "baseline": {
+          "maximum": 2.2939892203818065e-08,
+          "p99": 1.503815461555572e-11,
+          "rms": 8.110321776306663e-10,
+          "above_tolerance": 2
+        },
+        "optimized": {
+          "maximum": 2.2939892203818065e-08,
+          "p99": 1.503815461555572e-11,
+          "rms": 8.110321776306663e-10,
+          "above_tolerance": 2
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 2,
+          "max_residual": 2.2939892203818065e-08
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 2,
+          "max_residual": 2.2939892203818065e-08
+        }
+      }
+    },
+    {
+      "white": "D50",
+      "grade": "mixed",
+      "samples": 2114,
+      "forward_reference_max_error": 1.959420752607671e-15,
+      "max_reproduction_increase": 4.9562790966992544e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 2.2113765388908587e-07,
+          "p99": 3.012291776882325e-08,
+          "rms": 9.70984572138047e-09,
+          "above_tolerance": 28
+        },
+        "optimized": {
+          "maximum": 2.2113765370391092e-07,
+          "p99": 3.0124153368712295e-08,
+          "rms": 9.710537098946532e-09,
+          "above_tolerance": 28
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 28,
+          "max_residual": 2.2113765388908587e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 28,
+          "max_residual": 2.2113765370391092e-07
+        }
+      }
+    },
+    {
+      "white": "D50",
+      "grade": "concentration",
+      "samples": 2114,
+      "forward_reference_max_error": 1.3884255558334055e-15,
+      "max_reproduction_increase": 2.9482199561195227e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 1.6205745947000784e-07,
+          "p99": 1.9341539184427608e-08,
+          "rms": 7.62954946786241e-09,
+          "above_tolerance": 21
+        },
+        "optimized": {
+          "maximum": 1.620574594414688e-07,
+          "p99": 1.9341859644706333e-08,
+          "rms": 7.62996376146369e-09,
+          "above_tolerance": 21
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 21,
+          "max_residual": 1.6205745947000784e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 21,
+          "max_residual": 1.620574594414688e-07
+        }
+      }
+    },
+    {
+      "white": "D50",
+      "grade": "sharp-curves",
+      "samples": 2114,
+      "forward_reference_max_error": 4.602213591867634e-15,
+      "max_reproduction_increase": 4.9601082790812434e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 2.2145398786622446e-07,
+          "p99": 3.009264456130039e-08,
+          "rms": 9.713841148883604e-09,
+          "above_tolerance": 28
+        },
+        "optimized": {
+          "maximum": 2.214539878662198e-07,
+          "p99": 3.009388428479212e-08,
+          "rms": 9.714532562202777e-09,
+          "above_tolerance": 28
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 28,
+          "max_residual": 2.2145398786622446e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 28,
+          "max_residual": 2.214539878662198e-07
+        }
+      }
+    },
+    {
+      "white": "D50",
+      "grade": "tone-only",
+      "samples": 2114,
+      "forward_reference_max_error": 0.0,
+      "max_reproduction_increase": 0.0,
+      "errors": {
+        "baseline": {
+          "maximum": 2.2902141440396577e-08,
+          "p99": 1.5040202761988286e-11,
+          "rms": 8.121438727455847e-10,
+          "above_tolerance": 2
+        },
+        "optimized": {
+          "maximum": 2.2902141440396577e-08,
+          "p99": 1.5040202761988286e-11,
+          "rms": 8.121438727455847e-10,
+          "above_tolerance": 2
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 2,
+          "max_residual": 2.2902141440396577e-08
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 2,
+          "max_residual": 2.2902141440396577e-08
+        }
+      }
+    },
+    {
+      "white": "E",
+      "grade": "mixed",
+      "samples": 2114,
+      "forward_reference_max_error": 4.271171247058183e-15,
+      "max_reproduction_increase": 5.1862033700709705e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 2.095673348944108e-07,
+          "p99": 3.0453335885165575e-08,
+          "rms": 9.664096909196496e-09,
+          "above_tolerance": 26
+        },
+        "optimized": {
+          "maximum": 2.0956733484457063e-07,
+          "p99": 3.04533359019852e-08,
+          "rms": 9.664869094914473e-09,
+          "above_tolerance": 26
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 2.095673348944108e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 2.0956733484457063e-07
+        }
+      }
+    },
+    {
+      "white": "E",
+      "grade": "concentration",
+      "samples": 2114,
+      "forward_reference_max_error": 1.6228128512498132e-15,
+      "max_reproduction_increase": 7.201812109763125e-10,
+      "errors": {
+        "baseline": {
+          "maximum": 1.6081208724736316e-07,
+          "p99": 1.90292286462074e-08,
+          "rms": 7.588656807666613e-09,
+          "above_tolerance": 21
+        },
+        "optimized": {
+          "maximum": 1.6081208726824797e-07,
+          "p99": 1.902922864951155e-08,
+          "rms": 7.589096302968563e-09,
+          "above_tolerance": 21
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 21,
+          "max_residual": 1.6081208724736316e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 21,
+          "max_residual": 1.6081208726824797e-07
+        }
+      }
+    },
+    {
+      "white": "E",
+      "grade": "sharp-curves",
+      "samples": 2114,
+      "forward_reference_max_error": 3.5544187464009705e-15,
+      "max_reproduction_increase": 5.188556978371029e-11,
+      "errors": {
+        "baseline": {
+          "maximum": 2.0987006170555703e-07,
+          "p99": 3.0495956656613055e-08,
+          "rms": 9.667949600774418e-09,
+          "above_tolerance": 26
+        },
+        "optimized": {
+          "maximum": 2.0987006169672501e-07,
+          "p99": 3.049595666243092e-08,
+          "rms": 9.668722091670431e-09,
+          "above_tolerance": 26
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 2.0987006170555703e-07
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 26,
+          "max_residual": 2.0987006169672501e-07
+        }
+      }
+    },
+    {
+      "white": "E",
+      "grade": "tone-only",
+      "samples": 2114,
+      "forward_reference_max_error": 0.0,
+      "max_reproduction_increase": 0.0,
+      "errors": {
+        "baseline": {
+          "maximum": 2.293796623180344e-08,
+          "p99": 1.625906379222237e-11,
+          "rms": 8.102835827526097e-10,
+          "above_tolerance": 2
+        },
+        "optimized": {
+          "maximum": 2.293796623180344e-08,
+          "p99": 1.625906379222237e-11,
+          "rms": 8.102835827526097e-10,
+          "above_tolerance": 2
+        }
+      },
+      "diagnostics": {
+        "baseline": {
+          "samples": 2114,
+          "approximate": 2,
+          "max_residual": 2.293796623180344e-08
+        },
+        "optimized": {
+          "samples": 2114,
+          "approximate": 2,
+          "max_residual": 2.293796623180344e-08
+        }
+      }
+    }
+  ]
+}

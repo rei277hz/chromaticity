@@ -1,0 +1,15 @@
+{
+  "cargo_lock_sha256": "4692af3fe0d15f2c9af75a428f7cdf6c4d570b8efa96b768875e6ad3b39ba797",
+  "crates": {
+    "mdbook": {
+      "sha256": "5f68ffebcd0b9a4eb72aaacc4342bc94e1d63c01893b7c921437f6ef02443699",
+      "version": "0.5.4"
+    },
+    "wasm-bindgen-cli": {
+      "sha256": "2e29140c04e81832902b70e5d37b9ce1bfa811c8fe4563bea08f76df8388cf20",
+      "version": "0.2.128"
+    }
+  },
+  "reindeer_revision": "ede87128a86b36aa04e625071f87f52f05c7a827",
+  "schema": 1
+}

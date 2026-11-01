@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "source": {
+    "title": "Modeling Perceived Brightness in HDR Displays",
+    "authors": [
+      "Farnaz Agahian",
+      "Dale Stolitzka"
+    ],
+    "year": 2025,
+    "doi": "https://doi.org/10.2352/CIC.2025.33.1.7",
+    "copyright": "Society for Imaging Science and Technology; retained by the original publication",
+    "usage": "Unmodified reference illustrations for discussion and editorial review; replaceable source artwork"
+  },
+  "figures": [
+    {
+      "file": "modcam16-model-flow.png",
+      "figure": 2,
+      "sha256": "c5115ab628224e0e7274418472421e2890056ab94b35ccedb034491b6dd0d9c3"
+    },
+    {
+      "file": "modcam16-lightness-chroma.png",
+      "figure": 3,
+      "sha256": "27e01085d761361f21e0543e7053e62ba4befafb4cb9b8dec98eb0b0116af1e7"
+    }
+  ]
+}

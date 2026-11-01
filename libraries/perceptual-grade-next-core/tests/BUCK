@@ -1,0 +1,56 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool")
+
+python_test(
+    name = "numerical_and_workflow",
+    srcs = glob(
+        ["test_*.py"],
+        exclude = ["test_canonical_properties.py"],
+    ),
+    base_module = "tests.perceptual_grade_next_core",
+    deps = [
+        "//libraries/perceptual-grade-next-core:runtime",
+        "//libraries/perceptual-grade-reference:numerical_oracle_for_tests",
+        "//third_party:numpy",
+    ],
+)
+
+python_tool(
+    name = "canonical_property_validator",
+    srcs = {"canonical_properties.py": "canonical_properties.py"},
+    main_module = "canonical_properties",
+)
+
+generate(
+    name = "canonical_property_coverage",
+    args = [
+        "--proof-inputs",
+        "$(location //libraries/perceptual-grade-next-core:canonical_inventory_sources)",
+        "--adapter-inputs",
+        "$(location //products/perceptual-grade-next-blender:canonical_adapter_evidence)",
+        "--adapter-test-inputs",
+        "$(location //products/perceptual-grade-next-blender/tests:canonical_adapter_tests)",
+        "--crosswalk",
+        "$(location //libraries/perceptual-grade-next-core:canonical_crosswalk)",
+        "--design",
+        "$(location //products/perceptual-grade-next-blender:state_machine_design)",
+    ],
+    outputs = {"report": "report.json"},
+    tool = ":canonical_property_validator",
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "canonical_property_inventory",
+    srcs = [
+        "canonical_properties.py",
+        "test_canonical_properties.py",
+    ],
+    base_module = "tests.perceptual_grade_next_core",
+    resources = {
+        "canonical-properties.json": "//libraries/perceptual-grade-next-core:canonical_crosswalk",
+        "STATE_MACHINE_DESIGN.md": "//products/perceptual-grade-next-blender:state_machine_design",
+        "proof-inputs": "//libraries/perceptual-grade-next-core:canonical_inventory_sources",
+        "adapter-inputs": "//products/perceptual-grade-next-blender:canonical_adapter_evidence",
+        "adapter-test-inputs": "//products/perceptual-grade-next-blender/tests:canonical_adapter_tests",
+    },
+)

@@ -1,0 +1,2 @@
+# Probe compiler-supported vector intrinsics.
+buildscript.run = true

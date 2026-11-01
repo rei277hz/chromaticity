@@ -1,0 +1,51 @@
+python_test(
+    name = "baking",
+    srcs = ["test_baking.py"],
+    base_module = "tests.reference",
+    deps = [
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//products/perceptual-grade-blender:bake_check_code",
+    ],
+)
+
+python_test(
+    name = "inverse_tuning",
+    srcs = ["test_inverse_tuning.py"],
+    base_module = "tests.reference",
+    deps = [
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//products/perceptual-grade-blender:inverse_tuning_code",
+    ],
+)
+
+python_test(
+    name = "photo_grade",
+    srcs = ["test_photo_grade.py"],
+    base_module = "tests.reference",
+    deps = [
+        "//libraries/perceptual-grade-core/tests:reference_support",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//products/perceptual-grade-blender:grade_photo_error_code",
+    ],
+)
+
+python_test(
+    name = "lut_shapers",
+    srcs = ["test_lut_shapers.py"],
+    base_module = "tests.reference",
+    deps = ["//products/perceptual-grade-blender:grade_shaper_error_code"],
+)
+
+[
+    python_test(
+        name = name,
+        srcs = ["test_" + name + ".py"],
+        base_module = "tests.reference",
+        deps = ["//products/perceptual-grade-blender:photo_error_code"] + (["//libraries/perceptual-grade-reference/tests:legacy_capacity_support"] if name == "photo_stack" else []),
+    )
+    for name in [
+        "photo_stack",
+        "photo_io",
+        "photo_metrics",
+    ]
+]

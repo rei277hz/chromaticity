@@ -1,0 +1,2 @@
+# Derive atomic capability cfg from the configured target.
+buildscript.run = true

@@ -1,0 +1,75 @@
+{
+  stores: [
+    {
+      name: "REMOTE_CAS",
+      grpc: {
+        instance_name: "main",
+        endpoints: [{ address: "grpc://perceptual-grade-nativelink:50051" }],
+        store_type: "cas",
+      },
+    },
+    {
+      name: "REMOTE_AC",
+      grpc: {
+        instance_name: "main",
+        endpoints: [{ address: "grpc://perceptual-grade-nativelink:50051" }],
+        store_type: "ac",
+      },
+    },
+    {
+      name: "WORKER_CAS",
+      fast_slow: {
+        fast: {
+          filesystem: {
+            content_path: "/data/worker/cas/content",
+            temp_path: "/data/worker/cas/tmp",
+            eviction_policy: {
+              max_bytes: "${NATIVE_WORKER_CACHE_MAX_BYTES:-34359738368}",
+              evict_bytes: 1073741824,
+            },
+          },
+        },
+        slow: { ref_store: { name: "REMOTE_CAS" } },
+      },
+    },
+  ],
+  workers: [
+    {
+      local: {
+        name: "perceptual-grade-linux",
+        worker_api_endpoint: { uri: "grpc://perceptual-grade-nativelink:50061" },
+        cas_fast_slow_store: "WORKER_CAS",
+        upload_action_result: { ac_store: "REMOTE_AC" },
+        // Work and fast CAS share one volume so inputs can be hard-linked.
+        work_directory: "/data/worker/work",
+        // Zero means unlimited: actions have no CPU/memory reservations.
+        max_inflight_tasks: 0,
+        max_action_timeout_s: 21600,
+        drain_on_shutdown: true,
+        use_namespaces: false,
+        use_mount_namespace: false,
+        set_tmpdir: true,
+        entrypoint: "/usr/local/bin/nativelink-action",
+        additional_environment: {
+          PATH: { value: "/usr/local/bin:/usr/bin:/bin" },
+          LANG: { value: "C.UTF-8" },
+          LC_ALL: { value: "C.UTF-8" },
+          NL_ACTION_DIRECTORY: "action_directory",
+        },
+        platform_properties: {
+          OSFamily: { values: ["linux"] },
+          ISA: { values: ["x86-64"] },
+          "worker-image": { values: ["${NATIVE_WORKER_IMAGE}"] },
+        },
+      },
+    },
+  ],
+  servers: [
+    {
+      name: "health",
+      listener: { http: { socket_address: "0.0.0.0:50052" } },
+      services: { health: {} },
+    },
+  ],
+  global: { max_open_files: 131072 },
+}

@@ -1,0 +1,446 @@
+{
+  "version": 1,
+  "description": "Current production channel policy, with typed event admission and inductive state invariants. Native receipt truth is an adapter obligation.",
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "initial"
+  ],
+  "step": "step",
+  "invariants": {
+    "state_domain": "invariant(state)"
+  },
+  "contracts": {
+    "initial": {
+      "requires": [
+        "owner >= 0",
+        "key >= 0",
+        "session >= 0"
+      ]
+    },
+    "step": {
+      "requires": [
+        "event_valid(state,event)"
+      ]
+    },
+    "_final_scope_resolution_all_resolution": {
+      "ensures": [
+        "result == forall_range(i,0,len(_items),_items[i] == 65)"
+      ]
+    },
+    "final_scope_resolution": {
+      "ensures": [
+        "result == forall_range(i,0,len(resolutions),resolutions[i] == 65)"
+      ]
+    },
+    "_cyclic_first": {
+      "ensures": [
+        "(result == -1) == forall_range(i,0,len(values),not values[i])",
+        "result == -1 or (0 <= result < len(values) and values[result])",
+        "result == -1 or forall_range(i,0,len(values),(i-start)%len(values) >= (result-start)%len(values) or not values[i])"
+      ]
+    },
+    "scope_next": {
+      "ensures": [
+        "(result == -1) == forall_range(i,0,len(eligible),not eligible[i])",
+        "result == -1 or (0 <= result < len(eligible) and eligible[result])",
+        "result == -1 or forall_range(i,0,len(eligible),(i-start)%len(eligible) >= (result-start)%len(eligible) or not eligible[i])"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "publication_needs_current_admission",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state,event)",
+        "event.kind == 'publish'"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].accept or (state.live and state.ready and event.owner == state.owner and same_session(state, event) and event.signal == state.signal)"
+    },
+    {
+      "name": "occupied_channel_cannot_start",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state,event)",
+        "event.kind == 'start' and state.worker != 0"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].start"
+    },
+    {
+      "name": "stale_owner_cannot_publish",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state, event)",
+        "event.kind == 'publish' and (event.owner != state.owner or not same_session(state,event))"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].accept and after[0] == state"
+    },
+    {
+      "name": "scope_publication_requires_final_native_provenance",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state, event)",
+        "event.kind == 'publish' and state.scope"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].accept or (event.resolution == 65 and event.provenance > 0 and event.epoch >= state.display_epoch and event.epoch <= state.epoch)"
+    },
+    {
+      "name": "foreign_channel_events_preserve_state",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state, event)",
+        "event.owner != state.owner"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[0] == state"
+    },
+    {
+      "name": "new_worker_requires_live_ready_request",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].start or (state.live and state.worker == 0 and event.token > 0 and event.key > 0 and ((event.key == state.requested and (not state.scope or event.epoch == state.epoch)) or (state.scope and state.dragging) or (state.scope and state.history and event.history and event.epoch <= state.epoch)))"
+    },
+    {
+      "name": "shutdown_removes_logical_authority",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state, event)",
+        "event.kind == 'shutdown' and state.live and event.owner == state.owner and same_session(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[0].live and after[0].worker == 0 and not after[0].display_available"
+    },
+    {
+      "name": "final_resolution_checks_every_element",
+      "variables": {
+        "resolutions": "tuple[int, ...]"
+      },
+      "assume": [],
+      "lets": {},
+      "assert": "final_scope_resolution(resolutions) == forall_range(i,0,len(resolutions),resolutions[i] == 65)"
+    },
+    {
+      "name": "scope_selection_is_cyclic_first",
+      "variables": {
+        "eligible": "tuple[bool, ...]",
+        "start": "int"
+      },
+      "assume": [],
+      "lets": {
+        "selected": "scope_next(eligible,start)"
+      },
+      "assert": "(selected == -1) == forall_range(i,0,len(eligible),not eligible[i]) and (selected == -1 or (0 <= selected < len(eligible) and eligible[selected] and forall_range(i,0,len(eligible),(i-start)%len(eligible) >= (selected-start)%len(eligible) or not eligible[i])))"
+    },
+    {
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state,event)",
+        "event.kind == 'publish'"
+      ],
+      "lets": {
+        "after": "step(state,event)"
+      },
+      "name": "historical_publication_requires_automatic_authority",
+      "assert": "not after[1].accept or (event.key == state.requested and (not state.scope or event.epoch == state.epoch)) or state.dragging or (state.scope and state.history and event.history and event.epoch < state.epoch)"
+    },
+    {
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state,event)",
+        "event.kind == 'publish'"
+      ],
+      "lets": {
+        "after": "step(state,event)"
+      },
+      "name": "historical_publication_preserves_current_failure",
+      "assert": "(event.key == state.requested and (not state.scope or event.epoch == state.epoch)) or (after[0].error == state.error and after[0].error_key == state.error_key and after[0].quality == state.quality and after[0].requested == state.requested)"
+    },
+    {
+      "name": "frame_cycle_requires_compatible_owner",
+      "variables": {
+        "wanted": "bool",
+        "compatible": "bool",
+        "exact": "bool",
+        "dragging": "bool",
+        "history": "bool"
+      },
+      "assume": [],
+      "lets": {},
+      "assert": "scope_job_admissible(wanted,compatible,exact,dragging,history) == (wanted and compatible and (exact or dragging or history))"
+    },
+    {
+      "name": "compatible_cycle_survives_newer_pending",
+      "variables": {
+        "wanted": "bool",
+        "compatible": "bool",
+        "exact": "bool",
+        "dragging": "bool",
+        "retired": "bool",
+        "preview": "bool",
+        "control": "bool",
+        "ack": "bool",
+        "pending": "bool",
+        "history": "bool"
+      },
+      "assume": [
+        "wanted and compatible and history"
+      ],
+      "lets": {
+        "cycle": "scope_cycle(wanted,compatible,exact,dragging,retired,preview,control,ack,pending,history)"
+      },
+      "assert": "cycle.keep and not cycle.cancel and (not preview or cycle.publish)"
+    },
+    {
+      "name": "successor_waits_for_physical_retirement",
+      "variables": {
+        "wanted": "bool",
+        "compatible": "bool",
+        "exact": "bool",
+        "dragging": "bool",
+        "retired": "bool",
+        "preview": "bool",
+        "control": "bool",
+        "ack": "bool",
+        "pending": "bool",
+        "history": "bool"
+      },
+      "assume": [],
+      "lets": {
+        "cycle": "scope_cycle(wanted,compatible,exact,dragging,retired,preview,control,ack,pending,history)"
+      },
+      "assert": "cycle.dispatch == (retired and not cycle.advance and pending)"
+    },
+    {
+      "name": "unwanted_or_incompatible_cycle_cannot_publish",
+      "variables": {
+        "wanted": "bool",
+        "compatible": "bool",
+        "exact": "bool",
+        "dragging": "bool",
+        "retired": "bool",
+        "preview": "bool",
+        "control": "bool",
+        "ack": "bool",
+        "pending": "bool",
+        "history": "bool"
+      },
+      "assume": [
+        "not wanted or not compatible"
+      ],
+      "lets": {
+        "cycle": "scope_cycle(wanted,compatible,exact,dragging,retired,preview,control,ack,pending,history)"
+      },
+      "assert": "cycle.cancel and not cycle.publish and not cycle.collect and not cycle.advance"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "current_publication_admitted",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "event.kind == 'publish' and after[1].accept"
+    },
+    {
+      "name": "worker_start_admitted",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "event.kind == 'start' and after[1].start"
+    },
+    {
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "invariant(state)",
+        "event_valid(state,event)",
+        "event.kind == 'publish'"
+      ],
+      "lets": {
+        "after": "step(state,event)"
+      },
+      "name": "historical_frame_can_publish",
+      "assert": "after[1].accept and not state.dragging and event.key != state.requested and state.history and event.history"
+    },
+    {
+      "name": "completed_cycle_dispatches_pending",
+      "variables": {
+        "wanted": "bool",
+        "compatible": "bool",
+        "exact": "bool",
+        "dragging": "bool",
+        "retired": "bool",
+        "preview": "bool",
+        "control": "bool",
+        "ack": "bool",
+        "pending": "bool",
+        "history": "bool"
+      },
+      "assume": [],
+      "lets": {
+        "cycle": "scope_cycle(wanted,compatible,exact,dragging,retired,preview,control,ack,pending,history)"
+      },
+      "assert": "wanted and compatible and history and not exact and retired and pending and not control and cycle.collect and cycle.dispatch"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "publication_ignores_readiness",
+      "function": "apply_publish",
+      "target": "state.ready",
+      "replacement": "True",
+      "detects": [
+        "property.publication_needs_current_admission"
+      ]
+    },
+    {
+      "name": "publication_ignores_owner",
+      "function": "apply_publish",
+      "target": "event.owner == state.owner",
+      "replacement": "True",
+      "detects": [
+        "property.stale_owner_cannot_publish"
+      ]
+    },
+    {
+      "name": "history_ignores_channel_authority",
+      "function": "apply_publish",
+      "target": "state.history",
+      "replacement": "True",
+      "detects": [
+        "property.historical_publication_requires_automatic_authority"
+      ]
+    },
+    {
+      "name": "history_cycle_ignores_compatibility",
+      "function": "scope_job_admissible",
+      "target": "compatible",
+      "replacement": "True",
+      "detects": [
+        "property.frame_cycle_requires_compatible_owner"
+      ]
+    },
+    {
+      "name": "successor_dispatches_before_retirement",
+      "function": "scope_cycle",
+      "target": "retire and pending",
+      "replacement": "pending",
+      "detects": [
+        "property.successor_waits_for_physical_retirement"
+      ]
+    },
+    {
+      "name": "compatible_history_is_cancelled",
+      "function": "scope_job_admissible",
+      "target": "exact or dragging or history",
+      "replacement": "exact or dragging",
+      "detects": [
+        "property.compatible_cycle_survives_newer_pending"
+      ]
+    }
+  ],
+  "loops": [
+    {
+      "name": "all_final_resolutions",
+      "function": "_final_scope_resolution_all_resolution",
+      "target": "resolution",
+      "iter": "_items",
+      "cursor": "processed",
+      "invariants": [
+        "_result == forall_range(i,0,processed,_items[i] == 65)"
+      ],
+      "decreases": "len(_items) - processed"
+    },
+    {
+      "name": "first_eligible_scope",
+      "function": "_cyclic_first",
+      "target": "offset",
+      "iter": "range(count)",
+      "cursor": "processed",
+      "invariants": [
+        "count == len(values)",
+        "count > 0",
+        "cursor == start % count",
+        "0 <= cursor < count",
+        "forall_range(i,0,count,(i-start)%count >= processed or not values[i])"
+      ],
+      "decreases": "count - processed"
+    }
+  ]
+}

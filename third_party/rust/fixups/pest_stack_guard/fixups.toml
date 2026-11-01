@@ -1,0 +1,2 @@
+# Select stack guard support for the configured native targets.
+buildscript.run = true

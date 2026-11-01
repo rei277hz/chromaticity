@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "runtime_json": [
+    "perceptual_grade_core/locales/en.json",
+    "perceptual_grade_core/locales/zh_HANS.json",
+    "perceptual_grade_core/localization/bindings.json",
+    "perceptual_grade_core/localization/control-labels.json"
+  ]
+}

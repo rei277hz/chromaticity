@@ -1,0 +1,10 @@
+Perceptual Grade
+
+Copyright © 2026 Rei277Hz. Extension and DCTL code are licensed under GNU GPL version 3 or any later version; see LICENSE.
+
+The extension and DCTL share the Perceptual Grade model, using modCAM16 and CAT16. Model references and engineering details are documented in the handbook.
+
+The original NumPy implementation in src/blender/model/statistics.py follows the algorithm of Hubert, Rousseeuw & Verdonck (2012), “A deterministic algorithm for robust location and scatter”, Journal of Computational and Graphical Statistics 21(3), 618–637. Author manuscript: https://wis.kuleuven.be/stat/robust/papers/2012/DetMCD.pdf
+
+This is a two-dimensional bounded-sample implementation with six deterministic starts, Qn scales, concentration steps and reweighting. It uses asymptotic Gaussian corrections and explicitly documented degenerate/display fallbacks. No code from robustbase or scikit-learn is included. Statistical contours are UI diagnostics, never input to the grading calculation.
+

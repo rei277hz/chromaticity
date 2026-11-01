@@ -1,0 +1,92 @@
+alias(
+    name = "float3_shim",
+    actual = "//tools/dctl-testing:float3_shim",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "dctl_parser",
+    actual = "//products/perceptual-grade-dctl/tests:dctl_parser",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "oracle",
+    actual = "//products/perceptual-grade-dctl/tests:oracle",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "common_support",
+    actual = "//libraries/perceptual-grade-core/tests:common_support",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "reference_support",
+    actual = "//libraries/perceptual-grade-core/tests:reference_support",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "dctl_reference",
+    actual = "//products/perceptual-grade-dctl/tests:dctl_reference",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "support",
+    actual = "//products/perceptual-grade-dctl/tests:support",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "blender_support",
+    srcs = {
+        "blender.py": "support/blender.py",
+        "scope.py": "support/scope.py",
+        "session.py": "support/session.py",
+    },
+    base_module = "tests.support",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":reference_support",
+        "//products/perceptual-grade-blender:runtime",
+        "//third_party:bpy",
+    ],
+)
+
+python_library(
+    name = "gpu_support",
+    srcs = {
+        "gpu.py": "support/gpu.py",
+        "gpu_test_main.py": "support/gpu_test_main.py",
+    },
+    base_module = "tests.support",
+    resources = select({
+        "prelude//os:linux": {"xvfb": "//third_party:xvfb_software_linux"},
+        "DEFAULT": {},
+    }),
+    visibility = ["PUBLIC"],
+    deps = [":blender_support"],
+)
+
+python_test(
+    name = "sessions",
+    srcs = ["test_sessions.py"],
+    base_module = "tests.sessions",
+    deps = [
+        "//products/perceptual-grade-blender:runtime",
+        "//third_party:bpy",
+    ],
+)
+
+python_test(
+    name = "outcomes",
+    srcs = ["test_outcomes.py"],
+    base_module = "tests.outcomes",
+    deps = [
+        "//products/perceptual-grade-blender:runtime",
+        "//third_party:bpy",
+    ],
+)

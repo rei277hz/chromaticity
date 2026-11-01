@@ -1,0 +1,6 @@
+python_test(
+    name = "baking",
+    srcs = ["test_baking.py"],
+    base_module = "tests.execution",
+    deps = ["//products/perceptual-grade-blender/tests:blender_support"],
+)

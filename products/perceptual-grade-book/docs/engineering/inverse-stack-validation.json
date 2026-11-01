@@ -1,0 +1,348 @@
+{
+  "version": "1.14.1",
+  "execution": "authoring-preview; pinned CPython and bpy 5.2.2 LTS; CPU renders",
+  "test_count": 52,
+  "tests": [
+    {
+      "suite": "NUMERICAL",
+      "test": "test_core",
+      "status": "passed",
+      "seconds": 2.52
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_inverse_math",
+      "status": "passed",
+      "seconds": 1.07
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_inverse_solver",
+      "status": "passed",
+      "seconds": 0.32
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_chroma_drivers",
+      "status": "passed",
+      "seconds": 1.02
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_forward_inverse",
+      "status": "passed",
+      "seconds": 3.73
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_adaptance_weight",
+      "status": "passed",
+      "seconds": 1.37
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_hk_lift",
+      "status": "passed",
+      "seconds": 0.27
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_hk_native",
+      "status": "passed",
+      "seconds": 0.67
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_cube_math",
+      "status": "passed",
+      "seconds": 2.47
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_cube_native",
+      "status": "passed",
+      "seconds": 1.67
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_control_parity",
+      "status": "passed",
+      "seconds": 0.22
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_control_schema",
+      "status": "passed",
+      "seconds": 0.62
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_source_white",
+      "status": "passed",
+      "seconds": 2.47
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_linear_spread",
+      "status": "passed",
+      "seconds": 0.67
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_white_drag_centroid",
+      "status": "passed",
+      "seconds": 1.27
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_white_drag_boundary",
+      "status": "passed",
+      "seconds": 3.33
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_hue_concentration",
+      "status": "passed",
+      "seconds": 7.59
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_hk_fixture_regression",
+      "status": "passed",
+      "seconds": 4.28
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_lut_grid_regression",
+      "status": "passed",
+      "seconds": 18.37
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_i18n_terms",
+      "status": "passed",
+      "seconds": 0.27
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_grade_stack",
+      "status": "passed",
+      "seconds": 28.51
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_shared_grades",
+      "status": "passed",
+      "seconds": 22.24
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_shared_grade_undo",
+      "status": "passed",
+      "seconds": 24.34
+    },
+    {
+      "suite": "BLENDER",
+      "test": "blender_registration_test",
+      "status": "passed",
+      "seconds": 9.54
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_full_graph_template",
+      "status": "passed",
+      "seconds": 17.69
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_node_presentation",
+      "status": "passed",
+      "seconds": 18.58
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_ui",
+      "status": "passed",
+      "seconds": 18.32
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_comparison_scopes",
+      "status": "passed",
+      "seconds": 10.49
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_scope_framebuffer",
+      "status": "passed",
+      "seconds": 0.87
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_stage3_scopes",
+      "status": "passed",
+      "seconds": 0.42
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_extension_namespace",
+      "status": "passed",
+      "seconds": 11.14
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_graph_updates",
+      "status": "passed",
+      "seconds": 19.78
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_white_drag_sampling",
+      "status": "passed",
+      "seconds": 19.86
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_white_and_render_ui",
+      "status": "passed",
+      "seconds": 24.3
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_concentration_graph",
+      "status": "passed",
+      "seconds": 10.66
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_graph_regressions",
+      "status": "passed",
+      "seconds": 17.33
+    },
+    {
+      "suite": "BLENDER",
+      "test": "blender_half_precision_test",
+      "status": "passed",
+      "seconds": 24.65
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_optimized_curves",
+      "status": "passed",
+      "seconds": 1.67
+    },
+    {
+      "suite": "RENDERS",
+      "test": "blender_stage2_test",
+      "status": "passed",
+      "seconds": 23.34
+    },
+    {
+      "suite": "RENDERS",
+      "test": "blender_stage3_render_test",
+      "status": "passed",
+      "seconds": 22.15
+    },
+    {
+      "suite": "RENDERS",
+      "test": "blender_cube_test",
+      "status": "passed",
+      "seconds": 27.58
+    },
+    {
+      "suite": "RENDERS",
+      "test": "blender_compositor_test",
+      "status": "passed",
+      "seconds": 8.89
+    },
+    {
+      "suite": "DCTL",
+      "test": "test_chroma_drivers",
+      "status": "passed",
+      "seconds": 1.47
+    },
+    {
+      "suite": "DCTL",
+      "test": "test_interface",
+      "status": "passed",
+      "seconds": 0.32
+    },
+    {
+      "suite": "DCTL",
+      "test": "test_hk_guard",
+      "status": "passed",
+      "seconds": 0.67
+    },
+    {
+      "suite": "DCTL",
+      "test": "test_saturation",
+      "status": "passed",
+      "seconds": 1.72
+    },
+    {
+      "suite": "DCTL",
+      "test": "run_tests",
+      "status": "passed",
+      "seconds": 14.51
+    },
+    {
+      "suite": "DCTL",
+      "test": "portability",
+      "status": "passed",
+      "seconds": 0.62
+    },
+    {
+      "suite": "DCTL",
+      "test": "test_helper_scope",
+      "status": "passed",
+      "seconds": 0.77
+    },
+    {
+      "suite": "PARITY",
+      "test": "compare_dctl",
+      "status": "passed",
+      "seconds": 0.67
+    },
+    {
+      "suite": "PARITY",
+      "test": "compare_stage2_dctl",
+      "status": "passed",
+      "seconds": 0.52
+    },
+    {
+      "suite": "PARITY",
+      "test": "compare_stage3_dctl",
+      "status": "passed",
+      "seconds": 6.38
+    }
+  ],
+  "final_optimization_reruns": [
+    {
+      "suite": "NUMERICAL",
+      "test": "test_inverse_math",
+      "status": "passed",
+      "seconds": 1.02
+    },
+    {
+      "suite": "NUMERICAL",
+      "test": "test_inverse_solver",
+      "status": "passed",
+      "seconds": 0.42
+    },
+    {
+      "suite": "BLENDER",
+      "test": "test_grade_stack",
+      "status": "passed",
+      "seconds": 29.27
+    }
+  ],
+  "inverse_math_checks": 15,
+  "inverse_solver_checks": 24,
+  "grade_stack_checks": 36,
+  "native_max_normalized_error": 1.9450480489246844e-07,
+  "evidence": "Complete 52-fixture run; final neutral-offset and fused-decode optimization validated by focused solver/math/native Grade Stack reruns. Separate fresh-bake timing and full off-grid precision measurement.",
+  "limitations": [
+    "Buck2 release gate unavailable in this environment",
+    "Desktop interaction and GPU/Metal rendering not exercised"
+  ]
+}

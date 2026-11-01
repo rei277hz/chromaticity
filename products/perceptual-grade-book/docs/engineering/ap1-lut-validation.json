@@ -1,0 +1,60 @@
+{
+  "version": "1.21.0",
+  "configuration": "AP1_ACES_neg0_pos128_n0_log1p0.01",
+  "math_checks": 32,
+  "native_cube_checks": 29,
+  "working_white_checks": 102,
+  "stack_checks": 36,
+  "stack_editing_pytest_cases": 53,
+  "related_fixture_scripts_passed": 17,
+  "native_benchmark_cases": 6,
+  "independent_oracle_grades": 12,
+  "frozen_analytic_fixture_grades": 4,
+  "oracle_max_relative_error": 5.086417412122715e-13,
+  "native_cpu_max_sampler_relative_error": 7.654349140128709e-07,
+  "half_buffer_cases": 34,
+  "half_buffer_samples_per_case": 4483,
+  "half_buffer_overflow_count": 0,
+  "half_buffer_max_full_vs_python": 2.4966608462001505e-05,
+  "half_buffer_worst_half_vs_full": 0.019081491976976395,
+  "progressive_vertices": {
+    "preview": 35937,
+    "refinement": 238688,
+    "final": 274625,
+    "bitwise_shared_reuse": true
+  },
+  "schema": {
+    "model": 12,
+    "native_sampler": 12
+  },
+  "no_compatibility_or_migration_code_added": true,
+  "old_production_path_removed": true,
+  "production_sources": {
+    "src/blender/model/lut.py": "c9db381b2fdf4dad5fe03ee7457a6992a094f5fe1771b6b89f2608124f72b2a7",
+    "src/blender/graph/lut.py": "7710de041d58db73290bd7b6c9ffa657a0788953c5be766cf328158a66efac91",
+    "src/blender/graph/nodes.py": "029ea933755075445b80e517ec76e3562e9751cdc06b30bf34c3273933231299",
+    "src/blender/integration/lifecycle.py": "36e6d699ea2e5c7cab16f910f1f198d55f082b75c64685198668daf444dbb568",
+    "src/blender/blender_manifest.toml": "f45a10ebbb441c2e6fb8b42a1797e69222fc3cd53d0a3b45ce555bd0edcbe5ef"
+  },
+  "logs": {
+    "test_cube_math.log": "6762bac90811854d98abea2165965738523f543217d5328d5acc65188f23b603",
+    "test_cube_native.log": "2d3e1f85cf39cffd10f257a3724eb52fbb2c706b5cbe213f4cb7f04ce80d3c60",
+    "test_progressive_lut.log": "4c54498d28db3d0be5f1098b717314808f59c13d895e26513b6a0d1ea00cfbfe",
+    "test_lut_grid_regression.log": "a7d2fb689a9972f62c5f115e2d704f54b205a5374fe82d0aa2c4c0c2e9adcb3e",
+    "test_hk_fixture_regression.log": "34ebbde11adf2eb4a84108c4674c8e65296b43f7a53675fdfe342ba348edb9fe",
+    "blender_cube_test.log": "139a1e6a775dc0084a85f8f34422581c80283c46bafda326f03c8a110578e534",
+    "test_working_white.log": "32aa1cd361274f63c3b98408668d98f837b2778de1d1b42a0d81a0a7b1040a8e",
+    "test_grade_stack.log": "0d5f9342be7f77520c1a59794ded4c657aa313270112c7259d105d1efbf73e7b",
+    "test_stack_editing.log": "0149dc8ba59230fb2f9caba5769f5fb0bc6cc27a3b8068896ada04af47b7b9ef",
+    "test_graph_regressions.log": "6097765347e2a09cc3bac158b292e7adaf4c41ce6740467bc104eed8ef490948",
+    "test_full_graph_template.log": "15f3107ba38f212fe0adc750267062ccb551b9125b2b97d13c3f2781db65e65d",
+    "blender_half_precision_test.log": "3fcacba21aff25013cf86aca59d6af6aee43d2c7d5dd884ab0b6703d825b9cbb",
+    "test_white_drag_sampling.log": "555a1f584d71be206e4a0a2bff79ffc3895b4d26edb9655ed6b8d06ab9094b8c",
+    "test_shared_grades.log": "9bd9be692d5c4fc060bae87960bd116a14d783c7196001651c82c19b7f941a64",
+    "test_shared_grade_undo.log": "8d5993312603d3a5651bc59d7c232d0e1b95ceac2e78c39a168bee18b703fca1",
+    "test_extension_namespace.log": "71f8656c056df3a5ffbc0dd416967fd23a1c5c1ee7b1fe90282f26d19836b5b2",
+    "test_forward_inverse.log": "63f14b551e6197ad194d9c28a558b579d18603a6c3047cb78289b356f9c17dda",
+    "native-benchmark.log": "9429942229086de34d5cac6345e5f90f8a65b076b0a67fc129bf72332a3dc13b"
+  },
+  "execution": "Isolated authoring-preview fixtures with pinned NumPy/bpy; native CPU and buffer emulation. Native Buck2 execution is blocked by missing /proc/self/exe. No GPU/Metal claim."
+}

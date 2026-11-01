@@ -1,0 +1,30 @@
+python_library(
+    name = "common_support",
+    srcs = {"cases.py": "support/cases.py"},
+    base_module = "tests.support",
+    visibility = ["PUBLIC"],
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)
+
+python_library(
+    name = "reference_support",
+    srcs = {"reference.py": "support/reference.py"},
+    base_module = "tests.support",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":common_support",
+        "//libraries/perceptual-grade-reference:runtime",
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+    ],
+)
+
+python_test(
+    name = "headless",
+    srcs = ["test_headless.py"],
+    base_module = "tests.domain",
+    deps = [
+        "//libraries/color-core:runtime",
+        "//libraries/perceptual-grade-core:runtime",
+        "//libraries/perceptual-grade-reference:runtime",
+    ],
+)

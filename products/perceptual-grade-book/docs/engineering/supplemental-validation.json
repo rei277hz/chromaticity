@@ -1,0 +1,18 @@
+{
+  "execution": "authoring-preview",
+  "checks": {
+    "catalogs": "passed",
+    "numerical_photo_screenshot_figures": "passed; 15 photo comparisons",
+    "favicon": "passed",
+    "language_scripts": "passed",
+    "MOV_demos": "passed",
+    "fonts": "passed",
+    "intro_video": "passed",
+    "math_document": "555 expressions parsed; zero errors",
+    "native_benchmark": "passed: six actual native workloads; fixed Direct-to-QUINTIC RNA mapping",
+    "source_inputs": "passed: declared source omissions and action outputs",
+    "text_sources": "passed",
+    "site": "passed: 24 chapters, 2820 links/resources, deployment ZIP",
+    "package": "passed: release hashes, rebuild inputs, locks, catalogs, deterministic ZIP metadata"
+  }
+}

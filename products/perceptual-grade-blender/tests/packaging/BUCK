@@ -1,0 +1,39 @@
+python_test(
+    name = "extension",
+    srcs = ["test_extension.py"],
+    base_module = "tests.packaging",
+    resources = {
+        "perceptual_grade.zip": "//products/perceptual-grade-blender:extension[zip]",
+        "extension_tree": "//products/perceptual-grade-blender:extension_tree",
+    },
+)
+
+python_test(
+    name = "locales",
+    srcs = ["test_locales.py"],
+    base_module = "tests.packaging",
+    resources = {
+        "catalogs": "//libraries/perceptual-grade-core:catalog_sources",
+        "dctl_sources": "//products/perceptual-grade-dctl:sources",
+    },
+    deps = [
+        "//libraries/blender-runtime:runtime",
+        "//libraries/perceptual-grade-core:locale_compiler",
+        "//products/perceptual-grade-blender:runtime",
+    ],
+)
+
+python_test(
+    name = "architecture",
+    srcs = ["test_architecture.py"],
+    base_module = "tests.packaging",
+    resources = {
+        "perceptual_grade.zip": "//products/perceptual-grade-blender:extension[zip]",
+        "extension_tree": "//products/perceptual-grade-blender:extension_tree",
+    },
+    deps = [
+        "//libraries/blender-runtime:runtime",
+        "//libraries/invariant:runtime",
+        "//libraries/perceptual-grade-core:runtime",
+    ],
+)

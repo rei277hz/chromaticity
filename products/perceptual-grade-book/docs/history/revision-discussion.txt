@@ -1,0 +1,68 @@
+<history>
+Now let's focus on the mdbook part:
+
+- I think 'Install and connect' says too much about working space; should focus on installation of Blender Extension / DaVinci Resolve DCTL, and how to connect them; for Blender should include connecting nodes in shading / compositing page; for DaVinci Resolve should include using Color Space Transform to convert to/from Linear XYZ, and use proper destination white point; should have figures / screenshots; as other parts in the book, you should create dummy ones, so I can replace them, and just rerun Buck2 build to update the site; For Blender Extension, do not mention LUT/Direct at this time, it's too early
+- The 'Grade in three stages' should have a two running examples throughout the 3 stages; should have side-by-side webp video for each operation to be demonstrated; you should allow me to place two .mov files (Rec.709 gamut, Rec.709-A transfer), and you create a Buck2 flow to create each side-by-side webp from my videos to create the webp demonstrations to embed in the mdbook; for each demonstration, I will adjust two images differently (and for different purposes), but will use the same slider/control/handle
+- For linear stage, remove the RGB and CIE xy explanations, just start with white balance; with demonstration dragging source white point or the vectorscope to 'make what should look white actually white'; Also, remove that Rec.2020 recovery example from everywhere in the mdbook, it is too theoretical; and, 'Example: match a photographed ColorChecker' 's demonstration should include connecting the colorchecker exr image to Color Reference, and adjust to align vectorscope readings
+- For tone stage, Should provide concrete side-by-side examples to tell the difference between SDR and HDR footages' different look on waveform, before giving user warnings about 'mid-filling-the-headroom'; do not mention modCAM16's saturation-preserving yet, it's too early; users don't need my explanation, saturation-preservation is already everyone's default instinct; need one side-by-side demo, different curve shapes, for different purposes (one 's' curve to raise contrast, another like a gamma curve to brighten darker area)
+- For Color stage, should use side-by-side demonstration to cover every kind of controls; let me design:
+  - Lightness J curve, two different tones, 1 demo
+  - Lightness J and Chroma C curve together, one same tone, 1 demo
+  - Lightness J and Chroma C a/b pad together, one same tone, 1 demo
+  - Adaptance a/b pad, two different tones, 1 demo
+  - Hue a/b pad, two different tones, 1 demo
+  - Hue rotation, two different tones, 1 demo
+  - Global Cl/Ch->Hue, no demo, tell the user that they can try out themselves, to create more creative grades
+- 'Scopes and Color Reference' should not be a separate section, explain that in the ColorChecker earlier
+- in render methods section, 'Why choose it for shading?' and 'Why choose Direct for compositing?' should be merged; also the entire section is too wordy, please be concise
+- the 'Structure and appearance coordinates' section should be solely for stage 2 and stage 3, especially stage 3; should only have 'Saturation-preserving tone curve', 'Tone-shaped color operators', 'Bounded H–K guard' and 'Evaluation and interpolation' subsections; the section intro ('Structure and appearance coordinates' itself) should focus on introducing modCAM16, especially its coordinates, best with illustrations (find CAM16 illustrations if you can't find modCAM16 ones, I'll check and replace them later); should in its beginning explain that stage 1 still works on RGB, and stage 2 and stage 3 enters modCAM16 first; the existing two illustrations you drawn are ugly and should be removed (remove also the entire Buck2 path and their source)
+- For Release notes, I noticed some have short description after version number and some don't; please unify their format, don't have that short description after them; also avoid using bold/italic/inline-code in release note, use `'` and `"` when needed
+
+
+
+Please be sure you understand my requirements. List design choices you think are not settled for me to check before implementing,
+
+---
+
+Understood. The practical chapters should teach through two continuing examples, with the same control used for different purposes in each image. Installation should show the actual connections, and the appearance-model explanation should begin later in the theory chapters.
+
+I reviewed the book and its Buck2 asset pipeline. I haven’t changed anything yet. These are the choices I think remain open:
+
+1. **What the two MOVs contain.** I interpret this as **two recordings per demonstration**, showing your adjustments, relevant controls, scopes, and image. Buck2 would combine them into one synchronized animated WebP. Is that correct, rather than supplying only two original footage files for the entire tutorial?
+
+2. **The two running examples.** Should Example A be SDR and Example B HDR throughout all three stages? That would make the waveform comparison flow naturally into the Tone lesson. We can use neutral “Example A/B” placeholders until you choose the images and grading intentions.
+
+3. **Which application the demonstrations show.** The existing figures pair Blender with Resolve. Your new pairs would instead show the two examples. I suggest **Blender recordings for the interactive demonstrations**, with concise Resolve equivalents in the text. Would you prefer separate demonstration pairs for both applications?
+
+4. **How adjustments carry forward.** I suggest carrying the completed Linear correction into Tone, then the completed Tone adjustment into Color. Each of the six Color demonstrations would start from that same corrected baseline, so readers can see what its particular controls contribute. Should the Color demonstrations instead accumulate into one final grade?
+
+5. **Linear demonstration coverage and the ColorChecker.** White balance and ColorChecker matching are clear. Should Exposure, Balance, Spread, and Heading each receive their own paired demonstration, or be taught as steps within the ColorChecker example? Also, will your two running examples contain photographed charts, or should chart matching be a separate calibration example? Its illustration would explicitly show the EXR connected to Color Reference and the traces being aligned.
+
+6. **The selected tones in your six Color demonstrations.** My proposed interpretation is:
+   - “Two different tones”: Example A selects one tonal region; Example B selects another.
+   - “One same tone”: both examples select the same tonal region, with J and C adjusted together.
+
+   Is that what you mean? I would keep exactly your six demonstration categories, explain Fit, Adaptance Strength, and Global C Gain alongside them, and leave Global Cₗ/Cₕ → Hue as the suggested independent experiment.
+
+7. **Recording timing and presentation.** I suggest preserving recording speed, allowing independent start/end trims, and holding the shorter recording’s final frame until both finish. Both panels would have stable example labels and a brief statement of their different goals. For playback, do you prefer automatic looping or click-to-play/replay? I recommend click-to-play with a still preview. Rec.709/Rec.709-A input interpretation would be explicit in the conversion pipeline, with browser output converted to sRGB.
+
+8. **The Resolve setup to illustrate.** Should the installation screenshots use an unmanaged DaVinci YRGB project with explicit CSTs, or your usual color-managed/ACES workflow? I recommend the explicit CST setup for this introduction: input conversion → Linear XYZ → DCTL → output conversion, with the DCTL destination white specified for the illustrated setup.
+
+9. **Where removed material goes.** Restricting the theory section to your four subsections displaces both “Linear correction” and “Earlier H–K evaluation.” Should those disappear from the published book entirely or move into Development? I recommend removing those chapters from the book while preserving relevant implementation tests. For the shortened Render methods chapter, should its benchmark chart remain, or move to Development too?
+
+The other changes are settled: remove the Rec.2020 recovery example and its documentation assets; fold scopes into ColorChecker matching; remove the two unwanted appearance illustrations and their generating code/build outputs; source replaceable, attributed modCAM16/CAM16 illustrations; and normalize release-note headings and plain-text formatting.
+
+---
+
+1. Each MOV I provide are screen Rec.709/Rec.709-A recording (squared) of the image to be graded, together withe the gizmo, each only contain a few seconds of adjusting; the WebP should be looped, when possible.
+2. One SDR and one HDR.
+3. I will only record Blender Gizmo, DaVinci DCTL are just sliders, tell the users just use the corresponding slider (give them concrete slider names) for reproducing the demo.
+4. Yes, carry forward, all demonstration are based on results of the previous step.
+5. No. The linear correction demonstrations should include adjustments to all handles, no separate demonstrations.
+6. “Two different tones”: Examples A adjusts two tonal region, Example B also adjusts two tonal region; “One same tone”: both examples select the same tonal region, with J and C adjusted together.
+7. Preserve recording speed. Allow independent start/end trims. Prefer automatic looping. Rec.709/Rec.709-A input interpretation should be explicit in the conversion pipeline, with browser output converted to sRGB.
+8. Unmanaged DaVinci YRGB project with explicit CSTs.
+9. The content of 'Earlier H–K evaluation' should be merged to 'Bounded H–K guard'. And, 'Linear correction' should also not be removed, but change its structure, should be: separate 3x3 matrix's 9 DoFs into three orthogonal groups: 1 global exposure for luminance, 2 for chromatic adaptation, 6 for luminance-preserving-and-white-point-preserving adjustments; many RGB mixers already have 'preserve luminance' option, but few have our 'preserve white-point' option, this is our core 卖点; should then introduce using CAT16 for chromatic adaptation.
+
+- Additionally, I find the current (Blender inspired) themes very ugly; you should learn ACES doc ([https://docs.acescentral.com](https://docs.acescentral.com))'s style, turn theirs into a theme.
+</history>

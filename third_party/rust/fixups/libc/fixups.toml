@@ -1,0 +1,2 @@
+# Derive target ABI and compiler compatibility cfg.
+buildscript.run = true

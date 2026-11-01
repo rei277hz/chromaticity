@@ -1,0 +1,2 @@
+# Translate Cargo features and target properties into shader backend cfg.
+buildscript.run = true

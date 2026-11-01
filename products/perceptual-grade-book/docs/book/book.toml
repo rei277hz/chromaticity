@@ -1,0 +1,31 @@
+[book]
+title = "Perceptual Grade"
+authors = ["Rei277Hz"]
+language = "en"
+src = "src"
+description = "Using and developing Perceptual Grade: linear, tone and perceptual color grading."
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+smart-punctuation = true
+sidebar-header-nav = false
+mathjax-support = false
+additional-css = ["theme/fonts.css", "theme/grade.css"]
+additional-js = ["theme/math.js", "theme/reader.js"]
+git-repository-url = "https://github.com/rei277hz/chromaticity"
+site-url = "/"
+
+[output.html.search]
+enable = true
+limit-results = 20
+use-boolean-and = true
+
+[output.html.playground]
+copy-js = false
+runnable = false
+copyable = true

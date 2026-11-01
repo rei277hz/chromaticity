@@ -1,0 +1,120 @@
+{
+  "build_declaration_input_audit_passed": true,
+  "fix": {
+    "equations_tolerances_and_lut_grid_changed": false,
+    "error_policy": "Retain once-per-context logged/cached GPU startup/dispatch failure and CPU completion.",
+    "matrix_math": "For each column i, calculate jac[i]+(change*displacement[i])/square using vectors, then construct mat2/mat3. No matrix/scalar division.",
+    "multiplication_before_division_preserved": true,
+    "project_migration_added": false
+  },
+  "gpu_arithmetic_checks": 48,
+  "handbook_katex_expressions_checked": 1228,
+  "installed_baking_checks": 60,
+  "invocation": "pinned authoring-preview; not a Buck2 release gate",
+  "limits": [
+    "The supplied Mac log establishes the reported compile failure; the replacement shader still needs native Metal validation on a Mac.",
+    "GPU arithmetic and native graph tests here used software OpenGL.",
+    "No new hardware performance result or 10x guarantee; existing 1.23.0 performance tables retain their source snapshots.",
+    "Buck2 was unavailable, so its release gates were not executed."
+  ],
+  "native_measurements": {
+    "native_compositor_normalized_error": 3.0550607106479546e-07,
+    "native_shader_normalized_error": 3.943146204663367e-08,
+    "native_stack_prepare_seconds": 0.9001362300004985,
+    "nested_inverse": {
+      "approximate": 0,
+      "backend": "GPU",
+      "bake_seconds": 1.1952307750143518,
+      "cpu_repair_seconds": 0.5632011169946054,
+      "cpu_repaired_vertices": 18,
+      "cpu_residual_samples": 18,
+      "device": "OPENGL \u00b7 llvmpipe (LLVM 20.1.2, 256 bits)",
+      "gpu_flagged_vertices": 18,
+      "gpu_rgb_search_vertices": 12255,
+      "gpu_samples": 274625,
+      "max_residual": 1.7545933831316045e-11,
+      "policy": "analytic-f32-relative3e-6-audited-v1"
+    }
+  },
+  "new_regressions": [
+    "Shader does not require the Metal-missing outerProduct builtin",
+    "Complete mat2 Broyden update, denominator case 0",
+    "Mat2 Broyden update satisfies the secant condition",
+    "Complete mat2 Broyden update, denominator case 1",
+    "Complete mat2 Broyden update, denominator case 2",
+    "Complete mat3 Broyden update, denominator case 0",
+    "Mat3 Broyden update satisfies the secant condition",
+    "Complete mat3 Broyden update, denominator case 1",
+    "Complete mat3 Broyden update, denominator case 2",
+    "Plain shader Exception completes backend selection",
+    "Plain shader Exception leaves Preparing for CPU fallback",
+    "Failed compiler is attempted only once per context",
+    "Startup failure is logged once with its traceback",
+    "Plain shader Exception installs the current CPU LUT"
+  ],
+  "performance_scope": "Incidental timings from concurrently run correctness fixtures; not a hardware benchmark or speed claim.",
+  "python_syntax_files_checked": 58,
+  "reported_fault": {
+    "backend": "Metal",
+    "blender_family": "5.2",
+    "compiler_messages": [
+      "invalid operands to binary expression ('mat2' and 'float')",
+      "invalid operands to binary expression ('mat3' and 'float')"
+    ],
+    "device": "Apple M2",
+    "python_exception_type": "Exception",
+    "result": "one logged/cached shader failure followed by CPU fallback"
+  },
+  "reports": [
+    "validation/gpu-metal-division-fix/arithmetic/gpu-solver-checks.json",
+    "validation/gpu-metal-division-fix/integration/gpu-baking.json"
+  ],
+  "source_inventory_files": 715,
+  "sources": {
+    "src/blender/__init__.py": {
+      "bytes": 669,
+      "sha256": "eb4a18318a5da4dfc3e53ebf5f14e72f09e24083bc38fca14f35e458559e24bc"
+    },
+    "src/blender/blender_manifest.toml": {
+      "bytes": 544,
+      "sha256": "eafb4411a23ccd353ea4fdd7afd8a1514367471862693dbba3ab22b84f3e7428"
+    },
+    "src/blender/graph/gpu.py": {
+      "bytes": 4004,
+      "sha256": "f73b21a1a0ef9c2df354b484b3e3ae1acf5586cc41b1622ca2f8811f2a56f57f"
+    },
+    "src/blender/graph/lut.py": {
+      "bytes": 35457,
+      "sha256": "700f07c08500890bc8ddec1eaba77a1658227209f09ef1ca640e5c0b531df5fb"
+    },
+    "src/blender/model/gpu.py": {
+      "bytes": 14623,
+      "sha256": "6db3b724d43b097dfdb43b0156306bebee2e4db2aff4e39a3606583005a22c32"
+    },
+    "src/blender/model/gpu_shader.py": {
+      "bytes": 21684,
+      "sha256": "ea64dee1b479ac1614ddcfe65e4b9da5847911675b37d7dd0d57396db9a2240a"
+    },
+    "tests/blender/test_gpu_baking.py": {
+      "bytes": 19699,
+      "sha256": "8d3dc2950d19508deaafd1f09fc23e81cb8cc32485e99459689bda09b2777ada"
+    },
+    "tests/blender/test_gpu_solver.py": {
+      "bytes": 7270,
+      "sha256": "e4f214a907c00b50faa8784b2cbc7e84a910655599f2324aad5abcd250cf9f35"
+    }
+  },
+  "updated_handbook_local_links_checked": 97,
+  "validation_environment": {
+    "blender": "5.2.2 LTS",
+    "gpu": {
+      "backend": "OPENGL",
+      "renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "vendor": "Mesa"
+    },
+    "numpy": "2.5.3",
+    "python": "3.13.15",
+    "software_renderer": true
+  },
+  "version": "1.23.2"
+}

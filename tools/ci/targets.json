@@ -1,0 +1,15 @@
+{
+  "builds": [
+    "//:perceptual_grade_book",
+    "//:hdr_color_picker_web"
+  ],
+  "tests": [
+    "//libraries/color-core/tests:linear",
+    "//tools/verification/tests:package_boundary",
+    "//tools/verification/tests:invariant_packaging",
+    "//tools/web-build/tests:archive",
+    "//third_party/web:manifest_consistency",
+    "//libraries/modcam16-color-core:test",
+    "//libraries/modcam16-decomposition:test"
+  ]
+}

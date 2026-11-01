@@ -1,0 +1,90 @@
+load("//build_defs:artifacts.bzl", "source_tree")
+load("//build_defs:rust.bzl", "rust_notices", "wasm_package")
+
+_SOURCES = glob([
+    "src/**/*.rs",
+    "src/**/*.wgsl",
+])
+
+_ENV = {
+    "CARGO_PKG_NAME": "modcam16-decomposition-wasm",
+    "CARGO_PKG_VERSION": "0.1.0",
+    "CARGO_MANIFEST_DIR": ".",
+}
+
+_DEPS = ["//libraries/modcam16-color-core:lib"] + ["//third_party/rust:" + name for name in [
+    "exr",
+    "cmx",
+    "icc-profile",
+    "image",
+    "jpeg-decoder",
+    "png",
+    "serde",
+    "serde-wasm-bindgen",
+    "wasm-bindgen",
+    "half",
+    "js-sys",
+    "ultrahdr-core",
+    "rawler",
+    "uuid",
+]] + select({
+    "prelude//cpu:wasm32": ["//third_party/rust:" + name for name in [
+        "wgpu",
+        "bytemuck",
+        "futures-channel",
+        "wasm-bindgen-futures",
+    ]],
+    "DEFAULT": [],
+})
+
+source_tree(
+    name = "sources",
+    srcs = {p: p for p in _SOURCES},
+    visibility = ["PUBLIC"],
+)
+
+rust_library(
+    name = "lib",
+    srcs = _SOURCES,
+    crate = "modcam16_decomposition_wasm",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    env = _ENV,
+    soname = select({
+        "prelude//cpu:wasm32": "modcam16_decomposition_wasm.wasm",
+        "DEFAULT": None,
+    }),
+    visibility = ["PUBLIC"],
+    deps = _DEPS,
+)
+
+rust_test(
+    name = "test",
+    srcs = _SOURCES,
+    crate = "modcam16_decomposition_wasm",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    env = _ENV,
+    visibility = ["PUBLIC"],
+    deps = _DEPS + select({
+        "prelude//cpu:wasm32": [],
+        "DEFAULT": [
+            "//third_party/rust:bytemuck",
+            "//third_party/rust:pollster",
+            "//third_party/rust:wgpu",
+        ],
+    }),
+)
+
+wasm_package(
+    name = "wasm",
+    crate = "modcam16_decomposition_wasm",
+    library = ":lib[cdylib]",
+    visibility = ["PUBLIC"],
+)
+
+rust_notices(
+    name = "rust_notices",
+    library = ":lib",
+    visibility = ["PUBLIC"],
+)

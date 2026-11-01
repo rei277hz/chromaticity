@@ -1,0 +1,2 @@
+# Package metadata used by the crate's compiled code.
+cargo_env = ["CARGO_PKG_VERSION_PATCH"]

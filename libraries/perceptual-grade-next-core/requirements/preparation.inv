@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "state": "PreparationState",
+  "event": "PreparationEvent",
+  "initializers": ["new_preparation"],
+  "step": "preparation_step",
+  "invariants": {
+    "attempt_nonnegative": "state.attempt >= 0 and state.revision >= 0",
+    "known_stage": "state.stage in ('idle','staging','validated','repair','ready')",
+    "transaction_identities": "state.stage == 'idle' or (_identity(state.owner) and _identity(state.prior) and _identity(state.candidate) and state.candidate != state.prior)",
+    "manifest_after_validation": "state.stage not in ('validated','ready') or _identity(state.manifest)",
+    "repair_stage_matches_flag": "(state.stage == 'repair') == state.repair"
+  },
+  "contracts": {"new_preparation": {"ensures": ["result.stage == 'idle' and result.attempt == 0"]}},
+  "properties": [
+    {"name":"candidate_is_not_ready_before_commit","variables":{"state":"PreparationState","event":"PreparationEvent"},"lets":{"after":"preparation_step(state,event)"},"assert":"not after[1] or event.kind != 'begin' or (after[0].stage == 'staging' and after[0].candidate == event.candidate and after[0].stage != 'ready')"},
+    {"name":"candidate_binds_owner_revision","variables":{"state":"PreparationState","event":"PreparationEvent"},"lets":{"after":"preparation_step(state,event)"},"assert":"not after[1] or event.kind != 'begin' or (after[0].revision == event.revision and after[0].owner == event.owner)"},
+    {"name":"commit_requires_manifest","variables":{"state":"PreparationState","event":"PreparationEvent"},"assume":["event.kind == 'commit'","state.stage not in ('validated','ready') or _identity(state.manifest)"],"lets":{"after":"preparation_step(state,event)"},"assert":"not after[1] or _identity(after[0].manifest)"},
+    {"name":"stale_preparation_revision_is_rejected","variables":{"state":"PreparationState","event":"PreparationEvent"},"assume":["event.kind == 'begin' and event.revision <= state.revision"],"lets":{"after":"preparation_step(state,event)"},"assert":"after[0] == state and not after[1]"},
+    {"name":"failure_retains_repair_debt","variables":{"state":"PreparationState","event":"PreparationEvent"},"lets":{"after":"preparation_step(state,event)"},"assert":"not after[1] or event.kind != 'fail' or (after[0].repair and after[0].stage == 'repair')"},
+    {"name":"recovery_discards_candidate","variables":{"state":"PreparationState","event":"PreparationEvent"},"lets":{"after":"preparation_step(state,event)"},"assert":"not after[1] or event.kind != 'recover' or (after[0].candidate == 0 and after[0].manifest == 0)"},
+    {"name":"manifest_is_required_for_ready","variables":{"state":"PreparationState","event":"PreparationEvent"},"assume":["state.stage in ('idle','staging','validated','repair','ready')","state.stage == 'idle' or (_identity(state.owner) and _identity(state.prior) and _identity(state.candidate) and state.candidate != state.prior)","state.stage not in ('validated','ready') or _identity(state.manifest)","(state.stage == 'repair') == state.repair"],"lets":{"after":"preparation_step(state,event)"},"assert":"after[0].stage != 'ready' or _identity(after[0].manifest)"},
+    {"name":"prior_identity_is_retained_until_commit","variables":{"state":"PreparationState","event":"PreparationEvent"},"assume":["event.kind == 'commit'","state.stage == 'idle' or (_identity(state.owner) and _identity(state.prior) and _identity(state.candidate) and state.candidate != state.prior)"],"lets":{"after":"preparation_step(state,event)"},"assert":"not after[1] or after[0].stage != 'ready' or _identity(after[0].prior)"},
+    {"name":"transaction_has_distinct_candidate","variables":{"state":"PreparationState","event":"PreparationEvent"},"lets":{"after":"preparation_step(state,event)"},"assert":"not after[1] or event.kind != 'begin' or (after[0].candidate != after[0].prior and after[0].candidate != 0)"},
+    {"name":"candidate_manifest_requires_validation","variables":{"state":"PreparationState","event":"PreparationEvent"},"lets":{"after":"preparation_step(state,event)"},"assert":"not after[1] or event.kind != 'validated' or (after[0].stage == 'validated' and after[0].manifest == event.manifest and event.validated)"},
+    {"name":"preparation_attempt_is_monotonic","variables":{"state":"PreparationState","event":"PreparationEvent"},"lets":{"after":"preparation_step(state,event)"},"assert":"after[0].attempt >= state.attempt"}
+  ],
+  "witnesses": [{"name":"candidate_validates_then_commits","lets":{"started":"preparation_step(new_preparation(),PreparationEvent('begin',owner=1,revision=1,attempt=1,prior=2,candidate=3))","validated":"preparation_step(started[0],PreparationEvent('validated',owner=1,revision=1,attempt=1,candidate=3,manifest=4,validated=True))","committed":"preparation_step(validated[0],PreparationEvent('commit',owner=1,revision=1,attempt=1,candidate=3,manifest=4))"},"assert":"started[1] and validated[1] and committed[1] and committed[0].stage == 'ready'"}],
+  "mutations": [{"name":"preparation_accepts_stale_revision","function":"preparation_step","target":"event.revision > state.revision","replacement":"event.revision >= state.revision","detects":["property.stale_preparation_revision_is_rejected"]}]
+}

@@ -1,0 +1,2 @@
+# Probe target atomic/assembly capabilities with the declared rustc.
+buildscript.run = true

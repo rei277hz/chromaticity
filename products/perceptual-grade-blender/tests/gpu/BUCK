@@ -1,0 +1,92 @@
+python_library(
+    name = "contracts",
+    srcs = [
+        "test_baking.py",
+        "test_inverse_baking.py",
+        "test_scope_active.py",
+        "test_scope_cloud.py",
+        "test_shader.py",
+        "test_stack_baking.py",
+    ],
+    base_module = "tests.gpu",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//libraries/perceptual-grade-reference/tests:legacy_inverse_baking_cases",
+        "//products/perceptual-grade-blender:bake_check_code",
+        "//products/perceptual-grade-blender:runtime",
+        "//products/perceptual-grade-blender/tests:gpu_support",
+    ],
+)
+
+python_test(
+    name = "inverse_baking",
+    srcs = ["test_inverse_baking.py"],
+    base_module = "tests.gpu",
+    labels = ["gpu"],
+    main_module = "tests.support.gpu_test_main",
+    target_compatible_with = ["prelude//os:linux"],
+    deps = [
+        "//libraries/perceptual-grade-reference/tests:legacy_capacity_support",
+        "//libraries/perceptual-grade-reference/tests:legacy_inverse_baking_cases",
+        "//products/perceptual-grade-blender/tests:gpu_support",
+    ],
+)
+
+python_test(
+    name = "stack_baking",
+    srcs = ["test_stack_baking.py"],
+    base_module = "tests.gpu",
+    labels = ["gpu"],
+    main_module = "tests.support.gpu_test_main",
+    target_compatible_with = ["prelude//os:linux"],
+    deps = [
+        "//products/perceptual-grade-blender:runtime",
+        "//products/perceptual-grade-blender/tests:gpu_support",
+    ],
+)
+
+[
+    python_test(
+        name = name,
+        srcs = ["test_" + name + ".py"],
+        base_module = "tests.gpu",
+        labels = ["gpu"],
+        main_module = "tests.support.gpu_test_main",
+        target_compatible_with = ["prelude//os:linux"],
+        deps = [
+            "//products/perceptual-grade-blender:bake_check_code",
+            "//products/perceptual-grade-blender/tests:gpu_support",
+        ] + (["//libraries/perceptual-grade-reference/tests:legacy_capacity_support"] if name == "baking" else []),
+    )
+    for name in [
+        "shader",
+        "baking",
+    ]
+]
+
+python_test(
+    name = "scope_cloud",
+    srcs = ["test_scope_cloud.py"],
+    base_module = "tests.gpu",
+    labels = ["gpu"],
+    main_module = "tests.support.gpu_test_main",
+    target_compatible_with = ["prelude//os:linux"],
+    deps = [
+        "//products/perceptual-grade-blender:runtime",
+        "//products/perceptual-grade-blender/tests:gpu_support",
+    ],
+)
+
+python_test(
+    name = "scope_active",
+    srcs = ["test_scope_active.py"],
+    base_module = "tests.gpu",
+    labels = ["gpu"],
+    main_module = "tests.support.gpu_test_main",
+    target_compatible_with = ["prelude//os:linux"],
+    deps = [
+        "//products/perceptual-grade-blender:runtime",
+        "//products/perceptual-grade-blender/tests:gpu_support",
+    ],
+)

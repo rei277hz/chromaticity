@@ -1,0 +1,143 @@
+__DEVICE__ float3 pg_white(int p,float x,float y) {
+    if(p==0)return color_xyz(.3127f,.3290f,1.0f);
+    if(p==1)return color_xyz(.32161671f,.33761992f,1.0f);
+    if(p==2)return color_xyz(.32168f,.33767f,1.0f);
+    if(p==3)return color_xyz(.34567f,.35850f,1.0f);
+    if(p==4)return color_xyz(.33242f,.34743f,1.0f);
+    if(p==5)return color_xyz(.29903f,.31488f,1.0f);
+    if(p==6)return color_xyz(.314f,.351f,1.0f);
+    if(p==7)return make_float3(1.0f,1.0f,1.0f);
+    if(!color_finite(x)||!color_finite(y))return make_float3(x,y,x);
+    float3 safe=pg_safe_source_xy(x,y);
+    return color_xyz(safe.x,safe.y,1.0f);
+}
+__DEVICE__ float3 pg_primary(int t,int p) {
+    if(t==1) { if(p==0)return color_xyz(.680f,.320f,1.0f); if(p==1)return color_xyz(.265f,.690f,1.0f); return color_xyz(.150f,.060f,1.0f); }
+    if(t==2) { if(p==0)return color_xyz(.708f,.292f,1.0f); if(p==1)return color_xyz(.170f,.797f,1.0f); return color_xyz(.131f,.046f,1.0f); }
+    if(t==3) { if(p==0)return color_xyz(.713f,.293f,1.0f); if(p==1)return color_xyz(.165f,.830f,1.0f); return color_xyz(.128f,.044f,1.0f); }
+    if(p==0)return color_xyz(.640f,.330f,1.0f);
+    if(p==1)return color_xyz(.300f,.600f,1.0f);
+    return color_xyz(.150f,.060f,1.0f);
+}
+// Fixed Rec.709 defining references and target construction.
+__DEVICE__ float3 pg_anchor(float3 wd,int p,float reach) {
+    float3 wxy=color_xy(wd),pxy=color_xy(color_adapt(pg_primary(0,p),pg_white(0,0.0f,0.0f),wd));
+    float3 a=wxy+(pxy-wxy)*reach; return color_mv(color_cat(),color_xyz(a.x,a.y,1.0f));
+}
+__DEVICE__ float3 pg_move(float3 c,float3 wd,float degrees,float percent) {
+    if(degrees==0.0f && percent==0.0f)return c;
+    float3 xyz=color_mv(color_icat(),c),w=color_xy(wd),p=color_xy(xyz)-w;
+    float a=degrees*.0174532925199433f,cs=_cosf(a),sn=_sinf(a),k=1.0f+percent*.01f;
+    float x=w.x+k*(cs*p.x-sn*p.y),y=w.y+k*(sn*p.x+cs*p.y);
+    return color_mv(color_cat(),color_xyz(x,_fmaxf(y,.01f),xyz.y));
+}
+__DEVICE__ float3 pg_target(float3 c,float3 wd,float degrees,float percent,float stops) {
+    return pg_move(c,wd,degrees,percent)*_exp2f(stops);
+}
+// modCAM16 with H-K compensation: normalized Yw=100, Yb=10; dark c=.525, Nc=.8; D=1.
+// LA is absolute, 10% of Reference Nits. cz=.525*(1.48+sqrt(.1)).
+// Response offsets +0.1 cancel algebraically; retaining only s improves black precision.
+__DEVICE__ PGValue pg_value(float3 v,int valid) { PGValue r; r.v=v; r.valid=valid; r.ja=0.0f; return r; }
+__DEVICE__ float pg_hypot(float a,float b) {
+    float scale=_fmaxf(_fabs(a),_fabs(b));if(scale==0.0f)return 0.0f;
+    a/=scale;b/=scale;return scale*_sqrtf(a*a+b*b);
+}
+__DEVICE__ float pg_log1p(float x) {
+    if(_fabs(x)<.05f)return x*(1.0f+x*(-.5f+x*(1.0f/3.0f+x*(-.25f+x*(.2f+x*(-1.0f/6.0f+x/7.0f))))));
+    return _logf(1.0f+x);
+}
+__DEVICE__ float pg_expm1(float x) {
+    if(_fabs(x)<.02f)return x*(1.0f+x*(.5f+x*(1.0f/6.0f+x*(1.0f/24.0f+x/120.0f))));
+    return _expf(x)-1.0f;
+}
+__DEVICE__ float pg_softplus(float x) { return _fmaxf(x,0.0f)+pg_log1p(_expf(-_fabs(x))); }
+__DEVICE__ float pg_response(float n,PGViewing view) {
+    float t=_powf(view.fl*_fabs(n),.42f);
+    float s=400.0f*t/(27.13f+t); return n<0.0f?-s:s;
+}
+__DEVICE__ float pg_unresponse(float s,PGViewing view) {
+    float a=_fabs(s),n=_powf(27.13f*a/(400.0f-a),1.0f/.42f)/view.fl;
+    return s<0.0f?-n:n;
+}
+__DEVICE__ float pg_neutral_j(float Y,PGViewing view) {
+    return 100.0f*_powf(3.05f*pg_response(Y,view)/view.aw,.943019577159f);
+}
+__DEVICE__ PGViewing pg_viewing(float refNits) {
+    PGViewing v;
+    float adaptLum=.1f*_fmaxf(refNits,1.0f),k=1.0f/(5.0f*adaptLum+1.0f),k4=k*k*k*k;
+    v.fl=.2f*k4*5.0f*adaptLum+.1f*(1.0f-k4)*(1.0f-k4)*_powf(5.0f*adaptLum,1.0f/3.0f);
+    // Initialize fields before passing the struct by value on all GPU backends.
+    v.aw=1.0f; v.pivotJ=0.0f; v.lowJ=0.0f;
+    float sw=pg_response(1.0f,v); v.aw=3.05f*sw;
+    v.pivotJ=pg_neutral_j(.18f,v);
+    // Derived by buck2 build //:shadow_anchor; 3.148082606120999 nits at reference 203.
+    v.lowJ=pg_neutral_j(0.015507796089266005f,v);
+    return v;
+}
+__DEVICE__ float pg_eccentricity(float ch,float sh) {
+    // Original Hellwig-Fairchild 2022 Eq. 28 / Appendix A: -.1475*sin(h).
+    // Use the original fit and Colour coefficient in both directions; see guide.
+    float c2=ch*ch-sh*sh,s2=2.0f*ch*sh;
+    float c3=c2*ch-s2*sh,s3=s2*ch+c2*sh;
+    float c4=c2*c2-s2*s2,s4=2.0f*c2*s2;
+    return 1.0f-.0582f*ch-.0258f*c2-.1347f*c3+.0289f*c4
+               -.1475f*sh-.0308f*s2+.0385f*s3+.0096f*s4;
+}
+// Four heights are always ordered Shadows, Midtones, White, Highlights.
+__DEVICE__ float pg_selected_peak(int index) {
+    return index==0?500.0f:(index==2?2000.0f:(index==3?4000.0f:1000.0f));
+}
+__DEVICE__ PGFour pg_four(float s,float m,float w,float h) { PGFour v; v.s=s;v.m=m;v.w=w;v.h=h;return v; }
+__DEVICE__ float pg_four_energy(PGFour v) { return v.s*v.s+v.m*v.m+v.w*v.w+v.h*v.h; }
+__DEVICE__ float pg_sigmoid(float x) {
+    float e=_expf(-_fabs(x)); return x>=0.0f?1.0f/(1.0f+e):e/(1.0f+e);
+}
+__DEVICE__ float pg_kernel_integral(float t,float left,float right,float w) {
+    if(t==0.0f)return 0.0f;
+    float gap=(right-left)/w;
+    float integral_constant=gap+_logf(-pg_expm1(-gap))-pg_log1p(_expf(-left/w));
+    return w*pg_softplus(integral_constant-pg_softplus((right-t)/w)+_logf(-pg_expm1(-t/w)));
+}
+__DEVICE__ PGKernel pg_kernel(PGFour z,float fit) {
+    PGKernel k;k.z=z;k.width=.05f*_exp2f(-fit);
+    k.norm=pg_four(pg_kernel_integral(1.0f,0.0f,z.s,k.width),
+                   pg_kernel_integral(1.0f,z.s,z.m,k.width),
+                   pg_kernel_integral(1.0f,z.m,z.w,k.width),
+                   pg_kernel_integral(1.0f,z.w,1.0f,k.width));
+    return k;
+}
+__DEVICE__ PGFour pg_transitions(float t,PGKernel k) {
+    if(t<=0.0f)return pg_four(0.0f,0.0f,0.0f,0.0f);
+    if(t==1.0f)return pg_four(1.0f,1.0f,1.0f,1.0f);
+    return pg_four(pg_kernel_integral(t,0.0f,k.z.s,k.width)/k.norm.s,
+                   pg_kernel_integral(t,k.z.s,k.z.m,k.width)/k.norm.m,
+                   pg_kernel_integral(t,k.z.m,k.z.w,k.width)/k.norm.w,
+                   pg_kernel_integral(t,k.z.w,1.0f,k.width)/k.norm.h);
+}
+__DEVICE__ PGWeights pg_weights(float t,PGKernel k) {
+    PGFour v=pg_transitions(t,k);
+    // Repair only float roundoff in analytically ordered cumulative weights.
+    v.s=_fminf(1.0f,_fmaxf(0.0f,v.s));
+    v.m=_fminf(v.s,_fmaxf(0.0f,v.m));
+    v.w=_fminf(v.m,_fmaxf(0.0f,v.w));
+    v.h=_fminf(v.w,_fmaxf(0.0f,v.h));
+    PGWeights b;b.a=1.0f-v.s;b.b=v.s-v.m;b.c=v.m-v.w;b.d=v.w-v.h;b.e=v.h;return b;
+}
+__DEVICE__ float pg_blend(PGFour c,int zeroBlack,PGWeights w) {
+    float out=(zeroBlack==1?0.0f:w.a*c.s)+w.b*c.s+w.c*c.m+w.d*c.w+w.e*c.h;
+    float lo=_fminf(_fminf(c.s,c.m),_fminf(c.w,c.h));
+    float hi=_fmaxf(_fmaxf(c.s,c.m),_fmaxf(c.w,c.h));
+    if(zeroBlack==1) { lo=_fminf(lo,0.0f);hi=_fmaxf(hi,0.0f); }
+    // The convex combination already has these bounds analytically. Enforce
+    // them against final dot-product rounding, particularly at +/-45 degrees.
+    // This bounds a control coefficient, never image lightness or chroma.
+    return _fminf(hi,_fmaxf(lo,out));
+}
+__DEVICE__ float3 pg_pair(PGFamily f,PGWeights w) {
+    return make_float3(pg_blend(f.a,f.zeroBlack,w),pg_blend(f.b,f.zeroBlack,w),0.0f);
+}
+__DEVICE__ float pg_smoother(float r) {
+    if(r<=0.0f)return 0.0f;
+    if(r>=1.0f)return 1.0f;
+    return r*r*r*(10.0f+r*(-15.0f+6.0f*r));
+}

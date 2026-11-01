@@ -1,0 +1,28 @@
+{
+  "inputs": {
+    "docs/data/benchmark.json": "a445ab9fa586d5f68b53b3e5e96020153a900c544c8e0ec066908068b3928750",
+    "src/blender/model/color.py": "44463b3b4f3586cf089a80cc556691107054bde8365cd4a954777fb15b0fc1b6",
+    "src/blender/model/linear.py": "65162fb3c700b68cf90a76fe56d483e4431f3a9b500deb228c546d3c5168f9da",
+    "src/blender/model/lut.py": "6e5f27e18b8e65c66c669221ded3ecaf46dd4efe14aaac2dc772169f7ea3e89c",
+    "src/blender/model/tone.py": "991f7c1398a9ec294ebce0a533cfe307f0c43af6230b016034cf3bef886449a7",
+    "tools/docs/figures.py": "1584c416e7896ab03e7f6ae8977d001e0ee2455e9d895eae6c6f975d4e51fa6c"
+  },
+  "invocation": "buck2",
+  "outputs": {
+    "fragments/benchmark.md": "a2a445ffe7169849e36379622032d95334a8f83e4cddff59330d6d1d9875333b",
+    "images/color-drivers.png": "a98e5237cd56c86d49c1302a444bab1808f543ba17857368a6c445f4a9fe845a",
+    "images/color-hue-concentration.png": "2f4b0ff50ebc21ed1ccaa8d7e3478c92ad9e0eaf344870db78810b791a6595ee",
+    "images/color-tone-weights.png": "0c90011d7f3169bae5a05accb13b252e9317599dee05c0765e63203b73bcaf76",
+    "images/guard-boundary.png": "7d7acd502bbbee9a2bf21d6ecb4bb4c115ef487c99a8c69b37c1a798476b9636",
+    "images/guard-energy.png": "6cb3cf91724ce880efac9f62faf87a1f6876f1bc5de3cf2ea63c1233ff8cb41d",
+    "images/linear-basis.png": "a637973d133cd512ef8af5b0f644600c0faeb6f43eb434c715bc023a6de37900",
+    "images/lut-input-grid.png": "0d94ebb1ad73f3f6c17ea2ba4c49bdd9f50091979ab14859adea64e29662d933",
+    "images/lut-interpolation.png": "b297d06b2ebbfce31cfd605cb020a1833259cb4c2499f274d2f82788ab181d6c",
+    "images/render-benchmark.png": "50b6cf526af27ba6be951683bf88e583a1045d1f6cea163e47c868d3b3340f9e",
+    "images/tone-curves.png": "fd4c5a3a0faf564dcc9394624fceeee96ecbaedd08a6229eae5c38a07c6c3f83",
+    "images/tone-saturation.png": "c9a533bfdd5127f216ca3bb9c5d6b1a6092eac2ce257396b07818519c78c1209",
+    "numerical-data.json": "ca474fcd79ba42ed9ce53bb0edd98d64f37085021687bfdb38f4cadb93ac8399"
+  },
+  "producer": "production-model numerical figures",
+  "schema": 1
+}

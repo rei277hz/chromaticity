@@ -1,0 +1,176 @@
+// Direct per-pixel inverse: prior, black, and one bounded reconstruction.
+// The tone curve is solved locally because DCTL has no host preparation hook.
+__DEVICE__ float pg_inverse_tone_height(float h,PGModel m) {
+    if(!m.remapActive||h==0.0f)return h;
+    float target=h*.01f,lo=0.0f,hi=target/m.tailSlope,t=.5f*hi;
+    for(int iteration=0;iteration<80;iteration++) {
+        PGFour k=pg_transitions(t,m.remap);
+        float value=m.tailSlope*t+m.residual.s*k.s+m.residual.m*k.m+m.residual.w*k.w+m.residual.h*k.h;
+        if(value<target)lo=t;else hi=t;
+        float middle=.5f*(lo+hi);
+        if(middle==lo||middle==hi){t=middle;break;}
+        float w=m.remap.width;
+        PGFour z=m.remap.z,n=m.remap.norm,r=m.residual;
+        float d0=pg_sigmoid(t/w),d1=pg_sigmoid((t-z.s)/w),d2=pg_sigmoid((t-z.m)/w);
+        float d3=pg_sigmoid((t-z.w)/w),d4=pg_sigmoid((t-1.0f)/w);
+        float slope=m.tailSlope+r.s*(d0-d1)/n.s+r.m*(d1-d2)/n.m+r.w*(d2-d3)/n.w+r.h*(d3-d4)/n.h;
+        float next=t-(value-target)/slope;
+        t=iteration<16&&next>lo&&next<hi?next:middle;
+    }
+    return 100.0f*(m.black+m.qHigh*(.5f*(lo+hi)));
+}
+__DEVICE__ PGState pg_undo_tone(PGState q,PGModel m) {
+    if(!m.remapActive)return q;
+    float j=_sqrtf(_fmaxf(q.e,0.0f)),c=pg_hypot(q.q.y,q.q.z),h=_sqrtf(j*j+66.0f*c);
+    float original=pg_inverse_tone_height(h,m),gain=pg_div(2.0f*original*original,pg_hypot(66.0f*c,2.0f*j*original)+66.0f*c);
+    float jj=j*gain,a=q.q.y*gain,b=q.q.z*gain;
+    return pg_state(make_float3(_sqrtf(jj*jj+66.0f*pg_hypot(a,b)),a,b),jj*jj);
+}
+__DEVICE__ float3 pg_chroma_scale(PGState target) {
+    float ceiling=132.0f,h=_fminf(_fabs(target.q.x),_sqrtf(ceiling));
+    float energy=_fmaxf(h*h,_fminf(_fabs(target.e),ceiling));
+    float c=pg_hypot(_fminf(_fabs(target.q.y),2.0f),_fminf(_fabs(target.q.z),2.0f));
+    float tau=_fmaxf(1.1754943508222875e-38f,_fminf(2.0f,_fmaxf(energy/66.0f,c)));
+    return make_float3(tau,_logf(tau),0.0f);
+}
+__DEVICE__ float pg_chroma_encode(float log_value,float log_scale) {
+    float ell=log_value-log_scale;if(ell<=0.0f){float u=_expf(ell);return u*(2.0f-.5f*u);}return 1.5f+ell;
+}
+__DEVICE__ float pg_chroma_decode(float x,float log_scale) {
+    return x<=1.5f?_expf(log_scale)*(2.0f*x/(2.0f+_sqrtf(4.0f-2.0f*x))):_expf(x-1.5f+log_scale);
+}
+__DEVICE__ float pg_chroma_residual(float radius,float c,float gain,float3 scale) {
+    float lr=radius>0.0f?_logf(radius):0.0f,lc=c>0.0f?_logf(c):0.0f,lp=lc+gain;
+    if(radius>scale.x&&c>0.0f&&lp>scale.y)return lr-lc-gain;
+    return (radius>0.0f?pg_chroma_encode(lr,scale.y):0.0f)-(c>0.0f?pg_chroma_encode(lp,scale.y):0.0f);
+}
+__DEVICE__ float3 pg_opponent_encode(float3 ab,float log_scale) {
+    float c=pg_hypot(ab.x,ab.y);
+    float radius=c>0.0f?pg_chroma_encode(_logf(c),log_scale):0.0f;
+    return ab*pg_div(radius,c);
+}
+__DEVICE__ float3 pg_opponent_decode(float3 x,float log_scale) {
+    float radius=pg_hypot(x.x,x.y),c=pg_chroma_decode(radius,log_scale);
+    return x*pg_div(c,radius);
+}
+typedef struct {PGState state;float3 residual;} PGReduced;
+__DEVICE__ PGReduced pg_reduced(float3 x,PGState target,float3 scale,int reconstruct,PGModel m) {
+    float j=_expf(x.x);float3 ab=pg_opponent_decode(make_float3(x.y,x.z,0.0f),scale.y);
+    float c=pg_hypot(ab.x,ab.y);
+    PGReduced result;result.state=pg_state(make_float3(_sqrtf(j*j+66.0f*c),ab.x,ab.y),j*j);
+    result.residual=color_zero3();if(reconstruct)return result;
+    PGState actual=pg_grade_state(result.state,m);
+    float3 delta=pg_opponent_encode(make_float3(actual.q.y,actual.q.z,0.0f),scale.y)-
+        pg_opponent_encode(make_float3(target.q.y,target.q.z,0.0f),scale.y);
+    result.residual=make_float3((actual.q.x-target.q.x)/(1.0f+_fabs(target.q.x)),delta.x,delta.y);
+    return result;
+}
+__DEVICE__ float3 pg_fit_residual(float3 x,PGState target,float3 scale,PGModel m) {
+    return pg_reduced(x,target,scale,0,m).residual;
+}
+__DEVICE__ float3 pg_fit_clip(float3 x,float bound) {
+    return make_float3(_fminf(20.0f,_fmaxf(-69.0f,x.x)),
+        _fminf(bound,_fmaxf(-bound,x.y)),_fminf(bound,_fmaxf(-bound,x.z)));
+}
+__DEVICE__ float3 pg_normal_step(float3 j0,float3 j1,float3 j2,float3 residual,float damping) {
+    float a=color_dot(j0,j0),b=color_dot(j1,j1),c=color_dot(j2,j2);
+    float ab=color_dot(j0,j1),ac=color_dot(j0,j2),bc=color_dot(j1,j2);
+    float lam=damping*(1.0f+a+b+c);
+    float l00=_sqrtf(a+lam),l10=ab/l00,l20=ac/l00;
+    float l11=_sqrtf(_fmaxf(b+lam-l10*l10,lam)),l21=(bc-l20*l10)/l11;
+    float l22=_sqrtf(_fmaxf(c+lam-l20*l20-l21*l21,lam));
+    float y0=color_dot(j0,residual)/l00;
+    float y1=(color_dot(j1,residual)-l10*y0)/l11;
+    float y2=(color_dot(j2,residual)-l20*y0-l21*y1)/l22;
+    float z2=y2/l22,z1=(y1-l21*z2)/l11,z0=(y0-l10*z1-l20*z2)/l00;
+    return make_float3(z0,z1,z2);
+}
+__DEVICE__ float3 pg_fit(float3 seed,PGState target,float3 scale,PGModel m) {
+    float bound=pg_chroma_encode(20.0f,scale.y),step_size=.002f;
+    float3 x=pg_fit_clip(seed,bound),r=pg_fit_residual(x,target,scale,m);
+    float3 j0=color_zero3(),j1=color_zero3(),j2=color_zero3();
+    float score=color_dot(r,r),damping=1.0e-4f;int fresh=1,measured=0;
+    for(int iteration=0;iteration<8;iteration++) {
+        if(pg_maximum(r)<=1.0e-5f)break;
+        if(fresh||(iteration%12==0&&!measured)) {
+            float3 hi=pg_fit_clip(x+make_float3(step_size,0.0f,0.0f),bound),lo=pg_fit_clip(x-make_float3(step_size,0.0f,0.0f),bound);
+            j0=(pg_fit_residual(hi,target,scale,m)-pg_fit_residual(lo,target,scale,m))/(hi.x-lo.x);
+            hi=pg_fit_clip(x+make_float3(0.0f,step_size,0.0f),bound);lo=pg_fit_clip(x-make_float3(0.0f,step_size,0.0f),bound);
+            j1=(pg_fit_residual(hi,target,scale,m)-pg_fit_residual(lo,target,scale,m))/(hi.y-lo.y);
+            hi=pg_fit_clip(x+make_float3(0.0f,0.0f,step_size),bound);lo=pg_fit_clip(x-make_float3(0.0f,0.0f,step_size),bound);
+            j2=(pg_fit_residual(hi,target,scale,m)-pg_fit_residual(lo,target,scale,m))/(hi.z-lo.z);measured=1;
+        }
+        float3 step=pg_normal_step(j0,j1,j2,r,damping);
+        step=step/_fmaxf(1.0f,pg_maximum(step)/1.5f);int improved=0;
+        for(int trial=0;trial<3;trial++) {
+            float alpha=trial==0?1.0f:(trial==1?.5f:.125f);
+            float3 candidate=pg_fit_clip(x-step*alpha,bound),rr=pg_fit_residual(candidate,target,scale,m);
+            float ss=color_dot(rr,rr);
+            if(ss<score) {
+                float3 delta=candidate-x,change=rr-r-j0*delta.x-j1*delta.y-j2*delta.z;
+                float square=color_dot(delta,delta);float3 update=square>1.0e-20f?delta/square:color_zero3();
+                j0=j0+change*update.x;j1=j1+change*update.y;j2=j2+change*update.z;
+                measured=0;x=candidate;r=rr;score=ss;improved=1;break;
+            }
+        }
+        fresh=!improved&&!measured;damping=improved?_fmaxf(1.0e-6f,damping*.2f):_fminf(1.0e6f,damping*10.0f);
+    }
+    return x;
+}
+__DEVICE__ float3 pg_canonical(float3 rgb) {return pg_native(rgb,pg_canonical_matrix());}
+__DEVICE__ float pg_inverse_error(float3 rgb,float3 target,PGModel m) {
+    float3 difference=pg_canonical(pg_forward_native(rgb,m)-target);
+    return pg_maximum(difference)/_fmaxf(pg_maximum(pg_canonical(target)),1.0e-4f);
+}
+__DEVICE__ float pg_inverse_limit(float3 target) {
+    float peak=pg_maximum(pg_canonical(target));return _fmaxf(.0001f*peak,.00003f)/_fmaxf(peak,.0001f);
+}
+__DEVICE__ float3 pg_asinh3(float3 v) {return make_float3(_asinhf(v.x),_asinhf(v.y),_asinhf(v.z));}
+__DEVICE__ PGValue pg_inverse_native(float3 target,PGModel m) {
+    target=pg_input_repair(target);
+    if(!m.active)return pg_value(target,1);
+    float tolerance=pg_inverse_limit(target),best_error=pg_inverse_error(target,target,m);
+    if(best_error<=tolerance){PGValue out=pg_value(target,1);out.ja=best_error;return out;}
+    float3 best=target,canonical_best=pg_canonical(best),prior=pg_asinh3(canonical_best);float best_distance=0.0f;
+    PGState entered=pg_enter(target),toned=pg_tone_state(entered,m),candidate_state;
+    if(!m.tonalActive||(pg_four_energy(m.light.c)+pg_four_energy(m.light.q)+pg_four_energy(m.light.a)+pg_four_energy(m.light.b)+
+        pg_four_energy(m.radius.c)+pg_four_energy(m.radius.q)+pg_four_energy(m.radius.a)+pg_four_energy(m.radius.b)+
+        pg_four_energy(m.hueHeights)+pg_four_energy(m.concentrationAHeights)+pg_four_energy(m.concentrationBHeights)+
+        pg_four_energy(m.adaptance.a)+pg_four_energy(m.adaptance.b)==0.0f&&m.hueByChroma==0.0f&&m.hueByBend==0.0f)) {
+        candidate_state=entered;
+        if(m.radiusBase!=0.0f) {
+            float gain=_expf(-m.radiusBase);candidate_state.q.y*=gain;candidate_state.q.z*=gain;
+            float c=pg_hypot(candidate_state.q.y,candidate_state.q.z);
+            candidate_state.e=_fmaxf(0.0f,candidate_state.q.x*candidate_state.q.x-66.0f*c);
+            candidate_state.q.x=_sqrtf(candidate_state.e+66.0f*c);
+        }
+    } else {
+        float3 scale=pg_chroma_scale(entered),ab=pg_opponent_encode(make_float3(toned.q.y,toned.q.z,0.0f)*_expf(-m.radiusBase),scale.y);
+        float3 seed=make_float3(_logf(_fmaxf(_sqrtf(_fmaxf(toned.e,0.0f)),1.0e-30f)),ab.x,ab.y);
+        candidate_state=pg_reduced(pg_fit(seed,entered,scale,m),entered,scale,1,m).state;
+    }
+    float3 regular=pg_clip3(pg_export(pg_undo_tone(candidate_state,m)),0.0f,1024.0f);
+    for(int index=0;index<2;index++) {
+        float3 candidate=index==0?color_zero3():regular,canonical=pg_canonical(candidate);
+        float error=pg_inverse_error(candidate,target,m);float3 delta=pg_asinh3(canonical)-prior;float distance=color_dot(delta,delta);
+        int root=error<=tolerance,oldroot=best_error<=tolerance;
+        int lex=canonical.x<canonical_best.x||(canonical.x==canonical_best.x&&(canonical.y<canonical_best.y||(canonical.y==canonical_best.y&&canonical.z<canonical_best.z)));
+        int near=distance<best_distance||(distance==best_distance&&lex);
+        int pick=(root&&!oldroot)||((root==oldroot)&&(root?near:(error<best_error||(error==best_error&&near))));
+        if(pick){best=candidate;best_error=error;best_distance=distance;canonical_best=canonical;}
+    }
+    PGValue out=pg_value(best,best_error<=tolerance);out.ja=best_error;return out;
+}
+__DEVICE__ PGValue pg_inverse_nonlinear_eval(float3 xyz,PGModel m) {
+    PGValue out=pg_inverse_native(color_mv(pg_xyz_to_native_matrix(),xyz),m);out.v=color_mv(pg_native_to_xyz_matrix(),out.v);return out;
+}
+__DEVICE__ PGValue pg_inverse_grade_eval(float3 xyz,PGModel m) {
+    if(!m.valid||!m.invertible)return pg_value(make_float3(.5928716f,.2848313f,.9698630f),0);
+    PGValue out=pg_inverse_nonlinear_eval(xyz,m);
+    if(m.linearActive)out.v=color_mv(color_inv(color_mul(m.lin,m.adapt)),out.v)/m.exposure;
+    return out;
+}
+__DEVICE__ float3 pg_apply_pixel(float3 xyz,PGModel m,int inverse) {
+    if(!color_finite3(xyz)||!m.valid||(inverse&&!m.invertible))return make_float3(.5928716f,.2848313f,.9698630f);
+    return inverse?pg_inverse_grade_eval(xyz,m).v:pg_grade(xyz,m);
+}

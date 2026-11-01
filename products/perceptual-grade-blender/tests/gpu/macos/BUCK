@@ -1,0 +1,11 @@
+python_test(
+    name = "metal",
+    srcs = ["test_metal.py"],
+    base_module = "tests.gpu.macos",
+    labels = [
+        "gpu",
+        "metal",
+    ],
+    target_compatible_with = ["prelude//os:macos"],
+    deps = ["//products/perceptual-grade-blender/tests/gpu:contracts"],
+)

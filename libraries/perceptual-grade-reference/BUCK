@@ -1,0 +1,440 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool", "source_tree")
+load("//build_defs:python_packages.bzl", "component_library")
+
+PREFIX = "src/perceptual_grade_reference/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+component_library(
+    name = "model_code",
+    srcs = SOURCES,
+    external_deps = [
+        "//third_party:colour-science",
+        "//third_party:numpy",
+    ],
+    package = "perceptual_grade_reference",
+    deps = [
+        "//libraries/color-core:runtime",
+        "//libraries/perceptual-grade-core:model_code",
+    ],
+)
+
+component_library(
+    name = "numerical_oracle_for_tests",
+    srcs = {
+        "__init__.py": PREFIX + "__init__.py",
+        "appearance.py": PREFIX + "appearance.py",
+        "cube.py": PREFIX + "cube.py",
+        "cube_guard.py": PREFIX + "cube_guard.py",
+        "export.py": PREFIX + "export.py",
+        "grading.py": PREFIX + "grading.py",
+        "model.py": PREFIX + "model.py",
+        "responses.py": PREFIX + "responses.py",
+        "stack.py": PREFIX + "stack.py",
+    },
+    external_deps = [
+        "//third_party:colour-science",
+        "//third_party:numpy",
+    ],
+    package = "perceptual_grade_reference",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//libraries/color-core:runtime",
+        "//libraries/perceptual-grade-core:reference_math_for_tests",
+    ],
+)
+
+component_library(
+    name = "runtime",
+    srcs = {},
+    package = "perceptual_grade_reference",
+    resources = {
+        "d65_boundary.npz": "//libraries/perceptual-grade-core:d65_boundary",
+        "d65_cube.npz": "//libraries/perceptual-grade-core:d65_cube[context]",
+    },
+    deps = [
+        ":model_code",
+        "//libraries/perceptual-grade-core:runtime",
+    ],
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "evaluate",
+    main_module = "color_tools.perceptual_grade_reference.cli",
+    visibility = ["PUBLIC"],
+    deps = [":runtime"],
+)
+
+export_file(
+    name = "documentation",
+    src = PREFIX + "README.md",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "boundary_oracle",
+    srcs = {"boundary_oracle.py": "tools/build/boundary_oracle.py"},
+    base_module = "tools.build",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":model_code",
+        "//libraries/color-core:runtime",
+    ],
+)
+
+python_library(
+    name = "appearance_certificate",
+    srcs = {name: "tools/build/" + name for name in [
+        "appearance_certificate.py",
+        "spindle_certificate.py",
+    ]},
+    base_module = "tools.build",
+    visibility = ["PUBLIC"],
+    deps = [":model_code"],
+)
+
+python_tool(
+    name = "spindle_generator",
+    srcs = ["tools/build/spindle_boundary.py"],
+    main_module = "tools.build.spindle_boundary",
+    deps = [
+        ":appearance_certificate",
+        ":boundary_oracle",
+        ":model_code",
+    ],
+)
+
+generate(
+    name = "spindle_profile",
+    outputs = {
+        "context": "d65_boundary.npz",
+        "report": "report.json",
+    },
+    tool = ":spindle_generator",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "boundary_table_code",
+    srcs = {"boundary_table.py": "tools/build/boundary_table.py"},
+    base_module = "tools.build",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":boundary_oracle",
+        ":runtime",
+    ],
+)
+
+python_tool(
+    name = "boundary_table",
+    srcs = [],
+    main_module = "tools.build.boundary_table",
+    deps = [":boundary_table_code"],
+)
+
+generate(
+    name = "rebuild_d65_boundary",
+    outputs = {
+        "context": "d65_boundary.npz",
+        "report": "report.json",
+    },
+    tool = ":boundary_table",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "boundary_acceleration_audit",
+    args = [
+        "--candidate",
+        "$(location //libraries/perceptual-grade-core:d65_boundary)",
+    ],
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":boundary_table",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "cube_face_certificate_tool",
+    srcs = ["tools/build/cube_face_certificate.py"],
+    main_module = "tools.build.cube_face_certificate",
+    deps = [
+        ":appearance_certificate",
+        ":runtime",
+    ],
+)
+
+generate(
+    name = "cube_face_certificate",
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":cube_face_certificate_tool",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "tonal_web_tool",
+    srcs = ["tools/analysis/tonal_web.py"],
+    main_module = "tools.analysis.tonal_web",
+    deps = [
+        ":runtime",
+        "//third_party:matplotlib",
+    ],
+)
+
+python_tool(
+    name = "spindle_quality_tool",
+    srcs = ["tools/analysis/spindle_quality.py"],
+    main_module = "tools.analysis.spindle_quality",
+    deps = [
+        ":model_code",
+        "//libraries/color-core:runtime",
+        "//libraries/perceptual-grade-core:model_code",
+    ],
+)
+
+python_tool(
+    name = "radial_map_quality_tool",
+    srcs = ["tools/analysis/radial_map_quality.py"],
+    main_module = "tools.analysis.radial_map_quality",
+    deps = [":runtime"],
+)
+
+python_tool(
+    name = "spindle_release_curve_tool",
+    srcs = ["tools/analysis/spindle_release_curve.py"],
+    main_module = "tools.analysis.spindle_release_curve",
+    deps = [
+        ":model_code",
+        "//third_party:matplotlib",
+    ],
+)
+
+python_tool(
+    name = "spindle_blender_comparison_tool",
+    srcs = ["tools/analysis/spindle_blender_comparison.py"],
+    main_module = "tools.analysis.spindle_blender_comparison",
+    deps = [
+        ":model_code",
+        "//libraries/perceptual-grade-core:model_code",
+        "//third_party:matplotlib",
+    ],
+)
+
+python_tool(
+    name = "piecewise_spindle_comparison_tool",
+    srcs = ["tools/analysis/piecewise_spindle_comparison.py"],
+    main_module = "tools.analysis.piecewise_spindle_comparison",
+    deps = [
+        ":model_code",
+        "//third_party:matplotlib",
+    ],
+)
+
+python_tool(
+    name = "spindle_shape_tool",
+    srcs = ["tools/analysis/spindle_shape.py"],
+    main_module = "tools.analysis.spindle_shape",
+    deps = [
+        ":boundary_oracle",
+        ":runtime",
+        "//libraries/perceptual-grade-core:runtime",
+        "//third_party:matplotlib",
+    ],
+)
+
+python_tool(
+    name = "driver_visibility_sweep_tool",
+    srcs = ["tools/analysis/driver_visibility_sweep.py"],
+    main_module = "tools.analysis.driver_visibility_sweep",
+    deps = [
+        ":boundary_oracle",
+        ":runtime",
+        "//libraries/perceptual-grade-core:runtime",
+        "//third_party:matplotlib",
+    ],
+)
+
+python_tool(
+    name = "rec709_cube_ja_sections_tool",
+    srcs = ["tools/analysis/rec709_cube_ja_sections.py"],
+    main_module = "tools.analysis.rec709_cube_ja_sections",
+    deps = [
+        ":boundary_oracle",
+        ":runtime",
+        "//third_party:matplotlib",
+    ],
+)
+
+python_tool(
+    name = "cube_guard_audit_tool",
+    srcs = ["tools/analysis/cube_guard_audit.py"],
+    main_module = "tools.analysis.cube_guard_audit",
+    deps = [
+        ":runtime",
+        "//libraries/perceptual-grade-core:runtime",
+    ],
+)
+
+export_file(
+    name = "architecture",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "tonal_web",
+    args = [],
+    outputs = {
+        "png": "tonal-web.png",
+        "reset": "tonal-web-reset.png",
+        "report": "report.json",
+        "summary": "summary.md",
+        "mixed_settings": "mixed-settings.json",
+        "reset_settings": "reset-settings.json",
+    },
+    tool = ":tonal_web_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "spindle_quality",
+    args = [
+        "--context",
+        "$(location //libraries/perceptual-grade-core:d65_boundary)",
+    ],
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":spindle_quality_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "radial_map_quality",
+    args = [],
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":radial_map_quality_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "spindle_release_curve",
+    args = [
+        "--report",
+        "$(location :radial_map_quality[report])",
+    ],
+    outputs = {"png": "spindle-release-curve.png"},
+    tool = ":spindle_release_curve_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "spindle_blender_comparison",
+    args = [
+        "--report",
+        "$(location :radial_map_quality[report])",
+    ],
+    outputs = {
+        "png": "spindle-blender-comparison.png",
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":spindle_blender_comparison_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "piecewise_spindle_comparison",
+    args = [
+        "--report",
+        "$(location :radial_map_quality[report])",
+    ],
+    outputs = {
+        "png": "piecewise-spindle-comparison.png",
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":piecewise_spindle_comparison_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "spindle_shape",
+    args = [],
+    outputs = {"png": "spindle-boundary-shape.png"},
+    tool = ":spindle_shape_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "rec709_cube_ja_sections",
+    args = [],
+    outputs = {"png": "rec709-cube-ja-sections.png"},
+    tool = ":rec709_cube_ja_sections_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "driver_visibility_sweep",
+    args = [],
+    outputs = {
+        "png": "driver-sensitivity-overview.png",
+        "report": "report.json",
+    },
+    tool = ":driver_visibility_sweep_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "driver_crossover_comparison",
+    args = [
+        "--comparison",
+        "crossover",
+    ],
+    outputs = {
+        "png": "driver-sensitivity-overview.png",
+        "report": "report.json",
+    },
+    tool = ":driver_visibility_sweep_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "driver_raw_capacity_calibration",
+    args = [
+        "--comparison",
+        "raw-capacity",
+    ],
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":driver_visibility_sweep_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "cube_guard_audit",
+    args = [
+        "--candidate",
+        "$(location //libraries/perceptual-grade-core:d65_cube[context])",
+    ],
+    outputs = {"report": "report.json"},
+    tool = ":cube_guard_audit_tool",
+    visibility = ["PUBLIC"],
+)

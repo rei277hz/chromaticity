@@ -1,0 +1,30 @@
+{
+  "en": {
+    "name": "English",
+    "choose": "Choose language",
+    "credits": "Credits",
+    "license": "License",
+    "footer": "Perceptual Grade handbook",
+    "ui": {}
+  },
+  "zh-Hans": {
+    "name": "简体中文",
+    "choose": "选择语言",
+    "credits": "致谢",
+    "license": "许可证",
+    "footer": "Perceptual Grade 手册",
+    "ui": {
+      "Toggle Table of Contents": "切换目录",
+      "Table of contents": "目录",
+      "Change theme": "切换主题",
+      "Toggle Searchbar": "切换搜索框",
+      "Search this book ...": "搜索本书……",
+      "Print this book": "打印本书",
+      "Git repository": "Git 仓库",
+      "Search (`/`)": "搜索（/）",
+      ">Light<": ">浅色<",
+      ">Dark<": ">深色<",
+      ">Auto<": ">自动<"
+    }
+  }
+}

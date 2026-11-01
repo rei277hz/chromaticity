@@ -1,0 +1,3 @@
+# Derive compiler capabilities from the packaged manifest.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_VERSION"]

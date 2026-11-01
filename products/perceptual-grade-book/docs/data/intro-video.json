@@ -1,0 +1,12 @@
+{
+  "file": "match-three-images.mp4",
+  "start": 0,
+  "end": null,
+  "range": "limited",
+  "primaries": "bt709",
+  "matrix": "bt709",
+  "transfer": "gamma2.4",
+  "loop": 0,
+  "lossless": false,
+  "quality": 90
+}

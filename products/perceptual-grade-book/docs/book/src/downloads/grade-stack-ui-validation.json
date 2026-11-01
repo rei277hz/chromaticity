@@ -1,0 +1,323 @@
+{
+  "version": "1.17.0",
+  "input_source": "perceptual-grade-1.16.0-source.tar(1).xz",
+  "date": "2026-10-06",
+  "execution": "authoring-preview via the original tools/testing/run_fixture.py",
+  "environment": {
+    "python": "3.13.15",
+    "blender": "5.2.2 LTS",
+    "numpy": "2.5.3",
+    "pytest": "9.1.1"
+  },
+  "fixtures": [
+    {
+      "target": "blender_blender_half_precision_test",
+      "exit_code": 0,
+      "seconds": 26.21
+    },
+    {
+      "target": "blender_blender_registration_test",
+      "exit_code": 0,
+      "seconds": 9.95
+    },
+    {
+      "target": "blender_test_comparison_scopes",
+      "exit_code": 0,
+      "seconds": 12.24
+    },
+    {
+      "target": "blender_test_concentration_graph",
+      "exit_code": 0,
+      "seconds": 12.56
+    },
+    {
+      "target": "blender_test_extension_namespace",
+      "exit_code": 0,
+      "log": "test_extension_namespace-merge.log"
+    },
+    {
+      "target": "blender_test_full_graph_template",
+      "exit_code": 0,
+      "seconds": 17.44
+    },
+    {
+      "target": "blender_test_grade_stack",
+      "exit_code": 0,
+      "log": "test_grade_stack-merge.log"
+    },
+    {
+      "target": "blender_test_graph_regressions",
+      "exit_code": 0,
+      "seconds": 20.39
+    },
+    {
+      "target": "blender_test_graph_updates",
+      "exit_code": 0,
+      "seconds": 21.13
+    },
+    {
+      "target": "blender_test_node_presentation",
+      "exit_code": 0,
+      "seconds": 21.19
+    },
+    {
+      "target": "blender_test_optimized_curves",
+      "exit_code": 0,
+      "seconds": 1.72
+    },
+    {
+      "target": "blender_test_scope_framebuffer",
+      "exit_code": 0,
+      "seconds": 0.68
+    },
+    {
+      "target": "blender_test_shared_grade_undo",
+      "exit_code": 0,
+      "log": "test_shared_grade_undo-merge.log"
+    },
+    {
+      "target": "blender_test_shared_grades",
+      "exit_code": 0,
+      "seconds": 22.43
+    },
+    {
+      "target": "blender_test_stack_editing",
+      "exit_code": 0,
+      "log": "test_stack_editing-merge.log"
+    },
+    {
+      "target": "blender_test_stage3_scopes",
+      "exit_code": 0,
+      "seconds": 0.38
+    },
+    {
+      "target": "blender_test_ui",
+      "exit_code": 0,
+      "corrected_and_rerun": true,
+      "initial_attempt_seconds": 17.32
+    },
+    {
+      "target": "blender_test_white_and_render_ui",
+      "exit_code": 0,
+      "seconds": 26.94
+    },
+    {
+      "target": "blender_test_white_drag_sampling",
+      "exit_code": 0,
+      "seconds": 22.24
+    },
+    {
+      "target": "blender_test_working_white",
+      "exit_code": 0,
+      "log": "test_working_white-merge.log"
+    },
+    {
+      "target": "dctl_portability",
+      "exit_code": 0,
+      "seconds": 0.42
+    },
+    {
+      "target": "dctl_run_tests",
+      "exit_code": 0,
+      "seconds": 15.73
+    },
+    {
+      "target": "dctl_test_chroma_drivers",
+      "exit_code": 0,
+      "seconds": 2.27
+    },
+    {
+      "target": "dctl_test_helper_scope",
+      "exit_code": 0,
+      "seconds": 0.72
+    },
+    {
+      "target": "dctl_test_hk_guard",
+      "exit_code": 0,
+      "seconds": 0.63
+    },
+    {
+      "target": "dctl_test_interface",
+      "exit_code": 0,
+      "seconds": 0.37
+    },
+    {
+      "target": "dctl_test_saturation",
+      "exit_code": 0,
+      "seconds": 2.12
+    },
+    {
+      "target": "numerical_test_adaptance_weight",
+      "exit_code": 0,
+      "seconds": 1.47
+    },
+    {
+      "target": "numerical_test_chroma_drivers",
+      "exit_code": 0,
+      "seconds": 1.02
+    },
+    {
+      "target": "numerical_test_control_parity",
+      "exit_code": 0,
+      "seconds": 0.22
+    },
+    {
+      "target": "numerical_test_control_schema",
+      "exit_code": 0,
+      "seconds": 0.62
+    },
+    {
+      "target": "numerical_test_core",
+      "exit_code": 0,
+      "seconds": 3.48
+    },
+    {
+      "target": "numerical_test_cube_math",
+      "exit_code": 0,
+      "seconds": 2.27
+    },
+    {
+      "target": "numerical_test_cube_native",
+      "exit_code": 0,
+      "seconds": 1.47
+    },
+    {
+      "target": "numerical_test_forward_inverse",
+      "exit_code": 0,
+      "seconds": 4.29
+    },
+    {
+      "target": "numerical_test_hk_fixture_regression",
+      "exit_code": 0,
+      "seconds": 13.45
+    },
+    {
+      "target": "numerical_test_hk_lift",
+      "exit_code": 0,
+      "seconds": 0.32
+    },
+    {
+      "target": "numerical_test_hk_native",
+      "exit_code": 0,
+      "seconds": 0.72
+    },
+    {
+      "target": "numerical_test_hue_concentration",
+      "exit_code": 0,
+      "seconds": 6.53
+    },
+    {
+      "target": "numerical_test_i18n_terms",
+      "exit_code": 0,
+      "seconds": 0.22
+    },
+    {
+      "target": "numerical_test_inverse_math",
+      "exit_code": 0,
+      "seconds": 1.47
+    },
+    {
+      "target": "numerical_test_inverse_solver",
+      "exit_code": 0,
+      "corrected_and_rerun": true,
+      "initial_attempt_seconds": 0.52
+    },
+    {
+      "target": "numerical_test_linear_spread",
+      "exit_code": 0,
+      "seconds": 0.67
+    },
+    {
+      "target": "numerical_test_lut_grid_regression",
+      "exit_code": 0,
+      "seconds": 44.83
+    },
+    {
+      "target": "numerical_test_source_white",
+      "exit_code": 0,
+      "seconds": 2.27
+    },
+    {
+      "target": "numerical_test_white_drag_boundary",
+      "exit_code": 0,
+      "seconds": 2.88
+    },
+    {
+      "target": "numerical_test_white_drag_centroid",
+      "exit_code": 0,
+      "seconds": 1.07
+    },
+    {
+      "target": "parity_compare_dctl",
+      "exit_code": 0,
+      "seconds": 0.72
+    },
+    {
+      "target": "parity_compare_stage2_dctl",
+      "exit_code": 0,
+      "seconds": 0.53
+    },
+    {
+      "target": "parity_compare_stage3_dctl",
+      "exit_code": 0,
+      "seconds": 7.17
+    },
+    {
+      "target": "renders_blender_compositor_test",
+      "exit_code": 0,
+      "seconds": 10.68
+    },
+    {
+      "target": "renders_blender_cube_test",
+      "exit_code": 0,
+      "seconds": 29.37
+    },
+    {
+      "target": "renders_blender_stage2_test",
+      "exit_code": 0,
+      "seconds": 24.25
+    },
+    {
+      "target": "renders_blender_stage3_render_test",
+      "exit_code": 0,
+      "seconds": 21.09
+    }
+  ],
+  "fixture_totals": {
+    "passed": 54,
+    "failed": 0,
+    "new_pytest_cases": 30
+  },
+  "other_checks": {
+    "input_declarations": "passed: all required sources and 19 generator contracts",
+    "locales": "passed, including discovered third-locale fixture",
+    "documentation": "passed: 28 chapters per language, 63 HTML pages, 3534 links/resources, deployment ZIP",
+    "katex": {
+      "equations": 1045,
+      "failures": 0
+    },
+    "python_syntax": {
+      "files": 198,
+      "failures": 0
+    },
+    "english_source_localization": "passed on the declared source tree"
+  },
+  "limitations": [
+    "Buck2 is not installed in this restricted runtime; no Buck2 release-gate result is claimed.",
+    "Desktop interaction and native GPU/Metal/Resolve compilation were not run.",
+    "Existing illustrative benchmark data and historical photographic precision reports are retained, not remeasured."
+  ],
+  "merge": {
+    "complete_source_tree": true,
+    "blender_runtime": "1.17.0 implementation",
+    "original_build_and_dctl_sources": true,
+    "original_fixtures": true,
+    "handbook_languages": [
+      "en",
+      "zh-Hans"
+    ],
+    "new_buck_target": "//:blender_test_stack_editing",
+    "test_only_solver_adapter": "tests/blender/inverse_reference.py",
+    "compatibility_or_migration_code_added": false
+  }
+}

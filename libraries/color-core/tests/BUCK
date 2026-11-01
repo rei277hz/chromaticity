@@ -1,0 +1,6 @@
+python_test(
+    name = "linear",
+    srcs = ["test_linear.py"],
+    base_module = "tests.color_core",
+    deps = ["//libraries/color-core:runtime"],
+)

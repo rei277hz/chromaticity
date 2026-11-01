@@ -1,0 +1,951 @@
+[
+  {
+    "name": "direction",
+    "type": "DCTLUI_COMBO_BOX",
+    "default": 0,
+    "min": null,
+    "max": null,
+    "step": null,
+    "options": [
+      [
+        "PG_FORWARD",
+        "PG_INVERSE"
+      ],
+      [
+        "direction.forward",
+        "direction.inverse"
+      ]
+    ],
+    "label_id": "direction.label",
+    "tooltip_id": "tooltip.stack.invert"
+  },
+  {
+    "name": "globalExposure",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -6,
+    "max": 6,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.exposure.label",
+    "tooltip_id": "tooltip.linear.exposure"
+  },
+  {
+    "name": "srcX",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0.3127,
+    "min": 0,
+    "max": 0.9,
+    "step": 0.0001,
+    "options": null,
+    "label_id": "control.source_x.label",
+    "tooltip_id": "tooltip.dctl.source_x"
+  },
+  {
+    "name": "srcY",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0.329,
+    "min": 0,
+    "max": 0.9,
+    "step": 0.0001,
+    "options": null,
+    "label_id": "control.source_y.label",
+    "tooltip_id": "tooltip.dctl.source_y"
+  },
+  {
+    "name": "le",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -2,
+    "max": 2,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.cr_balance.label",
+    "tooltip_id": "tooltip.linear.cr_balance"
+  },
+  {
+    "name": "be",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -2,
+    "max": 2,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.yb_balance.label",
+    "tooltip_id": "tooltip.linear.yb_balance"
+  },
+  {
+    "name": "ls",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 150,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.cr_spread.label",
+    "tooltip_id": "tooltip.dctl.cr_spread"
+  },
+  {
+    "name": "bs",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 150,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.yb_spread.label",
+    "tooltip_id": "tooltip.dctl.yb_spread"
+  },
+  {
+    "name": "la",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -180,
+    "max": 180,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.cr_heading.label",
+    "tooltip_id": "tooltip.dctl.cr_heading"
+  },
+  {
+    "name": "ba",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -180,
+    "max": 180,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.yb_heading.label",
+    "tooltip_id": "tooltip.dctl.yb_heading"
+  },
+  {
+    "name": "srcWhite",
+    "type": "DCTLUI_COMBO_BOX",
+    "default": 8,
+    "min": null,
+    "max": null,
+    "step": null,
+    "options": [
+      [
+        "S_D65",
+        "S_D60",
+        "S_ACES",
+        "S_D50",
+        "S_D55",
+        "S_D75",
+        "S_DCI",
+        "S_E",
+        "S_CUSTOM"
+      ],
+      [
+        "symbol.d65",
+        "white.d60",
+        "symbol.aces",
+        "symbol.d50",
+        "symbol.d55",
+        "symbol.d75",
+        "white.dci",
+        "white.e",
+        "white.custom"
+      ]
+    ],
+    "label_id": "white.source.label",
+    "tooltip_id": "tooltip.dctl.source"
+  },
+  {
+    "name": "inputBlack",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0.0,
+    "min": 0,
+    "max": 2,
+    "step": 0.001,
+    "options": null,
+    "label_id": "control.input_black.label",
+    "tooltip_id": "tooltip.tone.black"
+  },
+  {
+    "name": "inputShadows",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 3.148082606120999,
+    "min": 0.01,
+    "max": 50,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.input_shadows.label",
+    "tooltip_id": "tooltip.tone.shadows"
+  },
+  {
+    "name": "inputMidtones",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 36.54,
+    "min": 0.1,
+    "max": 250,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.input_midtones.label",
+    "tooltip_id": "tooltip.tone.midtones"
+  },
+  {
+    "name": "inputWhite",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 203.0,
+    "min": 10,
+    "max": 1000,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.input_white.label",
+    "tooltip_id": "tooltip.tone.white"
+  },
+  {
+    "name": "inputHighlights",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 1000.0,
+    "min": 100,
+    "max": 10000,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.input_highlights.label",
+    "tooltip_id": "tooltip.tone.highlights"
+  },
+  {
+    "name": "globalChromaGain",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -3,
+    "max": 3,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.global_gain.label",
+    "tooltip_id": "tooltip.color.global_gain"
+  },
+  {
+    "name": "toneSLowToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -30,
+    "max": 30,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_low_0.label",
+    "tooltip_id": "tooltip.color.j_low.shadows"
+  },
+  {
+    "name": "toneSLowToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_low_0.label",
+    "tooltip_id": "tooltip.color.c_low.shadows"
+  },
+  {
+    "name": "toneSHighToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_high_0.label",
+    "tooltip_id": "tooltip.color.j_high.shadows"
+  },
+  {
+    "name": "toneSHighToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -16,
+    "max": 16,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_high_0.label",
+    "tooltip_id": "tooltip.color.c_high.shadows"
+  },
+  {
+    "name": "toneSaToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_a_0.label",
+    "tooltip_id": "tooltip.color.j_a.shadows"
+  },
+  {
+    "name": "toneSbToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_b_0.label",
+    "tooltip_id": "tooltip.color.j_b.shadows"
+  },
+  {
+    "name": "toneSaToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_a_0.label",
+    "tooltip_id": "tooltip.color.c_a.shadows"
+  },
+  {
+    "name": "toneSbToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_b_0.label",
+    "tooltip_id": "tooltip.color.c_b.shadows"
+  },
+  {
+    "name": "toneMLowToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_low_1.label",
+    "tooltip_id": "tooltip.color.j_low.midtones"
+  },
+  {
+    "name": "toneMLowToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_low_1.label",
+    "tooltip_id": "tooltip.color.c_low.midtones"
+  },
+  {
+    "name": "toneMHighToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -200,
+    "max": 200,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_high_1.label",
+    "tooltip_id": "tooltip.color.j_high.midtones"
+  },
+  {
+    "name": "toneMHighToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -16,
+    "max": 16,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_high_1.label",
+    "tooltip_id": "tooltip.color.c_high.midtones"
+  },
+  {
+    "name": "toneMaToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_a_1.label",
+    "tooltip_id": "tooltip.color.j_a.midtones"
+  },
+  {
+    "name": "toneMbToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_b_1.label",
+    "tooltip_id": "tooltip.color.j_b.midtones"
+  },
+  {
+    "name": "toneMaToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_a_1.label",
+    "tooltip_id": "tooltip.color.c_a.midtones"
+  },
+  {
+    "name": "toneMbToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_b_1.label",
+    "tooltip_id": "tooltip.color.c_b.midtones"
+  },
+  {
+    "name": "toneWLowToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_low_2.label",
+    "tooltip_id": "tooltip.color.j_low.white"
+  },
+  {
+    "name": "toneWLowToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_low_2.label",
+    "tooltip_id": "tooltip.color.c_low.white"
+  },
+  {
+    "name": "toneWHighToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -400,
+    "max": 400,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_high_2.label",
+    "tooltip_id": "tooltip.color.j_high.white"
+  },
+  {
+    "name": "toneWHighToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -16,
+    "max": 16,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_high_2.label",
+    "tooltip_id": "tooltip.color.c_high.white"
+  },
+  {
+    "name": "toneWaToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_a_2.label",
+    "tooltip_id": "tooltip.color.j_a.white"
+  },
+  {
+    "name": "toneWbToJ",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.j_b_2.label",
+    "tooltip_id": "tooltip.color.j_b.white"
+  },
+  {
+    "name": "toneWaToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_a_2.label",
+    "tooltip_id": "tooltip.color.c_a.white"
+  },
+  {
+    "name": "toneWbToC",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.c_b_2.label",
+    "tooltip_id": "tooltip.color.c_b.white"
+  },
+  {
+    "name": "toneHLowToJ",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -200,
+    "max": 200,
+    "step": 1,
+    "options": null,
+    "label_id": "control.j_low_3.label",
+    "tooltip_id": "tooltip.color.j_low.highlights"
+  },
+  {
+    "name": "toneHLowToC",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 1,
+    "options": null,
+    "label_id": "control.c_low_3.label",
+    "tooltip_id": "tooltip.color.c_low.highlights"
+  },
+  {
+    "name": "toneHHighToJ",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -700,
+    "max": 700,
+    "step": 1,
+    "options": null,
+    "label_id": "control.j_high_3.label",
+    "tooltip_id": "tooltip.color.j_high.highlights"
+  },
+  {
+    "name": "toneHHighToC",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -16,
+    "max": 16,
+    "step": 1,
+    "options": null,
+    "label_id": "control.c_high_3.label",
+    "tooltip_id": "tooltip.color.c_high.highlights"
+  },
+  {
+    "name": "toneHaToJ",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 1,
+    "options": null,
+    "label_id": "control.j_a_3.label",
+    "tooltip_id": "tooltip.color.j_a.highlights"
+  },
+  {
+    "name": "toneHbToJ",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -50,
+    "max": 50,
+    "step": 1,
+    "options": null,
+    "label_id": "control.j_b_3.label",
+    "tooltip_id": "tooltip.color.j_b.highlights"
+  },
+  {
+    "name": "toneHaToC",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 1,
+    "options": null,
+    "label_id": "control.c_a_3.label",
+    "tooltip_id": "tooltip.color.c_a.highlights"
+  },
+  {
+    "name": "toneHbToC",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -4,
+    "max": 4,
+    "step": 1,
+    "options": null,
+    "label_id": "control.c_b_3.label",
+    "tooltip_id": "tooltip.color.c_b.highlights"
+  },
+  {
+    "name": "toneSAdaptanceA",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.adaptance_a_0.label",
+    "tooltip_id": "tooltip.color.adaptance_a.shadows"
+  },
+  {
+    "name": "toneSAdaptanceB",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.adaptance_b_0.label",
+    "tooltip_id": "tooltip.color.adaptance_b.shadows"
+  },
+  {
+    "name": "toneMAdaptanceA",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.adaptance_a_1.label",
+    "tooltip_id": "tooltip.color.adaptance_a.midtones"
+  },
+  {
+    "name": "toneMAdaptanceB",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.adaptance_b_1.label",
+    "tooltip_id": "tooltip.color.adaptance_b.midtones"
+  },
+  {
+    "name": "toneWAdaptanceA",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.adaptance_a_2.label",
+    "tooltip_id": "tooltip.color.adaptance_a.white"
+  },
+  {
+    "name": "toneWAdaptanceB",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.adaptance_b_2.label",
+    "tooltip_id": "tooltip.color.adaptance_b.white"
+  },
+  {
+    "name": "toneHAdaptanceA",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.adaptance_a_3.label",
+    "tooltip_id": "tooltip.color.adaptance_a.highlights"
+  },
+  {
+    "name": "toneHAdaptanceB",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -100,
+    "max": 100,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.adaptance_b_3.label",
+    "tooltip_id": "tooltip.color.adaptance_b.highlights"
+  },
+  {
+    "name": "adaptanceStrength",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0.5,
+    "min": 0,
+    "max": 1,
+    "step": 0.05,
+    "options": null,
+    "label_id": "control.adaptance_strength.label",
+    "tooltip_id": "tooltip.color.adaptance_strength"
+  },
+  {
+    "name": "toneSHue",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -90,
+    "max": 90,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.hue_0.label",
+    "tooltip_id": "tooltip.color.hue.shadows"
+  },
+  {
+    "name": "toneMHue",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -90,
+    "max": 90,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.hue_1.label",
+    "tooltip_id": "tooltip.color.hue.midtones"
+  },
+  {
+    "name": "toneWHue",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -90,
+    "max": 90,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.hue_2.label",
+    "tooltip_id": "tooltip.color.hue.white"
+  },
+  {
+    "name": "toneHHue",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -90,
+    "max": 90,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.hue_3.label",
+    "tooltip_id": "tooltip.color.hue.highlights"
+  },
+  {
+    "name": "toneSConcentrationA",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -1,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.concentration_a_0.label",
+    "tooltip_id": "tooltip.color.concentration_a.shadows"
+  },
+  {
+    "name": "toneSConcentrationB",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -1,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.concentration_b_0.label",
+    "tooltip_id": "tooltip.color.concentration_b.shadows"
+  },
+  {
+    "name": "toneMConcentrationA",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -1,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.concentration_a_1.label",
+    "tooltip_id": "tooltip.color.concentration_a.midtones"
+  },
+  {
+    "name": "toneMConcentrationB",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -1,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.concentration_b_1.label",
+    "tooltip_id": "tooltip.color.concentration_b.midtones"
+  },
+  {
+    "name": "toneWConcentrationA",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -1,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.concentration_a_2.label",
+    "tooltip_id": "tooltip.color.concentration_a.white"
+  },
+  {
+    "name": "toneWConcentrationB",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -1,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.concentration_b_2.label",
+    "tooltip_id": "tooltip.color.concentration_b.white"
+  },
+  {
+    "name": "toneHConcentrationA",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -1,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.concentration_a_3.label",
+    "tooltip_id": "tooltip.color.concentration_a.highlights"
+  },
+  {
+    "name": "toneHConcentrationB",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -1,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "control.concentration_b_3.label",
+    "tooltip_id": "tooltip.color.concentration_b.highlights"
+  },
+  {
+    "name": "globalLowChromaHue",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -90,
+    "max": 90,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.global_low_hue.label",
+    "tooltip_id": "tooltip.color.global_low_hue"
+  },
+  {
+    "name": "globalHighChromaHue",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": -360,
+    "max": 360,
+    "step": 0.1,
+    "options": null,
+    "label_id": "control.global_high_hue.label",
+    "tooltip_id": "tooltip.color.global_high_hue"
+  },
+  {
+    "name": "peakNits",
+    "type": "DCTLUI_COMBO_BOX",
+    "default": 1,
+    "min": null,
+    "max": null,
+    "step": null,
+    "options": [
+      [
+        "P_500",
+        "P_1000",
+        "P_2000",
+        "P_4000"
+      ],
+      [
+        "peak.option.500",
+        "peak.option.1000",
+        "peak.option.2000",
+        "peak.option.4000"
+      ]
+    ],
+    "label_id": "control.peak_nits.label",
+    "tooltip_id": "tooltip.dctl.peak"
+  },
+  {
+    "name": "overlayMode",
+    "type": "DCTLUI_COMBO_BOX",
+    "default": 0,
+    "min": null,
+    "max": null,
+    "step": null,
+    "options": [
+      [
+        "O_OFF",
+        "O_INSET",
+        "O_FULL"
+      ],
+      [
+        "dctl.overlay.off",
+        "dctl.overlay.inset",
+        "dctl.overlay.full"
+      ]
+    ],
+    "label_id": "dctl.overlay.label",
+    "tooltip_id": "tooltip.dctl.overlay"
+  },
+  {
+    "name": "refTriangle",
+    "type": "DCTLUI_COMBO_BOX",
+    "default": 0,
+    "min": null,
+    "max": null,
+    "step": null,
+    "options": [
+      [
+        "T_709",
+        "T_P3",
+        "T_2020",
+        "T_AP1"
+      ],
+      [
+        "symbol.rec709",
+        "symbol.p3",
+        "symbol.rec2020",
+        "symbol.ap1"
+      ]
+    ],
+    "label_id": "dctl.triangle.label",
+    "tooltip_id": "tooltip.dctl.triangle"
+  },
+  {
+    "name": "remapFit",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -2,
+    "max": 6,
+    "step": 1,
+    "options": null,
+    "label_id": "control.remap_fit.label",
+    "tooltip_id": "tooltip.tone.fit"
+  },
+  {
+    "name": "lightnessFit",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -2,
+    "max": 6,
+    "step": 1,
+    "options": null,
+    "label_id": "control.j_fit.label",
+    "tooltip_id": "tooltip.color.j_fit"
+  },
+  {
+    "name": "chromaFit",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -2,
+    "max": 6,
+    "step": 1,
+    "options": null,
+    "label_id": "control.c_fit.label",
+    "tooltip_id": "tooltip.color.c_fit"
+  },
+  {
+    "name": "adaptanceFit",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -2,
+    "max": 6,
+    "step": 1,
+    "options": null,
+    "label_id": "control.adaptance_fit.label",
+    "tooltip_id": "tooltip.color.adaptance_fit"
+  },
+  {
+    "name": "hueFit",
+    "type": "DCTLUI_SLIDER_INT",
+    "default": 0,
+    "min": -2,
+    "max": 6,
+    "step": 1,
+    "options": null,
+    "label_id": "control.hue_fit.label",
+    "tooltip_id": "tooltip.color.hue_fit"
+  }
+]

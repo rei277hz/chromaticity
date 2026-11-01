@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "description": "S01 is represented by close revocation and stale-envelope rejection. S06 is only partially represented by one-time consumption of a foreground display receipt: preview-input occurrences are absent. S08 is only the foreground adoption portion of the required staged-success, actor-acceptance and foreground-receipt composite. Canonical S09 statistics/visual equality and S10 primary/reference/environment batch coherence are unrepresented; token and owner checks must not be labelled as those claims. All other canonical scope claims belong to the scope or native resource/service models, not ForegroundState. ViewAuthority uses these exact transitions and foreground_can_apply predicate.",
+  "state": "ForegroundState",
+  "event": "ForegroundEvent",
+  "initializers": ["new_foreground"],
+  "step": "foreground_step",
+  "invariants": {"epoch_nonnegative": "state.epoch >= 0"},
+  "contracts": {"new_foreground": {"ensures": ["not result.visible and result.epoch == 0"]}},
+  "properties": [
+    {"name":"S01_close_revokes_view_authority","variables":{"state":"ForegroundState","event":"ForegroundEvent"},"lets":{"after":"foreground_step(state,event)"},"assert":"not after[1] or event.kind != 'close' or (not after[0].visible and after[0].token == 0 and after[0].epoch > state.epoch)"},
+    {"name":"S01_close_is_admitted_for_current_owner","variables":{"state":"ForegroundState","event":"ForegroundEvent"},"assume":["state.visible and event.kind == 'close' and event.generation == state.generation and event.owner == state.owner"],"lets":{"after":"foreground_step(state,event)"},"assert":"after[1] and not after[0].visible"},
+    {"name":"display_issue_is_bound_to_current_view","variables":{"state":"ForegroundState","event":"ForegroundEvent"},"lets":{"after":"foreground_step(state,event)"},"assert":"not after[1] or event.kind != 'issue' or (after[0].token == event.token and after[0].epoch == state.epoch and event.owner == state.owner and event.generation == state.generation)"},
+    {"name":"foreground_adoption_matches_issued_token","variables":{"state":"ForegroundState","event":"ForegroundEvent"},"assume":["event.kind == 'apply'"],"lets":{"after":"foreground_step(state,event)"},"assert":"not after[1] or (state.visible and event.token == state.token and event.epoch == state.epoch and event.owner == state.owner and event.generation == state.generation and after[0].applied_token == event.token)"},
+    {"name":"stale_display_is_not_adopted","variables":{"state":"ForegroundState","event":"ForegroundEvent"},"assume":["event.kind == 'apply' and (event.token != state.token or event.epoch != state.epoch or event.owner != state.owner or event.generation != state.generation)"],"lets":{"after":"foreground_step(state,event)"},"assert":"after[0] == state and not after[1]"},
+    {"name":"display_receipt_is_consumed_once","variables":{"state":"ForegroundState","event":"ForegroundEvent"},"assume":["event.kind == 'apply' and event.token == state.applied_token"],"lets":{"after":"foreground_step(state,event)"},"assert":"after[0] == state and not after[1]"},
+    {"name":"owner_transfer_revokes_prior_display","variables":{"state":"ForegroundState","event":"ForegroundEvent"},"lets":{"after":"foreground_step(state,event)"},"assert":"not after[1] or event.kind != 'move' or (after[0].epoch > state.epoch and after[0].token == 0 and after[0].applied_token == 0 and (event.next_owner == 0 or after[0].owner == event.next_owner))"}
+  ],
+  "witnesses": [
+    {"name":"close_drops_issued_display","lets":{"opened":"foreground_step(new_foreground(),ForegroundEvent('open',generation=1,owner=1,epoch=1))","issued":"foreground_step(opened[0],ForegroundEvent('issue',generation=1,owner=1,epoch=1,token=2))","closed":"foreground_step(issued[0],ForegroundEvent('close',generation=1,owner=1))","late":"foreground_step(closed[0],ForegroundEvent('apply',generation=1,owner=1,epoch=1,token=2))"},"assert":"opened[1] and issued[1] and closed[1] and not closed[0].visible and not late[1]"},
+    {"name":"transferred_owner_can_adopt_one_new_display","lets":{"opened":"foreground_step(new_foreground(),ForegroundEvent('open',generation=1,owner=1,epoch=1))","moved":"foreground_step(opened[0],ForegroundEvent('move',generation=1,owner=1,epoch=2,next_owner=3))","issued":"foreground_step(moved[0],ForegroundEvent('issue',generation=1,owner=3,epoch=2,token=4))","applied":"foreground_step(issued[0],ForegroundEvent('apply',generation=1,owner=3,epoch=2,token=4))","duplicate":"foreground_step(applied[0],ForegroundEvent('apply',generation=1,owner=3,epoch=2,token=4))"},"assert":"moved[1] and issued[1] and applied[1] and not duplicate[1]"}
+  ],
+  "mutations": [
+    {"name":"close_rejects_current_owner","function":"foreground_step","target":"state.visible and event.generation == state.generation and event.owner == state.owner","replacement":"not state.visible and event.generation == state.generation and event.owner == state.owner","detects":["property.S01_close_is_admitted_for_current_owner"]},
+    {"name":"display_receipt_can_be_consumed_twice","function":"foreground_can_apply","target":"event.token != state.applied_token","replacement":"True","detects":["property.display_receipt_is_consumed_once"]},
+    {"name":"foreground_accepts_unissued_token","function":"foreground_can_apply","target":"event.token == state.token","replacement":"True","detects":["property.foreground_adoption_matches_issued_token"]}
+  ]
+}

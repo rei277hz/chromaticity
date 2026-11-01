@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "perceptual-grade-third-party"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# This package is a dependency catalogue for Reindeer, never an application.
+[[bin]]
+name = "dependency-catalogue"
+path = "reindeer.toml"
+
+[dependencies]
+cmx = "=0.2.0"
+exr = { version = "=1.74.2", default-features = false }
+half = "=2.7.1"
+icc-profile = "=0.0.6"
+image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
+jpeg-decoder = { version = "=0.3.2", default-features = false }
+js-sys = "=0.3.105"
+png = "=0.18.1"
+rawler = { version = "=0.8.0", default-features = false }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde-wasm-bindgen = "=0.6.5"
+ultrahdr-core = { version = "=0.6.0", default-features = false }
+uuid = { version = "=1.26.1", features = ["js"] }
+wasm-bindgen = "=0.2.128"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bytemuck = { version = "=1.25.2", features = ["derive"] }
+futures-channel = "=0.3.34"
+wasm-bindgen-futures = "=0.4.78"
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "webgpu", "wgsl"] }
+
+# Native test dependencies and executables used by Buck build actions.
+# Buck exec_dep selects the execution platform for these executable targets.
+[target.'cfg(any(all(target_os = "linux", target_arch = "x86_64"), all(target_os = "macos", target_arch = "aarch64")))'.dependencies]
+bytemuck = "=1.25.2"
+mdbook = { version = "=0.5.4", artifact = "bin:mdbook" }
+pollster = "=0.4.0"
+wasm-bindgen-cli = { version = "=0.2.128", artifact = "bin:wasm-bindgen" }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "vulkan", "wgsl"] }

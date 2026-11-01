@@ -1,0 +1,116 @@
+{
+  "attempt": {
+    "properties": [
+      "foreign_attempt_ignored",
+      "cancellation_retains_occupancy",
+      "retirement_is_explicit",
+      "retired_attempt_is_absorbing",
+      "start_requires_current_interest",
+      "rejected_attempt_preserves_state"
+    ],
+    "witnesses": [
+      "start_admitted",
+      "cancellation_is_still_occupied"
+    ],
+    "mutations": [
+      "detach_releases_running_attempt"
+    ]
+  },
+  "edge_effect": {
+    "properties": [
+      "foreign_effect_does_not_change_state",
+      "retired_effect_is_absorbing",
+      "arm_revokes_known_value",
+      "failed_compensation_retains_uncertainty",
+      "commit_requires_known_applied_value",
+      "compensation_restores_original_edge",
+      "edge_count_exact"
+    ],
+    "witnesses": [
+      "arm_is_possible",
+      "compensation_is_possible"
+    ],
+    "mutations": [
+      "arm_keeps_old_authority"
+    ]
+  },
+  "gpu": {
+    "properties": [
+      "validation_binds_probe",
+      "probing_disables_gpu",
+      "generation_never_regresses",
+      "restored_availability_requires_validation",
+      "rejected_gpu_receipt_preserves_state"
+    ],
+    "witnesses": [
+      "probe_admitted",
+      "validation_admitted"
+    ],
+    "mutations": [
+      "unvalidated_probe_is_accepted"
+    ]
+  },
+  "ownership": {
+    "properties": [
+      "recovery_waits_for_borrows",
+      "recovery_requires_current_safe_token",
+      "unsafe_state_cannot_retain_or_borrow",
+      "unsafe_replacement_is_sticky",
+      "replacement_records_outstanding_native_ownership",
+      "replacement_begin_advances_epoch",
+      "fenced_ownership_blocks_capture",
+      "resolution_requires_current_safe_epoch",
+      "replacement_revokes_old_resolution",
+      "fenced_or_failed_cannot_resolve",
+      "accounting_preserves_resolution",
+      "retry_requires_failed_current_safe_generation",
+      "retry_preserves_native_ownership_and_epoch",
+      "retry_rejection_preserves_state"
+    ],
+    "witnesses": [
+      "clean_recovery_admitted",
+      "replacement_detects_borrow",
+      "active_resolution_possible",
+      "rebind_resolution_possible",
+      "failed_rebind_can_retry"
+    ],
+    "mutations": [
+      "recovery_ignores_borrows",
+      "resolution_ignores_epoch",
+      "resolution_ignores_unsafe",
+      "resolution_ignores_phase",
+      "retry_ignores_generation",
+      "retry_ignores_borrows"
+    ]
+  },
+  "retry": {
+    "properties": [
+      "crash_retry_bounded",
+      "deterministic_failure_not_retried",
+      "rebind_preserves_budget",
+      "accepted_crash_consumes_one_retry",
+      "retry_budget_never_decreases"
+    ],
+    "witnesses": [
+      "first_crash_retry"
+    ],
+    "mutations": [
+      "crash_does_not_consume_budget"
+    ]
+  },
+  "startup": {
+    "properties": [
+      "startup_budget_bounded",
+      "failed_start_is_recorded",
+      "dispatch_resets_budget",
+      "exhausted_failure_cannot_restart"
+    ],
+    "witnesses": [
+      "first_failed_start_retries",
+      "second_failed_start_rejected"
+    ],
+    "mutations": [
+      "exhausted_start_is_retried"
+    ]
+  }
+}

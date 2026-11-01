@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "description": "Current production lifecycle policy, with typed event admission and inductive state invariants. Native receipt truth is an adapter obligation.",
+  "state": "LifecycleState",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {
+    "state_domain": "state_valid(state)"
+  },
+  "contracts": {
+    "new": {
+      "requires": []
+    },
+    "step": {
+      "requires": [
+        "event_valid(state,event)"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "failed_lifecycle_blocks_work",
+      "variables": {
+        "state": "LifecycleState",
+        "event": "Event"
+      },
+      "assume": [
+        "state_valid(state)",
+        "event_valid(state,event)",
+        "state.phase == 4"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not lifecycle_admits(state, 'publish')"
+    },
+    {
+      "name": "failed_state_is_explicit",
+      "variables": {
+        "state": "LifecycleState",
+        "event": "Event"
+      },
+      "assume": [
+        "state_valid(state)",
+        "event_valid(state, event)",
+        "event.kind == 'fail'"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[0].phase == 4 and after[0].dirty and after[0].error and after[1].failed"
+    },
+    {
+      "name": "save_cannot_finish_before_ready",
+      "variables": {
+        "state": "LifecycleState",
+        "event": "Event"
+      },
+      "assume": [
+        "state_valid(state)",
+        "event_valid(state, event)",
+        "event.kind == 'save_done' and state.dirty"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].accept"
+    },
+    {
+      "name": "recovery_completion_requires_recovering_phase",
+      "variables": {
+        "state": "LifecycleState",
+        "event": "Event"
+      },
+      "assume": [
+        "state_valid(state)",
+        "event_valid(state, event)",
+        "event.kind == 'recovered'"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].accept or state.phase == 3"
+    },
+    {
+      "name": "rejected_lifecycle_preserves_state",
+      "variables": {
+        "state": "LifecycleState",
+        "event": "Event"
+      },
+      "assume": [
+        "state_valid(state)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((not after[1].accept)) or (after[0] == state)"
+    },
+    {
+      "name": "disable_removes_work_admission",
+      "variables": {
+        "state": "LifecycleState",
+        "event": "Event"
+      },
+      "assume": [
+        "state_valid(state)",
+        "event_valid(state, event)",
+        "event.kind == 'disable'"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[0].phase == 5 and not lifecycle_admits(after[0],'publish')"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "save_ready_admitted",
+      "variables": {
+        "state": "LifecycleState",
+        "event": "Event"
+      },
+      "assume": [
+        "state_valid(state)",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "event.kind == 'save_ready' and after[1].accept"
+    },
+    {
+      "name": "recovery_admitted",
+      "variables": {
+        "state": "LifecycleState",
+        "event": "Event"
+      },
+      "assume": [
+        "state_valid(state)",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "event.kind == 'recovered' and after[1].accept"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "dirty_save_can_finish",
+      "function": "apply_save_done",
+      "target": "state.phase == 2 and (not state.dirty)",
+      "replacement": "state.phase == 2",
+      "detects": [
+        "property.save_cannot_finish_before_ready"
+      ]
+    }
+  ]
+}

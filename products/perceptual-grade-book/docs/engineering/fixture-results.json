@@ -1,0 +1,334 @@
+{
+  "execution": "authoring-preview",
+  "fixtures": [
+    {
+      "name": "numerical_test_white_drag_centroid",
+      "script": "tests/blender/test_white_drag_centroid.py",
+      "exit_code": 0,
+      "seconds": 1.172,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_white_drag_sampling",
+      "script": "tests/blender/test_white_drag_sampling.py",
+      "exit_code": 0,
+      "seconds": 17.091,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_source_white",
+      "script": "tests/blender/test_source_white.py",
+      "exit_code": 0,
+      "seconds": 2.572,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_extension_namespace",
+      "script": "tests/blender/test_extension_namespace.py",
+      "exit_code": 0,
+      "seconds": 8.691,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "parity_compare_stage2_dctl",
+      "script": "tests/blender/compare_stage2_dctl.py",
+      "exit_code": 0,
+      "seconds": 0.517,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "renders_blender_cube_test",
+      "script": "tests/blender/blender_cube_test.py",
+      "exit_code": 0,
+      "seconds": 28.109,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "dctl_portability",
+      "script": "tests/dctl/portability.py",
+      "exit_code": 0,
+      "seconds": 0.469,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "renders_blender_stage2_test",
+      "script": "tests/blender/blender_stage2_test.py",
+      "exit_code": 0,
+      "seconds": 17.116,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "renders_blender_stage3_render_test",
+      "script": "tests/blender/blender_stage3_render_test.py",
+      "exit_code": 0,
+      "seconds": 17.826,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_stage3_scopes",
+      "script": "tests/blender/test_stage3_scopes.py",
+      "exit_code": 0,
+      "seconds": 0.366,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_white_and_render_ui",
+      "script": "tests/blender/test_white_and_render_ui.py",
+      "exit_code": 0,
+      "seconds": 20.435,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_adaptance_weight",
+      "script": "tests/blender/test_adaptance_weight.py",
+      "exit_code": 0,
+      "seconds": 1.37,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "dctl_test_helper_scope",
+      "script": "tests/dctl/test_helper_scope.py",
+      "exit_code": 0,
+      "seconds": 0.667,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_node_presentation",
+      "script": "tests/blender/test_node_presentation.py",
+      "exit_code": 0,
+      "seconds": 16.459,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_full_graph_template",
+      "script": "tests/blender/test_full_graph_template.py",
+      "exit_code": 0,
+      "seconds": 16.369,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_hk_native",
+      "script": "tests/blender/test_hk_native.py",
+      "exit_code": 0,
+      "seconds": 0.771,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "dctl_test_hk_guard",
+      "script": "tests/dctl/test_hk_guard.py",
+      "exit_code": 0,
+      "seconds": 0.619,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_control_parity",
+      "script": "tests/blender/test_control_parity.py",
+      "exit_code": 0,
+      "seconds": 0.165,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_chroma_drivers",
+      "script": "tests/blender/test_chroma_drivers.py",
+      "exit_code": 0,
+      "seconds": 1.17,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "parity_compare_dctl",
+      "script": "tests/blender/compare_dctl.py",
+      "exit_code": 0,
+      "seconds": 0.567,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "dctl_test_saturation",
+      "script": "tests/dctl/test_saturation.py",
+      "exit_code": 0,
+      "seconds": 2.772,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_hue_concentration",
+      "script": "tests/blender/test_hue_concentration.py",
+      "exit_code": 0,
+      "seconds": 6.737,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "parity_compare_stage3_dctl",
+      "script": "tests/blender/compare_stage3_dctl.py",
+      "exit_code": 0,
+      "seconds": 6.448,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_blender_registration_test",
+      "script": "tests/blender/blender_registration_test.py",
+      "exit_code": 0,
+      "seconds": 7.087,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "dctl_run_tests",
+      "script": "tests/dctl/run_tests.py",
+      "exit_code": 0,
+      "seconds": 16.024,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_graph_regressions",
+      "script": "tests/blender/test_graph_regressions.py",
+      "exit_code": 0,
+      "seconds": 15.921,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_hk_fixture_regression",
+      "script": "tests/blender/test_hk_fixture_regression.py",
+      "exit_code": 0,
+      "seconds": 4.227,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_ui",
+      "script": "tests/blender/test_ui.py",
+      "exit_code": 0,
+      "seconds": 13.058,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "dctl_test_interface",
+      "script": "tests/dctl/test_interface.py",
+      "exit_code": 0,
+      "seconds": 0.316,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "dctl_test_chroma_drivers",
+      "script": "tests/dctl/test_chroma_drivers.py",
+      "exit_code": 0,
+      "seconds": 3.074,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_blender_half_precision_test",
+      "script": "tests/blender/blender_half_precision_test.py",
+      "exit_code": 0,
+      "seconds": 24.449,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_graph_updates",
+      "script": "tests/blender/test_graph_updates.py",
+      "exit_code": 0,
+      "seconds": 17.62,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_optimized_curves",
+      "script": "tests/blender/test_optimized_curves.py",
+      "exit_code": 0,
+      "seconds": 1.62,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_i18n_terms",
+      "script": "tests/blender/test_i18n_terms.py",
+      "exit_code": 0,
+      "seconds": 0.216,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_control_schema",
+      "script": "tests/blender/test_control_schema.py",
+      "exit_code": 0,
+      "seconds": 0.573,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_hk_lift",
+      "script": "tests/blender/test_hk_lift.py",
+      "exit_code": 0,
+      "seconds": 0.266,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_forward_inverse",
+      "script": "tests/blender/test_forward_inverse.py",
+      "exit_code": 0,
+      "seconds": 4.33,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_lut_grid_regression",
+      "script": "tests/blender/test_lut_grid_regression.py",
+      "exit_code": 0,
+      "seconds": 16.415,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "renders_blender_compositor_test",
+      "script": "tests/blender/blender_compositor_test.py",
+      "exit_code": 0,
+      "seconds": 9.697,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_linear_spread",
+      "script": "tests/blender/test_linear_spread.py",
+      "exit_code": 0,
+      "seconds": 0.617,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_core",
+      "script": "tests/blender/test_core.py",
+      "exit_code": 0,
+      "seconds": 3.628,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_cube_math",
+      "script": "tests/blender/test_cube_math.py",
+      "exit_code": 0,
+      "seconds": 2.475,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_comparison_scopes",
+      "script": "tests/blender/test_comparison_scopes.py",
+      "exit_code": 0,
+      "seconds": 7.184,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_white_drag_boundary",
+      "script": "tests/blender/test_white_drag_boundary.py",
+      "exit_code": 0,
+      "seconds": 2.523,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_concentration_graph",
+      "script": "tests/blender/test_concentration_graph.py",
+      "exit_code": 0,
+      "seconds": 10.17,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "blender_test_scope_framebuffer",
+      "script": "tests/blender/test_scope_framebuffer.py",
+      "exit_code": 0,
+      "seconds": 0.767,
+      "execution": "authoring-preview"
+    },
+    {
+      "name": "numerical_test_cube_native",
+      "script": "tests/blender/test_cube_native.py",
+      "exit_code": 0,
+      "seconds": 1.672,
+      "execution": "authoring-preview"
+    }
+  ]
+}

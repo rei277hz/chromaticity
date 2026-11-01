@@ -1,0 +1,3 @@
+# Generate private modules and probe compiler error APIs.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_VERSION_PATCH"]

@@ -1,0 +1,2 @@
+# Probe compatibility with the declared rustc.
+buildscript.run = true

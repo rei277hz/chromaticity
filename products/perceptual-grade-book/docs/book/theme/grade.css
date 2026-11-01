@@ -1,0 +1,150 @@
+/* ACES Documentation-inspired mdBook adaptation. Palette and typography from
+ * ACES extra.css, Copyright Contributors to the ACES Documentation, CC BY 4.0.
+ * Layout and contrast adapted for Perceptual Grade; see Credits and references. */
+:root, .light {
+  --bg: #fff; --fg: #252525; --sidebar-bg: #fff; --sidebar-fg: #454545;
+  --sidebar-active: #806000; --links: #806000; --icons: #e3e3e3;
+  --icons-hover: #d9bd65; --theme-popup-bg: #fff; --theme-popup-border: #deddd8;
+  --theme-hover: #f2f0e9; --table-border-color: #deddd8; --table-header-bg: #f3f1e8;
+  --table-alternate-bg: #faf9f6; --quote-bg: #f7f5ee; --quote-border: #c1a138;
+  --code-bg: #f3f3f1; --scrollbar: #c3c2bb; --pg-accent: #c1a138;
+  --pg-header: #343434; --pg-surface: #faf9f6; --pg-border: #e4e2dc;
+  --pg-muted: #686761; --sidebar-target-width: 255px;
+  --content-max-width: 760px; --menu-bar-height: 60px;
+  --mono-font: "Roboto Mono", SFMono-Regular, Consolas, Menlo, monospace;
+  --pg-header-fg: #fff;
+}
+.navy {
+  --bg: #23262d; --fg: #e4e5e7; --sidebar-bg: #23262d; --sidebar-fg: #c5c5c5;
+  --sidebar-active: #d5b659; --links: #d5b659; --icons: #c5c5c5;
+  --icons-hover: #e3c665; --theme-popup-bg: #2c3039; --theme-popup-border: #454953;
+  --theme-hover: #343841; --table-border-color: #454953; --table-header-bg: #333740;
+  --table-alternate-bg: #292d34; --quote-bg: #2c3039; --quote-border: #c1a138;
+  --code-bg: #1d2026; --scrollbar: #555b64; --pg-header: #1d2026;
+  --pg-surface: #292d34; --pg-border: #3d424b; --pg-muted: #b0b3bb;
+  color-scheme: dark;
+}
+html { font-family: "Pontano Sans", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif; scroll-padding-top: 84px; }
+body { font-size: 1.6rem; font-weight: 400; line-height: 1.6; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+button, input, select { font-family: inherit; }
+.page-wrapper { padding-top: var(--menu-bar-height); }
+.page { padding: 0; margin-block-start: 0; }
+#mdbook-menu-bar-hover-placeholder { display: none; }
+.content {
+  display: block; box-sizing: border-box; max-width: 832px; margin: 0 auto;
+  padding: 46px 36px 64px; overflow: visible;
+}
+.content main { min-width: 0; width: 100%; max-width: 760px; margin: 0; }
+.content main { -webkit-user-select: text; user-select: text; }
+.content h1 { font-size: 2em; font-weight: 800; line-height: 1.3; margin: 0 0 1.25em; }
+.content h2 { font-size: 1.5625em; font-weight: 700; line-height: 1.4; margin: 1.6em 0 .64em; }
+.content h3 { font-size: 1.25em; font-weight: 650; letter-spacing: -.01em; line-height: 1.5; margin: 1.6em 0 .8em; }
+.content h4 { font-weight: 600; letter-spacing: -.01em; }
+.content p, .content li { line-height: 1.6; }
+.content p { margin: 0 0 1.1em; }
+.content a { text-underline-offset: .18em; }
+.content a:focus-visible, button:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 4px; }
+.content pre { font-size: 1.35rem; line-height: 1.65; padding: 16px 20px; border: 1px solid var(--pg-border); }
+.content code { font-size: .84em; }
+.content img { display: block; max-width: 100%; height: auto; margin: 1.6em auto .65em; }
+.content a.figure-link { display: block; }
+.content .figure-caption, .content figcaption {
+  color: var(--pg-muted); font-size: 1.55rem; line-height: 1.5; margin: .4em 0 1.8em;
+}
+.content figure { margin: 1.8em 0; }
+.content .grade-demo img { width: 100%; }
+.content .video-embed { position: relative; width: 100%; aspect-ratio: 16 / 9; margin: 1.8em 0; }
+.content .video-embed iframe { position: absolute; inset: 0; display: block; width: 100%; height: 100%; border: 0; }
+.content table { display: block; overflow-x: auto; margin: 1.5em 0; font-size: 1.5rem; }
+.content th, .content td { padding: .65em .85em; text-align: left; }
+.content th { border-bottom: 2px solid var(--pg-accent); }
+.content .grade-equation { overflow-x: auto; overflow-y: hidden; margin: 1.5em 0; padding: .5em 0; }
+.content .katex { font-size: 1.05em; }
+.content .math-error { border-left: 3px solid #b42318; padding-left: 1em; }
+.content .download-grid { display: flex; flex-wrap: wrap; gap: 12px; margin: 1.8em 0; }
+.content .download {
+  flex: 1 1 175px; display: flex; flex-direction: column; padding: 15px 18px;
+  border: 1px solid var(--pg-border); background: var(--pg-surface); color: var(--fg);
+}
+.content .download.primary { border-top: 3px solid var(--pg-accent); }
+.content .download span { color: var(--pg-muted); font-size: 1.4rem; }
+.content .download:hover { border-color: var(--pg-accent); text-decoration: none; }
+.content .video-slot { padding: 22px; margin: 1.5em 0; border: 1px dashed var(--pg-border); color: var(--pg-muted); }
+.sidebar { top: var(--menu-bar-height); bottom: 0; height: calc(100% - var(--menu-bar-height)); font-size: 1.4rem; border-right: 1px solid var(--pg-border); }
+.sidebar .sidebar-scrollbox { padding: 30px 22px 40px; }
+.sidebar .chapter li { margin: .4em 0; }
+.sidebar .chapter .part-title { color: var(--fg); font-size: 1.4rem; font-weight: 600; margin-top: 1.7em; }
+.sidebar .chapter a.active { font-weight: 600; }
+.sidebar .chapter li a { padding: 2px 0; }
+.sidebar .chapter li.chapter-item { line-height: 1.45; }
+.sidebar-resize-handle { top: var(--menu-bar-height); height: calc(100% - var(--menu-bar-height)); }
+/* Match mdBook's ID selector so its light background cannot override the
+ * paired header colors. The fixed toolbar spans the viewport above both columns. */
+#mdbook-menu-bar {
+  position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; width: 100%; z-index: 100;
+  height: 60px; box-sizing: border-box; margin: 0; flex-wrap: nowrap;
+  align-items: center; border-top: 4px solid var(--pg-accent); border-bottom: 0;
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+  background-color: var(--pg-header); color: var(--pg-header-fg);
+  --icons: var(--pg-header-fg);
+}
+#mdbook-menu-bar .left-buttons, #mdbook-menu-bar .right-buttons { display: flex; flex: 0 0 auto; align-items: center; margin: 0; }
+#mdbook-menu-bar .left-buttons > .icon-button, #mdbook-menu-bar .right-buttons > a {
+  display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
+  line-height: 1; color: var(--pg-header-fg);
+}
+#mdbook-menu-bar .fa-svg { padding: 0; line-height: 1; }
+#mdbook-menu-bar .menu-title { min-width: 0; margin: 0 12px; font-size: 1.8rem; font-weight: 700; line-height: 1.3; }
+#mdbook-menu-bar .menu-title a, #mdbook-menu-bar .menu-title a:visited {
+  display: inline-flex; align-items: center; gap: 12px;
+  color: var(--pg-header-fg); text-decoration: none;
+}
+#mdbook-menu-bar .brand-icon { width: 32px; height: 32px; flex: 0 0 32px; }
+.menu-bar .theme-popup { color: var(--fg); }
+.menu-bar .theme-popup .grade-auto {
+  display: block; width: 100%; padding: 3px 15px; color: var(--fg);
+  background: transparent; border: 0; text-align: left; cursor: pointer;
+}
+.menu-bar .theme-popup .grade-auto:hover { background: var(--theme-hover); }
+.book-footer a { margin-left: 14px; }
+.book-footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--pg-border); color: var(--pg-muted); font-size: 1.4rem; }
+@media (max-width: 1199px) {
+  .content { display: block; max-width: 820px; padding: 40px 32px 56px; }
+}
+@media (max-width: 767px) {
+  .content { padding: 28px 22px 40px; }
+  #mdbook-menu-bar { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  #mdbook-menu-bar .left-buttons > .icon-button, #mdbook-menu-bar .right-buttons > a { width: 36px; }
+  #mdbook-menu-bar .menu-title { margin: 0 4px; font-size: 1.4rem; }
+  #mdbook-menu-bar .menu-title a { gap: 6px; }
+  #mdbook-menu-bar .brand-icon { width: 24px; height: 24px; flex-basis: 24px; }
+  #mdbook-menu-bar .right-buttons a[title="Print this book"] { display: none; }
+}
+/* ACES scales text at the same wide-screen breakpoints. mdBook uses a
+ * 10px rem baseline, so these roots are half the Material theme roots. */
+@media screen and (min-width: 100em) { html { font-size: 68.75%; } }
+@media screen and (min-width: 125em) { html { font-size: 75%; } }
+@media print {
+  .content .video-embed { display: none; }
+  .content { display: block; max-width: none; padding: 0; }
+  .page-wrapper { padding-top: 0; }
+  .menu-bar, .book-footer a { margin-left: 14px; }
+.book-footer { display: none !important; }
+}
+
+.language-picker { position: relative; color: var(--pg-header-fg); }
+.language-picker summary { display: grid; place-items: center; width: 44px; height: 44px; cursor: pointer; list-style: none; }
+.language-picker summary::-webkit-details-marker { display: none; }
+.language-picker summary:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: -3px; }
+.language-options { position: absolute; right: 0; top: 100%; min-width: 160px; padding: 8px 0; background: var(--theme-popup-bg); color: var(--fg); border: 1px solid var(--pg-border); border-radius: 3px; box-shadow: 0 6px 20px #0002; }
+.language-options a { display: block; padding: 7px 18px; color: var(--fg); text-decoration: none; white-space: nowrap; }
+.language-options a:hover, .language-options a:focus-visible { background: var(--theme-hover); }
+.language-options a[aria-current] { font-weight: 700; border-left: 3px solid var(--pg-accent); padding-left: 15px; }
+#mdbook-menu-bar .menu-title a { max-width: 100%; }
+#mdbook-menu-bar .menu-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 767px) { .language-picker summary { width: 36px; } }
+@media (max-width: 359px) {
+  #mdbook-menu-bar .left-buttons > .icon-button, #mdbook-menu-bar .right-buttons > a, .language-picker summary { width: 30px; }
+  #mdbook-menu-bar .menu-title { font-size: 1.2rem; }
+}

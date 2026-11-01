@@ -1,0 +1,72 @@
+name: perceptual-grade-re
+
+x-runtime: &runtime
+  image: ${NATIVE_WORKER_IMAGE:?Run ./remote_execution/re up to build and fingerprint the image}
+  pull_policy: never
+  platform: linux/amd64
+  restart: unless-stopped
+  init: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  ulimits:
+    nofile:
+      soft: 131072
+      hard: 131072
+  logging:
+    driver: local
+    options:
+      max-size: 20m
+      max-file: "5"
+
+services:
+  control:
+    <<: *runtime
+    command: [/etc/nativelink/control.json5]
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      NL_LOG: json
+      NATIVE_CAS_MAX_BYTES: ${NATIVE_CAS_MAX_BYTES:-128849018880}
+      NATIVE_AC_MAX_BYTES: ${NATIVE_AC_MAX_BYTES:-1073741824}
+    volumes:
+      - control-data:/data/control
+    networks:
+      re:
+        aliases: [perceptual-grade-nativelink]
+    healthcheck:
+      # Readiness must not require the worker that waits on this service.
+      test: [CMD, curl, --fail, --silent, --max-time, "5", http://127.0.0.1:50052/status]
+      interval: 5s
+      timeout: 6s
+      start_period: 20s
+      retries: 12
+
+  worker:
+    <<: *runtime
+    command: [/etc/nativelink/worker.json5]
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      NL_LOG: json
+      NATIVE_WORKER_IMAGE: ${NATIVE_WORKER_IMAGE:?Set NATIVE_WORKER_IMAGE to the built Docker image ID}
+      NATIVE_WORKER_CACHE_MAX_BYTES: ${NATIVE_WORKER_CACHE_MAX_BYTES:-34359738368}
+    volumes:
+      - worker-data:/data/worker
+    stop_grace_period: 10m
+    networks: [re]
+    depends_on:
+      control:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "5", http://127.0.0.1:50052/ready]
+      interval: 5s
+      timeout: 6s
+      start_period: 20s
+      retries: 12
+
+networks:
+  re:
+    external: true
+    name: perceptual-grade-re
+
+volumes:
+  control-data:
+  worker-data:

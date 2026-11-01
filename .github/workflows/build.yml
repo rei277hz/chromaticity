@@ -1,0 +1,76 @@
+name: Build and badges
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Linux builds and smoke suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-buck2
+      - name: Build and test in the declared runtime
+        env:
+          CI_DISPOSABLE_CHECKOUT: "1"
+          CI_CACHE_DIR: ${{ runner.temp }}/perceptual-grade-ci-cache
+        run: bash tools/ci/runtime.sh python3 tools/ci/run.py --report-dir buck-out/ci-reports
+      - name: Collect counts and render badges
+        if: always()
+        run: |
+          python3 tools/ci/report.py --report-dir buck-out/ci-reports --output-dir buck-out/ci-status
+          cat buck-out/ci-status/README.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload build and test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-reports-${{ github.run_attempt }}
+          path: buck-out/ci-reports/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload badge summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-status-${{ github.run_attempt }}
+          path: buck-out/ci-status/
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    name: Publish latest manual-run badges
+    needs: build
+    if: ${{ always() && !cancelled() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download result summary
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ci-status-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-status
+      - name: Report an incomplete run when no summary was produced
+        if: steps.download.outcome != 'success'
+        run: python3 tools/ci/report.py --report-dir "$RUNNER_TEMP/missing-ci-reports" --output-dir "$RUNNER_TEMP/ci-status"
+      - name: Update status branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/publish.py --directory "$RUNNER_TEMP/ci-status"

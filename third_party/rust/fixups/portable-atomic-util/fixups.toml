@@ -1,0 +1,3 @@
+# Derive compiler and target atomic compatibility cfg.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_NAME"]

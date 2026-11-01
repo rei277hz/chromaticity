@@ -1,0 +1,38 @@
+name: Set up pinned Buck2
+description: Install the repository's checksum-pinned Linux tools and bundled Buck prelude.
+
+inputs:
+  formatters:
+    description: Also install the pinned Buildifier and Taplo binaries.
+    required: false
+    default: "false"
+
+outputs:
+  bin-dir:
+    description: Directory containing the installed tools.
+    value: ${{ steps.install.outputs.bin-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure Zstandard is available
+      shell: bash
+      run: |
+        if ! command -v zstd >/dev/null; then
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends zstd
+        fi
+    - name: Install verified tools
+      id: install
+      shell: bash
+      env:
+        INSTALL_FORMATTERS: ${{ inputs.formatters }}
+      run: |
+        ci_bin_dir="$RUNNER_TEMP/perceptual-grade-tools/bin"
+        ci_tools=(buck2)
+        if [[ "$INSTALL_FORMATTERS" == true ]]; then
+          ci_tools+=(buildifier taplo)
+        fi
+        python3 tools/ci/install_tools.py --bin-dir "$ci_bin_dir" "${ci_tools[@]}"
+        echo "$ci_bin_dir" >> "$GITHUB_PATH"
+        echo "bin-dir=$ci_bin_dir" >> "$GITHUB_OUTPUT"

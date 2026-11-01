@@ -1,0 +1,12 @@
+{
+  "build": [
+    "//:perceptual_grade",
+    "//:perceptual_grade_next",
+    "//:hdr_color_picker",
+    "//:dctl",
+    "//:hdr_color_picker_web",
+    "//:verify",
+    "//:verify_next"
+  ],
+  "test": ["//..."]
+}

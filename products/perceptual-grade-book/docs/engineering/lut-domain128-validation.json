@@ -1,0 +1,56 @@
+{
+  "math_checks": 202,
+  "full_distributions": 340200,
+  "smoke_distributions": 6720,
+  "refinement_distributions": 71400,
+  "confirmation_distributions": 8400,
+  "fresh_repeat": {
+    "all_metrics_and_heldout_equal": true,
+    "all_axes_equal": true,
+    "all_float32_vertex_hashes_equal": true,
+    "candidates": [
+      "AP1_ACES_neg0_pos128_n0_logpower0.003_p0.9",
+      "Rec2020_D65_neg2_pos64_n20_log1p0.003"
+    ]
+  },
+  "cache_repair": [
+    {
+      "grid": "Rec2020_D65_neg4_pos128_n8_asinh0.003",
+      "tag": "forward",
+      "vertex_sha256": "64a3c2c9b628cd9dfc3c2339ad2a4c93c48a8cbc26060effc11a86c778015455"
+    },
+    {
+      "grid": "Rec2020_D65_neg4_pos128_n12_log1p0.003",
+      "tag": "forward_stack",
+      "vertex_sha256": "ca271d25728aa79e314210232ffd714f61ecfcbc5317046bae5847c4b4b665cc"
+    },
+    {
+      "grid": "AP1_D65_neg2_pos128_n4_asinh0.003",
+      "tag": "forward",
+      "vertex_sha256": "74a04623adb0a2bf2742a77d6bb1d8c0984e7eecc900e6fcc02577c36382efea"
+    },
+    {
+      "grid": "AP1_D65_neg4_pos128_n8_asinh0.003",
+      "tag": "inverse",
+      "vertex_sha256": "def562934f77de4ec438f4b2d16ae4beaa1c271f0165eb49dbfba3c015dea522"
+    },
+    {
+      "grid": "AP1_ACES_neg0_pos128_n0_log1p0.0001",
+      "tag": "forward_stack",
+      "vertex_sha256": "65e353e1d8483ac4e466f24830699ba9a643a9dc2f9a154f9c221828b695ec9f"
+    }
+  ],
+  "sparse_action_inputs": 32,
+  "declared_outputs": 11,
+  "concurrent_aces_render_arrays_identical": 32,
+  "native_buck2": false,
+  "native_buck2_reason": "No /proc/self/exe in authoring sandbox",
+  "production_changed": false,
+  "handbook_chapters_per_language": 29,
+  "handbook_links_and_resources": 3761,
+  "katex_equation_occurrences": 2216,
+  "english_source_text_files": 335,
+  "python_source_parses": 213,
+  "authored_source_files": 528,
+  "generator_output_contracts": 27
+}

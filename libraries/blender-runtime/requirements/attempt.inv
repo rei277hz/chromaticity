@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "description": "Current production attempt policy. Native receipts and scalar registry identities remain adapter assumptions. Inductive state closure and relational properties are checked from this exact source.",
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {
+    "state_domain": "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)"
+  },
+  "contracts": {
+    "new": {
+      "requires": [
+        "identity > 0",
+        "generation >= 0",
+        "interests > 0"
+      ]
+    },
+    "step": {
+      "requires": [
+        "event_valid(state, event)"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "foreign_attempt_ignored",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)",
+        "event_valid(state, event)",
+        "event.identity != state.identity or event.generation != state.generation"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[0] == state and not after[1].accepted"
+    },
+    {
+      "name": "cancellation_retains_occupancy",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)",
+        "event_valid(state, event)",
+        "state.phase == 1 and state.interests == 1 and event.kind == 'detach' and event.identity == state.identity and event.generation == state.generation"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[1].accepted and occupied(after[0]) and after[0].phase == 2 and after[0].interests == 0"
+    },
+    {
+      "name": "retirement_is_explicit",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((occupied(state) and not occupied(after[0]))) or (event.kind == 'retire' and after[1].accepted)"
+    },
+    {
+      "name": "retired_attempt_is_absorbing",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)",
+        "event_valid(state, event)",
+        "state.phase == 3"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[0] == state and not after[1].accepted"
+    },
+    {
+      "name": "start_requires_current_interest",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)",
+        "event_valid(state, event)",
+        "event.kind == 'start'"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].accepted or (state.phase == 0 and state.interests > 0 and event.identity == state.identity and event.generation == state.generation)"
+    },
+    {
+      "name": "rejected_attempt_preserves_state",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((not after[1].accepted)) or (after[0] == state)"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "start_admitted",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "event.kind == 'start' and after[1].accepted"
+    },
+    {
+      "name": "cancellation_is_still_occupied",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.identity > 0 and state.generation >= 0 and state.interests >= 0 and 0 <= state.phase <= 3 and (state.phase != 0 or state.interests > 0) and (state.phase != 1 or state.interests > 0) and (state.phase != 2 or state.interests == 0) and (state.phase != 3 or state.interests == 0)",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "event.kind == 'detach' and after[0].phase == 2 and occupied(after[0])"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "detach_releases_running_attempt",
+      "function": "apply_detach",
+      "target": "(3 if state.phase == 0 else 2)",
+      "replacement": "3",
+      "detects": [
+        "property.cancellation_retains_occupancy"
+      ]
+    }
+  ]
+}

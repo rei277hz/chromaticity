@@ -1,0 +1,2 @@
+# Select compiler-supported SIMD parsing implementations.
+buildscript.run = true

@@ -1,0 +1,2 @@
+# Probe the declared rustc for numeric APIs.
+buildscript.run = true

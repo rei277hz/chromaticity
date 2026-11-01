@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "npm": [
+    {
+      "path": "node_modules/@esbuild/linux-x64",
+      "version": "0.25.12",
+      "url": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.25.12.tgz",
+      "sha256": "f7efc127658a108dcda9d4210b01804ee8f5d6b3acbd6d63f20aa51d3b50bd5f",
+      "integrity": "sha512-uqZMTLr/zR/ed4jIGnwSLkaHmPjOjJvnm6TVVitAa08SLS9Z0VM8wIRx7gWbJB5/J54YuIMInDquWyYvQLZkgw==",
+      "target": "npm__esbuild_linux_x64"
+    },
+    {
+      "path": "node_modules/@napi-rs/lzma-linux-x64-gnu",
+      "version": "1.5.1",
+      "url": "https://registry.npmjs.org/@napi-rs/lzma-linux-x64-gnu/-/lzma-linux-x64-gnu-1.5.1.tgz",
+      "sha256": "e69ca2a96510be330953f5b04b1d74617e7ce5d4487db4876c4b02b8364ef7e7",
+      "integrity": "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==",
+      "target": "npm__napi_rs_lzma_linux_x64_gnu"
+    },
+    {
+      "path": "node_modules/@rollup/rollup-linux-x64-gnu",
+      "version": "4.63.1",
+      "url": "https://registry.npmjs.org/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.63.1.tgz",
+      "sha256": "283f7ac6dc628d2c8693cd78ad438c21a4230f8f39c37df85ddceb704fea28eb",
+      "integrity": "sha512-gfI5T24WLLuFfSKw7Go/zDXjAAV0fny0swTaDv+WjK7vqcw4cRhFfdsyKL1n+ukI+ooBxn3bVQnyrn06WpI50w==",
+      "target": "npm__rollup_rollup_linux_x64_gnu"
+    },
+    {
+      "path": "node_modules/@types/estree",
+      "version": "1.0.9",
+      "url": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
+      "sha256": "ec8f3c0dfb21497db5a3480c45a6cf6f9b18d3b337b2ea4d03e3ef2a9c2bb358",
+      "integrity": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==",
+      "target": "npm__types_estree"
+    },
+    {
+      "path": "node_modules/esbuild",
+      "version": "0.25.12",
+      "url": "https://registry.npmjs.org/esbuild/-/esbuild-0.25.12.tgz",
+      "sha256": "227584145829e5c4782734b3fb7b91b49c6aa12876d6cf070e6a3d9d4de543f9",
+      "integrity": "sha512-bbPBYYrtZbkt6Os6FiTLCTFxvq4tt3JKall1vRwshA3fdVztsLAatFaZobhkBC8/BrPetoa0oksYoKXoG4ryJg==",
+      "target": "npm_esbuild"
+    },
+    {
+      "path": "node_modules/fdir",
+      "version": "6.5.0",
+      "url": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+      "sha256": "241ddcd9f31e2a1fca405326017dbb8333ce174198e887f0f96387c29f0d365e",
+      "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
+      "target": "npm_fdir"
+    },
+    {
+      "path": "node_modules/fflate",
+      "version": "0.8.3",
+      "url": "https://registry.npmjs.org/fflate/-/fflate-0.8.3.tgz",
+      "sha256": "38c2cd824402407b43153c782274aec2ea83ea688e4aa0b743c5f2c305857d92",
+      "integrity": "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==",
+      "target": "npm_fflate"
+    },
+    {
+      "path": "node_modules/libheif-js",
+      "version": "1.23.2",
+      "url": "https://registry.npmjs.org/libheif-js/-/libheif-js-1.23.2.tgz",
+      "sha256": "728cf3795a94b18039ac07c6d38c089b72f1eeae12c37bc9f18b0925fc709daa",
+      "integrity": "sha512-qvHIXtggEsw1lCNCWBYKloL2Z36DJBm0R9ThGiH2JnhKYdeZFLPFkP30Lw4yMskxxhx0bKg1gLrBHX1D2w2pSw==",
+      "target": "npm_libheif_js"
+    },
+    {
+      "path": "node_modules/nanoid",
+      "version": "3.3.18",
+      "url": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz",
+      "sha256": "b9dc81cb403ea2510314dd2d1ad8d71934f325db90c1b43805e781b87e3fb009",
+      "integrity": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
+      "target": "npm_nanoid"
+    },
+    {
+      "path": "node_modules/picocolors",
+      "version": "1.1.1",
+      "url": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+      "sha256": "d3aedb2807967b7eb37fd11b03b7e3701e725af79c650d0812ff7213f8f882d9",
+      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
+      "target": "npm_picocolors"
+    },
+    {
+      "path": "node_modules/picomatch",
+      "version": "4.0.7",
+      "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+      "sha256": "697b463be3cdbd9ffc8f4194fd5019a69ddf95875fb703d78b2b115cc9e740a8",
+      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+      "target": "npm_picomatch"
+    },
+    {
+      "path": "node_modules/playwright-core",
+      "version": "1.63.0",
+      "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.63.0.tgz",
+      "sha256": "208593d4e1bcd8f8fe5f869cad1cc332dc7f1d70dc1d58c102dc3ac36e30f26c",
+      "integrity": "sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==",
+      "target": "npm_playwright_core"
+    },
+    {
+      "path": "node_modules/postcss",
+      "version": "8.5.26",
+      "url": "https://registry.npmjs.org/postcss/-/postcss-8.5.26.tgz",
+      "sha256": "9ea29f58a51822c17bc7eb198d4f0fb2cd66fa02feb193efb6ece17ce011a882",
+      "integrity": "sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==",
+      "target": "npm_postcss"
+    },
+    {
+      "path": "node_modules/rollup",
+      "version": "4.63.1",
+      "url": "https://registry.npmjs.org/rollup/-/rollup-4.63.1.tgz",
+      "sha256": "88b9180834f6d0472f49d379e13cb8d5d909eab28a34a4c766ec1676502e8f78",
+      "integrity": "sha512-3Df9jsstwhccuEfmAMi9l8XUh/GOkVObmFTU7CCVBysEbcOZLl84jCtaAZMcPiMz2EGKsATzQcU+Xr3n/wU6cg==",
+      "target": "npm_rollup"
+    },
+    {
+      "path": "node_modules/source-map-js",
+      "version": "1.2.1",
+      "url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+      "sha256": "f126a6f9fca487a43219d8cb8c3a955279187a966119d548eb5cd47e999d4853",
+      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
+      "target": "npm_source_map_js"
+    },
+    {
+      "path": "node_modules/tinyglobby",
+      "version": "0.2.17",
+      "url": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+      "sha256": "afb4afae9175f8b873ac13e1d21cea0997a0bcb40c3598613a834490058cb562",
+      "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
+      "target": "npm_tinyglobby"
+    },
+    {
+      "path": "node_modules/typescript",
+      "version": "5.9.3",
+      "url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "sha256": "10e108c9cf7d5f2879053dff18515fb405abf2ccef63eaaf017d9c571687a1d3",
+      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "target": "npm_typescript"
+    },
+    {
+      "path": "node_modules/vite",
+      "version": "6.4.3",
+      "url": "https://registry.npmjs.org/vite/-/vite-6.4.3.tgz",
+      "sha256": "e498f166131407cd8ab819dfbc656c62d514b4e5e62f6f639efcef1614beb809",
+      "integrity": "sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==",
+      "target": "npm_vite"
+    }
+  ],
+  "tools": {
+    "node": {
+      "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz",
+      "sha256": "d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997",
+      "filename": "node-v26.13.0-linux-x64.tar.xz",
+      "target": "node_archive"
+    },
+    "chromium": {
+      "url": "https://cdn.playwright.dev/builds/cft/153.0.8010.12/linux64/chrome-linux64.zip",
+      "sha256": "8aac35011c18f6e2d10696154af89a5728ac2ddd6dc6fad24ffdf243c3fcfd5a",
+      "filename": "chrome-linux64.zip",
+      "target": "chromium_archive"
+    },
+    "opencolorio": {
+      "url": "https://files.pythonhosted.org/packages/54/9c/b09c1c07e5f8fa83afc6d81cd98b99cba789b26d97181b17236a34decfdb/opencolorio-2.5.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "sha256": "42d86e6a737004ddaf7a9e995245643d87396ea13f2c41d4c65c30f7b29eb9d1",
+      "filename": "opencolorio-2.5.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "target": "opencolorio_archive"
+    }
+  },
+  "lock_sha256": {
+    "npm": "52cfcf9906eb642907af1783fa7ceeb62ad89ad3b1886292d27b6fe76b8c064d"
+  }
+}

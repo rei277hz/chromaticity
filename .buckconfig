@@ -1,0 +1,39 @@
+[cells]
+  root = .
+  prelude = prelude
+  toolchains = toolchains
+  none = none
+
+[cell_aliases]
+  config = prelude
+  ovr_config = prelude
+  fbcode = none
+  fbsource = none
+
+[external_cells]
+  prelude = bundled
+
+[parser]
+  target_platform_detector_spec = target:root//...->prelude//platforms:default target:prelude//...->prelude//platforms:default target:toolchains//...->prelude//platforms:default
+
+[project]
+  ignore = .git, buck-out, __pycache__, remote_execution/.state, third_party/rust/.cargo
+
+# BEGIN NativeLink settings (managed by remote_execution/re)
+[build]
+  execution_platforms = root//remote_execution:platforms
+
+[buck2]
+  digest_algorithms = SHA256
+
+[buck2_re_client]
+  engine_address = perceptual-grade-nativelink:50051
+  action_cache_address = perceptual-grade-nativelink:50051
+  cas_address = perceptual-grade-nativelink:50051
+  tls = false
+  instance_name = main
+
+[remote_execution]
+  enabled = true
+  worker_image = sha256:2c0180f95923d81012e70ad19f0cde306eb0708e3b3b1e259b50bf69956c3cc7
+# END NativeLink settings

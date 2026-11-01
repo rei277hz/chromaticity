@@ -1,0 +1,2 @@
+# MDBOOK_VERSION is part of the preprocessor protocol.
+cargo_env = ["CARGO_PKG_VERSION"]

@@ -1,0 +1,26 @@
+python_test(
+    name = "book",
+    srcs = ["test_book.py"],
+    base_module = "tests.perceptual_grade_book",
+    labels = ["docs"],
+    resources = {
+        "docs": "//products/perceptual-grade-book:docs",
+        "snapshot": "//products/perceptual-grade-book:snapshot",
+        "import-manifest.json": "//products/perceptual-grade-book:import_manifest",
+        "tool-pins.bzl": "//products/perceptual-grade-book:tool_pins",
+        "rust-versions.json": "//third_party/rust/tools:versions",
+        "site": "//products/perceptual-grade-book:site[html]",
+        "site-manifest.json": "//products/perceptual-grade-book:site[manifest]",
+        "site.zip": "//products/perceptual-grade-book:archive[zip]",
+        "SHA256.json": "//products/perceptual-grade-book:archive[checksums]",
+    },
+    deps = ["//products/perceptual-grade-book:build_support"],
+)
+
+python_test(
+    name = "publish",
+    srcs = ["test_publish.py"],
+    base_module = "tests.perceptual_grade_book_publish",
+    labels = ["docs"],
+    deps = ["//products/perceptual-grade-book:build_support"],
+)

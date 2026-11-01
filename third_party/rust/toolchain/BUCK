@@ -1,0 +1,9 @@
+load(":pins.bzl", "ARCHIVES", "RUST_DIST")
+
+[http_file(
+    name = name,
+    out = archive,
+    sha256 = checksum,
+    urls = [RUST_DIST + archive],
+    visibility = ["PUBLIC"],
+) for name, (archive, checksum) in ARCHIVES.items()]

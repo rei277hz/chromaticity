@@ -1,0 +1,2234 @@
+{
+  "blender": "5.2.2 LTS",
+  "buck2_declaration_audit": "passed; source omission, input collection and generator output contracts",
+  "buck2_declared_input_smoke": {
+    "inputs": 30,
+    "result": "passed through tools.build.action with all nine declared outputs; checker passed 750 distributions",
+    "scope": "Exact sparse input tree and generated catalogs; still not native Buck2 execution"
+  },
+  "buck2_execution_blocker": "Error finding daemon executable: no /proc/self/exe available",
+  "current_source_confirmation": {
+    "checks": [
+      {
+        "float32_vertex_hashes": "exact match",
+        "name": "Rec2020_neg4_n16_asinh0.001",
+        "per_case_metrics": "exact match",
+        "phase": "screen",
+        "solver_diagnostics": "exact match"
+      },
+      {
+        "float32_vertex_hashes": "exact match",
+        "name": "Rec2020_neg2_n20_log1p0.003",
+        "per_case_metrics": "exact match",
+        "phase": "screen",
+        "solver_diagnostics": "exact match"
+      },
+      {
+        "float32_vertex_hashes": "exact match",
+        "name": "Rec2020_neg4_n16_asinh0.001",
+        "per_case_metrics": "exact match",
+        "phase": "full",
+        "solver_diagnostics": "exact match"
+      },
+      {
+        "float32_vertex_hashes": "exact match",
+        "name": "Rec2020_neg2_n20_log1p0.003",
+        "per_case_metrics": "exact match",
+        "phase": "full",
+        "solver_diagnostics": "exact match"
+      }
+    ],
+    "current_results_manifest_sha256": "361ed92b7f46ccf17c61828bfe8dd689182f255c348b251c83892fa5a66ed3a9",
+    "invocation": "authoring-preview",
+    "scope": "Fresh current-source selected/baseline runs reproduce every per-case metric, axis, float32 vertex hash and solver diagnostic in the combined comparison. Timings are excluded."
+  },
+  "date": "2026-10-06",
+  "execution": "authoring-preview; no native Buck2 build/test execution",
+  "experiment_distributions_checked": {
+    "confirmation": 6000,
+    "full_comparison": 141000,
+    "smoke": 750
+  },
+  "fixtures": [
+    {
+      "exit_code": 0,
+      "result": {
+        "checks": [
+          "Projection reduces C with bounded H rise",
+          "Projection remains on the same hue ray",
+          "Projected targets satisfy the real H-K domain",
+          "Original reference preserves zero adjustments",
+          "Interior and negative-H targets are retained",
+          "Signed shaper inverse includes zero and HDR",
+          "Rec.2020 grid covers \u22122\u202664 with the selected allocation",
+          "Signed log1p input shaper has matching first derivatives at black",
+          "Both nested grids retain exact zero and bounds",
+          "Identity survives basis conversion, float32 atlas and extrapolation",
+          "Linear RGB affine transforms reproduce within float64 roundoff",
+          "Constant RGB survives signed and HDR extrapolation",
+          "Stored negative and HDR outputs remain linear",
+          "Six physical-RGB tetrahedra match independent barycentric solve",
+          "RGBA atlas stores B-fast 65-cube and opaque padding",
+          "Baked vertices match the analytic path",
+          "Height and fit edits reuse forward coordinates",
+          "Cached rebuild uses new adaptance adaptation and fit",
+          "Tone changes invalidate cached coordinates"
+        ],
+        "error_note": "Interpolation approximation measured for one explicit ACEScg grade and seeded HDR samples; not a universal accuracy bound.",
+        "example_grade_error": {
+          "maximum": 0.05840999749790191,
+          "p50": 0.0028571333619698074,
+          "p99": 0.02153253876735454
+        },
+        "timings": {
+          "cached_edit_seconds": 0.4192623619983351,
+          "cold_seconds": 1.2937648110000737
+        },
+        "vertex_relative_error": 5.925479995792153e-08
+      },
+      "script": "test_cube_math"
+    },
+    {
+      "exit_code": 0,
+      "result": {
+        "rows": [
+          {
+            "dtype": "float32",
+            "max_relative_error": 1.1877691685129569e-05,
+            "p99_relative_error": 3.645856767513696e-06,
+            "samples": 16295,
+            "size": 65,
+            "table": "identity"
+          },
+          {
+            "dtype": "float64",
+            "max_relative_error": 2.375673969662987e-14,
+            "p99_relative_error": 1.2349087338989988e-14,
+            "samples": 16295,
+            "size": 65,
+            "table": "identity"
+          },
+          {
+            "dtype": "float32",
+            "max_relative_error": 6.955928843334576e-05,
+            "p99_relative_error": 3.2504445097654135e-06,
+            "samples": 16295,
+            "size": 65,
+            "table": "strong"
+          },
+          {
+            "dtype": "float64",
+            "max_relative_error": 2.499225029236366e-13,
+            "p99_relative_error": 7.67451051564717e-15,
+            "samples": 16295,
+            "size": 65,
+            "table": "strong"
+          },
+          {
+            "dtype": "float32",
+            "max_relative_error": 7.544219280385896e-06,
+            "p99_relative_error": 2.1380733818630383e-06,
+            "samples": 16295,
+            "size": 33,
+            "table": "identity"
+          },
+          {
+            "dtype": "float64",
+            "max_relative_error": 1.4211615483320325e-14,
+            "p99_relative_error": 8.102501916723323e-15,
+            "samples": 16295,
+            "size": 33,
+            "table": "identity"
+          },
+          {
+            "dtype": "float32",
+            "max_relative_error": 6.337715698231139e-05,
+            "p99_relative_error": 2.088731596954392e-06,
+            "samples": 16295,
+            "size": 33,
+            "table": "strong"
+          },
+          {
+            "dtype": "float64",
+            "max_relative_error": 1.3865551543974097e-13,
+            "p99_relative_error": 5.434528007225613e-15,
+            "samples": 16295,
+            "size": 33,
+            "table": "strong"
+          }
+        ],
+        "scope": "CPU evaluation of emitted graph expressions; texture/GPU tests are separate"
+      },
+      "script": "test_cube_native"
+    },
+    {
+      "exit_code": 0,
+      "result": {
+        "checks": [
+          "Preview is exactly every second final vertex",
+          "Two disjoint pools cover the final grid once",
+          "False: preview evaluates only 33\u00b3 points",
+          "False: preview has separate identity and compact atlas",
+          "False: final evaluates exactly 65\u00b3 points in total",
+          "False: shared float32 vertices reused bit for bit",
+          "False: refinement equals an independent complete bake",
+          "False: progress completes at one",
+          "True: preview evaluates only 33\u00b3 points",
+          "True: preview has separate identity and compact atlas",
+          "True: final evaluates exactly 65\u00b3 points in total",
+          "True: shared float32 vertices reused bit for bit",
+          "True: refinement equals an independent complete bake",
+          "True: progress completes at one",
+          "Cancellation retains preview and stops remaining work",
+          "Inverse diagnostics count each vertex once",
+          "Inverse common vertices are not solved a second time"
+        ],
+        "final_vertices": 274625,
+        "inverse_diagnostics": {
+          "approximate": 55,
+          "max_residual": 0.002200709039368506,
+          "samples": 274625,
+          "singular_matrices": 0
+        },
+        "preview_vertices": 35937,
+        "remaining_vertices": 238688
+      },
+      "script": "test_progressive_lut"
+    },
+    {
+      "exit_code": 0,
+      "result": {
+        "blocks": [
+          {
+            "end": 3397,
+            "ev": -2,
+            "fixture": "IMG_0436",
+            "pixels": 3397,
+            "start": 0
+          },
+          {
+            "end": 6794,
+            "ev": 0,
+            "fixture": "IMG_0436",
+            "pixels": 3397,
+            "start": 3397
+          },
+          {
+            "end": 10191,
+            "ev": 2,
+            "fixture": "IMG_0436",
+            "pixels": 3397,
+            "start": 6794
+          },
+          {
+            "end": 13588,
+            "ev": -2,
+            "fixture": "IMG_0441",
+            "pixels": 3397,
+            "start": 10191
+          },
+          {
+            "end": 16985,
+            "ev": 0,
+            "fixture": "IMG_0441",
+            "pixels": 3397,
+            "start": 13588
+          },
+          {
+            "end": 20382,
+            "ev": 2,
+            "fixture": "IMG_0441",
+            "pixels": 3397,
+            "start": 16985
+          },
+          {
+            "end": 23779,
+            "ev": -2,
+            "fixture": "IMG_0446",
+            "pixels": 3397,
+            "start": 20382
+          },
+          {
+            "end": 27176,
+            "ev": 0,
+            "fixture": "IMG_0446",
+            "pixels": 3397,
+            "start": 23779
+          },
+          {
+            "end": 30573,
+            "ev": 2,
+            "fixture": "IMG_0446",
+            "pixels": 3397,
+            "start": 27176
+          },
+          {
+            "end": 33970,
+            "ev": -2,
+            "fixture": "IMG_0472",
+            "pixels": 3397,
+            "start": 30573
+          },
+          {
+            "end": 37367,
+            "ev": 0,
+            "fixture": "IMG_0472",
+            "pixels": 3397,
+            "start": 33970
+          },
+          {
+            "end": 40764,
+            "ev": 2,
+            "fixture": "IMG_0472",
+            "pixels": 3397,
+            "start": 37367
+          },
+          {
+            "end": 45492,
+            "ev": -2,
+            "fixture": "IMG_0221_PQ",
+            "pixels": 4728,
+            "start": 40764
+          },
+          {
+            "end": 50220,
+            "ev": 0,
+            "fixture": "IMG_0221_PQ",
+            "pixels": 4728,
+            "start": 45492
+          },
+          {
+            "end": 54948,
+            "ev": 2,
+            "fixture": "IMG_0221_PQ",
+            "pixels": 4728,
+            "start": 50220
+          }
+        ],
+        "notes": "Frozen independent spatial samples exclude screening pixels; five fixtures at -2, 0, +2 EV. Reviewed prototype: PiecewiseAsinh(.003,.25), linear RGB fractions/output. Percentiles come from pre-integration LUT study. Relative RGB = max-channel absolute error / max(0.01, max-channel absolute analytic RGB).",
+        "rows": [
+          {
+            "current_rgb": {
+              "max": 0.157477888378454,
+              "median": 0.001802965348458867,
+              "p95": 0.011286928047321353,
+              "p99": 0.023127228818765392
+            },
+            "grade": "mid_chroma",
+            "previous_rgb": {
+              "max": 0.35290823426139056,
+              "median": 0.010749015415642351,
+              "p95": 0.09398575762782066,
+              "p99": 0.16767346636619557
+            },
+            "prototype_max_error": 2.0884233475400105e-15,
+            "samples": 54948,
+            "seconds": 3.9227059419990837
+          },
+          {
+            "current_rgb": {
+              "max": 0.1277122854043617,
+              "median": 0.0011138872236196337,
+              "p95": 0.010653539869649708,
+              "p99": 0.02308517605161639
+            },
+            "grade": "practical",
+            "previous_rgb": {
+              "max": 0.1424222922257246,
+              "median": 0.006820935650530631,
+              "p95": 0.03617395126122149,
+              "p99": 0.06953727451018916
+            },
+            "prototype_max_error": 2.3602400153870722e-15,
+            "samples": 54948,
+            "seconds": 3.7547840870010987
+          },
+          {
+            "current_rgb": {
+              "max": 0.6740374795282621,
+              "median": 0.005863826766928721,
+              "p95": 0.04318792083875665,
+              "p99": 0.12502901834559096
+            },
+            "grade": "chroma_4x",
+            "previous_rgb": {
+              "max": 0.8322715597526624,
+              "median": 0.01904788615872849,
+              "p95": 0.28640232053638115,
+              "p99": 0.5898434885113496
+            },
+            "prototype_max_error": 5.9196236536962e-15,
+            "samples": 54948,
+            "seconds": 3.248265870999603
+          },
+          {
+            "current_rgb": {
+              "max": 1.7002898879183184,
+              "median": 0.009380484500193796,
+              "p95": 0.09279151193924566,
+              "p99": 0.25023297086511137
+            },
+            "grade": "chroma_8x",
+            "previous_rgb": {
+              "max": 1.361461664631924,
+              "median": 0.02046917466055418,
+              "p95": 0.3660950990674007,
+              "p99": 0.5767562497429964
+            },
+            "prototype_max_error": 1.2991976545141806e-14,
+            "samples": 54948,
+            "seconds": 3.2700731940003607
+          },
+          {
+            "current_rgb": {
+              "max": 0.6732862559426587,
+              "median": 0.007053744268744175,
+              "p95": 0.059708554090559134,
+              "p99": 0.16269151057556108
+            },
+            "grade": "dark_chroma",
+            "previous_rgb": {
+              "max": 0.8322715610587426,
+              "median": 0.023178464211457757,
+              "p95": 0.3166193775527411,
+              "p99": 0.6067827268342944
+            },
+            "prototype_max_error": 5.082781445027882e-15,
+            "samples": 54948,
+            "seconds": 3.296210950000386
+          },
+          {
+            "current_rgb": {
+              "max": 0.47055461260625187,
+              "median": 0.004910294704378629,
+              "p95": 0.03211280823780254,
+              "p99": 0.07049541103489594
+            },
+            "grade": "tonal_chroma",
+            "previous_rgb": {
+              "max": 0.849703206163304,
+              "median": 0.020829225771903975,
+              "p95": 0.24624663504941127,
+              "p99": 0.6827282590589557
+            },
+            "prototype_max_error": 3.4462407585528635e-15,
+            "samples": 54948,
+            "seconds": 3.460758966000867
+          },
+          {
+            "current_rgb": {
+              "max": 1.032052456871365,
+              "median": 0.008482713253644011,
+              "p95": 0.04865700777794217,
+              "p99": 0.0890534762578582
+            },
+            "grade": "strong_adaptance",
+            "previous_rgb": {
+              "max": 0.8391539298623906,
+              "median": 0.028777964716187286,
+              "p95": 0.14671474733395648,
+              "p99": 0.2630499294859598
+            },
+            "prototype_max_error": 7.638820623528427e-15,
+            "samples": 54948,
+            "seconds": 3.341531815000053
+          },
+          {
+            "current_rgb": {
+              "max": 0.5948850415052428,
+              "median": 0.00474983960095318,
+              "p95": 0.04766998443841203,
+              "p99": 0.14893516463263326
+            },
+            "grade": "remap_color",
+            "previous_rgb": {
+              "max": 1.0846848381488445,
+              "median": 0.02171552291320327,
+              "p95": 0.31464286132576363,
+              "p99": 0.6194768522671558
+            },
+            "prototype_max_error": 8.1942200176783e-15,
+            "samples": 54948,
+            "seconds": 4.609172725999088
+          },
+          {
+            "current_rgb": {
+              "max": 0.10066014834180548,
+              "median": 0.0006678698581661059,
+              "p95": 0.006402656888770822,
+              "p99": 0.009705625362195784
+            },
+            "grade": "tone_only",
+            "previous_rgb": {
+              "max": 0.08284623048770613,
+              "median": 0.00156321146520827,
+              "p95": 0.012628166839030765,
+              "p99": 0.020027882981509607
+            },
+            "prototype_max_error": 2.1659494053076306e-15,
+            "samples": 54948,
+            "seconds": 0.9896344829994632
+          },
+          {
+            "current_rgb": {
+              "max": 0.47922718673638376,
+              "median": 0.00457871251940362,
+              "p95": 0.026346362587920613,
+              "p99": 0.0870490693409108
+            },
+            "grade": "black_remap",
+            "previous_rgb": {
+              "max": 0.9840803299997514,
+              "median": 0.019823140128144096,
+              "p95": 0.21495164507891512,
+              "p99": 0.41170750753225677
+            },
+            "prototype_max_error": 7.96922846838781e-15,
+            "samples": 54948,
+            "seconds": 4.241150189000109
+          },
+          {
+            "current_rgb": {
+              "max": 0.6740374795282621,
+              "median": 0.006608388768970033,
+              "p95": 0.04704637859084441,
+              "p99": 0.12524420059974617
+            },
+            "grade": "peak500",
+            "previous_rgb": {
+              "max": 0.8062067234038849,
+              "median": 0.02172272528509328,
+              "p95": 0.3305328817938219,
+              "p99": 0.6248043140198798
+            },
+            "prototype_max_error": 7.366211949410588e-15,
+            "samples": 54948,
+            "seconds": 3.0835935689992766
+          },
+          {
+            "current_rgb": {
+              "max": 0.6740374795282621,
+              "median": 0.006316771219612825,
+              "p95": 0.044463278413801016,
+              "p99": 0.12524420059974617
+            },
+            "grade": "peak4000",
+            "previous_rgb": {
+              "max": 0.8328071473380493,
+              "median": 0.019365774611752935,
+              "p95": 0.2868897945359785,
+              "p99": 0.585233876746945
+            },
+            "prototype_max_error": 6.5801144056335685e-15,
+            "samples": 54948,
+            "seconds": 3.1826302369991026
+          }
+        ]
+      },
+      "script": "test_lut_grid_regression"
+    },
+    {
+      "exit_code": 0,
+      "result": {
+        "blender": "5.2.2 LTS",
+        "checks": [
+          "Automatic preview starts on the responsive branch",
+          "First pending bake continues the Quintic branch",
+          "Settings and selection preserve full graph identity/topology",
+          "LUT uses four tetrahedral vertex lookups",
+          "Selected LUT path evaluates a smaller branch",
+          "Atlas identifies raw linear RGB output",
+          "Mismatched atlas encoding is rejected",
+          "Stage 1 changes retain the same cube",
+          "Revert cancels obsolete pending cube",
+          "Stale completion cannot publish over reset",
+          "Pending switch keeps current real-time preview",
+          "Incremental timer publishes the latest grade",
+          "Duplicate edits detach trees and cube images",
+          "Render 0 uses the current signature",
+          "Render 0 retains the current render preview",
+          "CPU compositor tetrahedral parity 0: 3.863877e-07",
+          "Alpha retained 0",
+          "Render 1 uses the current signature",
+          "Render 1 retains the current render preview",
+          "CPU compositor tetrahedral parity 1: 4.61947e-07",
+          "Alpha retained 1",
+          "Cycles tetrahedral parity",
+          "Packed LUT survives save/open",
+          "Saved result has the latest settings",
+          "New edit selects current responsive result while pending",
+          "A completed matching LUT publishes immediately",
+          "Following edit resumes responsive evaluation",
+          "Render cancel retains the matching LUT",
+          "Disable/re-enable restores automatic LUT preview"
+        ],
+        "limits": [
+          "CPU rendering; desktop GPU and interactive GPU PNG drawing need local verification."
+        ],
+        "max_native_sampler_relative_error": 4.6194697713050477e-07,
+        "node_counts": {
+          "full_compositor_instances": 1965,
+          "lut_reachable": 236,
+          "quintic_reachable": 1419
+        },
+        "timings": {
+          "cold_bake_seconds": 1.575004276999607
+        },
+        "version": "1.19.0"
+      },
+      "script": "blender_cube_test"
+    },
+    {
+      "exit_code": 0,
+      "result": {
+        "blender": "5.2.2 LTS",
+        "fixture_sha256": "79a57caaacb87ec590090ddcad1383964512e85a51b9eedb26087cc9b8dce176",
+        "grades": 17,
+        "limits": "CPU storage emulator, not execution on Metal or an interactive compositor. Native CPU render parity is tested separately.",
+        "method": "Native node graph with float32 arithmetic and float16 materialized image buffers; source-informed Blender 5.2 scheduling.",
+        "rows": [
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 5.837049698761496e-07,
+              "median": 1.0335342113175935e-07,
+              "p99": 4.595256301722382e-07
+            },
+            "grade": "identity",
+            "half_vs_full": {
+              "maximum": 0.000838226405903697,
+              "median": 0.00018604072101879865,
+              "p99": 0.0006640754290856421
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              0.10182590782642365,
+              0.09812749922275543,
+              0.424692839384079
+            ],
+            "worst_half": [
+              0.101806640625,
+              0.09814453125,
+              0.425048828125
+            ],
+            "worst_input": [
+              0.10182591527700424,
+              0.09812749922275543,
+              0.4246928095817566
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 2.2721463283395105e-07,
+              "median": 5.8866245639344255e-08,
+              "p99": 1.6243550932419858e-07
+            },
+            "grade": "identity",
+            "half_vs_full": {
+              "maximum": 0.0008240684983320534,
+              "median": 0.00021377680241130292,
+              "p99": 0.0006553326966241002
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.003480814630165696,
+              0.003986588213592768,
+              0.015917059034109116
+            ],
+            "worst_half": [
+              0.0034809112548828125,
+              0.003986358642578125,
+              0.01593017578125
+            ],
+            "worst_input": [
+              0.003480814630165696,
+              0.003986588679254055,
+              0.015917059034109116
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 5.839015195250169e-07,
+              "median": 1.130056392578809e-07,
+              "p99": 4.7172737632515156e-07
+            },
+            "grade": "mid_chroma",
+            "half_vs_full": {
+              "maximum": 0.001894106506370008,
+              "median": 0.00023298364249058068,
+              "p99": 0.0008300441550090909
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              -0.0035753834526985884,
+              0.04614194482564926,
+              0.048890210688114166
+            ],
+            "worst_half": [
+              -0.0035991668701171875,
+              0.046142578125,
+              0.048797607421875
+            ],
+            "worst_input": [
+              0.019584886729717255,
+              0.07024049758911133,
+              0.0719863548874855
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 3.3163701633443795e-06,
+              "median": 2.9813117426673126e-07,
+              "p99": 1.7204346843085236e-06
+            },
+            "grade": "mid_chroma",
+            "half_vs_full": {
+              "maximum": 0.0050483038648962975,
+              "median": 0.0007115536718629301,
+              "p99": 0.0027751789893954992
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              -0.00021593649580609053,
+              -6.111206312198192e-05,
+              0.0021715781185775995
+            ],
+            "worst_half": [
+              -0.00023090839385986328,
+              -5.1915645599365234e-05,
+              0.0022220611572265625
+            ],
+            "worst_input": [
+              -0.0002795298059936613,
+              -2.1972842660034075e-05,
+              0.002360294805839658
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 6.730886696650357e-07,
+              "median": 1.1672271461134974e-07,
+              "p99": 5.068855913505587e-07
+            },
+            "grade": "practical",
+            "half_vs_full": {
+              "maximum": 0.0013487559044733644,
+              "median": 0.00024851749185472727,
+              "p99": 0.0008895796490833163
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              0.41866594552993774,
+              0.4047505557537079,
+              0.5124098658561707
+            ],
+            "worst_half": [
+              0.418701171875,
+              0.40478515625,
+              0.51171875
+            ],
+            "worst_input": [
+              0.4524887800216675,
+              0.4434923231601715,
+              0.5297987461090088
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 3.017876769285478e-06,
+              "median": 4.188756251339525e-07,
+              "p99": 1.7164780877234547e-06
+            },
+            "grade": "practical",
+            "half_vs_full": {
+              "maximum": 0.0067784953862428665,
+              "median": 0.0007963755051605403,
+              "p99": 0.003027613740414381
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.010231709107756615,
+              -0.000891929492354393,
+              -0.0001355453277938068
+            ],
+            "worst_half": [
+              0.010162353515625,
+              -0.0008935928344726562,
+              -0.0001385211944580078
+            ],
+            "worst_input": [
+              0.020798210054636,
+              0.0022861610632389784,
+              0.0005997665575705469
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.8374070249433768e-06,
+              "median": 1.4221008988591624e-07,
+              "p99": 8.708480311024119e-07
+            },
+            "grade": "chroma_4x",
+            "half_vs_full": {
+              "maximum": 0.0023988811299204826,
+              "median": 0.00023422762751579285,
+              "p99": 0.0012795614311471581
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              -0.019637668505311012,
+              0.02085990272462368,
+              0.02753186598420143
+            ],
+            "worst_half": [
+              -0.0196380615234375,
+              0.0208740234375,
+              0.0274658203125
+            ],
+            "worst_input": [
+              0.019584886729717255,
+              0.07024049758911133,
+              0.0719863548874855
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 6.758783332754343e-06,
+              "median": 3.9619303816107836e-07,
+              "p99": 2.971860618782319e-06
+            },
+            "grade": "chroma_4x",
+            "half_vs_full": {
+              "maximum": 0.004135058261454105,
+              "median": 0.0007077977061271667,
+              "p99": 0.0026177922263741493
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              -0.11842826008796692,
+              0.263104110956192,
+              0.37459585070610046
+            ],
+            "worst_half": [
+              -0.11846923828125,
+              0.2626953125,
+              0.373046875
+            ],
+            "worst_input": [
+              0.29341059923171997,
+              0.4748621881008148,
+              0.5049452781677246
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 3.7868855611581344e-06,
+              "median": 1.54377783482096e-07,
+              "p99": 1.3759376260521884e-06
+            },
+            "grade": "chroma_8x",
+            "half_vs_full": {
+              "maximum": 0.0038960278034210205,
+              "median": 0.0002430751919746399,
+              "p99": 0.0019311954965814948
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              0.6314408183097839,
+              0.15650704503059387,
+              -0.6395979523658752
+            ],
+            "worst_half": [
+              0.63134765625,
+              0.1561279296875,
+              -0.64208984375
+            ],
+            "worst_input": [
+              1.0410183668136597,
+              0.9037038683891296,
+              0.5516033172607422
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.0661756918310222e-05,
+              "median": 4.193252652974757e-07,
+              "p99": 4.17866512258192e-06
+            },
+            "grade": "chroma_8x",
+            "half_vs_full": {
+              "maximum": 0.004460935015231371,
+              "median": 0.0007288819761015475,
+              "p99": 0.0027660909108817577
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              -1.1935309171676636,
+              1.1714141368865967,
+              2.309128999710083
+            ],
+            "worst_half": [
+              -1.1923828125,
+              1.171875,
+              2.298828125
+            ],
+            "worst_input": [
+              1.1736423969268799,
+              1.8994487524032593,
+              2.0197811126708984
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 2.0704141109199683e-06,
+              "median": 1.448143707095088e-07,
+              "p99": 8.925998391778686e-07
+            },
+            "grade": "dark_chroma",
+            "half_vs_full": {
+              "maximum": 0.00249554798938334,
+              "median": 0.00023404136300086975,
+              "p99": 0.0013377150753512979
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              -0.03384621813893318,
+              0.03430742397904396,
+              0.04595207795500755
+            ],
+            "worst_half": [
+              -0.033843994140625,
+              0.034332275390625,
+              0.04583740234375
+            ],
+            "worst_input": [
+              0.019584886729717255,
+              0.07024049758911133,
+              0.0719863548874855
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 8.363254892054725e-06,
+              "median": 4.46672840322413e-07,
+              "p99": 3.1437665863025394e-06
+            },
+            "grade": "dark_chroma",
+            "half_vs_full": {
+              "maximum": 0.0037208006251603365,
+              "median": 0.0006980262696743011,
+              "p99": 0.0028195432387292385
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.039269495755434036,
+              0.03997417539358139,
+              -0.001554377842694521
+            ],
+            "worst_half": [
+              0.039154052734375,
+              0.039825439453125,
+              -0.0015459060668945312
+            ],
+            "worst_input": [
+              0.08766791969537735,
+              0.08969102799892426,
+              0.05262669920921326
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.3649256002495462e-06,
+              "median": 1.349356329564878e-07,
+              "p99": 6.632202916770784e-07
+            },
+            "grade": "tonal_chroma",
+            "half_vs_full": {
+              "maximum": 0.002071950351819396,
+              "median": 0.00023765562218613923,
+              "p99": 0.0009833493968471885
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              0.27800825238227844,
+              -0.07210015505552292,
+              0.22787094116210938
+            ],
+            "worst_half": [
+              0.2783203125,
+              -0.0721435546875,
+              0.227294921875
+            ],
+            "worst_input": [
+              0.5790330171585083,
+              0.23056139051914215,
+              0.4633186459541321
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 6.877358962076766e-06,
+              "median": 4.1668744998764726e-07,
+              "p99": 2.351284660971025e-06
+            },
+            "grade": "tonal_chroma",
+            "half_vs_full": {
+              "maximum": 0.004114862531423569,
+              "median": 0.0008016977226361632,
+              "p99": 0.002948006382212043
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.008120677433907986,
+              -0.0011876275530084968,
+              -0.0008184841135516763
+            ],
+            "worst_half": [
+              0.00807952880859375,
+              -0.0011835098266601562,
+              -0.0008244514465332031
+            ],
+            "worst_input": [
+              0.020798210054636,
+              0.0022861610632389784,
+              0.0005997665575705469
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.2625421363629805e-06,
+              "median": 1.3724157504890755e-07,
+              "p99": 7.182332269131866e-07
+            },
+            "grade": "strong_adaptance",
+            "half_vs_full": {
+              "maximum": 0.0016247202875092626,
+              "median": 0.000262692803516984,
+              "p99": 0.0009043369209393859
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              0.00023113076167646796,
+              0.04451857879757881,
+              0.021159976720809937
+            ],
+            "worst_half": [
+              0.00019443035125732422,
+              0.04449462890625,
+              0.021087646484375
+            ],
+            "worst_input": [
+              0.019584886729717255,
+              0.07024049758911133,
+              0.0719863548874855
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 4.314849430333979e-06,
+              "median": 4.834681152078106e-07,
+              "p99": 2.2981072848395352e-06
+            },
+            "grade": "strong_adaptance",
+            "half_vs_full": {
+              "maximum": 0.008641904219985008,
+              "median": 0.0008996623801067472,
+              "p99": 0.003416595282033086
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.024552831426262856,
+              -3.1692194170318544e-05,
+              0.014257431030273438
+            ],
+            "worst_half": [
+              0.0247650146484375,
+              8.64267349243164e-06,
+              0.01434326171875
+            ],
+            "worst_input": [
+              0.03223438560962677,
+              0.002392022404819727,
+              0.015927202999591827
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 2.2766467273893642e-06,
+              "median": 1.2511790352869733e-07,
+              "p99": 8.938172607567338e-07
+            },
+            "grade": "remap_color",
+            "half_vs_full": {
+              "maximum": 0.002403173130005598,
+              "median": 0.0002231822581961751,
+              "p99": 0.0011991343926638365
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              1.3881514072418213,
+              6.007556438446045,
+              -3.514859676361084
+            ],
+            "worst_half": [
+              1.380859375,
+              6.01171875,
+              -3.529296875
+            ],
+            "worst_input": [
+              9.248228073120117,
+              11.90234088897705,
+              3.2837114334106445
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 7.283114905674298e-06,
+              "median": 4.0027829647007046e-07,
+              "p99": 2.8843323561113807e-06
+            },
+            "grade": "remap_color",
+            "half_vs_full": {
+              "maximum": 0.008737132884562016,
+              "median": 0.0008598621352575719,
+              "p99": 0.00381654454395175
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.10448966920375824,
+              0.4576507806777954,
+              -1.2169067859649658
+            ],
+            "worst_half": [
+              0.10418701171875,
+              0.4580078125,
+              -1.2275390625
+            ],
+            "worst_input": [
+              1.2799302339553833,
+              1.674034833908081,
+              0.10736396908760071
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 5.80374262865954e-07,
+              "median": 1.0410976178387391e-07,
+              "p99": 4.3402565020092953e-07
+            },
+            "grade": "tone_only",
+            "half_vs_full": {
+              "maximum": 0.001092892256565392,
+              "median": 0.00025818165158852935,
+              "p99": 0.0008690949762240052
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              1.1248009204864502,
+              1.0012292861938477,
+              0.6114868521690369
+            ],
+            "worst_half": [
+              1.1240234375,
+              1.0,
+              0.61083984375
+            ],
+            "worst_input": [
+              1.949092149734497,
+              1.7365719079971313,
+              1.0648419857025146
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 2.468835805190643e-06,
+              "median": 3.760290087535809e-07,
+              "p99": 1.386849897996533e-06
+            },
+            "grade": "tone_only",
+            "half_vs_full": {
+              "maximum": 0.006371945142745972,
+              "median": 0.0013285052264109254,
+              "p99": 0.00456722266972065
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              5.480232238769531,
+              4.05829381942749,
+              5.086350440979004
+            ],
+            "worst_half": [
+              5.4453125,
+              4.06640625,
+              5.0859375
+            ],
+            "worst_input": [
+              8.294780731201172,
+              6.1431565284729,
+              7.699047088623047
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.734367102814115e-06,
+              "median": 1.32331723816134e-07,
+              "p99": 7.925801434887522e-07
+            },
+            "grade": "black_remap",
+            "half_vs_full": {
+              "maximum": 0.002698303898796439,
+              "median": 0.00019730068743228912,
+              "p99": 0.0010666815796867013
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              -0.00891780760139227,
+              0.01010541059076786,
+              0.012989762239158154
+            ],
+            "worst_half": [
+              -0.00891876220703125,
+              0.01010894775390625,
+              0.0129547119140625
+            ],
+            "worst_input": [
+              0.019584886729717255,
+              0.07024049758911133,
+              0.0719863548874855
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 6.766725141360726e-06,
+              "median": 4.1995349637041717e-07,
+              "p99": 2.4561667601387482e-06
+            },
+            "grade": "black_remap",
+            "half_vs_full": {
+              "maximum": 0.005573107860982418,
+              "median": 0.0008005202980712056,
+              "p99": 0.003872109344229102
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.013282828964293003,
+              0.01332652848213911,
+              -0.0010866221273317933
+            ],
+            "worst_half": [
+              0.01323699951171875,
+              0.01325225830078125,
+              -0.0010957717895507812
+            ],
+            "worst_input": [
+              0.08766791969537735,
+              0.08969102799892426,
+              0.05262669920921326
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.8374070249433768e-06,
+              "median": 1.4472397814657065e-07,
+              "p99": 1.0109757217350245e-06
+            },
+            "grade": "peak500",
+            "half_vs_full": {
+              "maximum": 0.0026210956275463104,
+              "median": 0.00023637736740056425,
+              "p99": 0.0013650963082909584
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              -8.207171440124512,
+              8.268280982971191,
+              10.464929580688477
+            ],
+            "worst_half": [
+              -8.2109375,
+              8.2734375,
+              10.4375
+            ],
+            "worst_input": [
+              3.2337706089019775,
+              8.6091947555542,
+              8.63682746887207
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 6.759170031141201e-06,
+              "median": 4.0639233704050335e-07,
+              "p99": 2.9700002498501618e-06
+            },
+            "grade": "peak500",
+            "half_vs_full": {
+              "maximum": 0.004303967580199242,
+              "median": 0.0007214024662971497,
+              "p99": 0.0026661211159080267
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              -0.46943771839141846,
+              0.6499159336090088,
+              -0.7360897064208984
+            ],
+            "worst_half": [
+              -0.47021484375,
+              0.650390625,
+              -0.7392578125
+            ],
+            "worst_input": [
+              0.5090619921684265,
+              1.239330768585205,
+              0.3032691776752472
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.8374070249433768e-06,
+              "median": 1.4260204443855112e-07,
+              "p99": 8.901259404969452e-07
+            },
+            "grade": "peak4000",
+            "half_vs_full": {
+              "maximum": 0.0023988811299204826,
+              "median": 0.00023921020328998566,
+              "p99": 0.001325151533819735
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              -0.019637668505311012,
+              0.02085990272462368,
+              0.02753186598420143
+            ],
+            "worst_half": [
+              -0.0196380615234375,
+              0.0208740234375,
+              0.0274658203125
+            ],
+            "worst_input": [
+              0.019584886729717255,
+              0.07024049758911133,
+              0.0719863548874855
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 6.759300823867683e-06,
+              "median": 4.0002213569011906e-07,
+              "p99": 2.9631259242228028e-06
+            },
+            "grade": "peak4000",
+            "half_vs_full": {
+              "maximum": 0.0038030894938856363,
+              "median": 0.0007205232977867126,
+              "p99": 0.002616705372929573
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              -0.06557998806238174,
+              0.2128000557422638,
+              0.2389458417892456
+            ],
+            "worst_half": [
+              -0.0657958984375,
+              0.2125244140625,
+              0.238037109375
+            ],
+            "worst_input": [
+              0.25404858589172363,
+              0.38131943345069885,
+              0.3864145576953888
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 2.5224188393618982e-06,
+              "median": 1.209616069200684e-07,
+              "p99": 6.158486603103366e-07
+            },
+            "grade": "concentration_limits",
+            "half_vs_full": {
+              "maximum": 0.001595800626091659,
+              "median": 0.00026243357569910586,
+              "p99": 0.0009090341627597809
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              2.0872788429260254,
+              0.2673080563545227,
+              2.171433925628662
+            ],
+            "worst_half": [
+              2.087890625,
+              0.267333984375,
+              2.16796875
+            ],
+            "worst_input": [
+              2.554044246673584,
+              0.20601680874824524,
+              0.6466283202171326
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 3.6687925032929243e-06,
+              "median": 4.4775862192548695e-07,
+              "p99": 1.9912223275976e-06
+            },
+            "grade": "concentration_limits",
+            "half_vs_full": {
+              "maximum": 0.006884582806378603,
+              "median": 0.0008453473565168679,
+              "p99": 0.00308578391559422
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.6288141012191772,
+              1.815432071685791,
+              2.989330291748047
+            ],
+            "worst_half": [
+              0.6279296875,
+              1.814453125,
+              2.96875
+            ],
+            "worst_input": [
+              0.8197414875030518,
+              1.8786401748657227,
+              1.5108261108398438
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 8.788557664376169e-06,
+              "median": 1.7338404294511868e-07,
+              "p99": 2.112024397527648e-06
+            },
+            "grade": "control_limit_concentration",
+            "half_vs_full": {
+              "maximum": 0.010341434739530087,
+              "median": 0.00023422762751579285,
+              "p99": 0.0021272648591548204
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              -0.035218626260757446,
+              0.029299777001142502,
+              0.06210465356707573
+            ],
+            "worst_half": [
+              -0.035186767578125,
+              0.0293426513671875,
+              0.06146240234375
+            ],
+            "worst_input": [
+              0.06874853372573853,
+              0.10410693287849426,
+              0.07056334614753723
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 2.4966608462001505e-05,
+              "median": 5.360054403381281e-07,
+              "p99": 9.596342205870517e-06
+            },
+            "grade": "control_limit_concentration",
+            "half_vs_full": {
+              "maximum": 0.011638843454420567,
+              "median": 0.0007704769959673285,
+              "p99": 0.0047533088363707066
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.5143340826034546,
+              -0.05919042229652405,
+              -0.705171525478363
+            ],
+            "worst_half": [
+              0.515625,
+              -0.058563232421875,
+              -0.71337890625
+            ],
+            "worst_input": [
+              1.277564525604248,
+              0.22090238332748413,
+              0.08029791712760925
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 4.011000297870667e-06,
+              "median": 1.782822329498224e-07,
+              "p99": 1.5895203488300153e-06
+            },
+            "grade": "control_limit_midtones",
+            "half_vs_full": {
+              "maximum": 0.004729856736958027,
+              "median": 0.000234632141655311,
+              "p99": 0.0021424260921776295
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              0.2975827753543854,
+              -0.006415260955691338,
+              -0.29912230372428894
+            ],
+            "worst_half": [
+              0.297607421875,
+              -0.0063018798828125,
+              -0.300537109375
+            ],
+            "worst_input": [
+              0.5301329493522644,
+              0.3987116813659668,
+              0.30698347091674805
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.4105441682826294e-05,
+              "median": 5.499853002926061e-07,
+              "p99": 5.541483620343039e-06
+            },
+            "grade": "control_limit_midtones",
+            "half_vs_full": {
+              "maximum": 0.00848640687763691,
+              "median": 0.0007544539985246956,
+              "p99": 0.004003086593002081
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              0.027985308319330215,
+              0.15174716711044312,
+              -0.0846618115901947
+            ],
+            "worst_half": [
+              0.0286102294921875,
+              0.1522216796875,
+              -0.0833740234375
+            ],
+            "worst_input": [
+              0.1934640258550644,
+              0.21426858007907867,
+              0.14525426924228668
+            ]
+          },
+          {
+            "compile_units": 5,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.0298738482151546e-05,
+              "median": 1.7520707178626853e-07,
+              "p99": 2.2456074662249185e-06
+            },
+            "grade": "control_limit_all_tones",
+            "half_vs_full": {
+              "maximum": 0.012031249701976776,
+              "median": 0.00021764608391094953,
+              "p99": 0.003215387463569641
+            },
+            "overflows": [],
+            "route": "cube",
+            "samples": 4483,
+            "worst_full": [
+              -8.3618745803833,
+              2.356184720993042,
+              92.88250732421875
+            ],
+            "worst_half": [
+              -8.34375,
+              2.21875,
+              94.0
+            ],
+            "worst_input": [
+              7.786987781524658,
+              9.489623069763184,
+              11.84587287902832
+            ]
+          },
+          {
+            "compile_units": 84,
+            "finite": 4483,
+            "full_vs_python": {
+              "maximum": 1.4238952167349918e-05,
+              "median": 4.7232856846081053e-07,
+              "p99": 5.309590534957669e-06
+            },
+            "grade": "control_limit_all_tones",
+            "half_vs_full": {
+              "maximum": 0.010445310734212399,
+              "median": 0.0007607938023284078,
+              "p99": 0.0036443702410906553
+            },
+            "overflows": [],
+            "route": "quintic",
+            "samples": 4483,
+            "worst_full": [
+              10.676403045654297,
+              0.48589736223220825,
+              -12.75036907196045
+            ],
+            "worst_half": [
+              10.703125,
+              0.476318359375,
+              -12.6171875
+            ],
+            "worst_input": [
+              8.098160743713379,
+              6.8204545974731445,
+              5.029345989227295
+            ]
+          }
+        ],
+        "samples_per_grade": 4483,
+        "version": "1.19.0"
+      },
+      "script": "blender_half_precision_test"
+    },
+    {
+      "exit_code": 0,
+      "result": {
+        "blender": "5.2.2 LTS",
+        "checks": [
+          "Ordinary Grade has no direction property",
+          "Direct stays selectable without allocating a Grade",
+          "Single inverse Stack bakes Stage 1 into its cube",
+          "Stack owns its ordered list with shared Grade IDs",
+          "Selecting a Stack does not select an ordinary Grade or scopes",
+          "Stack always bakes a single 65\u00b3 cube",
+          "Stack has exactly four native vertex reads",
+          "No separate Stage 1 matrix sockets on Stack",
+          "Renaming a Grade does not rebake",
+          "Stage 1 edits invalidate every dependent Stack",
+          "Pending Stack keeps its last completed LUT",
+          "Obsolete completion cannot replace newer settings",
+          "Baked-only work runs outside the UI thread",
+          "Continuous edits coalesce behind the in-flight preview",
+          "Completed preview advances to the latest requested snapshot",
+          "Obsolete snapshot never starts final refinement",
+          "Background completion publishes the current sequence",
+          "Copied Stack has an independent native graph",
+          "Copied Stack shares referenced Grades",
+          "Changing copied list leaves original untouched",
+          "stack native CPU render matches cube and matrix",
+          "stack alpha passes unchanged",
+          "inverse native CPU render matches cube and matrix",
+          "inverse alpha passes unchanged",
+          "shader_stack Cycles CPU render matches final cube",
+          "shader_inverse Cycles CPU render matches final cube",
+          "Stack alone declares Grade animation dependencies",
+          "Animated Grade invalidates its dependent Stack",
+          "Downstream scopes understand Stack output",
+          "Save restores custom Stack UI",
+          "Saved native graph retains appearance without extension",
+          "Stack list and directions survive save/load/disable",
+          "Packed final cube survives exactly",
+          "Inverse entry survives save/load",
+          "Undo/redo refresh preserves the Stack sequence",
+          "Stack and direction registrations are removed"
+        ],
+        "render_normalized_errors": [
+          2.9159144943305263e-07,
+          2.70266108297747e-07,
+          7.878804950112564e-08,
+          1.0901970461781404e-07
+        ]
+      },
+      "script": "test_grade_stack"
+    },
+    {
+      "exit_code": 0,
+      "result": {
+        "bake_timings": [
+          {
+            "kind": "FORWARD",
+            "seconds": 1.9150306480005383
+          },
+          {
+            "kind": "STACK",
+            "seconds": 6.73735335299898
+          },
+          {
+            "kind": "STACK",
+            "seconds": 6.669433562999984
+          },
+          {
+            "kind": "FORWARD",
+            "seconds": 0.0029318570013856515
+          },
+          {
+            "kind": "STACK",
+            "seconds": 0.0018427800005156314
+          },
+          {
+            "kind": "STACK",
+            "seconds": 0.0033414030003768858
+          }
+        ],
+        "blender": "5.2.2 LTS",
+        "checks": [
+          "Empty selectors default to D65",
+          "Default-white no-op stays empty",
+          "Choosing a different white creates Grade.001",
+          "Only the eight DCTL presets are offered",
+          "Daylight D60 and ACES are distinct",
+          "Grade stores nine matrix coefficients and no linear sliders",
+          "D65 keeps Tone and Color values",
+          "D65 white-drag Jacobian matches the displayed scope",
+          "D65 preserves adapted anchor 0",
+          "D65 preserves adapted anchor 2",
+          "D60 keeps Tone and Color values",
+          "D60 white-drag Jacobian matches the displayed scope",
+          "D60 preserves adapted anchor 0",
+          "D60 preserves adapted anchor 2",
+          "ACES keeps Tone and Color values",
+          "ACES white-drag Jacobian matches the displayed scope",
+          "ACES preserves adapted anchor 0",
+          "ACES preserves adapted anchor 2",
+          "D50 keeps Tone and Color values",
+          "D50 white-drag Jacobian matches the displayed scope",
+          "D50 preserves adapted anchor 0",
+          "D50 preserves adapted anchor 2",
+          "D55 keeps Tone and Color values",
+          "D55 white-drag Jacobian matches the displayed scope",
+          "D55 preserves adapted anchor 0",
+          "D55 preserves adapted anchor 2",
+          "D75 keeps Tone and Color values",
+          "D75 white-drag Jacobian matches the displayed scope",
+          "D75 preserves adapted anchor 0",
+          "D75 preserves adapted anchor 2",
+          "DCI keeps Tone and Color values",
+          "DCI white-drag Jacobian matches the displayed scope",
+          "DCI preserves adapted anchor 0",
+          "DCI preserves adapted anchor 2",
+          "E keeps Tone and Color values",
+          "E white-drag Jacobian matches the displayed scope",
+          "E preserves adapted anchor 0",
+          "E preserves adapted anchor 2",
+          "All preset changes preserve the Stage 1 action",
+          "Derived controls reproduce regular rebased matrices",
+          "Linear Rec.709 leaves Grade data untouched",
+          "Linear Rec.709 reuses ordinary and Stack LUTs",
+          "Linear Rec.709 new nodes always start at D65",
+          "Linear Rec.2020 leaves Grade data untouched",
+          "Linear Rec.2020 reuses ordinary and Stack LUTs",
+          "Linear Rec.2020 new nodes always start at D65",
+          "ACEScg leaves Grade data untouched",
+          "ACEScg reuses ordinary and Stack LUTs",
+          "ACEScg new nodes always start at D65",
+          "Analytic adapters preserve all three baked paths",
+          "Linear animation keys only matrix coefficients",
+          "Animated white change keeps the recorded coefficient basis",
+          "Animated conjugation is valid for any interpolated matrix",
+          "Rebased matrix animation at frame 1",
+          "Rebased matrix animation at frame 6",
+          "Rebased matrix animation at frame 11",
+          "Derived control reads never overwrite arbitrary matrices",
+          "Exposure edits preserve an arbitrary matrix exactly",
+          "Reset clears the authoritative matrix",
+          "Singular matrix is retained",
+          "ShaderNodeTree Add entries are enabled",
+          "CompositorNodeTree Add entries are enabled",
+          "Linear Rec.709 compositor QUINTIC native output",
+          "Linear Rec.709 QUINTIC alpha bypass",
+          "Linear Rec.709 compositor LUT native output",
+          "Linear Rec.709 LUT alpha bypass",
+          "Linear Rec.709 compositor INVERSE native output",
+          "Linear Rec.709 INVERSE alpha bypass",
+          "Linear Rec.709 compositor STACK native output",
+          "Linear Rec.709 STACK alpha bypass",
+          "Linear Rec.709 shader QUINTIC native output",
+          "Linear Rec.709 shader LUT native output",
+          "Linear Rec.709 shader INVERSE native output",
+          "Linear Rec.709 shader STACK native output",
+          "Linear Rec.709 downstream scopes match Stack",
+          "Linear Rec.2020 compositor QUINTIC native output",
+          "Linear Rec.2020 QUINTIC alpha bypass",
+          "Linear Rec.2020 compositor LUT native output",
+          "Linear Rec.2020 LUT alpha bypass",
+          "Linear Rec.2020 compositor INVERSE native output",
+          "Linear Rec.2020 INVERSE alpha bypass",
+          "Linear Rec.2020 compositor STACK native output",
+          "Linear Rec.2020 STACK alpha bypass",
+          "Linear Rec.2020 shader QUINTIC native output",
+          "Linear Rec.2020 shader LUT native output",
+          "Linear Rec.2020 shader INVERSE native output",
+          "Linear Rec.2020 shader STACK native output",
+          "Linear Rec.2020 downstream scopes match Stack",
+          "ACEScg compositor QUINTIC native output",
+          "ACEScg QUINTIC alpha bypass",
+          "ACEScg compositor LUT native output",
+          "ACEScg LUT alpha bypass",
+          "ACEScg compositor INVERSE native output",
+          "ACEScg INVERSE alpha bypass",
+          "ACEScg compositor STACK native output",
+          "ACEScg STACK alpha bypass",
+          "ACEScg shader QUINTIC native output",
+          "ACEScg shader LUT native output",
+          "ACEScg shader INVERSE native output",
+          "ACEScg shader STACK native output",
+          "ACEScg downstream scopes match Stack",
+          "Save/load preserves the white and exact matrix data"
+        ],
+        "max_coordinate_invariance_error": 1.8901385965217276e-08,
+        "max_decomposition_error": 5.245803791353865e-15,
+        "max_stage1_rebase_error": 8.881784197001252e-16,
+        "native_errors": [
+          {
+            "error": 3.49617217080489e-07,
+            "method": "QUINTIC",
+            "path": "compositor",
+            "space": "Linear Rec.709"
+          },
+          {
+            "error": 1.0882257657989266e-07,
+            "method": "LUT",
+            "path": "compositor",
+            "space": "Linear Rec.709"
+          },
+          {
+            "error": 9.046585578455735e-08,
+            "method": "INVERSE",
+            "path": "compositor",
+            "space": "Linear Rec.709"
+          },
+          {
+            "error": 8.450308777712991e-08,
+            "method": "STACK",
+            "path": "compositor",
+            "space": "Linear Rec.709"
+          },
+          {
+            "error": 3.49617217080489e-07,
+            "method": "QUINTIC",
+            "path": "shader",
+            "space": "Linear Rec.709"
+          },
+          {
+            "error": 1.0882257657989266e-07,
+            "method": "LUT",
+            "path": "shader",
+            "space": "Linear Rec.709"
+          },
+          {
+            "error": 9.046585578455735e-08,
+            "method": "INVERSE",
+            "path": "shader",
+            "space": "Linear Rec.709"
+          },
+          {
+            "error": 8.450308777712991e-08,
+            "method": "STACK",
+            "path": "shader",
+            "space": "Linear Rec.709"
+          },
+          {
+            "error": 2.0399194367209396e-07,
+            "method": "QUINTIC",
+            "path": "compositor",
+            "space": "Linear Rec.2020"
+          },
+          {
+            "error": 5.463774151891668e-08,
+            "method": "LUT",
+            "path": "compositor",
+            "space": "Linear Rec.2020"
+          },
+          {
+            "error": 1.327879977933399e-07,
+            "method": "INVERSE",
+            "path": "compositor",
+            "space": "Linear Rec.2020"
+          },
+          {
+            "error": 1.4240702268813453e-07,
+            "method": "STACK",
+            "path": "compositor",
+            "space": "Linear Rec.2020"
+          },
+          {
+            "error": 1.8228045837922434e-07,
+            "method": "QUINTIC",
+            "path": "shader",
+            "space": "Linear Rec.2020"
+          },
+          {
+            "error": 5.463774151891668e-08,
+            "method": "LUT",
+            "path": "shader",
+            "space": "Linear Rec.2020"
+          },
+          {
+            "error": 1.327879977933399e-07,
+            "method": "INVERSE",
+            "path": "shader",
+            "space": "Linear Rec.2020"
+          },
+          {
+            "error": 1.4240702268813453e-07,
+            "method": "STACK",
+            "path": "shader",
+            "space": "Linear Rec.2020"
+          },
+          {
+            "error": 1.7928579538940797e-07,
+            "method": "QUINTIC",
+            "path": "compositor",
+            "space": "ACEScg"
+          },
+          {
+            "error": 8.007015762708315e-08,
+            "method": "LUT",
+            "path": "compositor",
+            "space": "ACEScg"
+          },
+          {
+            "error": 8.020357695763285e-08,
+            "method": "INVERSE",
+            "path": "compositor",
+            "space": "ACEScg"
+          },
+          {
+            "error": 7.383049643770923e-08,
+            "method": "STACK",
+            "path": "compositor",
+            "space": "ACEScg"
+          },
+          {
+            "error": 1.7928579538940797e-07,
+            "method": "QUINTIC",
+            "path": "shader",
+            "space": "ACEScg"
+          },
+          {
+            "error": 8.007015762708315e-08,
+            "method": "LUT",
+            "path": "shader",
+            "space": "ACEScg"
+          },
+          {
+            "error": 8.020357695763285e-08,
+            "method": "INVERSE",
+            "path": "shader",
+            "space": "ACEScg"
+          },
+          {
+            "error": 7.383049643770923e-08,
+            "method": "STACK",
+            "path": "shader",
+            "space": "ACEScg"
+          }
+        ],
+        "scope": "Real Blender RNA, current-format save/load, native CPU shader/compositor. No GPU/Metal execution.",
+        "version": "1.19.0"
+      },
+      "script": "test_working_white"
+    }
+  ],
+  "numpy": "2.5.3",
+  "ocio": "2.5.0",
+  "packaging_checks": {
+    "generator_output_contracts": 23,
+    "handbook_chapters_per_language": 28,
+    "handbook_links_and_resources": 3618,
+    "katex_equation_occurrences": 2146,
+    "python_syntax_files": 207,
+    "release_hashes": "passed",
+    "source_inventory_files": 507
+  },
+  "python": "3.13.15",
+  "scope_limits": [
+    "Every stored photographic pixel is retained, but stored fixtures sample every twelfth original EXR row and column.",
+    "12 finalists, not all 82 screened candidates, receive full-pixel validation.",
+    "Displayed and absolute RGB accuracy tradeoffs are measured; previous -4..64 grid remains better on the joint objective.",
+    "Native CPU Shader/Compositor and compile-unit half-buffer checks; GPU/Metal not tested."
+  ],
+  "selected_grid": {
+    "axis": [
+      -2.0,
+      -1.4138919331505848,
+      -0.9993768629606298,
+      -0.706218052951061,
+      -0.49888641637909614,
+      -0.35225460435132,
+      -0.24855172207996953,
+      -0.1752096031859574,
+      -0.1233396234317931,
+      -0.08665545285873555,
+      -0.06071119035832187,
+      -0.042362547164935115,
+      -0.029385777945426576,
+      -0.020208176222969047,
+      -0.013717471799449613,
+      -0.00912703028896164,
+      -0.0058805177556139655,
+      -0.0035844763824469748,
+      -0.0019606397475523374,
+      -0.00081220860530821,
+      0.0,
+      0.0007627850993314907,
+      0.0017195172345836987,
+      0.002919509708776568,
+      0.004424614309177521,
+      0.006312409363618848,
+      0.00868019839743335,
+      0.011650025495699254,
+      0.01537496588001453,
+      0.020047015938014414,
+      0.02590698938520533,
+      0.033256929641728064,
+      0.04247567820113486,
+      0.054038401439074735,
+      0.06854108234154606,
+      0.08673123954160557,
+      0.10954645703056606,
+      0.13816271049905526,
+      0.17405498121569676,
+      0.2190732816936135,
+      0.2755380117721246,
+      0.34635956009785673,
+      0.4351883156817397,
+      0.5466028216494708,
+      0.6863457692843908,
+      0.8616199963168366,
+      1.081459746241681,
+      1.3571963246610015,
+      1.7030421541999576,
+      2.136823332218333,
+      2.680898449890999,
+      3.3633110317895833,
+      4.219234996711018,
+      5.292787643833385,
+      6.6393036118133635,
+      8.328187018589018,
+      10.446488791096913,
+      13.103393572923638,
+      16.43584748072367,
+      20.61561678355002,
+      25.858141333989412,
+      32.433639087746975,
+      40.68103407725599,
+      51.025425735531066,
+      64.0
+    ],
+    "baseline_score": {
+      "absolute_rgb_p99": {
+        "ACEScg": 0.025216027714230035,
+        "Linear Rec.2020": 0.025950361731977227,
+        "Linear Rec.709": 0.030517977607189693
+      },
+      "absolute_rgb_rms": {
+        "ACEScg": 0.008426538783505822,
+        "Linear Rec.2020": 0.008652537325047662,
+        "Linear Rec.709": 0.010259709393627104
+      },
+      "balanced_ratio": 1.0,
+      "display_p99": {
+        "HDR1000_P3D65": 2.0755268429943947,
+        "HDR1000_Rec2020": 2.085620212226343,
+        "SDR100_P3D65": 1.8719351572276057,
+        "SDR100_Rec709": 1.8473648289101878
+      },
+      "maximum_display_error": 14.406398333029728,
+      "mean_ratio": 1.0,
+      "worst_absolute_rgb_p99": 0.030517977607189693,
+      "worst_display_p99": 2.085620212226343,
+      "worst_outside_fraction": 5.9051398337112624e-05
+    },
+    "grid": {
+      "basis": "Rec2020",
+      "family": "log1p",
+      "k": 0.003,
+      "negative": 2,
+      "negative_cells": 20,
+      "positive": 64.0,
+      "power": 6.0
+    },
+    "scope": "Best balanced candidate in the exact declared shortlist from 82 screened grids; not a universal optimum.",
+    "score": {
+      "absolute_rgb_p99": {
+        "ACEScg": 0.0212975204638366,
+        "Linear Rec.2020": 0.02195883028833403,
+        "Linear Rec.709": 0.02558291713619288
+      },
+      "absolute_rgb_rms": {
+        "ACEScg": 0.010744392859421387,
+        "Linear Rec.2020": 0.011073838083060668,
+        "Linear Rec.709": 0.012655700821490323
+      },
+      "balanced_ratio": 1.279837077501387,
+      "display_p99": {
+        "HDR1000_P3D65": 2.5010724644520836,
+        "HDR1000_Rec2020": 2.5140193009494345,
+        "SDR100_P3D65": 2.2456248271009174,
+        "SDR100_Rec709": 2.1831933099344716
+      },
+      "maximum_display_error": 11.473714751553656,
+      "mean_ratio": 1.110936714164898,
+      "worst_absolute_rgb_p99": 0.02558291713619288,
+      "worst_display_p99": 2.5140193009494345,
+      "worst_outside_fraction": 0.0018424036281179139
+    },
+    "selected": "Rec2020_neg2_n20_log1p0.003",
+    "selection_rule": {
+      "eligible_range": [
+        -2,
+        64
+      ],
+      "full_validation": "All stored pixels; report screening-excluded heldout pixels separately.",
+      "objective": "Minimize the largest ratio to baseline across four worst-case ACES p99s, three absolute scene-RGB p99s and three scene-RGB RMS errors.",
+      "quantile_method": "linear",
+      "tie_break": [
+        "worst_display_p99",
+        "grid_name"
+      ]
+    },
+    "tested_full_finalists": [
+      "Rec2020_neg4_n16_asinh0.001",
+      "Rec2020_neg2_n20_log1p0.003",
+      "Rec2020_neg2_n18_log1p0.002",
+      "Rec2020_neg2_n16_log1p0.001_kn0.001",
+      "Rec2020_neg2_n22_log1p0.003",
+      "Rec2020_neg2_n16_log1p0.001",
+      "Rec2020_neg2_n20_log1p0.002",
+      "Rec2020_neg2_n14_asinh0.001",
+      "Rec2020_neg2_n12_asinh0.001_kn0.0005",
+      "Rec2020_neg2_n16_asinh0.001",
+      "Rec2020_neg2_n8_asinh0.003",
+      "Rec2020_neg2_n8_log1p0.003"
+    ]
+  },
+  "stack_editing_pytest_cases": 53,
+  "standalone_metric_checks": 123,
+  "version": "1.20.0"
+}

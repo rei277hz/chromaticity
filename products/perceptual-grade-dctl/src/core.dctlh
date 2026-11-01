@@ -1,0 +1,133 @@
+__DEVICE__ float pg_div(float a,float b) {return b!=0.0f?a/b:0.0f;}
+__DEVICE__ float pg_maximum(float3 v) {return _fmaxf(_fabs(v.x),_fmaxf(_fabs(v.y),_fabs(v.z)));}
+__DEVICE__ float3 pg_clip3(float3 v,float lo,float hi) {
+    return make_float3(_fminf(hi,_fmaxf(lo,v.x)),_fminf(hi,_fmaxf(lo,v.y)),_fminf(hi,_fmaxf(lo,v.z)));
+}
+__DEVICE__ float3 pg_native(float3 v,ColorMat m) {
+    return make_float3(v.y+(v.x-v.y)*m.a.x+(v.z-v.y)*m.a.z,
+                      v.y+(v.x-v.y)*m.b.x+(v.z-v.y)*m.b.z,
+                      v.y+(v.x-v.y)*m.c.x+(v.z-v.y)*m.c.z);
+}
+// Native backend spellings; DCTL does not provide an _nextafterf intrinsic.
+__DEVICE__ float pg_next_down(float x) {
+#if defined(DEVICE_IS_METAL) || defined(DEVICE_IS_OPENCL)
+    return nextafter(x,0.0f);
+#else
+    return nextafterf(x,0.0f);
+#endif
+}
+__DEVICE__ float3 pg_input_repair(float3 rgb) {
+    if(rgb.x>=0.0f&&rgb.y>=0.0f&&rgb.z>=0.0f&&rgb.x<=1024.0f&&rgb.y<=1024.0f&&rgb.z<=1024.0f)return rgb;
+    float amplitude=pg_maximum(rgb);float3 unit=rgb/amplitude;
+    float y=_fmaxf(0.0f,color_dot(unit,pg_y_weights())),k=_fmaxf(0.0f,-_fminf(unit.x,_fminf(unit.y,unit.z)));
+    if(k>0.0f)unit=(unit+make_float3(k,k,k))*pg_div(y,y+k);
+    float limit=pg_div(1024.0f,_fmaxf(unit.x,_fmaxf(unit.y,unit.z)));
+    float down=limit>0.0f?pg_next_down(limit):0.0f;
+    return unit*_fmaxf(0.0f,_fminf(amplitude,down));
+}
+__DEVICE__ PGState pg_state(float3 q,float energy) {PGState s;s.q=q;s.e=energy;return s;}
+__DEVICE__ float pg_hk(float ja,float c) {
+    float base=_sqrtf(66.0f*c),magnitude=pg_hypot(ja,base);
+    return ja>=0.0f?magnitude:2.0f*base-magnitude;
+}
+__DEVICE__ PGState pg_enter(float3 rgb) {
+    float3 cones=pg_native(rgb,pg_to_cones_matrix());
+    float3 p=make_float3(_powf(_fabs(cones.x)*PG_FL,.42f),_powf(_fabs(cones.y)*PG_FL,.42f),_powf(_fabs(cones.z)*PG_FL,.42f));
+    float3 r=make_float3((cones.x>=0.0f?1.0f:-1.0f)*400.0f*p.x/(27.13f+p.x),
+        (cones.y>=0.0f?1.0f:-1.0f)*400.0f*p.y/(27.13f+p.y),(cones.z>=0.0f?1.0f:-1.0f)*400.0f*p.z/(27.13f+p.z));
+    float t=(2.0f*r.x+r.y+.05f*r.z)/(3.05f*PG_RW);
+    float a=(r.x-r.y)+(r.z-r.y)/11.0f,b=((r.x-r.z)+(r.y-r.z))/9.0f,radius=pg_hypot(a,b);
+    float co=pg_div(a,radius),si=pg_div(b,radius),c=1204.0f*pg_eccentricity(co,si)*radius/PG_AW;
+    float ja=(t>=0.0f?1.0f:-1.0f)*PG_WHITE*_powf(_fabs(t),PG_GAMMA);
+    return pg_state(make_float3(pg_hk(ja,c),c*co,c*si),ja*_fabs(ja));
+}
+__DEVICE__ PGState pg_tone_state(PGState s,PGModel m) {
+    if(!m.remapActive)return s;
+    float j=(s.e>=0.0f?1.0f:-1.0f)*_sqrtf(_fabs(s.e)),c=pg_hypot(s.q.y,s.q.z),h=pg_hypot(j,_sqrtf(66.0f*c));
+    float out=100.0f*pg_remap(h*.01f,m);
+    float gain=pg_div(2.0f*out*out,pg_hypot(66.0f*c,2.0f*j*out)+66.0f*c);
+    float jj=j*gain,a=s.q.y*gain,b=s.q.z*gain;
+    return pg_state(make_float3(pg_hk(jj,pg_hypot(a,b)),a,b),jj*_fabs(jj));
+}
+__DEVICE__ PGState pg_grade_state(PGState s,PGModel m) {
+    if(!m.tonalActive)return s;
+    float c=pg_hypot(s.q.y,s.q.z),ja=(s.e>=0.0f?1.0f:-1.0f)*_sqrtf(_fabs(s.e)),magnitude=_sqrtf(_fabs(s.e)+66.0f*c);
+    float3 result=pg_stage3_ja(s.q,ja,m);
+    float c1=pg_hypot(result.y,result.z),b0=_sqrtf(66.0f*c),b1=_sqrtf(66.0f*c1);
+    float u0=pg_div(s.e,magnitude+b0),db=pg_div(66.0f*(c1-c),b1+b0);
+    float du=result.x-s.q.x-db,u=u0+du,total=_fabs(u)+_fabs(u0);
+    float slope=u*u0>=0.0f?total:pg_div(u*u+u0*u0,total);
+    float change=du*(slope+2.0f*b1)+2.0f*u0*db;
+    float energy=_fabs(change)<=.25f*_fabs(s.e)?s.e+change:u*(_fabs(u)+2.0f*b1);
+    return pg_state(result,energy);
+}
+__DEVICE__ float3 pg_response_axis(float3 co) {
+    return (make_float3(451.0f,-891.0f,-220.0f)*co.x+make_float3(288.0f,-261.0f,-6300.0f)*co.y)*(PG_AW/(1204.0f*pg_eccentricity(co.x,co.y)*1403.0f));
+}
+__DEVICE__ PGValue pg_decode_state(PGState q) {
+    float ja=(q.e>=0.0f?1.0f:-1.0f)*_sqrtf(_fabs(q.e));
+    float t=(ja>=0.0f?1.0f:-1.0f)*_powf(_fabs(ja)/PG_WHITE,1.0f/PG_GAMMA),c=pg_hypot(q.q.y,q.q.z);
+    float3 co=make_float3(pg_div(q.q.y,c),pg_div(q.q.z,c),0.0f),axis=pg_response_axis(co);
+    float3 response=make_float3(PG_RW*t,PG_RW*t,PG_RW*t)+axis*c,rgb;
+    if(!color_finite3(response)||pg_maximum(response)>=400.0f)return pg_value(color_zero3(),0);
+    if(t>.5f&&response.x>=0.0f&&response.y>=0.0f&&response.z>=0.0f) {
+        float3 d=make_float3(1.0f-t,1.0f-t,1.0f-t)-axis*(c/PG_RW);float k=PG_RW/(400.0f-PG_RW);
+        float3 cones=make_float3(-1024.0f*pg_expm1((50.0f/21.0f)*(pg_log1p(-d.x)-pg_log1p(k*d.x))),
+            -1024.0f*pg_expm1((50.0f/21.0f)*(pg_log1p(-d.y)-pg_log1p(k*d.y))),
+            -1024.0f*pg_expm1((50.0f/21.0f)*(pg_log1p(-d.z)-pg_log1p(k*d.z))));
+        rgb=make_float3(1024.0f,1024.0f,1024.0f)-pg_native(cones,pg_to_rgb_matrix());
+    } else {
+        float k=(400.0f-PG_RW)/PG_RW;
+        float3 cones=make_float3((response.x>=0.0f?1.0f:-1.0f)*1024.0f*_powf(_fabs(response.x)*k/(400.0f-_fabs(response.x)),50.0f/21.0f),
+            (response.y>=0.0f?1.0f:-1.0f)*1024.0f*_powf(_fabs(response.y)*k/(400.0f-_fabs(response.y)),50.0f/21.0f),
+            (response.z>=0.0f?1.0f:-1.0f)*1024.0f*_powf(_fabs(response.z)*k/(400.0f-_fabs(response.z)),50.0f/21.0f));
+        rgb=pg_native(cones,pg_to_rgb_matrix());
+    }
+    return pg_value(rgb,color_finite3(rgb));
+}
+__DEVICE__ int pg_inside(PGValue value) {
+    float3 rgb=value.v;
+    return value.valid&&rgb.x>=0.0f&&rgb.y>=0.0f&&rgb.z>=0.0f&&rgb.x<=1024.0f&&rgb.y<=1024.0f&&rgb.z<=1024.0f;
+}
+__DEVICE__ PGValue pg_cube_candidate(float energy,float3 co,float radius) {
+    return pg_decode_state(pg_state(make_float3(_sqrtf(energy+66.0f*radius),radius*co.x,radius*co.y),energy));
+}
+__DEVICE__ float3 pg_export(PGState q) {
+    if(q.e<=0.0f)return color_zero3();if(q.e>=PG_WHITE*PG_WHITE)return make_float3(1024.0f,1024.0f,1024.0f);
+    PGValue direct=pg_decode_state(q);if(pg_inside(direct))return direct.v;
+    float c=pg_hypot(q.q.y,q.q.z),ja=_sqrtf(q.e),t=_powf(ja/PG_WHITE,1.0f/PG_GAMMA);
+    float3 co=make_float3(pg_div(q.q.y,c),pg_div(q.q.z,c),0.0f),axis=pg_response_axis(co);
+    float3 lo=pg_response_low()-make_float3(PG_RW*t,PG_RW*t,PG_RW*t),hi=pg_response_high()-make_float3(PG_RW*t,PG_RW*t,PG_RW*t);
+    float high=c;
+    if(axis.x!=0.0f)high=_fminf(high,(axis.x>0.0f?hi.x:lo.x)/axis.x);
+    if(axis.y!=0.0f)high=_fminf(high,(axis.y>0.0f?hi.y:lo.y)/axis.y);
+    if(axis.z!=0.0f)high=_fminf(high,(axis.z>0.0f?hi.z:lo.z)/axis.z);
+    float low=0.0f;PGValue saved=pg_cube_candidate(q.e,co,0.0f);
+    float angle=c>0.0f?_atan2f(co.y,co.x):0.0f,seed=pg_physical_capacity(ja,angle);
+    if(seed>0.0f&&seed<high) {
+        PGValue test=pg_cube_candidate(q.e,co,seed);
+        if(pg_inside(test)){low=seed;saved=test;}else high=seed;
+    }
+    PGValue test=pg_cube_candidate(q.e,co,high);if(pg_inside(test))return test.v;
+    for(int step=0;step<24;step++) {
+        float middle=low+(high-low)*.5f;if(middle==low||middle==high)break;
+        test=pg_cube_candidate(q.e,co,middle);
+        if(pg_inside(test)){low=middle;saved=test;}else high=middle;
+    }
+    return saved.v;
+}
+__DEVICE__ float3 pg_linear(float3 xyz,PGModel m) {
+    if(!m.linearActive)return xyz;
+    float scale=pg_maximum(xyz);if(scale==0.0f)return xyz;
+    return color_mv(m.lin,color_mv(m.adapt,xyz/scale))*scale*m.exposure;
+}
+__DEVICE__ float3 pg_forward_native(float3 rgb,PGModel m) {
+    if(!m.active)return rgb;
+    return pg_export(pg_grade_state(pg_tone_state(pg_enter(rgb),m),m));
+}
+__DEVICE__ PGValue pg_nonlinear_eval(float3 xyz,PGModel m) {
+    float3 rgb=pg_input_repair(color_mv(pg_xyz_to_native_matrix(),xyz));
+    return pg_value(color_mv(pg_native_to_xyz_matrix(),pg_forward_native(rgb,m)),1);
+}
+__DEVICE__ float3 pg_nonlinear(float3 xyz,PGModel m) {return pg_nonlinear_eval(xyz,m).v;}
+__DEVICE__ float3 pg_grade(float3 xyz,PGModel m) {return pg_nonlinear(pg_linear(xyz,m),m);}

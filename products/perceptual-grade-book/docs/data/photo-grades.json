@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "grades": [
+    {
+      "name": "practical",
+      "title": "Practical color adjustment",
+      "color": {
+        "global_gain": 0.35,
+        "j_low_1": -4,
+        "j_high_2": 6,
+        "adaptance_a_1": 3,
+        "adaptance_b_2": -2,
+        "hue_1": 5
+      }
+    },
+    {
+      "name": "chroma-8x",
+      "title": "Strong chroma gain \u00b7 +3 stops",
+      "color": {
+        "global_gain": 3
+      }
+    },
+    {
+      "name": "dark-chroma",
+      "title": "Darken by opponent direction \u00b7 increase chroma",
+      "color": {
+        "global_gain": 2,
+        "j_a_1": -15,
+        "j_b_2": -20
+      }
+    }
+  ]
+}

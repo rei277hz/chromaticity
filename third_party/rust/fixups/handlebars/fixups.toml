@@ -1,0 +1,2 @@
+# pest_derive locates src/grammar.pest relative to the invoking package.
+cargo_env = ["CARGO_MANIFEST_DIR"]

@@ -1,0 +1,8 @@
+{
+  "inputs_manifest_sha256": "ed3354926405083aefc8ae08db1b92a1bb37a273c75b97efb1c5346bc6dfa028",
+  "files": {
+    "error-tradeoffs.png": "064f1d9f6aa1c1e9975eedd100a61624a38c29dc4e7c391ed708c8c695676d61",
+    "report.md": "dac7ad73eb69f9dcb1e49ab54417e6b8cfb1cd68c25918a56d497d4c84520414",
+    "sample-placement.png": "fcc38e8407d99ed03176f6189c9dbb6aee5119cc7d1d7629d7f3dd5aa878188b"
+  }
+}

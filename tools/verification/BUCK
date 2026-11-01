@@ -1,0 +1,105 @@
+load("//build_defs:artifacts.bzl", "generate")
+load("//third_party:proof_sources.bzl", "PROOF_SOURCES")
+
+python_library(
+    name = "unpack_lib",
+    srcs = ["unpack.py"],
+    base_module = "verification",
+    deps = ["//third_party:zstandard"],
+)
+
+python_binary(
+    name = "unpack",
+    main_module = "verification.unpack",
+    deps = [":unpack_lib"],
+)
+
+generate(
+    name = "lean",
+    args = [
+        "--archive",
+        "$(location //third_party:lean_archive)",
+    ],
+    outputs = {
+        "lean": "bin/lean",
+        "lake": "bin/lake",
+    },
+    tool = ":unpack",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "dependency_lib",
+    srcs = ["dependencies.py"],
+    base_module = "verification",
+    deps = [":unpack_lib"],
+)
+
+python_binary(
+    name = "dependency_builder",
+    main_module = "verification.dependencies",
+    deps = [":dependency_lib"],
+)
+
+export_file(
+    name = "imports",
+    src = "Imports.lean",
+)
+
+generate(
+    name = "dependencies",
+    args = [
+        "--lean",
+        "$(location :lean)",
+        "--imports",
+        "$(location :imports)",
+    ] + [arg for name in PROOF_SOURCES for arg in [
+        "--package",
+        name,
+        "$(location //third_party:" + name + "_source)",
+    ]],
+    outputs = {"imports": ".lake/build/lib/lean/PGDependencies.olean"},
+    tool = ":dependency_builder",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "checker_lib",
+    srcs = ["color_model.py"],
+    base_module = "verification",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "color_model_checker",
+    main_module = "verification.color_model",
+    visibility = ["PUBLIC"],
+    deps = [":checker_lib"],
+)
+
+python_library(
+    name = "invariant_report",
+    srcs = ["invariant_report.py"],
+    base_module = "verification",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "packaging",
+    srcs = ["packaging.py"],
+    base_module = "verification",
+    visibility = ["PUBLIC"],
+    deps = [":invariant_report"],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "check_proofs_source",
+    src = "color_model.py",
+    visibility = ["PUBLIC"],
+)

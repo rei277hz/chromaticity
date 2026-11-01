@@ -1,0 +1,13 @@
+python_test(
+    name = "archive",
+    srcs = ["test_archive.py"],
+    base_module = "web_build_tests",
+    visibility = ["PUBLIC"],
+    deps = ["//tools/web-build:build_lib"],
+)
+
+export_file(
+    name = "acceptance_source",
+    src = "acceptance.mjs",
+    visibility = ["PUBLIC"],
+)

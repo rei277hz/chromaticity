@@ -1,0 +1,312 @@
+{
+  "schema": 1,
+  "baseline_archive": "perceptual-grade-complete-fixed.zip",
+  "baseline_sha256": "5ad9d88d3bf7d31db157b69b4f8a5802ad0473706abf0b449d23980a6120353b",
+  "discussion": "docs/history/revision-discussion.txt",
+  "requirements": [
+    {
+      "requirement": "Install extension and DCTL, with Shading/Compositing connections and unmanaged YRGB CSTs through Linear XYZ; destination white must match the signal.",
+      "files": [
+        "docs/book/src/guide/install.md",
+        "docs/data/screenshots.json"
+      ]
+    },
+    {
+      "requirement": "Two continuing SDR/HDR examples; every recording starts from the preceding result.",
+      "files": [
+        "docs/book/src/guide/workflow.md",
+        "docs/data/demos.json"
+      ]
+    },
+    {
+      "requirement": "Paired square Rec.709/Rec.709-A screen MOVs; independent trims, original speed, last-frame hold, automatic loops, sRGB browser output.",
+      "files": [
+        "tools/docs/demos.py",
+        "tests/docs/test_demos.py",
+        "BUCK"
+      ]
+    },
+    {
+      "requirement": "Short Linear introduction and one merged section with two paired demos: vectorscope drag/reset/source-white drag, then all six Balance/Spread/Heading controls; ColorChecker follows. Concrete DCTL slider equivalents and intuitive purposes.",
+      "files": [
+        "docs/book/src/guide/linear.md",
+        "docs/data/demos.json"
+      ]
+    },
+    {
+      "requirement": "ColorChecker EXR connects to Color Reference; align vectorscope readings and explain scopes here.",
+      "files": [
+        "docs/book/src/guide/linear.md",
+        "docs/data/screenshots.json"
+      ]
+    },
+    {
+      "requirement": "Tone purposes and S/gamma-like curve demonstration precede SDR/HDR waveform examples; waveform examples precede the headroom warning, without early saturation theory.",
+      "files": [
+        "docs/book/src/guide/tone.md"
+      ]
+    },
+    {
+      "requirement": "Exactly six Color demos: J curve, paired J/C curves, paired J/C pads, Adaptance pad, hue pad, hue rotation; two tones in each example except the two shared-Midtones operations.",
+      "files": [
+        "docs/book/src/guide/color.md",
+        "docs/data/demos.json"
+      ]
+    },
+    {
+      "requirement": "Global lower/higher-chroma hue controls are an independent creative experiment without a demo.",
+      "files": [
+        "docs/book/src/guide/color.md"
+      ]
+    },
+    {
+      "requirement": "Concise Render methods with one combined shading/compositing recommendation.",
+      "files": [
+        "docs/book/src/guide/render-methods.md"
+      ]
+    },
+    {
+      "requirement": "Organize Understanding the model into three chapters: Linear correction; Appearance coordinates and grading; Evaluation and interpolation. Keep historical H-K evaluation with the bounded guard.",
+      "files": [
+        "docs/book/src/SUMMARY.md",
+        "docs/book/src/theory/structure.md",
+        "docs/book/src/theory/hk-guard.md"
+      ]
+    },
+    {
+      "requirement": "Describe exposure (1), white adaptation (2), and white-fixed directional controls (6), then CAT16; highlight preserving white. State the actual luminance constraints accurately.",
+      "files": [
+        "docs/book/src/theory/linear.md"
+      ],
+      "qualification": "All six directional controls fix white. Balance deliberately changes colored-pixel Y; the four Spread/Heading degrees preserve all Y when Balance is zero. Six degrees cannot simultaneously preserve every Y and a fixed white."
+    },
+    {
+      "requirement": "Remove the theoretical primary-recovery example and both unwanted appearance drawings, their sources, outputs and build paths; use replaceable attributed model figures.",
+      "files": [
+        "BUCK",
+        "tools/docs/figures.py",
+        "docs/data/appearance-references.json"
+      ]
+    },
+    {
+      "requirement": "Version-only release-note headings; no bold, italic or inline-code.",
+      "files": [
+        "RELEASES.md"
+      ]
+    },
+    {
+      "requirement": "ACES-inspired typography and palette; transparent title/favicon artwork, opaque home-screen tile; chapter/section-only combined contents with independent part numbering. Full-width title bar above the sidebar and reading column, safe toolbar padding, visible title in both themes and no previous/next buttons.",
+      "files": [
+        "docs/book/theme/grade.css",
+        "docs/book/theme/reader.js",
+        "tools/docs/favicon.py",
+        "tests/docs/test_favicon.py",
+        "tools/docs/site.py",
+        "docs/book/src/assets/icons",
+        "tools/docs/parts.py"
+      ]
+    },
+    {
+      "requirement": "Bundle the supplied dummy MOV at all 20 configured SDR/HDR source filenames; replacements regenerate WebP demonstrations and the site.",
+      "files": [
+        "docs/data/demos.json",
+        "docs/media/demos",
+        "tools/docs/demos.py"
+      ]
+    },
+    {
+      "requirement": "Every Buck2 pipeline fails for missing sources, without generated substitutes, silent glob omissions or stale/incomplete products.",
+      "files": [
+        "build_defs/source_inventory.bzl",
+        "build_defs/artifacts.bzl",
+        "tools/build/source_inventory.py",
+        "tools/build/action.py",
+        "tools/build/package.py",
+        "tools/docs/deploy.py",
+        "tools/docs/benchmark.py",
+        "tools/testing/run_fixture.py",
+        "tools/testing/entry.py",
+        "tests/packaging/test_inputs.py",
+        "BUCK"
+      ]
+    },
+    {
+      "requirement": "Use cr/yb axis identifiers (cr_balance/cr_spread/cr_heading and yb_balance/yb_spread/yb_heading), Cyan-Red/Yellow-Blue English labels, unchanged Chinese labels; ACES theme, rendered KaTeX/images, looping demonstrations, prose and reliable text selection.",
+      "files": [
+        "src/blender/model/linear.py",
+        "src/blender/graph/nodes.py",
+        "src/blender/locales/en.json",
+        "src/dctl/ui-spec.json",
+        "docs/book/theme/grade.css",
+        "docs/book/theme/reader.js",
+        "tools/docs/site.py",
+        "tests/docs/test_site.py"
+      ]
+    },
+    {
+      "requirement": "Attribute Perceptual Grade grading controls, scopes and render methods to the extension or DCTL throughout the handbook; distinguish genuine host facilities.",
+      "files": [
+        "docs/book/src/guide",
+        "docs/book/src/theory",
+        "docs/book/src/reference/credits.md",
+        "RELEASES.md"
+      ]
+    },
+    {
+      "requirement": "Match ACES font families and typography; load pinned Pontano Sans and Roboto Mono WOFF2 from CDN, with required hash-verified Buck2 font/license inputs. Shared search remains across all parts.",
+      "files": [
+        "third_party/docs.bzl",
+        "tools/docs/fonts.py",
+        "tests/docs/test_fonts.py",
+        "docs/book/theme/grade.css",
+        "tools/docs/site.py"
+      ]
+    },
+    {
+      "requirement": "Rename the opening page Introduction, remove middle-dot separators throughout the book, move release history to repository-only RELEASES.md, and consolidate notices under Credits and references while retaining a License page.",
+      "files": [
+        "docs/book/src/README.md",
+        "docs/book/src/SUMMARY.md",
+        "docs/book/src/reference/credits.md",
+        "docs/book/src/reference/license.md",
+        "RELEASES.md"
+      ]
+    },
+    {
+      "requirement": "Make Contributing and publishing an introduction, with separate code, localization, documentation/media, testing/measurements and publishing sections.",
+      "files": [
+        "docs/book/src/development/contributing.md",
+        "docs/book/src/development/localization.md",
+        "docs/book/src/development/documentation.md",
+        "docs/book/src/development/testing.md",
+        "docs/book/src/development/publishing.md"
+      ]
+    },
+    {
+      "requirement": "Explain runtime around current-grade ownership, native evaluation and diagnostic feedback, with an authored vector flowchart.",
+      "files": [
+        "docs/book/src/development/architecture.md",
+        "docs/book/src/assets/illustrations/runtime-flow.svg"
+      ]
+    },
+    {
+      "requirement": "Require all sixteen supplied transparent/opaque icon PNGs; embed exact-size PNG payloads in ICO, copy native 180/192/512 images, and create a separate 512 maskable composition from native 256 pixels without resampling.",
+      "files": [
+        "tools/docs/favicon.py",
+        "tests/docs/test_favicon.py",
+        "docs/book/src/assets/icons"
+      ]
+    },
+    {
+      "requirement": "Convert required introductory MP4 from explicitly declared Rec.709 / Gamma 2.4 to looping sRGB WebP with trims, original dimensions and speed; bundle the supplied dummy under a stable replaceable filename.",
+      "files": [
+        "docs/media/intro/match-three-images.mp4",
+        "docs/data/intro-video.json",
+        "tools/docs/intro.py",
+        "tests/docs/test_intro.py"
+      ]
+    },
+    {
+      "requirement": "Add English and title-only Simplified Chinese editions with the same hierarchy. Use a monochrome language selector, retain the current page, remember explicit choice before browser locales, and default to English. Search spans all parts within each edition; Chinese search matches phrases without the English stemmer.",
+      "files": [
+        "docs/book/zh-Hans",
+        "docs/book/locales.json",
+        "docs/book/theme/language.js",
+        "docs/book/theme/chinese-search.js",
+        "tools/docs/languages.py",
+        "tools/docs/site.py",
+        "tests/docs/test_languages.js"
+      ]
+    },
+    {
+      "requirement": "Embed the supplied Bilibili player immediately after the introductory WebP, with responsive sizing and fullscreen support. Permit only the exact player URL as an external iframe; preserve missing-source checks.",
+      "files": [
+        "docs/book/src/README.md",
+        "docs/book/theme/grade.css",
+        "tools/docs/site.py",
+        "tests/docs/test_site.py"
+      ]
+    }
+  ],
+  "reconstruction": "The application starts from the fixed baseline, with Cyan-Red and Yellow-Blue control identifiers corrected throughout code, catalogs and fixtures. The handbook and build pipeline are reconstructed from the source pack and discussion, then revised for the October 4 review. The subsequent revision adds the confirmed three-chapter model structure, contributor sections, bilingual routing, expanded native-size icon set and introductory MP4 pipeline.",
+  "validation": {
+    "media": "Real RGB MOV and 10-bit limited-range ProRes MOV fixtures passed.",
+    "buck2": "Fresh Buck2 execution is unavailable in this sandbox, which has no /proc/self/exe. Use the pinned toolchain and documented build/test gates on the review host.",
+    "photos": "Hash-verified original numerical panels retained. The current producer differs only in caption separators; those bands are redrawn while every panel pixel stays identical. The Linear identifier-only equivalence is also checked. This explicit authoring reuse is recorded in photographic-figures.json; production Buck2 still performs the declared Blender render, with no fallback.",
+    "chapters": 24,
+    "local_link_and_resource_checks": 2818,
+    "passed": [
+      "MOV color/timing/loop/error fixtures",
+      "Figure provenance and screenshot replacement",
+      "Rendered site, complete file inventory and deployment ZIP",
+      "Release checksums, source inputs and deterministic ZIP metadata",
+      "Locale discovery and catalog content",
+      "English source policy and model terminology",
+      "Python and Starlark syntax, book hierarchy, demo count, release-note formatting and original icon bytes",
+      "Every registered source omission, all generator output contracts, missing screenshot/MOV/extension inputs and benchmark output failures",
+      "3000 exact before/after Linear matrices and endpoint comparisons across all working spaces",
+      "All six renamed controls, localization bindings and every unchanged Chinese catalog value",
+      "422 equations parsed by the local KaTeX renderer without errors",
+      "Transparent icon alpha at every ICO size, exact supplied artwork, all icon roles and missing-source failures",
+      "Pinned CDN font and license hashes, deterministic CSS and missing/changed input failures",
+      "Generated static and dynamic TOC depth, independent part numbers, shared search and no previous/next controls",
+      "Final CSS cascade checked in light/dark at 375px and 1280px: title contrast, full-width header and sidebar below it and 16px/24px toolbar padding",
+      "Sixteen exact-size icon inputs, byte-identical ICO payloads and platform PNG copies, no resize calls and a separately padded maskable image",
+      "Rec.709 / Gamma 2.4 introductory MP4, sRGB ICC profile, original frame timing and infinite WebP loop",
+      "English and Chinese search against generated book data, including Chinese phrases and remembered language choice",
+      "24 English chapters and corresponding title-only Chinese pages, shared assets and relative cross-language links",
+      "Bilibili placement after the WebP; exact iframe exception accepts the supplied player while rejecting external scripts, changed player URLs and missing local iframe sources"
+    ],
+    "execution": "Direct authoring checks using pinned mdBook 0.5.4 and imageio-ffmpeg 0.6.0. No fresh Buck2 run or Blender/Resolve desktop run is claimed.",
+    "bundled_dummy": {
+      "source": "Screen Recording 2026-10-04 at 12.34.22.mov",
+      "sha256": "ddcee7c758147302e8a7050d637a7815e9a1e1192674f2f273bf34b41883e829",
+      "copies": 20,
+      "source_size": [
+        1024,
+        1024
+      ],
+      "source_fps": 60,
+      "duration_seconds": 4.22
+    },
+    "source_inventory": 332,
+    "generator_contracts": 19,
+    "browser": "Interactive browser rendering remains unavailable in this sandbox. Actual generated CSS was parsed with tinycss2/cssselect2 at phone and desktop widths in light/dark themes; this verifies cascade and declared layout values, not a browser screenshot.",
+    "languages": {
+      "en": 24,
+      "zh-Hans": 24
+    },
+    "bundled_intro": {
+      "source": "Timeline 1.mp4",
+      "path": "docs/media/intro/match-three-images.mp4",
+      "sha256": "149c2104b8a25ed8c2539dbc6890590d84fe676dd02167ef794badc0e2f5af86",
+      "size": [
+        1920,
+        1080
+      ],
+      "fps": 30,
+      "frames": 91,
+      "interpretation": "Rec.709 primaries and matrix, limited range, Gamma 2.4"
+    }
+  },
+  "typography_review": {
+    "reference_url": "https://docs.acescentral.com/background/overview/",
+    "reviewed": "2026-10-04",
+    "reference_files": {
+      "overview.html": "3094a84d23f357c75b2dd250eb5b6e75b4d82902b4d0d867c54b56241abf0b98",
+      "extra.css": "e690fffec2caa53d3308411046cc7abf5743bdfc201411bdd6db6d4f14c98064",
+      "main.css": "484c7ddccf764ac57a8f89781a99733dce01b8af53e12e9a4c2040667f1950af"
+    },
+    "families": [
+      "Pontano Sans",
+      "Roboto Mono"
+    ],
+    "differences_found": [
+      "Former body size 18px rather than 16px at default viewport width",
+      "Former H1/H3 weights and heading spacing differed",
+      "Former font-display optional could leave the fallback family in use on a slow request",
+      "Former header background selector lost to mdBook ID specificity, leaving white text on a white background"
+    ],
+    "delivery": "Fontsource-variable 5.3.0, exact jsDelivr WOFF2 URLs; swap, body preload and preconnect"
+  }
+}

@@ -1,0 +1,29 @@
+# Native host fixtures are build tools, independent of either extension.
+export_file(
+    name = "unpack_blender_source",
+    src = "unpack_blender.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "unpack_xvfb_source",
+    src = "unpack_xvfb.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "unpack_native_libraries_source",
+    src = "unpack_native_libraries.py",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "extractors",
+    srcs = [
+        "unpack_blender.py",
+        "unpack_native_libraries.py",
+        "unpack_xvfb.py",
+    ],
+    base_module = "blender_build",
+    visibility = ["PUBLIC"],
+)

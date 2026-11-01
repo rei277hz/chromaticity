@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "description": "Current production display policy, with typed event admission and inductive state invariants. Native receipt truth is an adapter obligation.",
+  "state": "ScopeDisplayState",
+  "event": "ScopeDisplayEvent",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {
+    "state_domain": "display_invariant(state)"
+  },
+  "contracts": {
+    "new": {
+      "requires": []
+    },
+    "step": {
+      "requires": [
+        "event_valid(state,event)"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "visual_requires_validation",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state,event)",
+        "not event.validated"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].replace_visual"
+    },
+    {
+      "name": "statistics_require_validation",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state,event)",
+        "not event.validated"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].replace_statistics"
+    },
+    {
+      "name": "visual_binds_current_source_slot",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((after[1].replace_visual)) or (event.source == state.source and event.slot == state.slot and event.capture > 0)"
+    },
+    {
+      "name": "statistics_bind_current_source_slot",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((after[1].replace_statistics)) or (event.source == state.source and event.slot == state.slot and event.capture > 0)"
+    },
+    {
+      "name": "visual_epoch_never_regresses",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((after[1].replace_visual)) or (after[0].visual_epoch >= state.visual_epoch)"
+    },
+    {
+      "name": "statistics_epoch_never_regresses",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((after[1].replace_statistics)) or (after[0].stats_epoch >= state.stats_epoch)"
+    },
+    {
+      "name": "current_epoch_cannot_change_analysis",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not (((after[1].replace_visual or after[1].replace_statistics) and event.epoch == state.desired_epoch)) or (event.analysis == state.desired_analysis)"
+    },
+    {
+      "name": "rejected_display_receipt_preserves_state",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((not after[1].accept)) or (after[0] == state)"
+    },
+    {
+      "name": "invalidation_clears_both_authorities",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state, event)",
+        "event.kind == 'invalidate'"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[0].visual_available and not after[0].stats_available and after[1].clear"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "visual_publication_admitted",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[1].replace_visual"
+    },
+    {
+      "name": "statistics_publication_admitted",
+      "variables": {
+        "state": "ScopeDisplayState",
+        "event": "ScopeDisplayEvent"
+      },
+      "assume": [
+        "display_invariant(state)",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[1].replace_statistics"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "visual_skips_validation",
+      "function": "apply_visual",
+      "target": "event.validated",
+      "replacement": "True",
+      "detects": [
+        "property.visual_requires_validation"
+      ]
+    },
+    {
+      "name": "statistics_skips_validation",
+      "function": "apply_statistics",
+      "target": "event.validated",
+      "replacement": "True",
+      "detects": [
+        "property.statistics_require_validation"
+      ]
+    }
+  ]
+}

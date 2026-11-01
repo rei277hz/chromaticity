@@ -1,0 +1,3 @@
+# Generate the declared compiler's version expression in OUT_DIR.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_NAME"]

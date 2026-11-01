@@ -1,0 +1,2 @@
+# Join packaged camera/lens TOML tables and check the declared rustc.
+buildscript.run = true

@@ -1,0 +1,60 @@
+load("//build_defs:artifacts.bzl", "generate", "python_tool", "source_tree")
+
+source_tree(
+    name = "sources",
+    srcs = {path[len("src/"):]: path for path in glob([
+        "src/*.dctlh",
+        "src/ui-spec.json",
+    ])},
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "metadata",
+    src = "product.toml",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "generator",
+    srcs = {"pg_dctl_tools/" + name: "tools/" + name for name in [
+        "generate_dctl.py",
+        "dctl_boundary.py",
+    ]},
+    main_module = "pg_dctl_tools.generate_dctl",
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)
+
+generate(
+    name = "dctl",
+    args = [
+        "--source-dir",
+        "$(location :sources)",
+        "--color-source",
+        "$(location //libraries/color-dctl:linear)",
+        "--metadata",
+        "$(location :metadata)",
+    ],
+    outputs = {locale: "Perceptual-Grade" + ("" if locale == "en" else "-" + locale.replace("_", "-")) + ".dctl" for locale in [
+        "en",
+        "zh_HANS",
+    ]},
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "quality",
+    srcs = {"pg_dctl_tools/dctl_quality.py": "tools/dctl_quality.py"},
+    main_module = "pg_dctl_tools.dctl_quality",
+    deps = [
+        "//libraries/perceptual-grade-reference:boundary_oracle",
+        "//products/perceptual-grade-dctl/tests:support",
+    ],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)

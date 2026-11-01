@@ -1,0 +1,19 @@
+[
+    python_test(
+        name = name,
+        srcs = ["test_" + name + ".py"],
+        base_module = "tests.numerical",
+        deps = [
+            "//libraries/perceptual-grade-core/tests:reference_support",
+            "//products/perceptual-grade-blender:runtime",
+        ] + (["//libraries/perceptual-grade-reference/tests:legacy_capacity_support"] if name == "inverse" else []) + (["//libraries/color-core:runtime"] if name == "scope_execution" else []),
+    )
+    for name in [
+        "lut",
+        "inverse",
+        "scope_execution",
+        "scope_protocol",
+        "scope_cloud",
+        "scope_active",
+    ]
+]

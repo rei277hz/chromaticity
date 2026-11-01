@@ -1,0 +1,61 @@
+load("//build_defs:artifacts.bzl", "generate", "source_tree", "verification_group")
+load("//build_defs:invariant.bzl", "invariant_proof")
+load("//libraries/perceptual-grade-core/requirements:inventory.bzl", "LEAF_REQUIREMENTS")
+load("//libraries/perceptual-grade-core/requirements/coordinators:inventory.bzl", "COORDINATOR_REQUIREMENTS")
+
+[invariant_proof(
+    name = "proof_" + machine,
+    required_mutations = inventory["mutations"],
+    required_properties = inventory["properties"],
+    required_witnesses = inventory["witnesses"],
+    requirements = "//libraries/perceptual-grade-core:" + machine + "_requirements",
+    runtime_contracts = "perceptual_grade_core/graph/policies/_" + machine + "_contracts.py",
+    runtime_source = "perceptual_grade_core/graph/policies/" + machine + ".py",
+    source = "//libraries/perceptual-grade-core:" + machine + "_source",
+    visibility = ["PUBLIC"],
+) for machine, inventory in LEAF_REQUIREMENTS.items()]
+
+[invariant_proof(
+    name = "proof_" + machine + "_coordinator",
+    required_mutations = inventory["mutations"],
+    required_properties = inventory["properties"],
+    required_witnesses = inventory["witnesses"],
+    requirements = "//libraries/perceptual-grade-core:" + machine + "_coordinator_requirements",
+    runtime_contracts = "perceptual_grade_core/graph/coordinators/_" + machine + "_contracts.py",
+    runtime_source = "perceptual_grade_core/graph/coordinators/" + machine + ".py",
+    source = "//libraries/perceptual-grade-core:" + machine + "_coordinator_source",
+    visibility = ["PUBLIC"],
+) for machine, inventory in COORDINATOR_REQUIREMENTS.items()]
+
+verification_group(
+    name = "verify",
+    visibility = ["PUBLIC"],
+    deps = [":proof_" + machine for machine in LEAF_REQUIREMENTS] +
+           [":proof_" + machine + "_coordinator" for machine in COORDINATOR_REQUIREMENTS],
+)
+
+source_tree(
+    name = "color_model_sources",
+    srcs = {path[len("color_model/"):]: path for path in glob(["color_model/PerceptualGrade/*.lean"])},
+)
+
+generate(
+    name = "color_model",
+    args = [
+        "--lean",
+        "$(location //tools/verification:lean)",
+        "--dependencies",
+        "$(location //tools/verification:dependencies)",
+        "--sources",
+        "$(location :color_model_sources)",
+    ],
+    outputs = {"report": "checked.json"},
+    tool = "//tools/verification:color_model_checker",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "bake_image",
+    actual = ":proof_bake_image",
+    visibility = ["PUBLIC"],
+)

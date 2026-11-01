@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#101216" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"
+    />
+    <title>modCAM16-HK Cartesian Color Picker</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="visuals">
+        <div class="gamut-stage">
+          <div class="j-trackwheel-control">
+            <div class="j-trackwheel-body">
+              <div
+                class="j-trackwheel"
+                id="j-trackwheel"
+                role="slider"
+                tabindex="0"
+                aria-label="J′ trackwheel"
+                aria-orientation="vertical"
+                aria-valuemin="0"
+                aria-valuemax="1"
+                aria-valuenow="0.3"
+                aria-valuetext="0.300"
+                ><span class="j-trackwheel-texture" aria-hidden="true"></span></div>
+              <div class="j-ruler" aria-hidden="true">
+                <div class="j-trackwheel-ticks">
+                  <span style="--tick: 0">0.0</span>
+                  <span style="--tick: 0.1">0.1</span>
+                  <span style="--tick: 0.2">0.2</span>
+                  <span style="--tick: 0.3">0.3</span>
+                  <span style="--tick: 0.4">0.4</span>
+                  <span style="--tick: 0.5">0.5</span>
+                  <span style="--tick: 0.6">0.6</span>
+                  <span style="--tick: 0.7">0.7</span>
+                  <span style="--tick: 0.8">0.8</span>
+                  <span style="--tick: 0.9">0.9</span>
+                  <span style="--tick: 1">1.0</span>
+                </div>
+                <span id="j-reference-tick" class="j-reference-tick"></span>
+                <span id="j-stick" class="j-patch-tick" hidden></span>
+                <span id="j-image-stick" class="j-image-tick" hidden></span>
+                <svg id="background-stick" class="j-background-tick" viewBox="0 0 11 14" hidden aria-hidden="true">
+                  <polygon points="1.5,1.5 10.5,7 1.5,12.5" fill="#171a20" stroke="#fff" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" />
+                </svg>
+                <svg id="j-current-indicator" class="j-current-indicator" viewBox="0 0 8 10" aria-hidden="true">
+                  <polygon points="0,0 8,5 0,10" fill="#fff" />
+                </svg>
+              </div>
+            </div>
+            <div class="j-number-row">
+              <label class="control-label" id="j-label" for="j-number">J’=</label>
+              <input id="j-number" class="number-input j-number" type="number"
+                min="0" max="1" step="0.001" value="0.300"
+                inputmode="decimal" aria-label="J’ value" />
+            </div>
+          </div>
+          <div
+            class="color-trackpad"
+              id="color-trackpad"
+              aria-busy="true"
+              aria-label="Color trackpad"
+            >
+              <canvas
+                id="gamut-checkerboard"
+                width="512" height="512" aria-hidden="true"
+              ></canvas>
+              <img
+                id="gamut-slice"
+                width="512" height="512" alt="J’, x’, and y’ gamut slice"
+              />
+              <img id="gamut-colorchecker" width="1024" height="1024" alt="" aria-hidden="true" />
+              <canvas
+                id="gamut-indicators"
+                width="512" height="512" aria-hidden="true"
+              ></canvas>
+              <div class="slice-coordinate-inputs" aria-label="Cartesian coordinates">
+                <span
+                  id="color-name"
+                  class="color-name"
+                  aria-hidden="true"
+                ></span>
+                <label for="x-number">x’=</label>
+                <input id="x-number" class="number-input coordinate-number" type="number"
+                  min="0" max="1" step="0.001" value="0.380"
+                  inputmode="decimal" aria-label="x’ value" />
+                <label for="y-number">y’=</label>
+                <input id="y-number" class="number-input coordinate-number" type="number"
+                  min="0" max="1" step="0.001" value="0.650"
+                  inputmode="decimal" aria-label="y’ value" />
+              </div>
+              <span id="plot-status" class="plot-status" role="status"
+                >Loading color engine…</span
+              >
+              <div class="slice-options" role="group" aria-label="Rec.2020 authoring options">
+                <button id="full-rec2020-toggle" class="action-button toggle-button" type="button">Rec.2020 (P3-D65 Limited)</button>
+              </div>
+          </div>
+        </div>
+        <div class="preview-panel">
+          <div class="preview-column">
+            <button id="preview" class="preview" type="button"
+              aria-label="Choose preview view transform" aria-haspopup="menu"
+              aria-expanded="false" aria-controls="view-menu"
+              title="ACES 2.0 - HDR 1000 nits (Rec.2020) — click to change view">
+              <img id="preview-image" width="256" height="256" alt="Picked color and background surround" hidden />
+              <span class="view-menu-cue" aria-hidden="true">▾</span>
+            </button>
+            <div id="view-menu" class="view-menu" role="menu" aria-label="Preview view transform" hidden>
+              <button type="button" role="menuitemradio" aria-checked="false" data-view="1">ACES 2.0 - SDR 100 nits (Rec.709)</button>
+              <button type="button" role="menuitemradio" aria-checked="false" data-view="4">ACES 2.0 - SDR 100 nits (P3 D65)</button>
+              <button type="button" role="menuitemradio" aria-checked="false" data-view="2">ACES 2.0 - HDR 1000 nits (P3 D65)</button>
+              <button type="button" role="menuitemradio" aria-checked="true" data-view="0">ACES 2.0 - HDR 1000 nits (Rec.2020)</button>
+            </div>
+            <span id="preview-status" class="preview-status" role="status" hidden></span>
+          </div>
+          <div class="preview-details">
+            <span id="rgb-label">ACEScg<sup>*</sup></span>
+            <code id="linear-value">(0.000, 0.000, 0.000)</code>
+            <span id="encoded-label" aria-live="polite"></span>
+            <div class="encoded-value-row">
+              <div class="hex-input">
+                <span class="hex-prefix" aria-hidden="true">#</span>
+                <input
+                  id="encoded-value"
+                  class="encoded-value"
+                  type="text"
+                  value="000000"
+                  maxlength="6"
+                  pattern="[0-9A-Fa-f]{6}"
+                  spellcheck="false"
+                  aria-label="Six sRGB Encoded ACEScg AP1 hexadecimal digits"
+                />
+              </div>
+              <button id="copy-value" class="action-button" type="button">
+                Copy
+              </button>
+              <button id="set-value" class="action-button" type="button">
+                Set
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section id="image-panel" class="image-panel" data-ready="false" data-image-state="empty" aria-labelledby="image-heading">
+        <div class="image-toolbar">
+          <div class="image-toolbar-copy">
+            <h2 id="image-heading">Image color locator</h2>
+            <p id="image-status" class="image-status" role="status">Load an image to locate its colors.</p>
+          </div>
+          <input id="image-file-input" type="file" hidden accept=".dng,.DNG,.exr,.jpg,.jpeg,.png,.heic,.heif,image/x-adobe-dng,image/dng,image/x-exr,image/png,image/jpeg,image/heif,image/heic" />
+          <div class="image-toolbar-actions">
+            <button id="image-load" class="action-button" type="button">Load image</button>
+            <button id="image-options" class="action-button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="image-options-dialog" disabled>Options</button>
+          </div>
+        </div>
+        <dialog id="image-options-dialog" class="image-options-dialog" aria-labelledby="image-options-heading">
+          <form method="dialog" class="image-options-card">
+            <div class="image-options-heading"><h3 id="image-options-heading">Options</h3><button id="image-options-close" class="action-button" value="cancel" type="submit">Close</button></div>
+            <p id="image-interpretation-warning" class="image-options-warning" role="status" hidden></p>
+            <div class="image-controls">
+          <label class="image-field image-units-field">
+            <input id="image-reference-white-encoded-as-linear-203" type="checkbox" />
+            <span class="image-units-copy">
+              <span>Image reference white is encoded as linear 2.03</span>
+              <small id="image-units-help">Use linear 1.0 as reference white.</small>
+            </span>
+          </label>
+          <label id="image-gamut-field" class="image-field" hidden><span>Primaries</span><select id="image-gamut">
+            <option value="embedded">Use embedded interpretation</option>
+            <option value="" disabled>Select primaries manually…</option>
+            <option value="Rec.709 / sRGB">sRGB (Rec.709)</option>
+            <option value="Display P3 / P3-D65">Display P3 (P3-D65)</option>
+            <option value="Rec.2020">Rec.2020</option>
+            <option value="ACEScg">ACEScg</option>
+            <option value="ACES2065-1">ACES2065-1</option>
+          </select></label>
+          <label id="image-transfer-field" class="image-field" hidden><span>Transfer</span><select id="image-transfer">
+            <option value="Linear">Linear</option>
+            <option value="sRGB">sRGB</option>
+            <option value="Gamma 1.8">Gamma 1.8</option>
+            <option value="Gamma 2.2">Gamma 2.2</option>
+            <option value="Gamma 2.4 / BT.1886">Gamma 2.4 / BT.1886</option>
+            <option value="BT.709 / BT.2020">BT.709 / BT.2020</option>
+            <option value="PQ / ST 2084">PQ / ST 2084</option>
+            <option value="HLG / BT.2100">HLG / BT.2100</option>
+          </select></label>
+            </div>
+          </form>
+        </dialog>
+        <div class="image-row">
+          <img id="image-loupe" width="192" height="192" alt="Pixel loupe" />
+          <div id="image-viewport" class="image-viewport" data-ready="false">
+            <img id="image-preview" alt="Loaded source image" />
+            <canvas id="image-overlay" width="512" height="512" aria-label="Image color locator"></canvas>
+            <div id="image-transform-banner" class="image-transform-banner" role="status" hidden>Applying display transform…</div>
+          </div>
+          <div class="image-zoom-controls" aria-label="Image zoom">
+            <button type="button" class="action-button image-zoom-button" data-image-zoom="1" aria-pressed="false">1x</button>
+            <button type="button" class="action-button image-zoom-button" data-image-zoom="2" aria-pressed="true">2x</button>
+            <button type="button" class="action-button image-zoom-button" data-image-zoom="5" aria-pressed="false">5x</button>
+          </div>
+        </div>
+        <p id="image-stats" class="image-stats" role="status"></p>
+      </section>
+      <footer class="app-footer">
+        <p>* The picked color is defined by its lightness (J′) and chromaticity coordinates (x′, y′). To match it in an OCIO workflow, use the ACEScg value with the <i>ACES 2.0 - HDR 1000 nits (Rec.2020)</i> view transform.</p>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

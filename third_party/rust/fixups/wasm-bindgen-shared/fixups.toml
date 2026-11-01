@@ -1,0 +1,5 @@
+# Keep schema hashing, but omit the optional ambient Git revision lookup.
+# Both the macro/runtime and the CLI therefore use the published crate version.
+overlay = "overlay"
+cargo_env = ["CARGO_PKG_VERSION"]
+buildscript.run = true

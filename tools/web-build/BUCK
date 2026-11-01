@@ -1,0 +1,61 @@
+load("//build_defs:artifacts.bzl", "generate")
+load("//third_party/web:dependencies.bzl", "NPM", "TOOLS")
+
+python_library(
+    name = "build_lib",
+    srcs = ["build.py"],
+    base_module = "web_build",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "builder",
+    main_module = "web_build.build",
+    visibility = ["PUBLIC"],
+    deps = [":build_lib"],
+)
+
+[
+    generate(
+        name = name,
+        args = [
+            "tools",
+            "--archive",
+            name,
+            "$(location //third_party/web:" + TOOLS[name]["target"] + ")",
+        ],
+        outputs = {"binary": "bin/node" if name == "node" else "chrome"},
+        target_compatible_with = [
+            "prelude//os:linux",
+            "prelude//cpu:x86_64",
+        ],
+        tool = ":builder",
+        visibility = ["PUBLIC"],
+    )
+    for name in [
+        "node",
+        "chromium",
+    ]
+]
+
+generate(
+    name = "npm",
+    args = [
+        "deps",
+        "--manifest",
+        "$(location //third_party/web:manifest)",
+    ] + [arg for spec in NPM for arg in [
+        "--archive",
+        spec["target"],
+        "$(location //third_party/web:" + spec["target"] + ")",
+    ]],
+    outputs = {},
+    tool = ":builder",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "runtime_test_source",
+    src = "test_runtime.py",
+    visibility = ["PUBLIC"],
+)

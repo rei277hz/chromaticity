@@ -1,0 +1,49 @@
+python_test(
+    name = "undo_launcher",
+    srcs = ["test_undo_launcher.py"],
+    base_module = "tests.diagnostics",
+    resources = {"pg_undo_trace_macos.command": "//products/perceptual-grade-blender:pg_undo_trace_macos"},
+)
+
+python_test(
+    name = "undo_collection",
+    srcs = ["test_undo_collection.py"],
+    base_module = "tests.diagnostics",
+    resources = {
+        "pg_undo_trace.py": "//products/perceptual-grade-blender:pg_undo_trace",
+        "pg_undo_trace_collect.py": "//products/perceptual-grade-blender:pg_undo_trace_collect",
+        "pg_undo_trace_pack.command": "//products/perceptual-grade-blender:pg_undo_trace_pack",
+    },
+)
+
+python_test(
+    name = "undo_native",
+    srcs = ["test_undo_native.py"],
+    base_module = "tests.diagnostics",
+    resources = {
+        "pg_undo_trace_native.py": "//products/perceptual-grade-blender:pg_undo_trace_native",
+        "pg_undo_trace_lldb.py": "//products/perceptual-grade-blender:pg_undo_trace_lldb",
+        "pg_undo_trace_collect.py": "//products/perceptual-grade-blender:pg_undo_trace_collect",
+        "malloc_history_macos_20261018.txt": "malloc_history_macos_20261018.txt",
+    },
+)
+
+python_test(
+    name = "undo_driver",
+    srcs = ["test_undo_driver.py"],
+    base_module = "tests.diagnostics",
+    resources = {
+        "pg_undo_trace_native.py": "//products/perceptual-grade-blender:pg_undo_trace_native",
+        "pg_undo_trace_lldb.py": "//products/perceptual-grade-blender:pg_undo_trace_lldb",
+    },
+)
+
+python_test(
+    name = "scope_probe",
+    srcs = ["test_scope_probe.py"],
+    base_module = "tests.diagnostics",
+    resources = {
+        "scope_probe_report.py": "//products/perceptual-grade-blender/tools/diagnostics:scope_probe_report",
+        "project_probe.py": "//products/perceptual-grade-blender/tools/diagnostics:project_probe_source",
+    },
+)

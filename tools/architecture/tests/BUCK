@@ -1,0 +1,15 @@
+COMPONENTS = {
+    "perceptual-grade-blender": "//products/perceptual-grade-blender",
+    "perceptual-grade-next-blender": "//products/perceptual-grade-next-blender",
+    "hdr-color-picker-blender": "//products/hdr-color-picker-blender",
+    "perceptual-grade-reference": "//libraries/perceptual-grade-reference",
+    "perceptual-grade-next-core": "//libraries/perceptual-grade-next-core",
+}
+
+python_test(
+    name = "components",
+    srcs = ["test_components.py"],
+    base_module = "architecture_tests",
+    resources = {name + ".json": target + ":runtime_bundle[manifest]" for name, target in COMPONENTS.items()} |
+                {name: target + ":runtime_bundle" for name, target in COMPONENTS.items()},
+)

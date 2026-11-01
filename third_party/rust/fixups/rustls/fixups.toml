@@ -1,0 +1,2 @@
+# Enable optional read_buf only when the compiler supports it.
+buildscript.run = true

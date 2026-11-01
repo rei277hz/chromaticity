@@ -1,0 +1,13 @@
+python_test(
+    name = "blender_distribution",
+    srcs = ["test_blender_distribution.py"],
+    base_module = "tests.blender_build",
+    deps = ["//tools/blender-build:extractors"],
+)
+
+python_test(
+    name = "xvfb_distribution",
+    srcs = ["test_xvfb_distribution.py"],
+    base_module = "tests.blender_build",
+    deps = ["//tools/blender-build:extractors"],
+)

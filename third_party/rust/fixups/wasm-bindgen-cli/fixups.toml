@@ -1,0 +1,2 @@
+# clap derives CLI version/about text from the invoking package metadata.
+cargo_env = ["CARGO_PKG_AUTHORS", "CARGO_PKG_DESCRIPTION", "CARGO_PKG_NAME", "CARGO_PKG_VERSION"]

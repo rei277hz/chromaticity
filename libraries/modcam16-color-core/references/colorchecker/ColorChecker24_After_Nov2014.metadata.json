@@ -1,0 +1,61 @@
+{
+  "asset": "ColorChecker24_After_Nov2014.txt",
+  "title": "ColorChecker24 - November2014 edition and newer",
+  "manufacturer": "X-Rite",
+  "native_format": "CGATS-style text with CIELAB fields Lab_L, Lab_a, Lab_b",
+  "reference_white": "D50",
+  "measurement": {
+    "date": "2015-04-28",
+    "time": "14:33",
+    "instrument": "i1Pro 2",
+    "instrument_serial": "1001785",
+    "condition": "M0",
+    "filter": "no"
+  },
+  "provenance": {
+    "manufacturer_notice_url": "https://www.xrite.com/service-support/new-color-specifications-for-colorchecker-sg-and-classic-charts",
+    "download_url": "https://babelcolor.com/index_htm_files/ColorChecker24_After_Nov2014.txt",
+    "retrieved_at": "2026-09-19",
+    "sha256": "2d110e3e8c33cb46fad920817efcf3efa504c2a9eb9cf60c9079b9c111557d29",
+    "note": "The downloaded file identifies X-Rite as manufacturer and the November 2014-and-newer ColorChecker24 edition as originator. The download URL is a public mirror of that reference file. No explicit redistribution license is embedded in the file."
+  },
+  "interpretation": {
+    "source_values": "CIELAB D50; XYZ values are derived and are not present in the source file",
+    "decimal_separator": "comma",
+    "rust_normalization": "Decimal commas are converted to decimal points without changing the numeric values.",
+    "patch_count": 24,
+    "active_picker_patch_count": 18,
+    "active_picker_order": [
+      "A1", "B1", "C1", "D1", "E1", "F1",
+      "A2", "B2", "C2", "D2", "E2", "F2",
+      "A3", "B3", "C3", "D3", "E3", "F3"
+    ],
+    "reference_only_neutral_patches": ["A4", "B4", "C4", "D4", "E4", "F4"]
+  },
+  "patches": {
+    "A1": [37.54, 14.37, 14.92],
+    "A2": [62.73, 35.83, 56.5],
+    "A3": [28.37, 15.42, -49.8],
+    "A4": [95.19, -1.03, 2.93],
+    "B1": [64.66, 19.27, 17.5],
+    "B2": [39.43, 10.75, -45.17],
+    "B3": [54.38, -39.72, 32.27],
+    "B4": [81.29, -0.57, 0.44],
+    "C1": [49.32, -3.82, -22.54],
+    "C2": [50.57, 48.64, 16.67],
+    "C3": [42.43, 51.05, 28.62],
+    "C4": [66.89, -0.75, -0.06],
+    "D1": [43.46, -12.74, 22.72],
+    "D2": [30.1, 22.54, -20.87],
+    "D3": [81.8, 2.67, 80.41],
+    "D4": [50.76, -0.13, 0.14],
+    "E1": [54.94, 9.61, -24.79],
+    "E2": [71.77, -24.13, 58.19],
+    "E3": [50.63, 51.28, -14.12],
+    "E4": [35.63, -0.46, -0.48],
+    "F1": [70.48, -32.26, -0.37],
+    "F2": [71.51, 18.24, 67.37],
+    "F3": [49.57, -29.71, -28.32],
+    "F4": [20.64, 0.07, -0.46]
+  }
+}

@@ -1,0 +1,53 @@
+python_test(
+    name = "package_boundary",
+    srcs = ["test_package_boundary.py"],
+    base_module = "tests.verification_boundary",
+    visibility = ["PUBLIC"],
+    deps = ["//tools/verification:packaging"],
+)
+
+python_test(
+    name = "invariant_packaging",
+    srcs = ["test_invariant_packaging.py"],
+    base_module = "tests.invariant_packaging",
+    visibility = ["PUBLIC"],
+    deps = ["//tools/verification:packaging"],
+)
+
+python_test(
+    name = "bake_correspondence",
+    srcs = ["test_bake_correspondence.py"],
+    base_module = "tests.bake_correspondence",
+    resources = {
+        "bake_image.py": "//libraries/perceptual-grade-core:bake_image_source",
+        "bake_image.inv": "//libraries/perceptual-grade-core:bake_image_requirements",
+    },
+    visibility = ["PUBLIC"],
+    deps = ["//libraries/invariant:verification"],
+)
+
+python_test(
+    name = "archive",
+    srcs = ["test_archive.py"],
+    base_module = "tests.verification_picker",
+    resources = {
+        "product.zip": "//products/hdr-color-picker-blender:extension[zip]",
+        "tree": "//products/hdr-color-picker-blender:extension_tree",
+        "package_inventory.json": "//products/hdr-color-picker-blender:package_inventory",
+    },
+    visibility = ["PUBLIC"],
+    deps = ["//tools/verification:packaging"],
+)
+
+python_test(
+    name = "grade_archive",
+    srcs = ["test_archive.py"],
+    base_module = "tests.verification_grade",
+    resources = {
+        "product.zip": "//products/perceptual-grade-blender:extension[zip]",
+        "tree": "//products/perceptual-grade-blender:extension_tree",
+        "package_inventory.json": "//products/perceptual-grade-blender:package_inventory",
+    },
+    visibility = ["PUBLIC"],
+    deps = ["//tools/verification:packaging"],
+)

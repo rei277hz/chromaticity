@@ -1,0 +1,3 @@
+# Derive architecture and compiler atomic capabilities.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_NAME"]

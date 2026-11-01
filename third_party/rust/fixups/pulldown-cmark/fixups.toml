@@ -1,0 +1,2 @@
+# Preserve upstream feature-dependent code generation.
+buildscript.run = true

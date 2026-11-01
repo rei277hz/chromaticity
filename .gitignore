@@ -1,0 +1,8 @@
+buck-out/
+__pycache__/
+*.py[cod]
+remote_execution/.state/
+node_modules/
+target/
+dist/
+.vite/

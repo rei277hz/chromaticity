@@ -1,0 +1,3 @@
+# Derive atomic and sanitizer cfg from the target supplied by Buck.
+buildscript.run = true
+cargo_env = ["CARGO_PKG_NAME"]

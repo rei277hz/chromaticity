@@ -1,0 +1,263 @@
+{
+  "version": "1.18.0",
+  "date": "2026-10-06",
+  "execution": "Original isolated fixture runner with --authoring-preview",
+  "environment": {
+    "python": "3.13.15",
+    "blender": "5.2.2 LTS",
+    "numpy": "2.5.3",
+    "pytest": "9.1.1"
+  },
+  "fixtures": [
+    {
+      "target": "blender_blender_half_precision_test",
+      "exit_code": 0,
+      "seconds": 25.95
+    },
+    {
+      "target": "blender_blender_registration_test",
+      "exit_code": 0,
+      "seconds": 9.26
+    },
+    {
+      "target": "blender_test_comparison_scopes",
+      "exit_code": 0,
+      "seconds": 12.27
+    },
+    {
+      "target": "blender_test_concentration_graph",
+      "exit_code": 0,
+      "seconds": 11.35
+    },
+    {
+      "target": "blender_test_extension_namespace",
+      "exit_code": 0,
+      "seconds": 12.22
+    },
+    {
+      "target": "blender_test_full_graph_template",
+      "exit_code": 0,
+      "seconds": 20.69
+    },
+    {
+      "target": "blender_test_grade_stack",
+      "exit_code": 0,
+      "seconds": 24.25
+    },
+    {
+      "target": "blender_test_graph_regressions",
+      "exit_code": 0,
+      "seconds": 22.36
+    },
+    {
+      "target": "blender_test_graph_updates",
+      "exit_code": 0,
+      "seconds": 21.81
+    },
+    {
+      "target": "blender_test_node_presentation",
+      "exit_code": 0,
+      "seconds": 20.11
+    },
+    {
+      "target": "blender_test_optimized_curves",
+      "exit_code": 0,
+      "seconds": 1.98
+    },
+    {
+      "target": "blender_test_scope_framebuffer",
+      "exit_code": 0,
+      "seconds": 0.72
+    },
+    {
+      "target": "blender_test_shared_grade_undo",
+      "exit_code": 0,
+      "seconds": 21.92
+    },
+    {
+      "target": "blender_test_shared_grades",
+      "exit_code": 0,
+      "seconds": 21.24
+    },
+    {
+      "target": "blender_test_stack_editing",
+      "exit_code": 0,
+      "pytest_cases": 42
+    },
+    {
+      "target": "blender_test_stage3_scopes",
+      "exit_code": 0,
+      "seconds": 0.37
+    },
+    {
+      "target": "blender_test_ui",
+      "exit_code": 0,
+      "seconds": 19.39
+    },
+    {
+      "target": "blender_test_white_and_render_ui",
+      "exit_code": 0,
+      "seconds": 29.24
+    },
+    {
+      "target": "blender_test_white_drag_sampling",
+      "exit_code": 0,
+      "seconds": 22.32
+    },
+    {
+      "target": "blender_test_working_white",
+      "exit_code": 0,
+      "seconds": 39.03
+    },
+    {
+      "target": "numerical_test_adaptance_weight",
+      "exit_code": 0,
+      "seconds": 1.42
+    },
+    {
+      "target": "numerical_test_chroma_drivers",
+      "exit_code": 0,
+      "seconds": 1.07
+    },
+    {
+      "target": "numerical_test_control_parity",
+      "exit_code": 0,
+      "seconds": 0.22
+    },
+    {
+      "target": "numerical_test_control_schema",
+      "exit_code": 0,
+      "seconds": 0.62
+    },
+    {
+      "target": "numerical_test_core",
+      "exit_code": 0,
+      "seconds": 2.88
+    },
+    {
+      "target": "numerical_test_cube_math",
+      "exit_code": 0
+    },
+    {
+      "target": "numerical_test_cube_native",
+      "exit_code": 0
+    },
+    {
+      "target": "numerical_test_forward_inverse",
+      "exit_code": 0,
+      "seconds": 4.08
+    },
+    {
+      "target": "numerical_test_hk_fixture_regression",
+      "exit_code": 0,
+      "seconds": 13.25
+    },
+    {
+      "target": "numerical_test_hk_lift",
+      "exit_code": 0,
+      "seconds": 0.32
+    },
+    {
+      "target": "numerical_test_hk_native",
+      "exit_code": 0,
+      "seconds": 0.82
+    },
+    {
+      "target": "numerical_test_hue_concentration",
+      "exit_code": 0,
+      "seconds": 6.48
+    },
+    {
+      "target": "numerical_test_i18n_terms",
+      "exit_code": 0,
+      "seconds": 0.22
+    },
+    {
+      "target": "numerical_test_inverse_math",
+      "exit_code": 0,
+      "seconds": 1.42
+    },
+    {
+      "target": "numerical_test_inverse_solver",
+      "exit_code": 0,
+      "seconds": 0.42
+    },
+    {
+      "target": "numerical_test_linear_spread",
+      "exit_code": 0,
+      "seconds": 0.67
+    },
+    {
+      "target": "numerical_test_lut_grid_regression",
+      "exit_code": 0,
+      "seconds": 42.36
+    },
+    {
+      "target": "numerical_test_progressive_lut",
+      "exit_code": 0
+    },
+    {
+      "target": "numerical_test_source_white",
+      "exit_code": 0,
+      "seconds": 2.37
+    },
+    {
+      "target": "numerical_test_white_drag_boundary",
+      "exit_code": 0,
+      "seconds": 2.67
+    },
+    {
+      "target": "numerical_test_white_drag_centroid",
+      "exit_code": 0,
+      "seconds": 1.17
+    },
+    {
+      "target": "renders_blender_compositor_test",
+      "exit_code": 0,
+      "seconds": 13.69
+    },
+    {
+      "target": "renders_blender_cube_test",
+      "exit_code": 0,
+      "seconds": 22.75,
+      "rerun": "Passed after updating the obsolete internal vertex-label assertion."
+    },
+    {
+      "target": "renders_blender_stage2_test",
+      "exit_code": 0,
+      "seconds": 22.6
+    },
+    {
+      "target": "renders_blender_stage3_render_test",
+      "exit_code": 0,
+      "seconds": 23.81
+    }
+  ],
+  "fixture_totals": {
+    "passed": 45,
+    "failed": 0,
+    "stack_pytest_cases": 42
+  },
+  "grid": {
+    "preview_size": 33,
+    "final_size": 65,
+    "preview_vertices": 35937,
+    "refinement_vertices": 238688,
+    "total_analytic_vertices": 274625,
+    "shared_samples": "bit-for-bit reused",
+    "space": "Linear Rec.2020/D65",
+    "bounds": [
+      -4,
+      64
+    ]
+  },
+  "benchmarks": "progressive-bake-performance.json",
+  "numerical_evidence": "All nine benchmark refinements match independent final bakes bit for bit; numerical regression checks exact disjoint evaluation counts, cancellation and inverse diagnostics.",
+  "limitations": [
+    "Buck2 is unavailable in this runtime; authoring checks do not satisfy its release gate.",
+    "Headless native CPU tests only; no desktop interaction or GPU certification.",
+    "Timing excludes scheduling, Blender image publication and rendering.",
+    "Existing photographic display-error studies were not rerun. DCTL math is unchanged; its validation results remain historical."
+  ],
+  "compatibility_or_migration_code_added": false
+}

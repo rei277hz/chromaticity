@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "description": "Current production retry policy. Native receipts and scalar registry identities remain adapter assumptions. Inductive state closure and relational properties are checked from this exact source.",
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {
+    "state_domain": "0 <= state.retries <= 1"
+  },
+  "contracts": {
+    "new": {
+      "requires": [
+        "0 <= retries <= 1"
+      ]
+    },
+    "step": {
+      "requires": [
+        "event_valid(state, event)"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "crash_retry_bounded",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "0 <= state.retries <= 1",
+        "event_valid(state, event)",
+        "event.kind == 'crashed' and state.retries == 1"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not after[1].accepted"
+    },
+    {
+      "name": "deterministic_failure_not_retried",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "0 <= state.retries <= 1",
+        "event_valid(state, event)",
+        "event.kind == 'failed'"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[0] == state and not after[1].accepted"
+    },
+    {
+      "name": "rebind_preserves_budget",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "0 <= state.retries <= 1",
+        "event_valid(state, event)",
+        "event.kind == 'rebind'"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[0] == state and after[1].accepted"
+    },
+    {
+      "name": "accepted_crash_consumes_one_retry",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "0 <= state.retries <= 1",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "not ((event.kind == 'crashed' and after[1].accepted)) or (after[0].retries == state.retries + 1)"
+    },
+    {
+      "name": "retry_budget_never_decreases",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "0 <= state.retries <= 1",
+        "event_valid(state, event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "after[0].retries >= state.retries"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "first_crash_retry",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "0 <= state.retries <= 1",
+        "event_valid(state,event)"
+      ],
+      "lets": {
+        "after": "step(state, event)"
+      },
+      "assert": "event.kind == 'crashed' and after[1].accepted"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "crash_does_not_consume_budget",
+      "function": "apply_crashed",
+      "target": "state.retries + 1 if accepted else state.retries",
+      "replacement": "state.retries",
+      "detects": [
+        "property.accepted_crash_consumes_one_retry"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,176 @@
+load("//build_defs:artifacts.bzl", "source_tree", "verification_group")
+load("//build_defs:invariant.bzl", "invariant_proof")
+load("//build_defs:python_packages.bzl", "component_library")
+load("//libraries/blender-runtime/requirements:inventory.bzl", "LEAF_REQUIREMENTS")
+load("//libraries/blender-runtime/requirements/coordinators:inventory.bzl", "COORDINATOR_REQUIREMENTS")
+
+# Runtime fragments have one package owner and explicit source ownership.
+PREFIX = "src/blender_runtime/"
+
+ABI_SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "*.py"]) if path != PREFIX + "machines.py"}
+
+component_library(
+    name = "abi",
+    srcs = ABI_SOURCES,
+    package = "blender_runtime",
+    deps = ["//libraries/invariant:runtime"],
+)
+
+[
+    invariant_proof(
+        name = "proof_" + name,
+        required_mutations = required["mutations"],
+        required_properties = required["properties"],
+        required_witnesses = required["witnesses"],
+        requirements = "requirements/" + name + ".inv",
+        runtime_contracts = "blender_runtime/policies/_" + name + "_contracts.py",
+        runtime_source = "blender_runtime/policies/" + name + ".py",
+        source = PREFIX + "policies/" + name + ".py",
+        visibility = ["PUBLIC"],
+    )
+    for name, required in LEAF_REQUIREMENTS.items()
+]
+
+[
+    invariant_proof(
+        name = "proof_" + name + "_coordinator",
+        required_mutations = required["mutations"],
+        required_properties = required["properties"],
+        required_witnesses = required["witnesses"],
+        requirements = "requirements/coordinators/" + name + ".inv",
+        runtime_contracts = "blender_runtime/coordinators/_" + name + "_contracts.py",
+        runtime_source = "blender_runtime/coordinators/" + name + ".py",
+        source = PREFIX + "coordinators/" + name + ".py",
+        visibility = ["PUBLIC"],
+    )
+    for name, required in COORDINATOR_REQUIREMENTS.items()
+]
+
+verification_group(
+    name = "verify",
+    visibility = ["PUBLIC"],
+    deps = [":proof_" + name for name in LEAF_REQUIREMENTS] +
+           [":proof_" + name + "_coordinator" for name in COORDINATOR_REQUIREMENTS],
+)
+
+component_library(
+    name = "coordinators",
+    srcs = {path[len(PREFIX):]: path for path in glob([PREFIX + "coordinators/*.py"])} |
+           {
+               "coordinators/_" + name + "_contracts.py": ":proof_" + name + "_coordinator[validators]"
+               for name in COORDINATOR_REQUIREMENTS
+           },
+    package = "blender_runtime",
+    deps = [":abi"],
+)
+
+MACHINES = [
+    "attempt",
+    "gpu",
+    "retry",
+    "startup",
+    "ownership",
+    "native_evaluation",
+]
+
+component_library(
+    name = "machines",
+    srcs = {"policies/__init__.py": PREFIX + "policies/__init__.py"} |
+           {"policies/" + name + ".py": PREFIX + "policies/" + name + ".py" for name in MACHINES} |
+           {"policies/_" + name + "_contracts.py": ":proof_" + name + "[validators]" for name in MACHINES},
+    package = "blender_runtime",
+    deps = [":abi"],
+)
+
+component_library(
+    name = "edge_effect_machine",
+    srcs = {
+        "policies/edge_effect.py": PREFIX + "policies/edge_effect.py",
+        "policies/_edge_effect_contracts.py": ":proof_edge_effect[validators]",
+    },
+    package = "blender_runtime",
+    deps = [":machines"],
+)
+
+component_library(
+    name = "runtime",
+    srcs = {path[len(PREFIX):]: path for path in glob([
+        PREFIX + "machines.py",
+        PREFIX + "execution/**/*.py",
+        PREFIX + "ownership/**/*.py",
+    ])},
+    external_deps = ["//third_party:numpy"],
+    package = "blender_runtime",
+    deps = [
+        ":abi",
+        ":coordinators",
+        ":machines",
+    ],
+)
+
+component_library(
+    name = "blender",
+    srcs = {path[len(PREFIX):]: path for path in glob([PREFIX + "blender/**/*.py"])},
+    package = "blender_runtime",
+    deps = [":runtime"],
+)
+
+source_tree(
+    name = "sources",
+    srcs = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])},
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "runtime_source",
+    src = PREFIX + "execution/runtime.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "arena_source",
+    src = PREFIX + "ownership/arena.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "machine_bindings_source",
+    src = PREFIX + "machines.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "attempt_source",
+    src = PREFIX + "policies/attempt.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "gpu_source",
+    src = PREFIX + "policies/gpu.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "retry_source",
+    src = PREFIX + "policies/retry.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "startup_source",
+    src = PREFIX + "policies/startup.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "ownership_source",
+    src = PREFIX + "policies/ownership.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "edge_effect_source",
+    src = PREFIX + "policies/edge_effect.py",
+    visibility = ["PUBLIC"],
+)

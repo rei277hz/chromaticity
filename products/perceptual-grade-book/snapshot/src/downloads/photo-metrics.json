@@ -1,0 +1,278 @@
+{
+  "blender_version": "5.2.2 LTS",
+  "comparison": "Historical retain-C energy floor in current pipeline; not original archived measurements",
+  "rows": [
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0436-rec2020",
+      "grade": "practical",
+      "guard_difference": {
+        "absolute_rgb_max": 0.01905045226676244,
+        "relative_rgb_max": 0.45167932289975626,
+        "relative_rgb_p50": 0.0017209974221012725,
+        "relative_rgb_p99": 0.14236274921917283
+      },
+      "lut": {
+        "absolute_rgb_max": 0.02167102260495865,
+        "relative_rgb_max": 0.28045285709521955,
+        "relative_rgb_p50": 0.0006538503410993114,
+        "relative_rgb_p99": 0.030657049732863133
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0441-rec2020",
+      "grade": "practical",
+      "guard_difference": {
+        "absolute_rgb_max": 0.006723965410083722,
+        "relative_rgb_max": 0.4153381239371234,
+        "relative_rgb_p50": 0.0,
+        "relative_rgb_p99": 0.16648075539721766
+      },
+      "lut": {
+        "absolute_rgb_max": 0.0026089581977156995,
+        "relative_rgb_max": 0.05427846834038421,
+        "relative_rgb_p50": 0.0008471965615960202,
+        "relative_rgb_p99": 0.011219607750934934
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0446-rec2020",
+      "grade": "practical",
+      "guard_difference": {
+        "absolute_rgb_max": 0.015626266786498595,
+        "relative_rgb_max": 0.5510264472962891,
+        "relative_rgb_p50": 0.0,
+        "relative_rgb_p99": 0.326593771157913
+      },
+      "lut": {
+        "absolute_rgb_max": 0.0007280704702009588,
+        "relative_rgb_max": 0.04769136410543147,
+        "relative_rgb_p50": 0.0005650372752332912,
+        "relative_rgb_p99": 0.020299487727742375
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0472-rec2020",
+      "grade": "practical",
+      "guard_difference": {
+        "absolute_rgb_max": 0.015991206387218394,
+        "relative_rgb_max": 0.4592517861672052,
+        "relative_rgb_p50": 0.0,
+        "relative_rgb_p99": 0.1223898780492258
+      },
+      "lut": {
+        "absolute_rgb_max": 0.21312612558277788,
+        "relative_rgb_max": 0.27347772790422664,
+        "relative_rgb_p50": 0.002261183089819807,
+        "relative_rgb_p99": 0.02668733477885325
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "P3-D65 / PQ",
+      "grade": "practical",
+      "guard_difference": {
+        "absolute_rgb_max": 0.0008062890524833111,
+        "relative_rgb_max": 0.00011796348306598083,
+        "relative_rgb_p50": 0.0,
+        "relative_rgb_p99": 0.0
+      },
+      "lut": {
+        "absolute_rgb_max": 0.018523921590604342,
+        "relative_rgb_max": 0.009662077076353618,
+        "relative_rgb_p50": 0.00021951379745920851,
+        "relative_rgb_p99": 0.00489189194086128
+      },
+      "pixels": 94543
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0436-rec2020",
+      "grade": "chroma-8x",
+      "guard_difference": {
+        "absolute_rgb_max": 34.85276875525822,
+        "relative_rgb_max": 62.755844782562875,
+        "relative_rgb_p50": 10.582467015557018,
+        "relative_rgb_p99": 37.16709880650193
+      },
+      "lut": {
+        "absolute_rgb_max": 0.022384952845308004,
+        "relative_rgb_max": 0.7736793014948682,
+        "relative_rgb_p50": 0.001755299293801641,
+        "relative_rgb_p99": 0.0686291569264862
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0441-rec2020",
+      "grade": "chroma-8x",
+      "guard_difference": {
+        "absolute_rgb_max": 7.526453933606986,
+        "relative_rgb_max": 66.31283643220192,
+        "relative_rgb_p50": 8.890736730833964,
+        "relative_rgb_p99": 41.96922971212069
+      },
+      "lut": {
+        "absolute_rgb_max": 0.03249041616124244,
+        "relative_rgb_max": 0.9049418526782266,
+        "relative_rgb_p50": 0.00849436178060917,
+        "relative_rgb_p99": 0.08029733430981532
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0446-rec2020",
+      "grade": "chroma-8x",
+      "guard_difference": {
+        "absolute_rgb_max": 11.238103193778855,
+        "relative_rgb_max": 68.34290876387165,
+        "relative_rgb_p50": 4.774933271566033,
+        "relative_rgb_p99": 37.365153189907026
+      },
+      "lut": {
+        "absolute_rgb_max": 0.00948874962363308,
+        "relative_rgb_max": 0.5810651995226777,
+        "relative_rgb_p50": 0.004964947366690578,
+        "relative_rgb_p99": 0.13928413931628345
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0472-rec2020",
+      "grade": "chroma-8x",
+      "guard_difference": {
+        "absolute_rgb_max": 275.7523780406771,
+        "relative_rgb_max": 67.22584402307582,
+        "relative_rgb_p50": 2.3470610527272733,
+        "relative_rgb_p99": 44.59620688958246
+      },
+      "lut": {
+        "absolute_rgb_max": 2.1128159655052254,
+        "relative_rgb_max": 1.5175099358384763,
+        "relative_rgb_p50": 0.011456299636742148,
+        "relative_rgb_p99": 0.5098817978760488
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "P3-D65 / PQ",
+      "grade": "chroma-8x",
+      "guard_difference": {
+        "absolute_rgb_max": 393.2378675377955,
+        "relative_rgb_max": 26.72759134204911,
+        "relative_rgb_p50": 0.4004547516730706,
+        "relative_rgb_p99": 16.058363405581144
+      },
+      "lut": {
+        "absolute_rgb_max": 0.40119628555288855,
+        "relative_rgb_max": 0.14730622070566896,
+        "relative_rgb_p50": 0.005446408915498902,
+        "relative_rgb_p99": 0.0867629706686986
+      },
+      "pixels": 94543
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0436-rec2020",
+      "grade": "dark-chroma",
+      "guard_difference": {
+        "absolute_rgb_max": 5.050645491235335,
+        "relative_rgb_max": 8.736315833370478,
+        "relative_rgb_p50": 1.3011198534067634,
+        "relative_rgb_p99": 5.695775976739585
+      },
+      "lut": {
+        "absolute_rgb_max": 0.08888392218573664,
+        "relative_rgb_max": 0.4547613415236865,
+        "relative_rgb_p50": 0.00262072865902678,
+        "relative_rgb_p99": 0.07600008222640334
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0441-rec2020",
+      "grade": "dark-chroma",
+      "guard_difference": {
+        "absolute_rgb_max": 0.812334963006311,
+        "relative_rgb_max": 14.963112564680314,
+        "relative_rgb_p50": 0.589693756525768,
+        "relative_rgb_p99": 5.521538168075231
+      },
+      "lut": {
+        "absolute_rgb_max": 0.011006961455675653,
+        "relative_rgb_max": 0.4103843001920907,
+        "relative_rgb_p50": 0.004444765398798893,
+        "relative_rgb_p99": 0.08334712214728993
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0446-rec2020",
+      "grade": "dark-chroma",
+      "guard_difference": {
+        "absolute_rgb_max": 1.8200490015766746,
+        "relative_rgb_max": 15.054428611813218,
+        "relative_rgb_p50": 0.789024733010381,
+        "relative_rgb_p99": 7.5008618759112995
+      },
+      "lut": {
+        "absolute_rgb_max": 0.007268207358425947,
+        "relative_rgb_max": 0.28880507176440695,
+        "relative_rgb_p50": 0.0023284460563367084,
+        "relative_rgb_p99": 0.09846102814522664
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "IMG_0472-rec2020",
+      "grade": "dark-chroma",
+      "guard_difference": {
+        "absolute_rgb_max": 21.182893108067564,
+        "relative_rgb_max": 14.351448544716764,
+        "relative_rgb_p50": 0.3467710009008319,
+        "relative_rgb_p99": 8.688209998257996
+      },
+      "lut": {
+        "absolute_rgb_max": 2.745934385403782,
+        "relative_rgb_max": 0.6357421449234667,
+        "relative_rgb_p50": 0.01216547884813932,
+        "relative_rgb_p99": 0.2084336301345326
+      },
+      "pixels": 84672
+    },
+    {
+      "all_results_finite": true,
+      "fixture": "P3-D65 / PQ",
+      "grade": "dark-chroma",
+      "guard_difference": {
+        "absolute_rgb_max": 38.60366486118578,
+        "relative_rgb_max": 3.099583886305609,
+        "relative_rgb_p50": 0.005928094053219489,
+        "relative_rgb_p99": 1.7491694131134106
+      },
+      "lut": {
+        "absolute_rgb_max": 0.18304908898378436,
+        "relative_rgb_max": 0.0860943219909337,
+        "relative_rgb_p50": 0.00346771252327131,
+        "relative_rgb_p99": 0.05497021191379219
+      },
+      "pixels": 94543
+    }
+  ],
+  "view": "Blender ACES 2.0 / sRGB",
+  "working_space": "Linear Rec.709"
+}

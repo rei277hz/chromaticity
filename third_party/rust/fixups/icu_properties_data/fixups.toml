@@ -1,0 +1,2 @@
+# Use the published ICU data; no external ICU4X_DATA_DIR is supplied.
+buildscript.run = true

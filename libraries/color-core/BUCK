@@ -1,0 +1,25 @@
+load("//build_defs:artifacts.bzl", "source_tree")
+load("//build_defs:python_packages.bzl", "component_library")
+
+PREFIX = "src/color_core/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+component_library(
+    name = "runtime",
+    srcs = SOURCES,
+    external_deps = ["//third_party:numpy"],
+    package = "color_core",
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)

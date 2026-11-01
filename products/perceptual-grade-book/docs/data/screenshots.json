@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "figures": [
+    {
+      "name": "blender-install",
+      "title": "Install the Blender extension",
+      "columns": 1,
+      "panels": [
+        {
+          "file": "blender-install.png",
+          "label": "Blender · Install from Disk and enabled extension"
+        }
+      ]
+    },
+    {
+      "name": "blender-shading",
+      "title": "Connect a material grade",
+      "columns": 1,
+      "panels": [
+        {
+          "file": "blender-shading.png",
+          "label": "Blender · Image Texture → grade → shader → Material Output"
+        }
+      ]
+    },
+    {
+      "name": "blender-compositing",
+      "title": "Connect a compositor grade",
+      "columns": 1,
+      "panels": [
+        {
+          "file": "blender-compositing.png",
+          "label": "Blender · Image / Render Layers → grade → output and Viewer"
+        }
+      ]
+    },
+    {
+      "name": "resolve-install",
+      "title": "Install and select the DCTL",
+      "columns": 1,
+      "panels": [
+        {
+          "file": "resolve-install.png",
+          "label": "Resolve · Open LUT Folder, Update Lists and DCTL selection"
+        }
+      ]
+    },
+    {
+      "name": "resolve-cst",
+      "title": "Use explicit CSTs in DaVinci YRGB",
+      "columns": 3,
+      "panels": [
+        {
+          "file": "resolve-cst-input.png",
+          "label": "Input CST · source encoding → XYZ / Linear"
+        },
+        {
+          "file": "resolve-dctl-white.png",
+          "label": "DCTL · Destination White matches the XYZ chain"
+        },
+        {
+          "file": "resolve-cst-output.png",
+          "label": "Output CST · XYZ / Linear → delivery encoding"
+        }
+      ]
+    },
+    {
+      "name": "colorchecker-connect",
+      "title": "Connect the ColorChecker reference",
+      "columns": 1,
+      "panels": [
+        {
+          "file": "colorchecker-connect.png",
+          "label": "Photograph → Color · ACEScg EXR → Color Reference"
+        }
+      ]
+    },
+    {
+      "name": "tone-waveforms",
+      "title": "Read SDR and HDR on the same waveform scale",
+      "columns": 2,
+      "panels": [
+        {
+          "file": "waveform-sdr.png",
+          "label": "Example A · SDR: shadows, midtones and diffuse white"
+        },
+        {
+          "file": "waveform-hdr.png",
+          "label": "Example B · HDR: diffuse white and brighter highlights"
+        }
+      ]
+    }
+  ]
+}

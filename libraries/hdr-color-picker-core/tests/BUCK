@@ -1,0 +1,18 @@
+python_test(
+    name = "math",
+    srcs = ["test_math.py"],
+    base_module = "tests.hdr_picker",
+    resources = {"fixtures/legacy_rust.json": "fixtures/legacy_rust.json"},
+    deps = [
+        "//libraries/color-core:runtime",
+        "//libraries/hdr-color-picker-core:runtime",
+    ],
+)
+
+python_test(
+    name = "radius_fit",
+    srcs = ["test_radius_fit.py"],
+    base_module = "tests.hdr_picker",
+    resources = {"radius_fit.json": "//libraries/hdr-color-picker-core:radius_fit[report]"},
+    deps = ["//libraries/hdr-color-picker-core:runtime"],
+)
