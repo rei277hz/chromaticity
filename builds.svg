@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="235" height="20" role="img" aria-label="Linux build targets: 2/2 passed">
+  <title>Linux build targets: 2/2 passed</title>
+  <rect width="235" height="20" rx="3" fill="#555"/>
+  <path d="M149 0H232Q235 0 235 3V17Q235 20 232 20H149Z" fill="#2e7d32"/>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11">
+    <text x="74.5" y="14">Linux build targets</text>
+    <text x="192.0" y="14">2/2 passed</text>
+  </g>
+</svg>

@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "metadata": {
+    "repository": "rei277hz/chromaticity",
+    "commit": "414cafea156602e6b20362374465de09b8c5a363",
+    "run_id": "41321628578",
+    "run_number": 1,
+    "run_attempt": 1,
+    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/41321628578",
+    "timestamp": "2026-11-01T15:42:30+00:00"
+  },
+  "builds": {
+    "passed": 2,
+    "total": 2,
+    "outcome": "passed",
+    "exit_code": 0,
+    "counts": {
+      "passed": 2
+    },
+    "issues": [],
+    "targets": [
+      {
+        "target": "//:perceptual_grade_book",
+        "status": "passed"
+      },
+      {
+        "target": "//:hdr_color_picker_web",
+        "status": "passed"
+      }
+    ]
+  },
+  "tests": {
+    "passed": 7,
+    "total": 7,
+    "outcome": "passed",
+    "exit_code": 0,
+    "counts": {
+      "passed": 7
+    },
+    "issues": [],
+    "targets": [
+      {
+        "target": "//libraries/color-core/tests:linear",
+        "status": "passed"
+      },
+      {
+        "target": "//tools/verification/tests:package_boundary",
+        "status": "passed"
+      },
+      {
+        "target": "//tools/verification/tests:invariant_packaging",
+        "status": "passed"
+      },
+      {
+        "target": "//tools/web-build/tests:archive",
+        "status": "passed"
+      },
+      {
+        "target": "//third_party/web:manifest_consistency",
+        "status": "passed"
+      },
+      {
+        "target": "//libraries/modcam16-color-core:test",
+        "status": "passed"
+      },
+      {
+        "target": "//libraries/modcam16-decomposition:test",
+        "status": "passed"
+      }
+    ]
+  }
+}

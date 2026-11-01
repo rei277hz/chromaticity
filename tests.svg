@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="228" height="20" role="img" aria-label="Linux smoke suites: 7/7 passed">
+  <title>Linux smoke suites: 7/7 passed</title>
+  <rect width="228" height="20" rx="3" fill="#555"/>
+  <path d="M142 0H225Q228 0 228 3V17Q228 20 225 20H142Z" fill="#2e7d32"/>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11">
+    <text x="71.0" y="14">Linux smoke suites</text>
+    <text x="185.0" y="14">7/7 passed</text>
+  </g>
+</svg>
