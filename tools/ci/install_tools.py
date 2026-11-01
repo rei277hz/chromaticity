@@ -50,6 +50,16 @@ def download(url, destination):
 
 def install(name, directory):
     pin = PINS[name]
+    installed = directory / name
+    if installed.is_file():
+        try:
+            check_version(installed, name)
+        except (OSError, ValueError, subprocess.CalledProcessError):
+            pass
+        else:
+            print(f"Using pinned {name} {pin['version']} at {installed}")
+            return
+
     with tempfile.TemporaryDirectory(prefix=f".{name}-", dir=directory) as temporary:
         temporary = Path(temporary)
         archive = temporary / "download"
@@ -74,7 +84,7 @@ def install(name, directory):
         executable.chmod(0o755)
         check_version(executable, name)
         executable.replace(directory / name)
-    print(f"Installed {name} {pin['version']} at {directory / name}")
+    print(f"Installed {name} {pin['version']} at {installed}")
 
 
 def main():

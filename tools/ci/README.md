@@ -21,8 +21,10 @@ included, including the central Rust catalogue, Reindeer configuration, and crat
 fixups. Generated Rust rules, generated web declarations, lockfiles, dependency
 caches, build outputs, and the historical handbook snapshot are excluded.
 
-On Linux x86_64, install the pinned tools (Python 3.11+ and `zstd` are prerequisites)
-and run the same formatting checks locally from the repository root:
+On Linux x86_64, run the formatting commands locally from the repository root.
+The Buck2 fix target installs pinned Buildifier and Taplo in the user cache the first
+time it runs; Python 3.11+ and network access are required for that first run. The
+manual setup below also installs Buck2 and needs `zstd` if Buck2 is not already available.
 
 ```sh
 python3 tools/ci/install_tools.py --bin-dir /tmp/chromaticity-ci-tools buck2 buildifier taplo
@@ -31,6 +33,9 @@ python3 tools/ci/format.py
 python3 tools/ci/format.py --starlark-lint
 # Apply only the supported Buck/Starlark and TOML formatting:
 python3 tools/ci/format.py --fix
+# The same formatter through Buck2:
+buck2 run //tools/ci:format_fix
+# The checks below are separate commands; the Buck2 target only applies formatting.
 python3 tools/ci/check_targets.py
 python3 third_party/web/update.py --check
 python3 third_party/rust/regenerate.py --check

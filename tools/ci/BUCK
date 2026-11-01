@@ -1,0 +1,5 @@
+sh_binary(
+    name = "format_fix",
+    main = "format_fix.sh",
+    visibility = ["PUBLIC"],
+)

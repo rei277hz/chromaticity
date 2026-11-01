@@ -3,18 +3,21 @@ load("//build_defs:web.bzl", "static_site")
 
 source_tree(
     name = "sources",
-    srcs = {p: p for p in glob([
-        "src/*.ts",
-        "src/*.css",
-        "index.html",
-        "package.json",
-        "package-lock.json",
-        "tsconfig.json",
-        "vite.config.ts",
-        "tests/*.mjs",
-        "tests/*.py",
-        "tests/reference/*.ocio",
-    ], exclude = ["tests/test_publish.py"])},
+    srcs = {p: p for p in glob(
+        [
+            "src/*.ts",
+            "src/*.css",
+            "index.html",
+            "package.json",
+            "package-lock.json",
+            "tsconfig.json",
+            "vite.config.ts",
+            "tests/*.mjs",
+            "tests/*.py",
+            "tests/reference/*.ocio",
+        ],
+        exclude = ["tests/test_publish.py"],
+    )},
     visibility = ["PUBLIC"],
 )
 
