@@ -27,13 +27,13 @@
   digest_algorithms = SHA256
 
 [buck2_re_client]
-  engine_address = perceptual-grade-nativelink:50051
-  action_cache_address = perceptual-grade-nativelink:50051
-  cas_address = perceptual-grade-nativelink:50051
+  engine_address = 172.19.0.2:50051
+  action_cache_address = 172.19.0.2:50051
+  cas_address = 172.19.0.2:50051
   tls = false
   instance_name = main
 
 [remote_execution]
   enabled = true
-  worker_image = sha256:2c0180f95923d81012e70ad19f0cde306eb0708e3b3b1e259b50bf69956c3cc7
+  worker_image = sha256:950122d8ff3471616c1fabb735da6fc429f320e6dc20556ba65da44f31d5acaf
 # END NativeLink settings

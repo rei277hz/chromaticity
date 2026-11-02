@@ -10,6 +10,8 @@ from color_tools.perceptual_grade_nodes import (
     LinearSettings, ToneSettings, ColorSettings, WebSettings, Settings, prepare, prepare_linear,
     prepare_tone as runtime_prepare_tone, prepare_update)
 from color_tools.perceptual_grade_nodes.prepare import linear_matrix, project_source_white
+from color_tools.perceptual_grade_nodes import project_source_white_component
+from color_tools.perceptual_grade_nodes.settings import D65
 from color_tools.perceptual_grade_nodes.tables import (
     TABLE_ERROR_LIMIT, build_diagnostic_table, build_runtime_table, build_table, coefficients, derivative_bernstein,
     kernel, readonly, select_table, audit_tone)
@@ -46,6 +48,23 @@ class PreparationTests(unittest.TestCase):
     def test_white_projection_matches_reference(self):
         for point in ((0., 0.), (.9, .9), (.1, .7), (.3127, .329), (1., -1.)):
             np.testing.assert_allclose(project_source_white(point), reference.source_white(point), atol=1e-14)
+
+    def test_white_component_projection_keeps_the_other_coordinate(self):
+        for axis in (0, 1):
+            for value in (0.0, 0.9):
+                point = [D65[0], D65[1]]
+                point[axis] = value
+                point = tuple(point)
+                result = project_source_white_component(point, axis)
+                projected = list(point)
+                projected[axis] = result
+                with self.subTest(point=point, axis=axis):
+                    self.assertEqual(projected[1-axis], D65[1-axis])
+                    np.testing.assert_allclose(
+                        project_source_white(projected), projected, atol=1e-12
+                    )
+        with self.assertRaises(ValueError):
+            project_source_white_component((.3127, .329), 2)
 
     def test_matrix_override_is_authoritative_even_when_singular(self):
         # API robustness; this is not a UI-authored accuracy case.

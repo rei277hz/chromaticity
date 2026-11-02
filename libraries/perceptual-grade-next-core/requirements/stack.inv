@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["new"],
+  "step": "step",
+  "invariants": {
+    "grade_identity_tuple_is_well_formed": "len(state.grade_ids) >= 0"
+  },
+  "contracts": {
+    "new": {
+      "ensures": ["result.grade_ids == ()"]
+    },
+    "step": {
+      "requires": [
+        "event.kind != 'grade_changed' or event.grade_id > 0"
+      ],
+      "ensures": [
+        "result[0].grade_ids == (event.grade_ids if event.kind == 'replace' else state.grade_ids)",
+        "result[1].rebuild == (state.grade_ids != event.grade_ids if event.kind == 'replace' else (event.grade_id in state.grade_ids if event.kind == 'grade_changed' else False))"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "replacement_rebuild_tracks_order_and_multiplicity",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["event.kind == 'replace'"],
+      "lets": {"updated": "step(state, event)"},
+      "assert": "updated[0].grade_ids == event.grade_ids and updated[1].rebuild == (state.grade_ids != event.grade_ids)"
+    },
+    {
+      "name": "selection_never_rebuilds",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["event.kind == 'select'"],
+      "lets": {"updated": "step(state, event)"},
+      "assert": "updated[0] == state and not updated[1].rebuild"
+    },
+    {
+      "name": "grade_edit_rebuilds_only_when_referenced",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["event.kind == 'grade_changed'", "event.grade_id > 0"],
+      "lets": {"updated": "step(state, event)"},
+      "assert": "updated[0] == state and updated[1].rebuild == (event.grade_id in state.grade_ids)"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "duplicate_grade_occurrences_are_preserved",
+      "variables": {},
+      "lets": {"result": "step(new(), Event('replace', (7, 7), 0))"},
+      "assert": "result[0].grade_ids == (7, 7) and result[1].rebuild"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "replacement_ignores_order",
+      "function": "step",
+      "target": "state.grade_ids != event.grade_ids",
+      "replacement": "False",
+      "detects": ["property.replacement_rebuild_tracks_order_and_multiplicity"]
+    }
+  ]
+}

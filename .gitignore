@@ -2,6 +2,10 @@ buck-out/
 __pycache__/
 *.py[cod]
 remote_execution/.state/
+# Match cache contents explicitly for Sapling's ignore matcher.
+remote_execution/.state/**
+third_party/rust/.cargo/**
+third_party/rust/vendor/**
 node_modules/
 target/
 dist/

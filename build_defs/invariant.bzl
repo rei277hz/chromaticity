@@ -4,7 +4,6 @@ InvariantProofInfo = provider(fields = {
     "proof": provider_field(Artifact),
     "inputs": provider_field(Artifact),
     "runtime_source": provider_field(str),
-    "runtime_contracts": provider_field(str),
 })
 
 def _proof_impl(ctx):
@@ -44,13 +43,11 @@ def _proof_impl(ctx):
     return [DefaultInfo(default_output = output, sub_targets = {
         "receipt": [DefaultInfo(default_output = output.project("receipt.json"))],
         "report": [DefaultInfo(default_output = output.project("report.json"))],
-        "validators": [DefaultInfo(default_output = output.project("validators.py"))],
         "inputs": [DefaultInfo(default_output = inputs)],
     }), InvariantProofInfo(
         proof = output,
         inputs = inputs,
         runtime_source = ctx.attrs.runtime_source,
-        runtime_contracts = ctx.attrs.runtime_contracts,
     )]
 
 invariant_proof = rule(impl = _proof_impl, attrs = {
@@ -60,7 +57,6 @@ invariant_proof = rule(impl = _proof_impl, attrs = {
     "required_witnesses": attrs.list(attrs.string(), default = []),
     "required_mutations": attrs.list(attrs.string(), default = []),
     "runtime_source": attrs.string(),
-    "runtime_contracts": attrs.string(),
     "timeout_ms": attrs.int(default = 10000),
     "verifier": attrs.exec_dep(default = "//libraries/invariant:verifier", providers = [RunInfo]),
     "verifier_sources": attrs.dep(default = "//libraries/invariant:verifier_sources"),
@@ -69,7 +65,7 @@ invariant_proof = rule(impl = _proof_impl, attrs = {
 
 def _bundle_impl(ctx):
     files, manifest = {}, {}
-    validators, names = [], []
+    names = []
     for dependency in ctx.attrs.deps:
         info = dependency[InvariantProofInfo]
         name = str(dependency.label)
@@ -77,20 +73,13 @@ def _bundle_impl(ctx):
             fail("Duplicate proof dependency: " + name)
         names.append(name)
         prefix = str(len(manifest))
-        if info.runtime_contracts in validators:
-            fail("Duplicate runtime contract destination: " + info.runtime_contracts)
-        validators.append(info.runtime_contracts)
-
-        # One production module can carry several independently checked
-        # policies. Each still needs its own receipt and generated contracts.
         manifest[name] = {
             "path": prefix,
             "runtime_source": info.runtime_source,
-            "runtime_contracts": info.runtime_contracts,
         }
         files[prefix + "/proof"] = info.proof
         files[prefix + "/inputs"] = info.inputs
-    files["manifest.json"] = ctx.actions.write_json("manifest.json", {"version": 1, "machines": manifest})
+    files["manifest.json"] = ctx.actions.write_json("manifest.json", {"version": 2, "machines": manifest})
     return [DefaultInfo(default_output = ctx.actions.copied_dir("evidence", files))]
 
 invariant_bundle = rule(impl = _bundle_impl, attrs = {

@@ -15,6 +15,10 @@ _identity = z3.Datatype('InvariantIdentity')
 _identity.declare('integer_identity', ('integer_value', z3.IntSort()))
 _identity.declare('text_identity', ('text_value', TEXT))
 IDENTITY = _identity.create()
+_optional_text = z3.Datatype('InvariantOptionalText')
+_optional_text.declare('optional_none')
+_optional_text.declare('optional_some', ('optional_value', TEXT))
+OPTIONAL_TEXT = _optional_text.create()
 _LABELS = {}
 
 
@@ -52,6 +56,22 @@ def is_text(value):
 
 def is_identity(value):
     return isinstance(value, z3.ExprRef) and value.sort() == IDENTITY
+
+
+def is_optional_text(value):
+    return isinstance(value, z3.ExprRef) and value.sort() == OPTIONAL_TEXT
+
+
+def optional_text_value(value):
+    if value is None:
+        return OPTIONAL_TEXT.optional_none
+    if is_optional_text(value):
+        return value
+    if isinstance(value, Label):
+        value = label_text(value)
+    if is_text(value):
+        return OPTIONAL_TEXT.optional_some(text_value(value))
+    raise VerificationError('Optional[str] requires str or None')
 
 
 def identity_value(value):
@@ -121,6 +141,11 @@ def equal(left, right):
         if isinstance(right, Label) and type(left) is str:
             return equal(right, left)
         return equal(label_text(left) if isinstance(left, Label) else left, label_text(right) if isinstance(right, Label) else right)
+    if left is None or right is None or is_optional_text(left) or is_optional_text(right):
+        try:
+            return optional_text_value(left) == optional_text_value(right)
+        except VerificationError:
+            return z3.BoolVal(False)
     if is_identity(left) or is_identity(right):
         identity, other = (left, right) if is_identity(left) else (right, left)
         if type(other) is bool or z3.is_bool(other):
@@ -170,6 +195,8 @@ def fixed_tuple_element(values):
             kinds.add('str')
         elif is_identity(value):
             kinds.add('union')
+        elif value is None or is_optional_text(value):
+            kinds.add('optional')
         elif type(value) is bool or z3.is_bool(value):
             kinds.add('bool')
         elif type(value) is int or z3.is_int(value):
@@ -182,12 +209,16 @@ def fixed_tuple_element(values):
         return None
     if 'union' in kinds or {'int', 'str'} <= kinds:
         return Type('union')
+    if kinds <= {'str', 'optional'}:
+        return Type('optional', (Type('str'),))
     return Type(next(iter(kinds))) if len(kinds) == 1 else None
 
 
 def empty_sequence(element):
     if element.kind == 'union':
         default = identity_value(0)
+    elif element.kind == 'optional':
+        default = OPTIONAL_TEXT.optional_none
     elif element.kind == 'str':
         default = text_value('')
     elif element.kind == 'bool':
@@ -220,6 +251,8 @@ def choose(condition, yes, no):
         if a is not None and b is not None:
             return Label(z3.If(condition, a, b), label.alternatives)
         return choose(condition, label_text(yes) if isinstance(yes, Label) else yes, label_text(no) if isinstance(no, Label) else no)
+    if yes is None or no is None or is_optional_text(yes) or is_optional_text(no):
+        return z3.If(condition, optional_text_value(yes), optional_text_value(no))
     if (is_text(yes) and (type(no) is int or z3.is_int(no))) or (is_text(no) and (type(yes) is int or z3.is_int(yes))):
         return z3.If(condition, identity_value(yes), identity_value(no))
     if is_identity(yes) or is_identity(no):
@@ -281,6 +314,8 @@ def choose(condition, yes, no):
                     item = integer(item)
                 elif sequence.element.kind == "bool":
                     item = boolean(item)
+                elif sequence.element.kind == "optional":
+                    item = optional_text_value(item)
                 values = z3.Store(values, index, item)
             return Sequence(z3.IntVal(len(value)), values, sequence.element)
 
@@ -325,6 +360,14 @@ def choose(condition, yes, no):
 class Interpreter:
     def __init__(self, source, requirements, *, summaries=()):
         self.source = source
+        self.local_types = {
+            name: {
+                node.target.id: source.annotation(node.annotation)
+                for node in ast.walk(function)
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+            }
+            for name, function in source.functions.items()
+        }
         self.requirements = requirements
         self.safety = []
         self.domains = []
@@ -353,7 +396,8 @@ class Interpreter:
     def sort(self, typ):
         if typ.kind == 'literal':
             typ = Type({int: 'int', bool: 'bool', str: 'str'}[type(typ.args[0])])
-        sorts = {'int': z3.IntSort(), 'bool': z3.BoolSort(), 'str': TEXT, 'union': IDENTITY}
+        sorts = {'int': z3.IntSort(), 'bool': z3.BoolSort(), 'str': TEXT,
+                 'union': IDENTITY, 'optional': OPTIONAL_TEXT}
         if typ.kind not in sorts:
             raise VerificationError('Sequence elements require a scalar type')
         return sorts[typ.kind]
@@ -378,6 +422,17 @@ class Interpreter:
             value = text_value(value)
             i = z3.FreshInt('codepoint')
             return z3.ForAll(i, z3.Implies(z3.And(0 <= i, i < z3.Length(value)), z3.And(0 <= value[i], value[i] <= 0x10ffff)))
+        if typ.kind == 'optional':
+            if value is None or type(value) is str or isinstance(value, Label):
+                return z3.BoolVal(True)
+            if not is_optional_text(value):
+                if is_text(value):
+                    return self.typed(value, Type('str'))
+                return z3.BoolVal(False)
+            if z3.is_app(value) and value.decl().kind() == z3.Z3_OP_ITE:
+                return z3.And(z3.Implies(value.arg(0), self.typed(value.arg(1), typ)), z3.Implies(z3.Not(value.arg(0)), self.typed(value.arg(2), typ)))
+            return z3.Implies(OPTIONAL_TEXT.is_optional_some(value),
+                              self.typed(OPTIONAL_TEXT.optional_value(value), Type('str')))
         if typ.kind == 'union':
             if isinstance(value, Label):
                 return z3.BoolVal(True)
@@ -433,11 +488,12 @@ class Interpreter:
         kind = typ.kind
         if kind == "literal":
             kind = {int: "int", bool: "bool", str: "str"}[type(typ.args[0])]
-        value = z3.Const(name, {'int': z3.IntSort(), 'bool': z3.BoolSort(), 'str': TEXT, 'union': IDENTITY}[kind])
+        value = z3.Const(name, {'int': z3.IntSort(), 'bool': z3.BoolSort(), 'str': TEXT,
+                                'union': IDENTITY, 'optional': OPTIONAL_TEXT}[kind])
         if kind == 'int':
             self.input_integers.add(value.get_id())
             self.expression_roots[value.get_id()] = value
-        if typ.kind in ("literal", 'str', 'union'):
+        if typ.kind in ("literal", 'str', 'union', 'optional'):
             self.domains.append(self.typed(value, typ))
             self.known_types.add((self.value_key(value), typ))
         return value
@@ -489,6 +545,8 @@ class Interpreter:
             return identity_value(value)
         if typ.kind == 'str':
             return text_value(value)
+        if typ.kind == 'optional':
+            return optional_text_value(value)
         if typ.kind == 'int':
             return integer(value)
         if typ.kind == 'bool':
@@ -686,9 +744,9 @@ class Interpreter:
                         raise VerificationError('Membership requires a tuple')
                     if isinstance(op, ast.NotIn):
                         comparison = z3.Not(comparison)
-                elif isinstance(op, (ast.Eq, ast.NotEq)):
+                elif isinstance(op, (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)):
                     comparison = equal(left, right)
-                    if isinstance(op, ast.NotEq):
+                    if isinstance(op, (ast.NotEq, ast.IsNot)):
                         comparison = z3.Not(comparison)
                 else:
                     a, b = integer(left), integer(right)
@@ -870,6 +928,8 @@ class Interpreter:
                         env.update({n.id: v for n, v in zip(target.elts, value)})
                     if isinstance(node, ast.AnnAssign):
                         self.require(self.typed(value, self.source.annotation(node.annotation)), guard, "local annotation")
+                    elif isinstance(target, ast.Name) and target.id in self.local_types.get(self.stack[-1], {}):
+                        self.require(self.typed(value, self.local_types[self.stack[-1]][target.id]), guard, "local assignment type")
                     next_active.append((guard, env))
                 elif isinstance(node, ast.If):
                     cond = z3.simplify(boolean(self.expr(node.test, env, guard)))
@@ -893,15 +953,31 @@ class Interpreter:
         returned.extend(exits)
         return returned
 
-    def fresh_like(self, name, value):
+    def fresh_like(self, name, value, typ=None):
         if isinstance(value, Label):
             return Label(z3.FreshConst(value.value.sort(), name), value.alternatives)
         if isinstance(value, Record):
-            return Record(value.name, {key: self.fresh_like(name + '.' + key, item) for key, item in value.fields.items()})
+            fields = self.source.records[value.name]
+            return Record(value.name, {
+                key: self.fresh_like(name + '.' + key, item, fields[key])
+                for key, item in value.fields.items()
+            })
         if isinstance(value, tuple):
-            return tuple(self.fresh_like(name + '.' + str(index), item) for index, item in enumerate(value))
+            element_types = typ.args if typ is not None and typ.kind == 'tuple' else (None,) * len(value)
+            return tuple(self.fresh_like(name + '.' + str(index), item, element_types[index])
+                         for index, item in enumerate(value))
         if isinstance(value, Sequence):
             return self.symbol(str(z3.FreshInt(name)), Type('sequence', (value.element,)))
+        if typ is not None and typ.kind in ('optional', 'str', 'literal', 'union', 'int', 'bool'):
+            fresh = z3.FreshConst(self.sort(typ), name)
+            self.domains.append(self.typed(fresh, typ))
+            return fresh
+        if value is None:
+            raise VerificationError('Loop-local None requires an explicit supported annotation')
+        if is_optional_text(value):
+            fresh = z3.FreshConst(OPTIONAL_TEXT, name)
+            self.domains.append(self.typed(fresh, Type('optional', (Type('str'),))))
+            return fresh
         if type(value) is bool:
             value = z3.BoolVal(value)
         elif type(value) is int:
@@ -910,7 +986,10 @@ class Interpreter:
             value = text_value(value)
         if not isinstance(value, z3.ExprRef):
             raise VerificationError('Unsupported loop-local type')
-        return z3.FreshConst(value.sort(), name)
+        fresh = z3.FreshConst(value.sort(), name)
+        if is_text(value):
+            self.domains.append(self.typed(fresh, Type('str')))
+        return fresh
 
     def loop(self, node, guard, env):
         declaration = self.loop_nodes.get(id(node))
@@ -944,7 +1023,8 @@ class Interpreter:
 
         base = env | {cursor: z3.IntVal(0)}
         obligation('init', z3.Implies(guard, invariant(base)))
-        head = {key: self.fresh_like(prefix + '.' + key, value) if key in writes else value for key, value in env.items()}
+        local_types = self.local_types.get(self.stack[-1], {})
+        head = {key: self.fresh_like(prefix + '.' + key, value, local_types.get(key)) if key in writes else value for key, value in env.items()}
         k = z3.FreshInt(prefix + '.cursor')
         head[cursor] = k
         inv = invariant(head)
@@ -967,7 +1047,7 @@ class Interpreter:
             obligation('decrease.' + str(number), z3.Implies(path, z3.And(next_variant >= 0, next_variant < variant)))
         # Arbitrary invariant-preserving exit values cover every terminating
         # execution; termination follows from the checked integer variant.
-        exited = {key: self.fresh_like(prefix + '.exit.' + key, value) if key in writes else value for key, value in env.items()}
+        exited = {key: self.fresh_like(prefix + '.exit.' + key, value, local_types.get(key)) if key in writes else value for key, value in env.items()}
         exited[cursor] = count
         exit_guard = z3.And(guard, invariant(exited))
         exited.pop(cursor)
