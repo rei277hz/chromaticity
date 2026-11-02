@@ -24,14 +24,9 @@ HISTORICAL = "products/perceptual-grade-book/docs/"
 
 
 def inventory():
-    result = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        cwd=ROOT,
-        check=True,
-        stdout=subprocess.PIPE,
-    )
+    files = repository_files()
     groups = {"build": [], "starlark": [], "toml": []}
-    for name in sorted(set(result.stdout.decode().split("\0")) - {""}):
+    for name in sorted(files):
         path = Path(name)
         if (name in GENERATED or name.startswith(HISTORICAL)
                 or EXCLUDED_DIRECTORIES.intersection(path.parts)
@@ -47,6 +42,52 @@ def inventory():
         if not names:
             raise ValueError(f"No maintained {kind} files found; refusing an empty formatting check")
     return groups
+
+
+def repository_files():
+    if shutil.which("git"):
+        git_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=ROOT,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if git_root.returncode == 0:
+            result = subprocess.run(
+                ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                cwd=ROOT,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            return set(result.stdout.decode().split("\0")) - {""}
+
+    sapling = os.environ.get("CHROMATICITY_SAPLING_BIN") or shutil.which("sl")
+    if sapling:
+        sapling_root = subprocess.run(
+            [sapling, "root"],
+            cwd=ROOT,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if sapling_root.returncode == 0:
+            tracked = subprocess.run(
+                [sapling, "files", "--print0"],
+                cwd=ROOT,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            unknown = subprocess.run(
+                [sapling, "status", "--unknown", "--no-status", "--print0"],
+                cwd=ROOT,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            names = tracked.stdout + unknown.stdout
+            return set(names.decode().split("\0")) - {""}
+
+    raise ValueError(f"{ROOT} is neither a Git nor a Sapling working copy")
 
 
 def tool(name):

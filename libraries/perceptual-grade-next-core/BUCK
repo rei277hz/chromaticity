@@ -3,7 +3,9 @@ load("//build_defs:invariant.bzl", "invariant_proof")
 load("//build_defs:python_packages.bzl", "component_library")
 
 PACKAGE = "perceptual_grade_core"
+
 PREFIX = "src/"
+
 SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
 
 component_library(
@@ -44,6 +46,9 @@ export_file(
 
 invariant_proof(
     name = "proof_stack",
+    required_mutations = [
+        "replacement_ignores_order",
+    ],
     required_properties = [
         "replacement_rebuild_tracks_order_and_multiplicity",
         "selection_never_rebuilds",
@@ -51,9 +56,6 @@ invariant_proof(
     ],
     required_witnesses = [
         "duplicate_grade_occurrences_are_preserved",
-    ],
-    required_mutations = [
-        "replacement_ignores_order",
     ],
     requirements = ":stack_requirements",
     runtime_source = PACKAGE + "/stack.py",
@@ -117,8 +119,12 @@ invariant_proof(
 
 verification_group(
     name = "verify",
-    deps = [":proof_stack", ":proof_readiness", ":proof_preparation"],
     visibility = ["PUBLIC"],
+    deps = [
+        ":proof_preparation",
+        ":proof_readiness",
+        ":proof_stack",
+    ],
 )
 
 export_file(

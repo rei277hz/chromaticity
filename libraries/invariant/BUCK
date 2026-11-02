@@ -2,7 +2,9 @@ load("//build_defs:artifacts.bzl", "source_tree", "verification_group")
 load("//build_defs:invariant.bzl", "invariant_proof")
 
 PREFIX = "src/"
+
 VERIFIER_PREFIX = "verification/"
+
 VERIFIER = {
     path[len(VERIFIER_PREFIX):]: path
     for path in glob([VERIFIER_PREFIX + "*.py"])
