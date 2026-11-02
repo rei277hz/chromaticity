@@ -6,11 +6,15 @@ python_test(
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
     },
 )
+
 python_test(
     name = "installed",
     srcs = ["test_installed.py"],
     base_module = "tests.perceptual_grade_blender",
-    labels = ["installed", "blender"],
+    labels = [
+        "installed",
+        "blender",
+    ],
     resources = {
         "blender": "//third_party:blender_native",
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
@@ -23,7 +27,11 @@ python_test(
     name = "gesture_undo_gui",
     srcs = ["test_gesture_undo_gui.py"],
     base_module = "tests.perceptual_grade_blender",
-    labels = ["installed", "gui", "acceptance"],
+    labels = [
+        "installed",
+        "gui",
+        "acceptance",
+    ],
     resources = select({
         "prelude//os:linux": {
             "blender": "//third_party:blender_native",

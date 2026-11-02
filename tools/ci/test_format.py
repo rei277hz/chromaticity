@@ -70,6 +70,35 @@ class FormattingInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "refusing an empty formatting check"):
             formatting.inventory()
 
+    def test_sapling_inventory_collects_tracked_and_unignored_unknown_files(self):
+        expected = self.maintained()
+        tracked = ["BUCK", "third_party/rust/PACKAGE", "build_defs/rules.bzl",
+                   "third_party/rust/Cargo.toml"]
+        unknown = ["products/demo/BUCK", "libraries/demo/BUCK_TREE", "build_defs/query.bxl",
+                   "build_defs/untracked.bzl", "third_party/rust/fixups/demo/fixups.toml"]
+        commands = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
+                return subprocess.CompletedProcess(command, 128, b"", b"")
+            if command == ["sl", "root"]:
+                return subprocess.CompletedProcess(command, 0, str(self.root).encode(), b"")
+            if command == ["sl", "files", "--print0"]:
+                return subprocess.CompletedProcess(command, 0, ("\0".join(tracked) + "\0").encode(), b"")
+            if command == ["sl", "status", "--unknown", "--no-status", "--print0"]:
+                return subprocess.CompletedProcess(command, 0, ("\0".join(unknown) + "\0").encode(), b"")
+            self.fail(f"Unexpected command: {command}")
+
+        with patch.dict(formatting.os.environ, {"CHROMATICITY_SAPLING_BIN": "sl"}), \
+                patch.object(formatting.subprocess, "run", side_effect=run):
+            groups = formatting.inventory()
+
+        actual = {name for names in groups.values() for name in names}
+        self.assertEqual(actual, expected)
+        self.assertIn(["sl", "files", "--print0"], commands)
+        self.assertIn(["sl", "status", "--unknown", "--no-status", "--print0"], commands)
+
 
 if __name__ == "__main__":
     unittest.main()

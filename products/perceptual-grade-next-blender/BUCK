@@ -2,6 +2,7 @@ load("//build_defs:artifacts.bzl", "generate", "source_tree")
 load("//build_defs:python_packages.bzl", "extension_tree")
 
 PREFIX = "src/"
+
 SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
 
 source_tree(
@@ -20,11 +21,11 @@ extension_tree(
         "LICENSE": "LICENSE",
         "README.md": "README.md",
     },
+    visibility = ["PUBLIC"],
     deps = [
         "//libraries/perceptual-grade-next-core:runtime_bundle",
         "//libraries/perceptual-grade-nodes:code_bundle",
     ],
-    visibility = ["PUBLIC"],
 )
 
 python_library(
@@ -98,5 +99,8 @@ python_binary(
     name = "install_workspace",
     main_module = "product_install.install_workspace",
     visibility = ["PUBLIC"],
-    deps = [":workspace_install_archive", ":workspace_install_code"],
+    deps = [
+        ":workspace_install_archive",
+        ":workspace_install_code",
+    ],
 )
