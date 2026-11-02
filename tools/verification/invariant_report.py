@@ -1,4 +1,4 @@
-"""Build-only validation of shared Invariant evidence against shipped bytes."""
+"""Build-only validation of shared Invariant proofs against shipped bytes."""
 from dataclasses import dataclass
 import hashlib
 import json
@@ -63,27 +63,26 @@ def _names(values, label):
 
 
 def validate_bundle(root, entries):
+    """Bind build-only proof receipts to exact runtime policy source bytes."""
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError('Proof evidence bundle must be a regular directory')
     manifest, _ = _read(root / 'manifest.json')
-    if set(manifest) != {'version', 'machines'} or manifest['version'] != 1:
-        raise ValueError('Unsupported shared proof manifest')
+    if set(manifest) != {'version', 'machines'} or manifest['version'] != 2:
+        raise ValueError('Unsupported proof-only manifest')
     machines = manifest['machines']
     if type(machines) is not dict or not machines:
         raise ValueError('Required shared machine evidence is absent')
-    accepted, validators, prefixes = {}, set(), set()
+    accepted, prefixes = {}, set()
     for name, spec in sorted(machines.items()):
-        if type(spec) is not dict or set(spec) != {'path', 'runtime_source', 'runtime_contracts'}:
+        if type(spec) is not dict or set(spec) != {'path', 'runtime_source'}:
             raise ValueError('Invalid proof machine descriptor')
-        prefix, source, contracts = (str(_path(spec[key])) for key in ('path', 'runtime_source', 'runtime_contracts'))
-        if prefix in prefixes or contracts in validators:
-            raise ValueError('Duplicate proof machine evidence prefix or validator')
-        # A shared implementation may have several independent specifications;
-        # each receipt below must bind the same shipped source bytes itself.
-        prefixes.add(prefix); validators.add(contracts)
-        if source not in entries or contracts not in entries:
-            raise ValueError('Checked runtime source or validator is absent: ' + name)
+        prefix, source = (str(_path(spec[key])) for key in ('path', 'runtime_source'))
+        if prefix in prefixes:
+            raise ValueError('Duplicate proof machine evidence prefix')
+        prefixes.add(prefix)
+        if source not in entries:
+            raise ValueError('Checked runtime source is absent: ' + name)
         directory = root / prefix
         for parent in (directory, directory / 'proof'):
             if parent.is_symlink() or not parent.is_dir():
@@ -98,10 +97,6 @@ def validate_bundle(root, entries):
         for kind in ('properties', 'witnesses', 'mutations'):
             required = _names(inventory[kind], kind)
             declared = [item['name'] for item in requirements.get(kind, [])]
-            if not set(required).issubset(declared):
-                raise ValueError('Required ' + kind + ' missing from specification')
-            # All delivered named requirements are mandatory. Removing one from
-            # the .inv file must not silently reduce the packaging requirement.
             if set(required) != set(declared) or len(declared) != len(set(declared)):
                 raise ValueError('Specification and required ' + kind + ' inventories differ')
             key = 'required_' + kind
@@ -112,29 +107,21 @@ def validate_bundle(root, entries):
             raise ValueError('Missing verifier input identities')
         expected = {'source.py', 'requirements.inv', 'inventory.json', 'solver/z3.whl'}
         expected.update('verifier/' + str(_path(key)) for key in verifier)
-        if set(hashes) != expected or any(hashes['verifier/' + key] != value for key, value in verifier.items()):
+        if (set(hashes) != expected
+                or any(hashes['verifier/' + key] != value for key, value in verifier.items())):
             raise ValueError('Verifier closure inventory or bytes differ')
-        runtime_binder = 'invariant/verification/runtime_contracts.py'
-        if (runtime_binder not in entries or
-                _digest(entries[runtime_binder]) != hashes.get('verifier/runtime_contracts.py')):
-            raise ValueError('Shipped runtime contract evaluator differs from proved verifier')
         closure = _digest(json.dumps(hashes, sort_keys=True, separators=(',', ':')).encode())
         if receipt.get('input_sha256') != hashes or receipt.get('closure_sha256') != closure:
             raise ValueError('Proof input closure differs')
-        if receipt.get('version') != 1 or report.get('version') != 1 or report.get('ok') is not True:
-            raise ValueError('Unsuccessful or unsupported shared proof')
+        if receipt.get('version') != 2 or report.get('version') != 1 or report.get('ok') is not True:
+            raise ValueError('Unsuccessful or unsupported proof-only evidence')
         if receipt.get('report_sha256') != _digest(report_bytes):
             raise ValueError('Proof report bytes differ')
-        if receipt.get('source_sha256') != hashes['source.py'] or _digest(entries[source]) != hashes['source.py']:
+        if (receipt.get('source_sha256') != hashes['source.py']
+                or _digest(entries[source]) != hashes['source.py']):
             raise ValueError('Shipped policy differs from proved source')
         if receipt.get('requirements_sha256') != hashes['requirements.inv']:
             raise ValueError('Proof specification bytes differ')
-        generated_path = directory / 'proof/validators.py'
-        if generated_path.is_symlink() or not generated_path.is_file():
-            raise ValueError('Generated contracts must be a regular file')
-        generated = generated_path.read_bytes()
-        if receipt.get('validators_sha256') != _digest(generated) or entries[contracts] != generated:
-            raise ValueError('Shipped contracts differ from generated validator')
         obligations = report.get('obligations')
         if type(obligations) is not list or not obligations:
             raise ValueError('Missing proof obligations')
@@ -145,9 +132,10 @@ def validate_bundle(root, entries):
             if check.get('expected') not in ('sat', 'unsat') or check.get('actual') != check['expected']:
                 raise ValueError('Unproved obligation')
             checks[check['name']] = check
-        for kind, label, expected in [('properties', 'property.', 'unsat'), ('witnesses', 'witness.', 'sat')]:
+        for kind, label, expected_result in (
+                ('properties', 'property.', 'unsat'), ('witnesses', 'witness.', 'sat')):
             for required in inventory[kind]:
-                if checks.get(label + required, {}).get('actual') != expected:
+                if checks.get(label + required, {}).get('actual') != expected_result:
                     raise ValueError('Required claim was not checked: ' + required)
         mutations = report.get('mutations')
         if type(mutations) is not list or {item.get('name') for item in mutations} != set(inventory['mutations']):
@@ -157,12 +145,11 @@ def validate_bundle(root, entries):
         for item in mutations:
             if item.get('ok') is not True or item.get('replay', {}).get('ok') is not True:
                 raise ValueError('Mutation lacks a replayed counterexample')
-        accepted[name] = {'receipt_sha256': _digest(receipt_bytes), 'report_sha256': _digest(report_bytes),
-                          'closure_sha256': closure, 'source_sha256': hashes['source.py'],
-                          'validators_sha256': receipt['validators_sha256'],
-                          'runtime_source': source, 'runtime_contracts': contracts}
-    shipped = {name for name in entries if PurePosixPath(name).name.endswith('_contracts.py')
-               and PurePosixPath(name).name != 'runtime_contracts.py'}
-    if shipped != validators:
-        raise ValueError('Shipped generated contracts lack exact proof coverage')
+        accepted[name] = {
+            'receipt_sha256': _digest(receipt_bytes),
+            'report_sha256': _digest(report_bytes),
+            'closure_sha256': closure,
+            'source_sha256': hashes['source.py'],
+            'runtime_source': source,
+        }
     return accepted

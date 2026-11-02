@@ -5,7 +5,7 @@ load("//libraries/blender-runtime/requirements:inventory.bzl", "LEAF_REQUIREMENT
 load("//libraries/blender-runtime/requirements/coordinators:inventory.bzl", "COORDINATOR_REQUIREMENTS")
 
 # Runtime fragments have one package owner and explicit source ownership.
-PREFIX = "src/blender_runtime/"
+PREFIX = "src/"
 
 ABI_SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "*.py"]) if path != PREFIX + "machines.py"}
 

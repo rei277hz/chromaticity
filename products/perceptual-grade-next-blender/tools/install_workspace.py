@@ -102,7 +102,7 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     try:
-        resource = files("product_install") / "perceptual_grade_next.zip"
+        resource = files("product_install") / "perceptual_grade.zip"
         with as_file(resource) as archive:
             print(f"Using completed product ZIP: {archive}", flush=True)
             count = install_archive(archive, args.destination)

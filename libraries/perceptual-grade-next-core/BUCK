@@ -2,46 +2,14 @@ load("//build_defs:artifacts.bzl", "source_tree", "verification_group")
 load("//build_defs:invariant.bzl", "invariant_proof")
 load("//build_defs:python_packages.bzl", "component_library")
 
-PREFIX = "src/perceptual_grade_next_core/"
-
+PACKAGE = "perceptual_grade_core"
+PREFIX = "src/"
 SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
-
-RUNTIME_RESOURCES = {
-    "workflow/_preflight_contracts.py": ":preflight_proof[validators]",
-    "workflow/_scope_contracts.py": ":scope_proof[validators]",
-    "workflow/_project_contracts.py": ":project_proof[validators]",
-    "workflow/_project_unbounded_contracts.py": ":project_unbounded_proof[validators]",
-    "workflow/_restart_contracts.py": ":restart_proof[validators]",
-    "workflow/_foreground_contracts.py": ":foreground_proof[validators]",
-    "workflow/_preparation_contracts.py": ":preparation_proof[validators]",
-    "workflow/_recovery_policy_contracts.py": ":recovery_proof[validators]",
-    "workflow/_composed_contracts.py": ":composition_proof[validators]",
-}
 
 component_library(
     name = "runtime",
     srcs = SOURCES,
-    external_deps = ["//third_party:numpy"],
-    package = "perceptual_grade_next_core",
-    resources = RUNTIME_RESOURCES,
-    visibility = ["PUBLIC"],
-    deps = ["//libraries/color-core:runtime"],
-)
-
-# Temporary opt-in: omit only the unbounded project's generated contracts and
-# proof dependency. The normal runtime and verification aggregates stay intact.
-component_library(
-    name = "unsafe_runtime",
-    srcs = SOURCES,
-    external_deps = ["//third_party:numpy"],
-    package = "perceptual_grade_next_core",
-    resources = {
-        path: source
-        for path, source in RUNTIME_RESOURCES.items()
-        if path != "workflow/_project_unbounded_contracts.py"
-    },
-    visibility = ["PUBLIC"],
-    deps = ["//libraries/color-core:runtime"],
+    package = PACKAGE,
 )
 
 source_tree(
@@ -51,324 +19,110 @@ source_tree(
 )
 
 export_file(
-    name = "documentation",
-    src = "README.md",
-    visibility = ["PUBLIC"],
-)
-
-source_tree(
-    name = "canonical_inventory_sources",
-    srcs = {
-        "libraries/perceptual-grade-next-core/BUCK": "BUCK",
-    } | {
-        "libraries/perceptual-grade-next-core/" + path: path
-        for path in glob([
-            "requirements/*.inv",
-            "requirements/canonical-properties.json",
-        ])
-    },
+    name = "stack_source",
+    src = PREFIX + "stack.py",
     visibility = ["PUBLIC"],
 )
 
 export_file(
-    name = "canonical_crosswalk",
-    src = "requirements/canonical-properties.json",
-    visibility = ["PUBLIC"],
-)
-
-source_tree(
-    name = "preflight_source",
-    srcs = {
-        "src/perceptual_grade_next_core/workflow/preflight.py": "src/perceptual_grade_next_core/workflow/preflight.py",
-    },
+    name = "stack_requirements",
+    src = "requirements/stack.inv",
     visibility = ["PUBLIC"],
 )
 
 export_file(
-    name = "preflight_requirements",
-    src = "requirements/preflight.inv",
+    name = "readiness_source",
+    src = PREFIX + "readiness.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "readiness_requirements",
+    src = "requirements/readiness.inv",
     visibility = ["PUBLIC"],
 )
 
 invariant_proof(
-    name = "preflight_proof",
-    required_mutations = [
-        "receipt_without_active_check",
-        "retry_accepts_nonfailed_source",
-        "closed_source_can_become_ready",
-    ],
+    name = "proof_stack",
     required_properties = [
-        "completion_requires_exact_active_check",
-        "closed_owner_cannot_restore_authority",
-        "failure_requires_explicit_retry",
-        "retry_requires_a_failed_source",
-        "closed_completion_cannot_become_ready",
-        "equal_observation_keeps_failed_verdict",
+        "replacement_rebuild_tracks_order_and_multiplicity",
+        "selection_never_rebuilds",
+        "grade_edit_rebuilds_only_when_referenced",
     ],
     required_witnesses = [
-        "open_owner_for_observation",
-        "a_b_a_requires_distinct_source_revisions",
-        "explicit_retry_starts_a_fresh_check",
+        "duplicate_grade_occurrences_are_preserved",
     ],
-    requirements = "requirements/preflight.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_preflight_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/preflight.py",
-    source = "src/perceptual_grade_next_core/workflow/preflight.py",
+    required_mutations = [
+        "replacement_ignores_order",
+    ],
+    requirements = ":stack_requirements",
+    runtime_source = PACKAGE + "/stack.py",
+    source = ":stack_source",
     visibility = ["PUBLIC"],
 )
 
 invariant_proof(
-    name = "scope_proof",
-    required_mutations = [
-        "completion_accepts_different_submission",
-        "begin_reuses_consumed_request",
-        "scope_replays_display_receipt",
-        "old_input_can_issue_current_display",
-    ],
+    name = "proof_readiness",
     required_properties = [
-        "completion_accounts_original_submission",
-        "display_adoption_requires_current_healthy_scope",
-        "cancelled_completion_preserves_prior_accepted_input",
-        "operation_receipt_matches_owner_generation_serial",
-        "cancelled_attempt_cannot_begin_again",
-        "retirement_consumes_matching_physical_debt",
-        "begin_advances_request_and_submission_once",
-        "display_issue_requires_current_accepted_input",
-        "new_demand_retains_old_physical_debt",
-        "cancel_retains_physical_retirement_debt",
-        "close_without_physical_work_is_destroyable",
-        "playback_blocks_acquisition_and_publication",
-        "playback_start_revokes_prior_display_tokens",
-        "failure_is_bound_to_exact_physical_submission",
-        "old_settlement_preserves_latest_demand",
-        "scope_display_receipt_is_consumed_once",
+        "full_quality_is_required_for_current_output",
+        "request_without_gesture_retains_last_good_output",
+        "gesture_release_retains_last_good_output",
+        "matching_preview_survives_release",
+        "stale_completion_requires_gesture",
+        "stale_full_result_updates_drag_preview",
+        "late_lower_quality_never_replaces_full_quality",
+        "current_failure_clears_applied_output",
+        "return_to_applied_settings_updates_preparation_demand",
     ],
     required_witnesses = [
-        "view_move_retires_without_accepting_old_completion",
-        "playback_revokes_display_then_requires_a_fresh_demand",
+        "preview_remains_visible_until_full_installation",
     ],
-    requirements = "requirements/scope.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_scope_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/scope.py",
-    source = "src/perceptual_grade_next_core/workflow/scope.py",
+    requirements = ":readiness_requirements",
+    runtime_source = PACKAGE + "/readiness.py",
+    source = ":readiness_source",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "preparation_source",
+    src = PREFIX + "preparation.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "preparation_requirements",
+    src = "requirements/preparation.inv",
     visibility = ["PUBLIC"],
 )
 
 invariant_proof(
-    name = "project_proof",
-    required_mutations = [
-        "open_accepts_unpaired_owner_evaluator",
-        "owner_readiness_ignores_repair_debt",
-        "owner_readiness_ignores_expected_evaluator",
-        "save_starts_without_owner_readiness",
-        "render_starts_without_owner_readiness",
-        "owner_ready_accepts_repair_debt",
-        "save_completion_accepts_stale_operation",
-        "bake_accepts_another_evaluator",
-        "render_accepts_stale_operation",
-    ],
+    name = "proof_preparation",
     required_properties = [
-        "owner_worklist_has_exact_evaluator_slots",
-        "owner_worklist_rejects_duplicate_or_unpaired_entries",
-        "every_required_owner_has_current_matching_artifact",
-        "ready_artifact_evaluator_matches_its_required_owner",
-        "owner_ready_receipt_matches_required_evaluator",
-        "save_start_requires_complete_current_owner_readiness",
-        "render_start_requires_complete_current_owner_readiness",
-        "repair_debt_blocks_ready_receipt_until_fresh_retry",
-        "bake_completion_matches_admitted_receipt",
-        "save_completion_requires_invoked_operation",
-        "render_completion_requires_invoked_operation",
+        "idle_request_starts_preparation",
+        "running_request_only_replaces_latest_demand",
+        "preview_receipt_keeps_worker_occupied",
+        "final_receipt_starts_latest_successor",
+        "current_final_receipt_does_not_restart",
+        "obsolete_failure_does_not_publish_error",
+        "unmatched_receipt_is_ignored",
     ],
     required_witnesses = [
-        "all_owners_ready_then_failure_retry_requires_fresh_receipt",
-        "accepted_save_holds_publication_until_exact_terminal_receipt",
+        "preview_does_not_consume_latest_queued_request",
     ],
-    requirements = "requirements/project.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_project_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/project_proof.py",
-    source = "src/perceptual_grade_next_core/workflow/project_proof.py",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "project_unbounded_proof",
-    required_mutations = [
-        "ignore_artifact_revision",
-        "ignore_required_evaluator_match",
-        "accept_artifact_tail",
-        "ignore_repair_debt",
-    ],
-    required_properties = [
-        "T01_unbounded_worklist_covers_every_owner",
-        "T02_unbounded_artifacts_match_revision_and_evaluator",
-        "T03_unbounded_artifact_evaluator_matches_required_owner",
-        "J07_unbounded_repair_debt_blocks_readiness",
-    ],
-    required_witnesses = ["five_aligned_ready_owners_are_accepted"],
-    requirements = "requirements/project_unbounded.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_project_unbounded_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/project_unbounded.py",
-    source = "src/perceptual_grade_next_core/workflow/project_unbounded.py",
-    # The quantified J07 mutation counterexample can exceed 10 seconds under
-    # concurrent builds. Give each solver query a minute; retain every obligation.
-    timeout_ms = 60000,
+    requirements = ":preparation_requirements",
+    runtime_source = PACKAGE + "/preparation.py",
+    source = ":preparation_source",
     visibility = ["PUBLIC"],
 )
 
 verification_group(
     name = "verify",
-    visibility = ["PUBLIC"],
-    deps = [
-        ":preflight_proof",
-        ":project_proof",
-        ":project_unbounded_proof",
-        ":scope_proof",
-    ],
-)
-
-invariant_proof(
-    name = "restart_proof",
-    required_mutations = [
-        "restart_accepts_stale_generation",
-        "restart_completes_without_retirement",
-        "restart_accepts_duplicate_obligations",
-    ],
-    required_properties = [
-        "R01_fresh_generation_starts_drain",
-        "R02_retirement_is_owner_bound",
-        "R03_completion_requires_all_obligations",
-        "R04_stale_restart_receipt_is_rejected",
-        "R05_duplicate_obligations_are_rejected",
-    ],
-    required_witnesses = [
-        "restart_drains_then_completes",
-        "restart_accepts_receipts_in_any_order",
-    ],
-    requirements = "requirements/restart.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_restart_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/restart.py",
-    source = "src/perceptual_grade_next_core/workflow/restart.py",
+    deps = [":proof_stack", ":proof_readiness", ":proof_preparation"],
     visibility = ["PUBLIC"],
 )
 
-invariant_proof(
-    name = "foreground_proof",
-    required_mutations = [
-        "close_rejects_current_owner",
-        "display_receipt_can_be_consumed_twice",
-        "foreground_accepts_unissued_token",
-    ],
-    required_properties = [
-        "S01_close_revokes_view_authority",
-        "S01_close_is_admitted_for_current_owner",
-        "display_issue_is_bound_to_current_view",
-        "foreground_adoption_matches_issued_token",
-        "stale_display_is_not_adopted",
-        "display_receipt_is_consumed_once",
-        "owner_transfer_revokes_prior_display",
-    ],
-    required_witnesses = [
-        "close_drops_issued_display",
-        "transferred_owner_can_adopt_one_new_display",
-    ],
-    requirements = "requirements/foreground.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_foreground_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/scope.py",
-    source = "src/perceptual_grade_next_core/workflow/scope.py",
+export_file(
+    name = "documentation",
+    src = "README.md",
     visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "preparation_proof",
-    required_mutations = ["preparation_accepts_stale_revision"],
-    required_properties = [
-        "candidate_is_not_ready_before_commit",
-        "candidate_binds_owner_revision",
-        "commit_requires_manifest",
-        "stale_preparation_revision_is_rejected",
-        "failure_retains_repair_debt",
-        "recovery_discards_candidate",
-        "manifest_is_required_for_ready",
-        "prior_identity_is_retained_until_commit",
-        "transaction_has_distinct_candidate",
-        "candidate_manifest_requires_validation",
-        "preparation_attempt_is_monotonic",
-    ],
-    required_witnesses = ["candidate_validates_then_commits"],
-    requirements = "requirements/preparation.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_preparation_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/preparation.py",
-    source = "src/perceptual_grade_next_core/workflow/preparation.py",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "recovery_proof",
-    required_mutations = ["recovery_accepts_stale_generation"],
-    required_properties = [
-        "reopen_discards_prior_authority",
-        "reuse_requires_derived_validation",
-        "queue_creates_preparation_demand",
-        "recovery_generation_must_be_fresh",
-        "settled_recovery_does_not_requeue",
-        "queue_does_not_replay_operations",
-        "discard_drops_explicit_operations",
-        "ready_receipt_preserves_generation",
-    ],
-    required_witnesses = ["recovery_queues_invalid_assets"],
-    requirements = "requirements/recovery_policy.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_recovery_policy_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/recovery_policy.py",
-    source = "src/perceptual_grade_next_core/workflow/recovery_policy.py",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "composition_proof",
-    required_mutations = [
-        "scope_receipt_clears_project_hold",
-        "restart_completes_before_retirement",
-        "restart_accepts_duplicate_obligations",
-        "scope_retirement_checks_current_generation_instead_of_receipt_generation",
-    ],
-    required_properties = [
-        "C01_current_generation_required_for_scope",
-        "C02_restart_revokes_view_and_fences_generation",
-        "C03_restart_waits_for_physical_retirement",
-        "C04_close_revokes_view_while_scope_retires",
-        "C05_publication_hold_blocks_bake_start",
-        "C06_scope_receipt_cannot_clear_project_hold",
-        "C07_old_scope_receipt_cannot_advance_new_generation",
-        "C08_restart_does_not_replay_old_authority",
-        "C09_restart_rejects_duplicate_obligations",
-        "C10_scope_retirement_matches_original_work",
-        "C11_bake_retirement_matches_original_work",
-        "C12_restart_preserves_old_scope_receipt_identity",
-    ],
-    required_witnesses = [
-        "close_hides_view_before_scope_retirement",
-        "save_hold_blocks_bake_across_scope_close",
-        "restart_accepts_only_exact_late_scope_retirement",
-        "restarted_bake_accepts_exact_old_terminal_receipt",
-    ],
-    requirements = "requirements/composed.inv",
-    runtime_contracts = "perceptual_grade_next_core/workflow/_composed_contracts.py",
-    runtime_source = "perceptual_grade_next_core/workflow/composed.py",
-    source = "src/perceptual_grade_next_core/workflow/composed.py",
-    visibility = ["PUBLIC"],
-)
-
-verification_group(
-    name = "verify_extended",
-    visibility = ["PUBLIC"],
-    deps = [
-        ":composition_proof",
-        ":foreground_proof",
-        ":preparation_proof",
-        ":recovery_proof",
-        ":restart_proof",
-        ":verify",
-        "//libraries/perceptual-grade-next-core/tests:canonical_property_coverage",
-    ],
 )

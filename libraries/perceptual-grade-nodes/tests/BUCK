@@ -10,6 +10,16 @@ python_test(
 )
 
 python_test(
+    name = "lut",
+    srcs = ["test_lut.py"],
+    base_module = "tests.perceptual_grade_nodes",
+    deps = [
+        "//libraries/perceptual-grade-nodes:runtime",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
     name = "gui_drag_report",
     srcs = ["test_gui_drag_report.py"],
     base_module = "tests.perceptual_grade_nodes",

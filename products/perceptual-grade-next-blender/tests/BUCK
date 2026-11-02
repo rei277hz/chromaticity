@@ -1,304 +1,56 @@
-load("//build_defs:artifacts.bzl", "source_tree")
+python_test(
+    name = "package",
+    srcs = ["test_package.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+    },
+)
+python_test(
+    name = "installed",
+    srcs = ["test_installed.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["installed", "blender"],
+    resources = {
+        "blender": "//third_party:blender_native",
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+        "runner.py": "runner.py",
+        "stack_ui_checks.py": "stack_ui_checks.py",
+    },
+)
+
+python_test(
+    name = "gesture_undo_gui",
+    srcs = ["test_gesture_undo_gui.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["installed", "gui", "acceptance"],
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "gesture_undo_runner.py": "gesture_undo_runner.py",
+            "xvfb": "//third_party:xvfb_software_linux",
+        },
+        "prelude//os:macos": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "gesture_undo_runner.py": "gesture_undo_runner.py",
+        },
+    }),
+)
 
 python_test(
     name = "install_workspace",
     srcs = ["test_install_workspace.py"],
-    base_module = "tests.next_product_install",
+    base_module = "tests.perceptual_grade_blender",
     deps = ["//products/perceptual-grade-next-blender:workspace_install_code"],
 )
 
-source_tree(
-    name = "canonical_adapter_tests",
-    srcs = {
-        "products/perceptual-grade-next-blender/tests/" + path: path
-        for path in glob(["test_*.py"])
-    },
-    visibility = ["PUBLIC"],
-)
-
-export_file(
-    name = "installed_smoke_runner",
-    src = "installed/runner.py",
-)
-
-export_file(
-    name = "installed_bake_runner",
-    src = "installed/bake_runner.py",
-)
-
-export_file(
-    name = "installed_compositor_runner",
-    src = "installed/compositor_capture_runner.py",
-)
-
-export_file(
-    name = "installed_save_runner",
-    src = "installed/save_runner.py",
-)
-
-export_file(
-    name = "installed_render_runner",
-    src = "installed/render_runner.py",
-)
-
-export_file(
-    name = "installed_scope_runner",
-    src = "installed/scope_capture_runner.py",
-)
-
 python_test(
-    name = "extension",
-    srcs = ["test_extension.py"],
-    base_module = "tests.next_product",
+    name = "preparation_runtime",
+    srcs = ["test_preparation_runtime.py"],
+    base_module = "tests.perceptual_grade_blender",
     resources = {
-        "extension_tree": "//products/perceptual-grade-next-blender:extension_tree",
-        "perceptual_grade_next.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-        "package_inventory.json": "//products/perceptual-grade-next-blender:package_inventory",
-        "runtime_components.json": "//products/perceptual-grade-next-blender:runtime_bundle[manifest]",
-    },
-)
-
-python_test(
-    name = "installed_smoke",
-    srcs = ["installed/test_installed_smoke.py"],
-    base_module = "tests.installed",
-    labels = [
-        "installed",
-        "native",
-        "acceptance",
-    ],
-    resources = select({
-        "prelude//os:linux": {
-            "blender": "//third_party:blender_native",
-            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "runner.py": ":installed_smoke_runner",
-            "xvfb": "//third_party:xvfb_linux",
-        },
-        "prelude//os:macos": {
-            "blender": "//third_party:blender_native",
-            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "runner.py": ":installed_smoke_runner",
-        },
-    }),
-    deps = ["//third_party:bpy"],
-)
-
-python_test(
-    name = "installed_bake",
-    srcs = ["installed/test_installed_bake.py"],
-    base_module = "tests.installed",
-    labels = [
-        "installed",
-        "native",
-        "acceptance",
-    ],
-    resources = select({
-        "prelude//os:linux": {
-            "blender": "//third_party:blender_native",
-            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "runner.py": ":installed_bake_runner",
-            "xvfb": "//third_party:xvfb_linux",
-        },
-        "prelude//os:macos": {
-            "blender": "//third_party:blender_native",
-            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "runner.py": ":installed_bake_runner",
-        },
-    }),
-    deps = ["//third_party:bpy"],
-)
-
-python_test(
-    name = "installed_compositor_capture",
-    srcs = ["installed/test_installed_compositor_capture.py"],
-    base_module = "tests.installed",
-    labels = [
-        "installed",
-        "native",
-        "acceptance",
-    ],
-    resources = {
-        "blender": "//third_party:blender_native",
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-        "runner.py": ":installed_compositor_runner",
-        "xvfb": "//third_party:xvfb_software_linux",
     },
-    target_compatible_with = ["prelude//os:linux"],
-)
-
-python_test(
-    name = "installed_save",
-    srcs = ["installed/test_installed_save.py"],
-    base_module = "tests.installed",
-    labels = [
-        "installed",
-        "native",
-        "acceptance",
-    ],
-    resources = select({
-        "prelude//os:linux": {
-            "blender": "//third_party:blender_native",
-            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "save_runner.py": ":installed_save_runner",
-            "xvfb": "//third_party:xvfb_linux",
-        },
-        "prelude//os:macos": {
-            "blender": "//third_party:blender_native",
-            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "save_runner.py": ":installed_save_runner",
-        },
-    }),
-    deps = ["//third_party:bpy"],
-)
-
-python_test(
-    name = "installed_render",
-    srcs = ["installed/test_installed_render.py"],
-    base_module = "tests.installed",
-    labels = [
-        "installed",
-        "native",
-        "acceptance",
-    ],
-    resources = {
-        "blender": "//third_party:blender_native",
-        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-        "runner.py": ":installed_render_runner",
-        "xvfb": "//third_party:xvfb_linux",
-        "bpy_abi": "//third_party:bpy_native_abi_linux",
-    },
-    target_compatible_with = ["prelude//os:linux"],
-)
-
-python_test(
-    name = "installed_scope_capture",
-    srcs = ["installed/test_scope_capture.py"],
-    base_module = "tests.installed",
-    labels = [
-        "installed",
-        "gui",
-        "native",
-        "acceptance",
-    ],
-    resources = {
-        "blender": "//third_party:blender_native",
-        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-        "scope_capture_runner.py": ":installed_scope_runner",
-        "xvfb": "//third_party:xvfb_software_linux",
-        "bpy_abi": "//third_party:bpy_native_abi_linux",
-    },
-    target_compatible_with = ["prelude//os:linux"],
-    deps = ["//third_party:bpy"],
-)
-
-python_test(
-    name = "native_grade",
-    srcs = ["test_native_grade.py"],
-    base_module = "tests.next_product",
-    labels = ["native"],
-    deps = [
-        "//products/perceptual-grade-next-blender:runtime",
-        "//third_party:bpy",
-    ],
-)
-
-python_test(
-    name = "controls",
-    srcs = ["test_controls.py"],
-    base_module = "tests.next_product",
-    deps = ["//products/perceptual-grade-next-blender:runtime"],
-)
-
-python_test(
-    name = "bake_lifecycle",
-    srcs = ["test_bake_lifecycle.py"],
-    base_module = "tests.next_product",
-    deps = ["//products/perceptual-grade-next-blender:runtime"],
-)
-
-python_test(
-    name = "scope_runtime",
-    srcs = ["test_scope_runtime.py"],
-    base_module = "tests.next_product",
-    deps = ["//products/perceptual-grade-next-blender:runtime"],
-)
-
-python_test(
-    name = "scope_ui",
-    srcs = ["test_scope_ui.py"],
-    base_module = "tests.next_product",
-    labels = ["native"],
-    deps = [
-        "//products/perceptual-grade-next-blender:runtime",
-        "//third_party:bpy",
-    ],
-)
-
-python_test(
-    name = "native_stack",
-    srcs = ["test_native_stack.py"],
-    base_module = "tests.next_product",
-    labels = ["native"],
-    deps = [
-        "//products/perceptual-grade-next-blender:runtime",
-        "//third_party:bpy",
-    ],
-)
-
-python_test(
-    name = "recovery",
-    srcs = ["test_recovery.py"],
-    base_module = "tests.next_product",
-    labels = ["native"],
-    deps = [
-        "//products/perceptual-grade-next-blender:runtime",
-        "//third_party:bpy",
-    ],
-)
-
-python_test(
-    name = "project_readiness",
-    srcs = ["test_project_readiness.py"],
-    base_module = "tests.next_product",
-    labels = ["native"],
-    deps = [
-        "//products/perceptual-grade-next-blender:runtime",
-        "//third_party:bpy",
-    ],
-)
-
-python_test(
-    name = "output_operators",
-    srcs = ["test_output_operators.py"],
-    base_module = "tests.next_product",
-    deps = ["//products/perceptual-grade-next-blender:runtime"],
-)
-
-python_test(
-    name = "native_bake",
-    srcs = ["test_native_bake.py"],
-    base_module = "tests.next_product",
-    labels = ["native"],
-    deps = [
-        "//products/perceptual-grade-next-blender:runtime",
-        "//third_party:bpy",
-    ],
-)
-
-python_test(
-    name = "restart",
-    srcs = ["test_restart.py"],
-    base_module = "tests.next_product",
-    labels = ["native"],
-    deps = [
-        "//products/perceptual-grade-next-blender:runtime",
-        "//third_party:bpy",
-    ],
-)
-
-python_test(
-    name = "composition_trace",
-    srcs = ["test_composition_trace.py"],
-    base_module = "tests.next_product",
-    deps = ["//products/perceptual-grade-next-blender:runtime"],
 )

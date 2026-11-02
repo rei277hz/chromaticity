@@ -3,16 +3,16 @@
 `buck2 build //:verify` combines retained Lean color-model theorems with the shared
 Invariant `.inv` verifier. The generic process lifecycle, thirteen leaf
 machines and ten workflow coordinators have separate requirements. Handwritten
-Python is the behavior authority; source-derived proofs produce runtime contracts,
-not generated automata. See [the framework authoring guide](../../libraries/invariant/README.md).
+Python is the behavior authority; proofs are build evidence and produce no runtime
+code. See [the framework authoring guide](../../libraries/invariant/README.md).
 These retained Grade/Picker gates do not certify the independent Next product;
 its [proof coverage](../../libraries/perceptual-grade-next-core/PROOF_COVERAGE.md)
 records its separate implementation and acceptance boundaries.
 
 ## Source-bound machine verification
 
-The reusable source model, symbolic interpreter, obligation builder and runtime
-contract evaluator live in `libraries/invariant/`. Requirements name invariants,
+The reusable source model, symbolic interpreter, obligation builder and concrete
+counterexample evaluator live in `libraries/invariant/verification/`. Requirements name invariants,
 function pre/postconditions, relational properties, witnesses, source mutations
 and loop induction clauses. Initialization establishes the invariants; each
 admitted event preserves them. Helper calls, result types, definedness, exceptional
@@ -34,8 +34,8 @@ Native observations and receipt identity remain explicit adapter premises.
 Each `invariant_proof` action declares the policy, `.inv`, mandatory inventories,
 all verifier modules and pinned Z3 wheel as an exact closure. The checker validates
 its executing modules and solver against those inputs. Successful artifacts include
-SMT queries, the report, a receipt and a generated runtime validator. The receipt
-binds the closure, source, requirements, report and generated validator hashes.
+SMT queries, the report and a receipt. The receipt binds the closure, source,
+requirements, report and mandatory claim inventories.
 Current Buck actions use a ten-second per-query timeout and Z3 4.15.4.
 
 ```sh
@@ -60,18 +60,17 @@ verification target additionally requires the Lean gate.
 
 ## Archive integrity
 
-The preserved Grade and Picker Blender extensions are deterministic archives of
-exact declared runtime sources. Their external proof bundles enumerate every
-shipped generated contract and its policy. Packaging checks mandatory claims, witnesses, replayed mutations,
-complete input inventories and all bound bytes. Changed/missing evidence removes
-stale ZIPs and reports rather than leaving a previously accepted artifact.
+Product archives contain exact declared runtime sources; proof bundles remain
+outside the archive. Packaging checks mandatory claims, witnesses, replayed
+mutations, complete input inventories, and that each shipped policy source matches
+its proof receipt. Changed or missing evidence removes stale ZIPs and reports
+rather than leaving a previously accepted artifact. The package report records
+accepted source, report and closure hashes. Native safety assumptions are not
+expanded by an archive integrity check.
 
-Of the verification implementation, only the shared solver-free
-`invariant.verification.runtime_contracts` module and generated contract modules
-are permitted at runtime. Z3, checker sources, `.inv` files, receipts and SMT
-queries remain outside the archive. The package report
-records accepted source, validator, report and closure hashes. Native safety
-assumptions are not expanded by an archive integrity check.
+The new Perceptual Grade product uses this proof-only package boundary. Existing
+Grade and Picker consumers are deferred for migration and their package targets
+are not compatible until that work is completed.
 The [component packaging guide](../../build_defs/README.md) describes the source
 ownership and private namespace layout checked by these gates.
 

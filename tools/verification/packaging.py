@@ -26,15 +26,6 @@ _BUILD_SUFFIXES = frozenset({
     '.whl', '.pyc', '.pyo', '.v', '.vo', '.vos', '.vok', '.glob', '.lean',
     '.olean', '.smt2', '.inv',
 })
-_RUNTIME_CONTRACT_FILES = frozenset({
-    'invariant/verification/__init__.py',
-    'invariant/verification/runtime_contracts.py',
-})
-_RUNTIME_CONTRACT_IMPORTS = frozenset({
-    'verification.runtime_contracts', 'invariant.verification.runtime_contracts',
-})
-
-
 def _path(name):
     if type(name) is not str:
         raise ValueError('Runtime paths must be strings')
@@ -64,10 +55,9 @@ def _runtime_json(inventory):
 def _runtime_file(name, data, allowed_json):
     path = _path(name)
     blocked_parts = set(path.parts) & _BUILD_MODULES
-    if name in _RUNTIME_CONTRACT_FILES:
-        blocked_parts.discard('verification')
     if (blocked_parts or path.stem in _BUILD_MODULES
             or path.suffix in _BUILD_SUFFIXES or path.name == 'INVARIANT'
+            or path.name.endswith('_contracts.py')
             or path.name.endswith(('.manifest.json', '.receipt.json'))):
         raise ValueError('Build-only evidence or tooling in extension: ' + name)
     if path.suffix == '.json' and name not in allowed_json:
@@ -82,7 +72,7 @@ def _runtime_file(name, data, allowed_json):
                        if isinstance(node, ast.ImportFrom)
                        else [alias.name for alias in node.names])
             if any(set(module.split('.')) & _BUILD_MODULES
-                   for module in imports if module not in _RUNTIME_CONTRACT_IMPORTS):
+                   for module in imports):
                 raise ValueError('Build-only import in runtime: ' + name)
         identifier = (node.id if isinstance(node, ast.Name) else
                       node.arg if isinstance(node, ast.arg) else
