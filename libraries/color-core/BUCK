@@ -1,7 +1,7 @@
 load("//build_defs:artifacts.bzl", "source_tree")
 load("//build_defs:python_packages.bzl", "component_library")
 
-PREFIX = "src/color_core/"
+PREFIX = "src/"
 
 SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
 

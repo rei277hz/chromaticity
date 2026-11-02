@@ -45,7 +45,7 @@ class Source:
             if index == 0 and docstring(node):
                 continue
             if isinstance(node, ast.ImportFrom):
-                allowed = {"dataclasses": {"dataclass", "replace"}, "typing": {"Literal"}, "__future__": {"annotations"}}
+                allowed = {"dataclasses": {"dataclass", "replace"}, "typing": {"Literal", "Optional"}, "__future__": {"annotations"}}
                 if node.level or node.module not in allowed or any(x.asname or x.name not in allowed[node.module] for x in node.names):
                     raise VerificationError("Only explicit dataclasses/typing imports are supported")
                 self.imports.update(x.name for x in node.names)
@@ -65,15 +65,15 @@ class Source:
                     value = ast.literal_eval(node.value)
                 except (ValueError, TypeError) as error:
                     raise VerificationError("Module constants must be literal") from error
-                if type(value) not in (int, bool, str):
-                    raise VerificationError("Module constants must be int, bool, or str")
+                if type(value) not in (int, bool, str, type(None)):
+                    raise VerificationError("Module constants must be int, bool, str, or None")
                 if targets[0].id in self.constants:
                     raise VerificationError("Duplicate module constant")
                 self.constants[targets[0].id] = value
             else:
                 raise VerificationError("Unsupported module syntax: " + type(node).__name__)
         names = [*self.records, *self.functions, *self.constants]
-        if len(names) != len(set(names)) or any(n in {"replace", "dataclass", "Literal", "int", "bool", "str", "tuple", "ValueError", *INTRINSICS} for n in names):
+        if len(names) != len(set(names)) or any(n in {"replace", "dataclass", "Literal", "Optional", "int", "bool", "str", "tuple", "ValueError", *INTRINSICS} for n in names):
             raise VerificationError("Duplicate or reserved declaration name")
         for name, node in list(self.records.items()):
             if node.bases or node.keywords or len(node.decorator_list) != 1:
@@ -134,6 +134,10 @@ class Source:
             return Type('union', (Type('int'), Type('str')))
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
             items = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            if node.value.id == "Optional":
+                if "Optional" not in self.imports or len(items) != 1 or self.annotation(items[0]) != Type("str"):
+                    raise VerificationError("Only Optional[str] is supported")
+                return Type("optional", (Type("str"),))
             if node.value.id == "Literal":
                 if "Literal" not in self.imports:
                     raise VerificationError("Literal must be explicitly imported")
@@ -154,7 +158,7 @@ class Source:
         allowed = (ast.Constant, ast.Name, ast.Attribute, ast.Tuple, ast.Subscript, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp, ast.Call)
         if not isinstance(node, allowed):
             raise VerificationError("Unsupported expression: " + type(node).__name__)
-        if isinstance(node, ast.Constant) and type(node.value) not in (int, bool, str):
+        if isinstance(node, ast.Constant) and type(node.value) not in (int, bool, str, type(None)):
             raise VerificationError("Unsupported literal")
         if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
             raise VerificationError("Private attributes are not supported")
@@ -164,8 +168,16 @@ class Source:
             raise VerificationError("Unsupported unary operator")
         if isinstance(node, ast.BoolOp) and not isinstance(node.op, (ast.And, ast.Or)):
             raise VerificationError("Unsupported Boolean operator")
-        if isinstance(node, ast.Compare) and any(not isinstance(op, (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)) for op in node.ops):
+        if isinstance(node, ast.Compare) and any(not isinstance(op, (ast.Eq, ast.NotEq, ast.Is, ast.IsNot, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)) for op in node.ops):
             raise VerificationError("Unsupported comparison")
+        if isinstance(node, ast.Compare):
+            left = node.left
+            for op, right in zip(node.ops, node.comparators):
+                if isinstance(op, (ast.Is, ast.IsNot)) and not (
+                        isinstance(left, ast.Constant) and left.value is None
+                        or isinstance(right, ast.Constant) and right.value is None):
+                    raise VerificationError("Identity comparisons are supported only with None")
+                left = right
         if isinstance(node, ast.Call):
             if not isinstance(node.func, ast.Name) or node.func.id not in {*self.functions, *self.records, "replace", *INTRINSICS}:
                 raise VerificationError("Only source-defined pure functions and constructors may be called")
@@ -232,7 +244,7 @@ class Source:
             def children(typ):
                 if typ.kind == "record":
                     record_visit(typ.args[0], stack | {name})
-                if typ.kind in ("tuple", "sequence", "union"):
+                if typ.kind in ("tuple", "sequence", "union", "optional"):
                     for item in typ.args:
                         children(item)
             for typ in self.records[name].values():
@@ -287,7 +299,7 @@ class Source:
 
     def schema(self):
         def typ(t):
-            return {"kind": t.kind, "args": [typ(x) for x in t.args] if t.kind in ("tuple", "sequence", "union") else list(t.args)}
+            return {"kind": t.kind, "args": [typ(x) for x in t.args] if t.kind in ("tuple", "sequence", "union", "optional") else list(t.args)}
         return {
             "records": {name: {key: typ(t) for key, t in fields.items()} for name, fields in self.records.items()},
             "functions": {name: {"arguments": {key: typ(t) for key, t in args.items()}, "returns": typ(ret)} for name, (args, ret) in self.signatures.items()},

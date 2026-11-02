@@ -367,6 +367,10 @@ for the old UI must negate its convention. `matrix` replaces the derived XYZ
 transform and may be singular. `ToneSettings` has five `input_nits`, `fit`,
 `reference_nits` and `peak_nits`.
 
+`project_source_white` moves an xy pair to the nearest CAT16-positive point.
+`project_source_white_component(point, axis)` clamps one coordinate while
+holding the other fixed, for independent x/y controls.
+
 `ColorSettings.lightness` and `.chroma` each have four tonal rows and four
 columns ordered low chroma, high chroma, opponent a, opponent b. `.adaptance`
 has four two-component rows. Independent `.lightness_fit`, `.chroma_fit`,

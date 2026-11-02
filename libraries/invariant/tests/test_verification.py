@@ -1,9 +1,6 @@
-import ast
 import copy
-import importlib.util
 import json
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -188,6 +185,80 @@ def chained(n: int) -> bool:
                     self.assertEqual(z3.is_true(z3.simplify(boolean(symbolic[0].fields["active"]))), actual[0].active)
                     self.assertEqual(z3.is_true(z3.simplify(boolean(symbolic[1].fields["launch"]))), actual[1].launch)
 
+    def test_optional_string_none_semantics(self):
+        source = '''from dataclasses import dataclass
+from typing import Optional
+
+@dataclass(frozen=True)
+class State:
+    signature: Optional[str]
+
+@dataclass(frozen=True)
+class Event:
+    signature: Optional[str]
+
+@dataclass(frozen=True)
+class Effects:
+    pass
+
+def new() -> State:
+    return State(None)
+
+def absent(state: State) -> bool:
+    return state.signature is None
+
+def optional_loop(values: tuple[Optional[str], ...]) -> Optional[str]:
+    selected: Optional[str] = None
+    for item in values:
+        selected = item
+    return selected
+
+def step(state: State, event: Event) -> tuple[State, Effects]:
+    if event.signature is None:
+        return state, Effects()
+    return State(event.signature), Effects()
+'''
+        requirements = {
+            "version": 1,
+            "state": "State",
+            "event": "Event",
+            "initializers": ["new"],
+            "step": "step",
+            "invariants": {"signature_is_optional": "state.signature is None or state.signature is not None"},
+            "contracts": {"new": {"ensures": ["result.signature is None"]}},
+            "properties": [
+                {
+                    "name": "none_branch_is_absent",
+                    "variables": {"state": "State"},
+                    "assume": ["state.signature is None"],
+                    "assert": "absent(state)",
+                },
+                {
+                    "name": "string_branch_is_present",
+                    "variables": {"state": "State"},
+                    "assume": ["state.signature is not None"],
+                    "assert": "not absent(state)",
+                },
+            ],
+            "witnesses": [],
+            "mutations": [],
+            "loops": [{
+                "name": "optional_local_prefix",
+                "function": "optional_loop",
+                "target": "item",
+                "iter": "values",
+                "cursor": "processed",
+                "invariants": ["True"],
+                "decreases": "len(values)-processed",
+            }],
+        }
+        report = self.verify(source, requirements, output=True)
+        self.assertTrue(report["ok"], report)
+        self.assertFalse((self.root / "proof" / "validators.py").exists())
+
+        with self.assertRaises(VerificationError):
+            Source(source.replace("Optional[str]", "Optional[int]"))
+
     def test_python_division_and_modulo_match_concrete_execution(self):
         source = Source(SOURCE + "\ndef divmod_pair(a: int, b: int) -> tuple[int, int]:\n    return a // b, a % b\n")
         for a in (-7, -1, 0, 1, 7):
@@ -238,55 +309,6 @@ def nested(pair: Pair) -> Pair:
             result = checker.solve("timeout", True)
         self.assertFalse(result["ok"])
         self.assertEqual(result["reason"], "timeout")
-
-    def test_generated_runtime_validators_have_no_z3_dependency(self):
-        self.assertTrue(self.verify(output=True)["ok"])
-        def load(name, path):
-            spec = importlib.util.spec_from_file_location(name, path)
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[name] = module
-            spec.loader.exec_module(module)
-            self.addCleanup(sys.modules.pop, name, None)
-            return module
-        machine = load("verified_fixture", self.root / "machine.py")
-        validators = load("fixture_validators", self.root / "proof" / "validators.py").bind(machine)
-        validators.validate_state(machine.initial())
-        validators.validate_before("remaining", {"n": 0})
-        validators.validate_after("remaining", {"n": 0}, 1)
-        for callback in (lambda: validators.validate_state(machine.State(-1, False)), lambda: validators.validate_before("remaining", {"n": True}), lambda: validators.validate_before("remaining", {"n": 2}), lambda: validators.validate_after("remaining", {"n": 0}, 2)):
-            with self.assertRaises(ValueError):
-                callback()
-        # Inspect the import boundary rather than relying on this process, which
-        # necessarily imports the solver to exercise the verification itself.
-        from invariant.verification import runtime_contracts
-        tree = ast.parse(Path(runtime_contracts.__file__).read_text())
-        imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
-        imports += [item.name for node in ast.walk(tree) if isinstance(node, ast.Import) for item in node.names]
-        self.assertFalse(any(name and name.startswith("z3") for name in imports))
-
-    def test_generated_contracts_accept_relocated_binder_without_global_alias(self):
-        self.assertTrue(self.verify(output=True)["ok"])
-        from invariant import Machine
-        from invariant.verification import runtime_contracts
-        import builtins
-        original_import = builtins.__import__
-        def private_only(name, *arguments, **keywords):
-            if name == "invariant" or name.startswith("invariant."):
-                raise ImportError("global invariant package is unavailable")
-            return original_import(name, *arguments, **keywords)
-        fixture_module = importlib.util.module_from_spec(importlib.util.spec_from_file_location(
-            "relocated_automaton", self.root / "machine.py"))
-        sys.modules[fixture_module.__name__] = fixture_module
-        self.addCleanup(sys.modules.pop, fixture_module.__name__, None)
-        fixture_module.__spec__.loader.exec_module(fixture_module)
-        generated = {}
-        with patch("builtins.__import__", private_only):
-            exec((self.root / "proof" / "validators.py").read_text(), generated)
-            bindings = generated["bind"](fixture_module, binder=runtime_contracts.bind)
-            bindings.validate_state(fixture_module.initial())
-            contracts = type("Contracts", (), {"bind": staticmethod(generated["bind"])})
-            bound = Machine(fixture_module, contracts=contracts, initializers=("initial",))
-            bound.validate_state(fixture_module.initial())
 
     def test_failed_recheck_removes_success_receipt(self):
         self.assertTrue(self.verify(output=True)["ok"])

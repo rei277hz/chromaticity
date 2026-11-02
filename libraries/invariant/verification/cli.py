@@ -35,8 +35,7 @@ def main(argv=None):
     except (VerificationError, ValueError, KeyError, TypeError, SyntaxError) as error:
         output = Path(args.output)
         output.mkdir(parents=True, exist_ok=True)
-        for artifact in ("receipt.json", "validators.py"):
-            (output / artifact).unlink(missing_ok=True)
+        (output / "receipt.json").unlink(missing_ok=True)
         report = {"version": 1, "ok": False, "error": str(error)}
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         print("Verification failed: " + str(error), file=sys.stderr)

@@ -59,7 +59,7 @@ class InstallWorkspaceTests(unittest.TestCase):
             install_archive(self.archive, self.destination)
         self.assertEqual(self.snapshot(), before)
 
-    def test_installs_zip_bytes_after_removing_all_stale_entries_except_git(self):
+    def test_installs_zip_bytes_and_preserves_git(self):
         outside = self.root / "outside"
         outside.mkdir()
         (outside / "keep.txt").write_bytes(b"outside target")
@@ -96,7 +96,8 @@ class InstallWorkspaceTests(unittest.TestCase):
         self.write_archive([("empty/", b""), ("package/", b"")])
         install_archive(self.archive, self.destination)
         self.assertTrue((self.destination / "empty").is_dir())
-        self.assertEqual((self.destination / "package" / "module.py").read_bytes(), self.product["package/module.py"])
+        self.assertEqual((self.destination / "package" / "module.py").read_bytes(),
+                         self.product["package/module.py"])
 
     def test_rejects_unsafe_or_git_member_before_removal(self):
         for name in ("../escape", "/absolute", "a/../escape", "a//b", "./name",
