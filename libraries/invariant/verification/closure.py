@@ -34,7 +34,8 @@ def validate(root, source, requirements, *, properties, witnesses, mutations,
     """Check the declared closure against the code actually executing this proof."""
     root, verifier_dir = Path(root), Path(verifier_dir)
     hashes = file_hashes(root)
-    verifier = {p.name: digest(p.read_bytes()) for p in verifier_dir.glob('*.py')}
+    verifier = {p.name: digest(p.read_bytes()) for p in verifier_dir.glob('*.py')
+                if p.name != '__init__.py'}
     expected = {'source.py', 'requirements.inv', 'inventory.json', 'solver/z3.whl'}
     expected.update('verifier/' + name for name in verifier)
     if set(hashes) != expected:
@@ -66,10 +67,9 @@ def validate(root, source, requirements, *, properties, witnesses, mutations,
 
 
 def bind_receipt(output, hashes):
-    """Publish the closure only after the proof and generated validator succeed."""
+    """Bind the successful proof receipt to its exact verifier input closure."""
     output = Path(output)
     receipt_path = output / 'receipt.json'
     receipt = json.loads(receipt_path.read_text())
-    receipt.update(input_sha256=hashes, closure_sha256=closure_digest(hashes),
-                   validators_sha256=digest((output / 'validators.py').read_bytes()))
+    receipt.update(input_sha256=hashes, closure_sha256=closure_digest(hashes))
     receipt_path.write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')

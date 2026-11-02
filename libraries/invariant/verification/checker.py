@@ -12,7 +12,9 @@ from types import ModuleType
 import z3
 
 from .model import Source, Type, Record, VerificationError
-from .symbolic import Interpreter, Sequence, Label, label_sort, IDENTITY, is_identity, is_text, boolean, equal
+from .symbolic import (Interpreter, Sequence, Label, label_sort, IDENTITY,
+                       OPTIONAL_TEXT, is_identity, is_optional_text, is_text,
+                       boolean, equal)
 
 
 def sha256(data):
@@ -232,12 +234,13 @@ class Checker:
                 premises.append(boolean(i.expression(expression, env, z3.And(*premises))))
             assumptions_safety = list(i.safety)
             i.safety.clear()
-            domain = z3.And(*i.domains)
-            assumptions = z3.And(domain, *premises)
-            self.solve("premise." + name, assumptions, "sat", "nonvacuity")
+            input_domain = z3.And(*i.domains)
+            input_assumptions = z3.And(input_domain, *premises)
+            self.solve("premise." + name, input_assumptions, "sat", "nonvacuity")
             if assumptions_safety:
-                self.solve("defined.premise." + name, z3.And(domain, z3.Not(z3.And(*(p for _, p in assumptions_safety)))))
+                self.solve("defined.premise." + name, z3.And(input_domain, z3.Not(z3.And(*(p for _, p in assumptions_safety)))))
             result = i.call(name, [], env, check_preconditions=False)
+            assumptions = z3.And(z3.And(*i.domains), *premises)
             env["result"] = result
             if any(isinstance(node, ast.For) for node in ast.walk(self.source.functions[name])):
                 conclusions = [(str(index) + '.return.' + str(number),
@@ -338,7 +341,8 @@ def _mutate(source, mutation):
 
 def verifier_identity():
     directory = Path(__file__).parent
-    return {p.name: sha256(p.read_bytes()) for p in sorted(directory.glob("*.py"))}
+    return {p.name: sha256(p.read_bytes()) for p in sorted(directory.glob("*.py"))
+            if p.name != "__init__.py"}
 
 
 def solver_identity():
@@ -380,6 +384,12 @@ def _decode_model_value(model, value, module):
         if z3.is_true(model.eval(IDENTITY.is_integer_identity(value), model_completion=True)):
             return _decode_model_value(model, IDENTITY.integer_value(value), module)
         return _decode_model_value(model, IDENTITY.text_value(value), module)
+    if is_optional_text(value):
+        concrete = model.eval(value, model_completion=True)
+        if concrete.decl() == OPTIONAL_TEXT.optional_none:
+            return None
+        if concrete.decl() == OPTIONAL_TEXT.optional_some:
+            return _decode_model_value(model, OPTIONAL_TEXT.optional_value(concrete), module)
     if is_text(value):
         length = model.eval(z3.Length(value), model_completion=True).as_long()
         if not 0 <= length <= 1000000:
@@ -394,12 +404,12 @@ def _decode_model_value(model, value, module):
 
 
 def replay(checker, names):
-    from .runtime_contracts import Contract
+    from .evaluator import Evaluator
     module = ModuleType('_invariant_mutation_' + str(id(checker)))
     sys.modules[module.__name__] = module
     try:
         exec(compile(checker.source.tree, '<checked mutation>', 'exec'), module.__dict__)
-        evaluator = Contract(module, checker.requirements, checker.source.schema())
+        evaluator = Evaluator(module, checker.requirements, checker.source.schema())
         cases = []
         for name in names:
             model = checker.models.get(name)
@@ -462,8 +472,7 @@ def verify(source_path, requirements_path, output_path=None, timeout_ms=5000, re
     output = Path(output_path) if output_path is not None else None
     if output is not None:
         output.mkdir(parents=True, exist_ok=True)
-        for artifact in ("receipt.json", "validators.py"):
-            (output / artifact).unlink(missing_ok=True)
+        (output / "receipt.json").unlink(missing_ok=True)
     source_path, requirements_path = Path(source_path), Path(requirements_path)
     source_bytes, requirements_bytes = source_path.read_bytes(), requirements_path.read_bytes()
     source = Source(source_bytes.decode())
@@ -503,13 +512,11 @@ def verify(source_path, requirements_path, output_path=None, timeout_ms=5000, re
     if output is not None:
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         if report["ok"]:
-            receipt = {"version": 1, "source_sha256": sha256(source_bytes), "requirements_sha256": sha256(requirements_bytes), **inventory, "verifier_sha256": verifier_identity(), "solver": z3.get_version_string(), "solver_sha256": solver_identity(), "python": sys.version, "report_sha256": sha256((output / "report.json").read_bytes())}
+            receipt = {"version": 2, "source_sha256": sha256(source_bytes), "requirements_sha256": sha256(requirements_bytes), **inventory, "verifier_sha256": verifier_identity(), "solver": z3.get_version_string(), "solver_sha256": solver_identity(), "python": sys.version, "report_sha256": sha256((output / "report.json").read_bytes())}
             (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-            validator = "# Generated from successfully verified source and requirements.\n_REQUIREMENTS = " + repr(requirements) + "\n_SCHEMA = " + repr(source.schema()) + "\n\ndef bind(module, *, binder=None):\n    if binder is None:\n        from invariant.verification.runtime_contracts import bind as binder\n    return binder(module, _REQUIREMENTS, _SCHEMA)\n"
-            (output / "validators.py").write_text(validator)
     return report
 
 
 def verify_receipt(source_path, requirements_path, receipt_path):
     receipt = json.loads(Path(receipt_path).read_text())
-    return (receipt.get("version") == 1 and receipt.get("source_sha256") == sha256(Path(source_path).read_bytes()) and receipt.get("requirements_sha256") == sha256(Path(requirements_path).read_bytes()) and receipt.get("verifier_sha256") == verifier_identity() and receipt.get("solver") == z3.get_version_string() and receipt.get("solver_sha256") == solver_identity())
+    return (receipt.get("version") == 2 and receipt.get("source_sha256") == sha256(Path(source_path).read_bytes()) and receipt.get("requirements_sha256") == sha256(Path(requirements_path).read_bytes()) and receipt.get("verifier_sha256") == verifier_identity() and receipt.get("solver") == z3.get_version_string() and receipt.get("solver_sha256") == solver_identity())

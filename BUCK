@@ -60,7 +60,7 @@ verification_group(
     name = "verify_next",
     visibility = ["PUBLIC"],
     deps = [
-        "//libraries/perceptual-grade-next-core:verify_extended",
+        "//libraries/perceptual-grade-next-core:verify",
         "//products/perceptual-grade-next-blender:extension",
     ],
 )

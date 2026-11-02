@@ -1,2 +1,2 @@
-"""Source-first verification. The runtime contracts module does not import Z3."""
+"""Build-time proof generation for pure Python state machines."""
 

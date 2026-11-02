@@ -110,17 +110,13 @@ class PackageBoundaryTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(ValueError):
                 self.verify(entries=entries)
 
-    def test_runtime_contract_path_allowlist_is_exact(self):
-        allowed = ('invariant/verification/__init__.py',
-                   'invariant/verification/runtime_contracts.py')
-        entries = {**self.expected, **{name: b'pass\n' for name in allowed}}
-        self.write(entries)
-        self.assertEqual(self.verify(entries=entries), entries)
-        for name in ('invariant/verification/checker.py',
-                     'invariant/verification/closure.py',
+    def test_verification_and_generated_contract_paths_are_build_only(self):
+        for name in ('invariant/verification/__init__.py',
+                     'invariant/verification/evaluator.py',
                      'other/invariant/verification/runtime_contracts.py',
-                     '_vendor/invariant/verification/runtime_contracts.py'):
-            changed = {**entries, name: b'pass\n'}
+                     '_vendor/invariant/verification/runtime_contracts.py',
+                     'product/_policy_contracts.py'):
+            changed = {**self.expected, name: b'pass\n'}
             self.write(changed)
             with self.subTest(path=name), self.assertRaisesRegex(
                     ValueError, 'Build-only evidence or tooling'):
