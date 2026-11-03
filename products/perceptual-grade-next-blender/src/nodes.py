@@ -31,9 +31,9 @@ from .perceptual_grade_nodes.lut import (
     bake_linear_stack_progressive,
 )
 from .perceptual_grade_nodes.settings import D65, SPACES
-from .perceptual_grade_core import readiness as kernel_readiness
-from .perceptual_grade_core import preparation as preparation_policy
-from .perceptual_grade_core import stack as stack_policy
+from .policy import readiness as kernel_readiness
+from .policy import preparation as preparation_policy
+from .policy import stack as stack_policy
 from .preparation_runtime import PreparationRuntime
 
 

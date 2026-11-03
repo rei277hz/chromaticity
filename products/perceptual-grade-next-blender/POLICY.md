@@ -1,9 +1,9 @@
-# Perceptual Grade Core
+# Grade Policies
 
-This host-free library contains the ordered Grade Stack policy, shared Grade
-preparation scheduling, and per-node kernel readiness. All policies use the
-Invariant verifier; generated proof evidence remains a build artifact and is not
-included in the runtime package.
+The product-owned `policy` package contains the ordered Grade Stack policy,
+shared Grade preparation scheduling, and per-node kernel readiness. These
+host-free policies use the Invariant verifier; proof evidence remains a build
+artifact and is not included in the runtime package.
 
 Preparation stores only optional desired and running signatures. While one
 snapshot prepares, each request replaces the newest demand. Completion retires
@@ -22,6 +22,8 @@ graph installation, and presentation.
 Build and test through remote execution:
 
 ```sh
-buck2 build //libraries/perceptual-grade-next-core:verify --remote-only
-buck2 test //libraries/perceptual-grade-next-core/tests: --remote-only
+buck2 build //products/perceptual-grade-next-blender:verify_policies --remote-only
+buck2 test //products/perceptual-grade-next-blender/tests:policy_preparation --remote-only
+buck2 test //products/perceptual-grade-next-blender/tests:policy_readiness --remote-only
+buck2 test //products/perceptual-grade-next-blender/tests:policy_stack --remote-only
 ```

@@ -252,9 +252,10 @@ The float64 [`perceptual-grade-reference`](../perceptual-grade-reference/README.
 is the independent development oracle. Runtime code depends only on `color-core`
 and NumPy; Blender evaluates the pixels. There is no input RGB repair, 3D RGB
 grading LUT, Python pixel evaluator, inverse grade, UI or product registration.
-The old `perceptual-grade-core` and Blender extension remain preserved. Future
-Next core can compose portable settings/preparation; Next Blender will own native
-graph installation, publication and persistence. That integration is deferred.
+The old `perceptual-grade-core` and Blender extension remain preserved. The
+rebuilt Blender product composes portable settings/preparation from this
+component and owns native graph installation, publication, persistence, and its
+state-machine policies.
 
 ## Numerical path
 

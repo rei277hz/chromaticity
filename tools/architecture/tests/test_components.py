@@ -14,7 +14,7 @@ RETIRED = frozenset({
 })
 PRODUCTS = frozenset({'perceptual_grade_blender', 'perceptual_grade_next_blender',
                       'hdr_color_picker_blender'})
-MATH = frozenset({'color_core', 'perceptual_grade_core', 'perceptual_grade_next_core',
+MATH = frozenset({'color_core', 'perceptual_grade_core',
                   'hdr_color_picker_core', 'perceptual_grade_reference'})
 BUILD_ONLY = frozenset({'invariant_compiler', 'invariant_verification', 'z3', 'z3solver'})
 NATIVE = frozenset({'bpy', 'gpu', 'gpu_extras', 'blf', 'mathutils'})

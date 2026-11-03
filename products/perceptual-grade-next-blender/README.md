@@ -31,8 +31,9 @@ and Grade reassignment fence obsolete source subscriptions and reconcile kernels
 Shutdown withdraws pending demand and waits for active physical work to retire.
 
 The extension ZIP uses `src/__init__.py` directly as its root entrypoint and
-places the product's `nodes.py` beside it. Shared libraries remain root-level
-packages in the archive.
+places the product's `nodes.py` beside it. Product-owned state-machine policies
+are packaged under `policy/`; shared library dependencies remain separate
+root-level packages in the archive.
 
 Build the package and run the installed smoke test with:
 

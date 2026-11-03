@@ -8,7 +8,7 @@ import json
 import threading
 from typing import Optional
 
-from .perceptual_grade_core import preparation as preparation_policy
+from .policy import preparation as preparation_policy
 
 
 @dataclass(frozen=True)

@@ -5,9 +5,9 @@ Invariant `.inv` verifier. The generic process lifecycle, thirteen leaf
 machines and ten workflow coordinators have separate requirements. Handwritten
 Python is the behavior authority; proofs are build evidence and produce no runtime
 code. See [the framework authoring guide](../../libraries/invariant/README.md).
-These retained Grade/Picker gates do not certify the independent Next product;
-its [proof coverage](../../libraries/perceptual-grade-next-core/PROOF_COVERAGE.md)
-records its separate implementation and acceptance boundaries.
+These retained Grade/Picker gates do not certify the rebuilt Blender product.
+Its product-owned [policy documentation](../../products/perceptual-grade-next-blender/POLICY.md)
+describes its separate machine requirements and proof targets.
 
 ## Source-bound machine verification
 

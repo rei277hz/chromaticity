@@ -15,10 +15,10 @@ class PackageTests(unittest.TestCase):
                 "blender_manifest.toml",
                 "LICENSE",
                 "README.md",
-                "perceptual_grade_core/__init__.py",
-                "perceptual_grade_core/readiness.py",
-                "perceptual_grade_core/preparation.py",
-                "perceptual_grade_core/stack.py",
+                "policy/__init__.py",
+                "policy/readiness.py",
+                "policy/preparation.py",
+                "policy/stack.py",
                 "perceptual_grade_nodes/__init__.py",
                 "perceptual_grade_nodes/graph.py",
                 "perceptual_grade_nodes/prepare.py",
@@ -30,6 +30,7 @@ class PackageTests(unittest.TestCase):
             self.assertFalse(any(name.startswith("perceptual_grade_blender/")
                                  for name in names))
             self.assertNotIn("perceptual_grade_core/registration.py", names)
+            self.assertFalse(any(name.startswith("perceptual_grade_core/") for name in names))
             self.assertFalse(any(name.startswith("src/") for name in names))
             self.assertNotIn("perceptual_grade_nodes/output_boundary.npz", names)
             manifest = tomllib.loads(archive.read("blender_manifest.toml").decode())

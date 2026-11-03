@@ -1,6 +1,6 @@
 import unittest
 
-from color_tools.perceptual_grade_core.stack import Event, new, step
+from policy.stack import Event, new, step
 
 
 class StackPolicyTests(unittest.TestCase):

@@ -1,9 +1,17 @@
-load("//build_defs:artifacts.bzl", "generate", "source_tree")
+load("//build_defs:artifacts.bzl", "generate", "source_tree", "verification_group")
+load("//build_defs:invariant.bzl", "invariant_proof")
 load("//build_defs:python_packages.bzl", "extension_tree")
 
 PREFIX = "src/"
 
 SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+POLICY_PREFIX = PREFIX + "policy/"
+
+POLICY_SOURCES = {
+    path[len(POLICY_PREFIX):]: path
+    for path in glob([POLICY_PREFIX + "*.py"])
+}
 
 source_tree(
     name = "sources",
@@ -11,21 +19,128 @@ source_tree(
     visibility = ["PUBLIC"],
 )
 
+python_library(
+    name = "policy_runtime",
+    srcs = POLICY_SOURCES,
+    base_module = "policy",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "stack_source",
+    src = POLICY_PREFIX + "stack.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "stack_requirements",
+    src = "requirements/stack.inv",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_stack",
+    required_mutations = ["replacement_ignores_order"],
+    required_properties = [
+        "replacement_rebuild_tracks_order_and_multiplicity",
+        "selection_never_rebuilds",
+        "grade_edit_rebuilds_only_when_referenced",
+    ],
+    required_witnesses = ["duplicate_grade_occurrences_are_preserved"],
+    requirements = ":stack_requirements",
+    runtime_source = "policy/stack.py",
+    source = ":stack_source",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "readiness_source",
+    src = POLICY_PREFIX + "readiness.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "readiness_requirements",
+    src = "requirements/readiness.inv",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_readiness",
+    required_properties = [
+        "full_quality_is_required_for_current_output",
+        "request_without_gesture_retains_last_good_output",
+        "gesture_release_retains_last_good_output",
+        "matching_preview_survives_release",
+        "stale_completion_requires_gesture",
+        "stale_full_result_updates_drag_preview",
+        "late_lower_quality_never_replaces_full_quality",
+        "current_failure_clears_applied_output",
+        "return_to_applied_settings_updates_preparation_demand",
+    ],
+    required_witnesses = ["preview_remains_visible_until_full_installation"],
+    requirements = ":readiness_requirements",
+    runtime_source = "policy/readiness.py",
+    source = ":readiness_source",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "preparation_source",
+    src = POLICY_PREFIX + "preparation.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "preparation_requirements",
+    src = "requirements/preparation.inv",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_preparation",
+    required_properties = [
+        "idle_request_starts_preparation",
+        "running_request_only_replaces_latest_demand",
+        "preview_receipt_keeps_worker_occupied",
+        "final_receipt_starts_latest_successor",
+        "current_final_receipt_does_not_restart",
+        "obsolete_failure_does_not_publish_error",
+        "unmatched_receipt_is_ignored",
+    ],
+    required_witnesses = ["preview_does_not_consume_latest_queued_request"],
+    requirements = ":preparation_requirements",
+    runtime_source = "policy/preparation.py",
+    source = ":preparation_source",
+    visibility = ["PUBLIC"],
+)
+
+verification_group(
+    name = "verify_policies",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":proof_preparation",
+        ":proof_readiness",
+        ":proof_stack",
+    ],
+)
+
 extension_tree(
     name = "extension_tree",
     entrypoints = {
         "__init__.py": "src/__init__.py",
         "nodes.py": "src/nodes.py",
+        "policy/__init__.py": "src/policy/__init__.py",
+        "policy/preparation.py": "src/policy/preparation.py",
+        "policy/readiness.py": "src/policy/readiness.py",
+        "policy/stack.py": "src/policy/stack.py",
         "preparation_runtime.py": "src/preparation_runtime.py",
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
         "README.md": "README.md",
     },
     visibility = ["PUBLIC"],
-    deps = [
-        "//libraries/perceptual-grade-next-core:runtime_bundle",
-        "//libraries/perceptual-grade-nodes:code_bundle",
-    ],
+    deps = ["//libraries/perceptual-grade-nodes:code_bundle"],
 )
 
 python_library(
@@ -56,17 +171,17 @@ generate(
         "--inventory",
         "$(location :package_inventory)",
         "--proof-stack",
-        "$(location //libraries/perceptual-grade-next-core:proof_stack)",
+        "$(location :proof_stack)",
         "--requirements-stack",
-        "$(location //libraries/perceptual-grade-next-core:stack_requirements)",
+        "$(location :stack_requirements)",
         "--proof-preparation",
-        "$(location //libraries/perceptual-grade-next-core:proof_preparation)",
+        "$(location :proof_preparation)",
         "--requirements-preparation",
-        "$(location //libraries/perceptual-grade-next-core:preparation_requirements)",
+        "$(location :preparation_requirements)",
         "--proof-readiness",
-        "$(location //libraries/perceptual-grade-next-core:proof_readiness)",
+        "$(location :proof_readiness)",
         "--requirements-readiness",
-        "$(location //libraries/perceptual-grade-next-core:readiness_requirements)",
+        "$(location :readiness_requirements)",
     ],
     outputs = {
         "zip": "perceptual_grade.zip",

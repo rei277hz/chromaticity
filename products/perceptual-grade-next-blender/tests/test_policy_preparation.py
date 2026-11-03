@@ -1,6 +1,6 @@
 import unittest
 
-from color_tools.perceptual_grade_core.preparation import Effects, Event, new, step
+from policy.preparation import Effects, Event, new, step
 
 
 class PreparationPolicyTests(unittest.TestCase):

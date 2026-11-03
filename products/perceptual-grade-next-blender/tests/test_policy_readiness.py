@@ -1,6 +1,6 @@
 import unittest
 
-from color_tools.perceptual_grade_core.readiness import (
+from policy.readiness import (
     Event,
     new,
     output_allowed,
