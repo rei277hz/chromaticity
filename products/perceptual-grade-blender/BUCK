@@ -87,7 +87,6 @@ component_library(
         "//libraries/blender-runtime:blender",
         "//libraries/blender-runtime:edge_effect_machine",
         "//libraries/color-core:runtime",
-        "//libraries/invariant:runtime",
         "//libraries/perceptual-grade-core:runtime",
     ],
 )

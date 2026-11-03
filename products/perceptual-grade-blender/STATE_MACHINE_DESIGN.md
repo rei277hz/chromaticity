@@ -1,10 +1,9 @@
 # State-machine redesign moved to the new product
 
-The audited [state-machine design](../perceptual-grade-next-blender/STATE_MACHINE_DESIGN.md)
-will be implemented in `libraries/perceptual-grade-next-core` and
-`products/perceptual-grade-next-blender`.
+The audited state-machine design was implemented in the rebuilt Blender product.
+Its host-free policies live in [`src/policy`](../perceptual-grade-next-blender/src/policy/)
+and are documented in [`POLICY.md`](../perceptual-grade-next-blender/POLICY.md).
 
-This product and `libraries/perceptual-grade-core` retain the current implementation
-for comparison. Their source, tests and Buck targets are unchanged by the design
-handoff. [GOAL.md](../perceptual-grade-next-blender/GOAL.md) and [CHECKLIST.md](../perceptual-grade-next-blender/CHECKLIST.md) track the
-new implementation; historical checks do not certify it.
+This product and `libraries/perceptual-grade-core` retain the earlier
+implementation for comparison. Their source, tests, and Buck targets are
+independent of the rebuilt product's policy proofs.

@@ -13,7 +13,6 @@ component_library(
     name = "abi",
     srcs = ABI_SOURCES,
     package = "blender_runtime",
-    deps = ["//libraries/invariant:runtime"],
 )
 
 [
@@ -23,7 +22,6 @@ component_library(
         required_properties = required["properties"],
         required_witnesses = required["witnesses"],
         requirements = "requirements/" + name + ".inv",
-        runtime_contracts = "blender_runtime/policies/_" + name + "_contracts.py",
         runtime_source = "blender_runtime/policies/" + name + ".py",
         source = PREFIX + "policies/" + name + ".py",
         visibility = ["PUBLIC"],
@@ -38,7 +36,6 @@ component_library(
         required_properties = required["properties"],
         required_witnesses = required["witnesses"],
         requirements = "requirements/coordinators/" + name + ".inv",
-        runtime_contracts = "blender_runtime/coordinators/_" + name + "_contracts.py",
         runtime_source = "blender_runtime/coordinators/" + name + ".py",
         source = PREFIX + "coordinators/" + name + ".py",
         visibility = ["PUBLIC"],
@@ -55,11 +52,7 @@ verification_group(
 
 component_library(
     name = "coordinators",
-    srcs = {path[len(PREFIX):]: path for path in glob([PREFIX + "coordinators/*.py"])} |
-           {
-               "coordinators/_" + name + "_contracts.py": ":proof_" + name + "_coordinator[validators]"
-               for name in COORDINATOR_REQUIREMENTS
-           },
+    srcs = {path[len(PREFIX):]: path for path in glob([PREFIX + "coordinators/*.py"])},
     package = "blender_runtime",
     deps = [":abi"],
 )
@@ -76,8 +69,7 @@ MACHINES = [
 component_library(
     name = "machines",
     srcs = {"policies/__init__.py": PREFIX + "policies/__init__.py"} |
-           {"policies/" + name + ".py": PREFIX + "policies/" + name + ".py" for name in MACHINES} |
-           {"policies/_" + name + "_contracts.py": ":proof_" + name + "[validators]" for name in MACHINES},
+           {"policies/" + name + ".py": PREFIX + "policies/" + name + ".py" for name in MACHINES},
     package = "blender_runtime",
     deps = [":abi"],
 )
@@ -86,7 +78,6 @@ component_library(
     name = "edge_effect_machine",
     srcs = {
         "policies/edge_effect.py": PREFIX + "policies/edge_effect.py",
-        "policies/_edge_effect_contracts.py": ":proof_edge_effect[validators]",
     },
     package = "blender_runtime",
     deps = [":machines"],

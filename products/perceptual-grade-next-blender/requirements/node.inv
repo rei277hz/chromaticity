@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["new"],
+  "step": "step",
+  "invariants": {
+    "optional_signatures_are_nonempty": "(state.desired_signature is None or state.desired_signature != '') and (state.applied_signature is None or state.applied_signature != '')",
+    "applied_quality_matches_applied_signature": "(state.applied_signature is None) == (state.applied_quality is None) and (state.applied_quality is None or state.applied_quality in ('preview', 'full'))",
+    "error_discards_applied_kernel": "state.error is None or state.applied_signature is None",
+    "applied_kernel_has_demand": "state.desired_signature is not None or state.applied_signature is None",
+    "optional_preparation_signature_is_nonempty": "state.desired_preparation_signature is None or state.desired_preparation_signature != ''",
+    "preparation_signature_has_demand": "state.desired_signature is not None or state.desired_preparation_signature is None"
+  },
+  "contracts": {
+    "new": {
+      "requires": [
+        "desired_signature is None or desired_signature != ''",
+        "applied_signature is None or applied_signature != ''",
+        "applied_quality is None or applied_quality in ('preview', 'full')",
+        "applied_signature is not None or applied_quality is None",
+        "error is None or applied_signature is None",
+        "desired_signature is not None or applied_signature is None",
+        "desired_preparation_signature is None or desired_preparation_signature != ''",
+        "desired_signature is not None or desired_preparation_signature is None"
+      ],
+      "ensures": [
+        "result.desired_signature == desired_signature",
+        "result.applied_signature == applied_signature",
+        "result.applied_quality == (None if applied_signature is None else ('full' if applied_quality is None else applied_quality))",
+        "result.gesture_active == gesture_active and result.error == error",
+        "result.grade_ids == grade_ids",
+        "result.desired_preparation_signature == desired_preparation_signature"
+      ]
+    },
+    "output_allowed": {
+      "ensures": [
+        "result == (state.desired_signature is not None and state.desired_signature == state.applied_signature and state.applied_quality == 'full' and state.error is None)"
+      ]
+    },
+    "output_mode": {
+      "ensures": [
+        "result == ('current' if output_allowed(state) else ('error' if state.error is not None else ('pending' if state.applied_signature is None else 'preview')))"
+      ]
+    },
+    "step": {
+      "requires": [
+        "state.desired_signature is None or state.desired_signature != ''",
+        "state.applied_signature is None or state.applied_signature != ''",
+        "(state.applied_signature is None) == (state.applied_quality is None)",
+        "state.error is None or state.applied_signature is None",
+        "state.desired_signature is not None or state.applied_signature is None",
+        "state.desired_preparation_signature is None or state.desired_preparation_signature != ''",
+        "state.desired_signature is not None or state.desired_preparation_signature is None",
+        "event.signature is None or event.signature != ''",
+        "event.preparation_signature is None or event.preparation_signature != ''",
+        "event.kind != 'request' or event.signature is not None or event.preparation_signature is None",
+        "event.quality in ('preview', 'full')"
+      ],
+      "ensures": [
+        "result[0].desired_signature is None or result[0].desired_signature != ''",
+        "result[0].applied_signature is None or result[0].applied_signature != ''",
+        "(result[0].applied_signature is None) == (result[0].applied_quality is None)",
+        "result[0].error is None or result[0].applied_signature is None",
+        "result[0].desired_signature is not None or result[0].applied_signature is None",
+        "result[0].desired_preparation_signature is None or result[0].desired_preparation_signature != ''",
+        "result[0].desired_signature is not None or result[0].desired_preparation_signature is None",
+        "result[1].output_mode == output_mode(result[0])",
+        "result[1].error == result[0].error",
+        "result[1].prepare_signature is None or result[1].prepare_signature == result[0].desired_preparation_signature",
+        "(result[1].build_signature is None) == (result[1].build_quality is None)",
+        "result[0].grade_ids == (event.grade_ids if event.kind == 'stack_replace' else state.grade_ids)",
+        "result[0].desired_preparation_signature == ((event.preparation_signature if event.preparation_signature is not None else event.signature) if event.kind == 'request' else state.desired_preparation_signature)",
+        "result[1].rebuild == (state.grade_ids != event.grade_ids if event.kind == 'stack_replace' else (len(event.grade_ids) == 1 and event.grade_ids[0] in state.grade_ids if event.kind == 'grade_changed' else False))"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "full_quality_is_required_for_current_output",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'a'))",
+        "prepared": "step(requested[0], Event('preparation_result', 'a'))",
+        "full": "step(prepared[0], Event('installation_result', 'a'))",
+        "preview_requested": "step(new(), Event('request', 'b'))",
+        "preview_prepared": "step(preview_requested[0], Event('preparation_result', 'b', quality='preview'))",
+        "preview": "step(preview_prepared[0], Event('installation_result', 'b', quality='preview'))"
+      },
+      "assert": "output_allowed(full[0]) and not output_allowed(preview[0]) and full[1].output_mode == 'current' and preview[1].output_mode == 'preview'"
+    },
+    {
+      "name": "request_without_gesture_retains_last_good_output",
+      "variables": {},
+      "lets": {
+        "changed": "step(new('a', 'a'), Event('request', 'b'))"
+      },
+      "assert": "changed[0].desired_signature == 'b' and changed[0].applied_signature == 'a' and changed[1].output_mode == 'preview' and changed[1].prepare_signature == 'b' and not output_allowed(changed[0])"
+    },
+    {
+      "name": "gesture_release_retains_last_good_output",
+      "variables": {},
+      "lets": {
+        "started": "step(new('a', 'a'), Event('gesture_begin'))",
+        "changed": "step(started[0], Event('request', 'b'))",
+        "released": "step(changed[0], Event('gesture_release'))"
+      },
+      "assert": "changed[1].output_mode == 'preview' and released[0].applied_signature == 'a' and not released[0].gesture_active and released[1].output_mode == 'preview' and not output_allowed(released[0])"
+    },
+    {
+      "name": "matching_preview_survives_release",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'a'))",
+        "prepared": "step(requested[0], Event('preparation_result', 'a', quality='preview'))",
+        "installed": "step(prepared[0], Event('installation_result', 'a', quality='preview'))",
+        "released": "step(installed[0], Event('gesture_release'))"
+      },
+      "assert": "released[0].applied_signature == 'a' and released[0].applied_quality == 'preview' and released[1].output_mode == 'preview' and not output_allowed(released[0])"
+    },
+    {
+      "name": "stale_completion_requires_gesture",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'a'))",
+        "begun": "step(requested[0], Event('gesture_begin'))",
+        "changed": "step(begun[0], Event('request', 'b'))",
+        "prepared": "step(changed[0], Event('preparation_result', 'a', quality='preview'))",
+        "installed": "step(prepared[0], Event('installation_result', 'a', quality='preview'))",
+        "released": "step(installed[0], Event('gesture_release'))",
+        "late": "step(released[0], Event('installation_result', 'a', quality='preview'))"
+      },
+      "assert": "prepared[1].build_signature == 'a' and installed[1].output_mode == 'preview' and released[0].applied_signature == 'a' and released[1].output_mode == 'preview' and late[0] == released[0] and late[1].build_signature is None"
+    },
+    {
+      "name": "stale_full_result_updates_drag_preview",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'a'))",
+        "begun": "step(requested[0], Event('gesture_begin'))",
+        "changed": "step(begun[0], Event('request', 'b'))",
+        "prepared": "step(changed[0], Event('preparation_result', 'a'))",
+        "installed": "step(prepared[0], Event('installation_result', 'a'))",
+        "released": "step(installed[0], Event('gesture_release'))"
+      },
+      "assert": "prepared[1].build_signature == 'a' and prepared[1].build_quality == 'full' and installed[0].applied_signature == 'a' and installed[0].applied_quality == 'full' and installed[1].output_mode == 'preview' and released[0].applied_signature == 'a' and released[1].output_mode == 'preview' and not output_allowed(released[0])"
+    },
+    {
+      "name": "late_lower_quality_never_replaces_full_quality",
+      "variables": {},
+      "lets": {
+        "full": "step(new('a', 'a', 'full', True), Event('preparation_result', 'a', quality='preview'))",
+        "installed": "step(full[0], Event('installation_result', 'a', quality='preview'))"
+      },
+      "assert": "full[0].applied_quality == 'full' and full[1].build_signature is None and installed[0].applied_quality == 'full' and installed[1].output_mode == 'current'"
+    },
+    {
+      "name": "current_failure_clears_applied_output",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'a'))",
+        "preview_prepared": "step(requested[0], Event('preparation_result', 'a', quality='preview'))",
+        "preview": "step(preview_prepared[0], Event('installation_result', 'a', quality='preview'))",
+        "failed": "step(preview[0], Event('preparation_result', 'a', 'failed'))"
+      },
+      "assert": "failed[0].applied_signature is None and failed[0].error == 'failed' and failed[1].output_mode == 'error'"
+    },
+    {
+      "name": "return_to_applied_settings_updates_preparation_demand",
+      "variables": {},
+      "lets": {
+        "begun": "step(new('a', 'a'), Event('gesture_begin'))",
+        "changed": "step(begun[0], Event('request', 'b'))",
+        "returned": "step(changed[0], Event('request', 'a'))"
+      },
+      "assert": "returned[1].output_mode == 'current' and returned[1].prepare_signature == 'a' and returned[1].build_signature is None"
+    },
+    {
+      "name": "replacement_rebuild_tracks_order_and_multiplicity",
+      "variables": {},
+      "lets": {
+        "initial": "step(new(), Event('stack_replace', grade_ids=(5, 8)))",
+        "reordered": "step(initial[0], Event('stack_replace', grade_ids=(8, 5)))"
+      },
+      "assert": "reordered[0].grade_ids == (8, 5) and reordered[1].rebuild"
+    },
+    {
+      "name": "grade_edit_rebuilds_only_when_referenced",
+      "variables": {},
+      "lets": {
+        "stack": "step(new(), Event('stack_replace', grade_ids=(5, 8)))",
+        "referenced": "step(stack[0], Event('grade_changed', grade_ids=(8,)))",
+        "unreferenced": "step(stack[0], Event('grade_changed', grade_ids=(13,)))"
+      },
+      "assert": "referenced[0] == stack[0] and referenced[1].rebuild and unreferenced[0] == stack[0] and not unreferenced[1].rebuild"
+    },
+    {
+      "name": "kernel_match_does_not_override_preparation_correlation",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'kernel-a', preparation_signature='prep-a'))",
+        "mismatched": "step(requested[0], Event('preparation_result', 'kernel-a', preparation_signature='prep-old'))"
+      },
+      "assert": "mismatched[0] == requested[0] and mismatched[1].build_signature is None"
+    },
+    {
+      "name": "preparation_failure_requires_current_preparation_signature",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'kernel-a', preparation_signature='prep-a'))",
+        "superseded": "step(requested[0], Event('request', 'kernel-b', preparation_signature='prep-b'))",
+        "late_failure": "step(superseded[0], Event('preparation_result', error='late', preparation_signature='prep-a'))",
+        "current_failure": "step(late_failure[0], Event('preparation_result', error='current', preparation_signature='prep-b'))"
+      },
+      "assert": "late_failure[0] == superseded[0] and late_failure[1].output_mode == 'pending' and current_failure[0].error == 'current' and current_failure[1].output_mode == 'error'"
+    },
+    {
+      "name": "request_preserves_reducer_owned_stack_membership",
+      "variables": {},
+      "lets": {
+        "stack": "new(grade_ids=(4, 7, 4))",
+        "requested": "step(stack, Event('request', 'kernel-a', preparation_signature='prep-a'))"
+      },
+      "assert": "requested[0].grade_ids == (4, 7, 4) and requested[0].desired_preparation_signature == 'prep-a'"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "preview_remains_visible_until_full_installation",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'a'))",
+        "preview_prepared": "step(requested[0], Event('preparation_result', 'a', quality='preview'))",
+        "preview": "step(preview_prepared[0], Event('installation_result', 'a', quality='preview'))",
+        "released": "step(preview[0], Event('gesture_release'))",
+        "full_prepared": "step(released[0], Event('preparation_result', 'a'))",
+        "full": "step(full_prepared[0], Event('installation_result', 'a'))"
+      },
+      "assert": "preview[1].output_mode == 'preview' and released[1].output_mode == 'preview' and full[1].output_mode == 'current' and full[0].applied_quality == 'full'"
+    },
+    {
+      "name": "duplicate_grade_occurrences_are_preserved",
+      "variables": {},
+      "lets": {"result": "step(new(), Event('stack_replace', grade_ids=(7, 7)))"},
+      "assert": "result[0].grade_ids == (7, 7) and result[1].rebuild"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "replacement_ignores_order",
+      "function": "step",
+      "target": "state.grade_ids != event.grade_ids",
+      "replacement": "False",
+      "detects": ["property.replacement_rebuild_tracks_order_and_multiplicity"]
+    }
+  ]
+}
