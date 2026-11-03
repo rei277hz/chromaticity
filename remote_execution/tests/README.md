@@ -4,22 +4,9 @@ Run these commands from the repository root after starting the deployment with
 `./remote_execution/re up`. The [deployment guide](../README.md) covers setup and
 [Buck client configuration](../README.md#buck-client-configuration) in the
 checked-in root `.buckconfig`. Builds and tests use NativeLink by default;
-`re up` updates its managed NativeLink block with a reachable hostname, remote
+`re up` updates its managed NativeLink block with the deployed endpoint, remote
 platform, and worker image ID. Validation tests local and remote execution in its
 own disposable checkout without changing the live checkout's execution mode.
-When moving between host and container clients, run `re remote` in the client
-environment before running Buck so the selected name is reachable there.
-
-The isolated CLI regression suite needs neither Docker nor a live network:
-
-```sh
-buck2 test //remote_execution/tests:cli --remote-only
-```
-
-It covers Docker service-name selection, the host's `localhost` fallback,
-selection based on the current process despite saved workspace metadata,
-migration of saved bridge IPs, numeric-address rejection, and readiness checks
-against the expected worker image.
 
 ```sh
 # Verify local and remote execution, concurrency, isolation, and remote cache reuse.
@@ -124,9 +111,8 @@ Both switches edit only the root `.buckconfig` block between
 `# END NativeLink settings`, preserving other sections. `re local` removes remote
 client addresses and selects the local platform with remote execution disabled;
 it requires neither Docker nor saved deployment state. `re remote` requires a
-ready worker and selects a reachable hostname using the saved deployment's image
-ID. It migrates older saved IP endpoints. `re up` also selects remote execution.
-The CLI reminds you to restart the idle Buck
+ready worker and uses the saved deployment's endpoints and image ID. `re up`
+also selects remote execution. The CLI reminds you to restart the idle Buck
 daemon after an endpoint or mode change so it reads the new settings.
 Platform rules and the Python-test executor profile live in
 `toolchains/remote_execution.bzl`.

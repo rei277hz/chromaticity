@@ -5,12 +5,14 @@ from .machine import Machine
 
 def policy_machine(name, *, initializers=('new',), queries=()):
     module = import_module(__package__ + '.policies.' + name)
-    return Machine(module, initializers=initializers, queries=queries)
+    contracts = import_module(__package__ + '.policies._' + name + '_contracts')
+    return Machine(module, contracts=contracts, initializers=initializers, queries=queries)
 
 
 def coordinator_machine(name):
     module = import_module(__package__ + '.coordinators.' + name)
-    return Machine(module)
+    contracts = import_module(__package__ + '.coordinators._' + name + '_contracts')
+    return Machine(module, contracts=contracts)
 
 
 def create_execution_machines():

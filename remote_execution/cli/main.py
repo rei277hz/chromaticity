@@ -2,7 +2,6 @@
 """Manage the private Docker Compose NativeLink deployment and its Buck2 client."""
 import argparse
 import datetime
-import ipaddress
 import json
 import os
 from pathlib import Path
@@ -13,7 +12,6 @@ import sys
 import tempfile
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 import uuid
 
@@ -25,10 +23,8 @@ STATE = HERE / '.state'
 ENV_FILE = STATE / 'compose.env'
 NETWORK = 'perceptual-grade-re'
 IMAGE = 'perceptual-grade-nativelink:1.8.3'
-SERVICE_ENDPOINT = 'perceptual-grade-nativelink:50051'
-SERVICE_HEALTH = 'http://perceptual-grade-nativelink:50052'
-HOST_ENDPOINT = 'localhost:50051'
-HOST_HEALTH = 'http://localhost:50052'
+ENDPOINT = 'perceptual-grade-nativelink:50051'
+HEALTH = 'http://perceptual-grade-nativelink:50052'
 BEGIN = '# BEGIN NativeLink settings (managed by remote_execution/re)\n'
 END = '# END NativeLink settings\n'
 
@@ -71,16 +67,7 @@ def configured_buckconfig(original, config=None):
         '', '[buck2]', '  digest_algorithms = SHA256',
     ]
     if config:
-        endpoint = config.get('endpoint', SERVICE_ENDPOINT)
-        hostname = urllib.parse.urlsplit('//' + endpoint).hostname
-        if not hostname:
-            raise RuntimeError('NativeLink endpoint must have a hostname.')
-        try:
-            ipaddress.ip_address(hostname)
-        except ValueError:
-            pass
-        else:
-            raise RuntimeError('NativeLink endpoint must use a hostname, not a numeric IP address. Run re up.')
+        endpoint = config.get('endpoint', ENDPOINT)
         lines += ['', '[buck2_re_client]',
                   f'  engine_address = {endpoint}', f'  action_cache_address = {endpoint}',
                   f'  cas_address = {endpoint}', '  tls = false', '  instance_name = main']
@@ -106,19 +93,19 @@ def atomic_write(path, content):
     temp.replace(path)
 
 
-def health(path='/ready', *, config=None):
+def health(path='/ready'):
     # Private Docker service traffic must not be sent through a shell HTTP proxy.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    address = (settings() if config is None else config).get('health_url', SERVICE_HEALTH)
+    address = settings().get('health_url', HEALTH)
     with opener.open(address + path, timeout=5) as response:
         return response.read().decode()
 
 
-def require_ready(config=None):
+def require_ready():
     try:
-        config = settings() if config is None else config
-        health(config=config)
-        workers = json.loads(health('/admin/scheduler/scheduler/workers', config=config))
+        health()
+        config = settings()
+        workers = json.loads(health('/admin/scheduler/scheduler/workers'))
         expected = {'worker-image': config['image_id'], 'OSFamily': 'linux', 'ISA': 'x86-64'}
         usable = [worker for worker in workers
                   if not worker['is_paused'] and not worker['is_draining']
@@ -129,23 +116,6 @@ def require_ready(config=None):
     except (OSError, urllib.error.URLError) as error:
         raise RuntimeError(f'NativeLink is not ready: {error}. '
                            'Run re status / re logs; use re local for local execution.') from error
-
-
-def client_config(config):
-    """Select a hostname reachable from the process running this CLI."""
-    endpoints = [(SERVICE_ENDPOINT, SERVICE_HEALTH), (HOST_ENDPOINT, HOST_HEALTH)]
-    errors = []
-    for endpoint, health_url in endpoints:
-        candidate = dict(config, endpoint=endpoint, health_url=health_url)
-        try:
-            require_ready(candidate)
-        except RuntimeError as error:
-            errors.append(f'{endpoint}: {error}')
-        else:
-            return candidate
-    raise RuntimeError('No named NativeLink endpoint is ready. '
-                       'Run re remote from the client environment that will run Buck. '
-                       + '; '.join(errors))
 
 
 def up(args):
@@ -185,11 +155,18 @@ def up(args):
         # first can leave a shutting-down worker retrying its lost connection.
         compose('stop', 'worker')
     compose('up', '-d', '--wait', '--wait-timeout', '120')
-    # An already-attached development container can resolve the service alias
-    # even when --workspace-container was omitted. Hosts use published loopback
-    # ports. Validate the matching worker before choosing or writing either name.
-    config = client_config(config)
+    if args.workspace_container:
+        config.update(endpoint=ENDPOINT, health_url=HEALTH)
+    else:
+        # A native client on the Linux Docker host can reach the private bridge
+        # address directly; Docker's service DNS is only available to containers.
+        control = compose('ps', '-q', 'control', capture=True)
+        networks = json.loads(run(['docker', 'inspect', '--format', '{{json .NetworkSettings.Networks}}',
+                                  control], capture=True))
+        address = networks[NETWORK]['IPAddress']
+        config.update(endpoint=f'{address}:50051', health_url=f'http://{address}:50052')
     atomic_write(STATE / 'deployment.json', json.dumps(config, indent=2) + '\n')
+    require_ready()
     configure_buck(ROOT, config)
     print(f'Ready: {config["endpoint"]}; unrestricted worker execution ({config["host_cpu_count"]} visible CPUs).')
     print('Updated root .buckconfig: ordinary Buck builds and tests use NativeLink.')
@@ -378,13 +355,12 @@ def main():
         print('Root .buckconfig now selects local builds and tests.')
         print('Run buck2 kill when this checkout has no active commands to reset its client connections.')
     elif args.command == 'remote':
+        require_ready()
         config = settings()
         worker = compose('ps', '-q', 'worker', capture=True)
         actual = run(['docker', 'inspect', '--format', '{{.Image}}', worker], capture=True)
         if actual != config['image_id']:
             raise RuntimeError('Worker image differs from deployment settings; run re up again.')
-        config = client_config(config)
-        atomic_write(STATE / 'deployment.json', json.dumps(config, indent=2) + '\n')
         configure_buck(ROOT, config)
         print('Root .buckconfig now selects NativeLink for builds and tests.')
         print('Run buck2 kill when this checkout has no active commands to reset its client connections.')

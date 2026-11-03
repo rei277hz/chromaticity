@@ -24,9 +24,3 @@ native.alias(
     actual = "//remote_execution/tests:smoke",
     visibility = ["PUBLIC"],
 )
-
-export_file(
-    name = "cli_source",
-    src = "cli/main.py",
-    visibility = ["PUBLIC"],
-)

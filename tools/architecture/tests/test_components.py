@@ -14,7 +14,7 @@ RETIRED = frozenset({
 })
 PRODUCTS = frozenset({'perceptual_grade_blender', 'perceptual_grade_next_blender',
                       'hdr_color_picker_blender'})
-MATH = frozenset({'color_core', 'perceptual_grade_core',
+MATH = frozenset({'color_core', 'perceptual_grade_core', 'perceptual_grade_next_core',
                   'hdr_color_picker_core', 'perceptual_grade_reference'})
 BUILD_ONLY = frozenset({'invariant_compiler', 'invariant_verification', 'z3', 'z3solver'})
 NATIVE = frozenset({'bpy', 'gpu', 'gpu_extras', 'blf', 'mathutils'})
@@ -110,7 +110,7 @@ class ComponentTests(unittest.TestCase):
                                     and component_parts in (['blender_runtime', 'ownership'], ['blender_runtime', 'blender'])
                                     and not PRODUCTS.intersection(components_for(tree)))
                         self.assertTrue(optional or location.is_dir() or location.with_suffix('.py').is_file(), target)
-        self.assertTrue({'color_core', 'perceptual_grade_core', 'perceptual_grade_reference'} <= checked, checked)
+        self.assertTrue(PRODUCTS | MATH | {'invariant', 'blender_runtime'} <= checked, checked)
 
     def test_retired_and_build_only_packages_are_absent_from_runtime_closures(self):
         for name, _, components in bundles():
@@ -179,8 +179,7 @@ class ComponentTests(unittest.TestCase):
                         self.assertLessEqual({alias.name for alias in node.names}, allowed[node.module])
                     elif isinstance(node, ast.Import):
                         self.fail('Machine policies must use only explicit dataclass and Literal imports')
-        if not found:
-            self.skipTest('No reusable machine policies are present in this component bundle')
+        self.assertTrue(found, 'Runtime bundles must include the machine policies they execute')
 
 
 if __name__ == '__main__':

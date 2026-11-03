@@ -54,13 +54,14 @@ verification_group(
     ],
 )
 
-# Product-owned policies and the extension's delivery receipt.
+# Independent Next delivery receipt; the preserved root verification remains
+# bound only to the original core and product.
 verification_group(
     name = "verify_next",
     visibility = ["PUBLIC"],
     deps = [
+        "//libraries/perceptual-grade-next-core:verify",
         "//products/perceptual-grade-next-blender:extension",
-        "//products/perceptual-grade-next-blender:verify_policies",
     ],
 )
 

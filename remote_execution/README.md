@@ -50,16 +50,10 @@ For a client inside a development container, explicitly attach that container:
 
 Replace `dev-container` with its actual name. `up` builds the image, creates the
 network, starts the services, and checks their health and worker registration.
-The CLI prefers the Docker service name `perceptual-grade-nativelink` when it can
-reach a matching worker, including from a development container already attached
-to the network. Otherwise host clients use `localhost` through Compose's loopback
-ports. Endpoint selection follows the environment running the CLI, not the saved
-`--workspace-container` value. That flag only attaches the named container to the
-network. After running `up` on the host, run `re remote` inside the development
-container before running Buck there. Deployment metadata is stored in `.state/`;
-the CLI writes the selected hostname and image ID to a clearly marked managed
-block in the checked-in root `.buckconfig`, leaving the rest of that file
-unchanged. It never writes a numeric bridge address.
+Host clients use the discovered control-container bridge IP; container clients
+use Docker DNS. Deployment metadata is stored in `.state/`; `up` writes the active
+endpoint and image ID to a clearly marked managed block in the checked-in root
+`.buckconfig`, leaving the rest of that file unchanged.
 
 Ordinary Buck commands use remote execution by default. Run
 `./remote_execution/re validate` to run 16 probes locally, then remotely, then
@@ -107,9 +101,8 @@ Switch build and test execution by updating that same root configuration:
 `local` needs no Docker, service connection, or saved deployment state: it selects
 `prelude//platforms:default`, sets `remote_execution.enabled = false`, and removes
 remote-client settings from the block. `remote` requires a ready deployed worker
-and selects a reachable named endpoint again, migrating older deployment metadata
-that stored a bridge IP. Both `remote` and `up` record the actual image ID. `up`
-starts the deployment and selects remote execution. Stopping NativeLink does not
+and writes its actual image ID and endpoints from deployment state. `up` starts
+the deployment and selects remote execution. Stopping NativeLink does not
 automatically select local mode; remote actions then fail.
 
 Buck initializes remote connection addresses in its daemon. After switching modes
@@ -136,11 +129,10 @@ flowchart LR
 ```
 
 The deployment uses one private Docker network, `perceptual-grade-re`, and
-publishes the control and health ports on loopback only (`localhost:50051` and
-`localhost:50052`). Container clients resolve `perceptual-grade-nativelink`
-over the private network; external LAN access and authentication are not
-configured. The Compose project is a singleton per Docker host: coordinate
-replacement or shutdown when several checkouts share it.
+publishes no host ports. Health/admin APIs use internal port 50052. Container
+clients resolve `perceptual-grade-nativelink`; external LAN access and
+authentication are not configured. The Compose project is a singleton per Docker
+host: coordinate replacement or shutdown when several checkouts share it.
 
 Worker matching uses exact OS, architecture, and Docker image identity. Actions
 share available host CPU and RAM without per-action resource requests.
@@ -171,12 +163,8 @@ deployment is intended for trusted development workloads.
 
 `status` checks service readiness and a registered worker with the expected image,
 OS, and architecture. `up` updates root `.buckconfig` when the image or endpoint
-changes. For container clients that are not already attached, include
-`--workspace-container dev-container` when running `up`, then run `re remote`
-inside that container to select its reachable service hostname. Both `up` and
-`remote` validate readiness from the environment running the CLI before choosing
-the Docker service name or `localhost`; generating `.buckconfig` with a numeric
-IP address is rejected.
+changes. For container clients, include
+`--workspace-container dev-container` when running `up`.
 
 For execution-mode switches and daemon restart requirements, see
 [Buck client configuration](#buck-client-configuration).

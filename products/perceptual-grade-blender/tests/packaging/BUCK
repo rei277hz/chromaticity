@@ -33,6 +33,7 @@ python_test(
     },
     deps = [
         "//libraries/blender-runtime:runtime",
+        "//libraries/invariant:runtime",
         "//libraries/perceptual-grade-core:runtime",
     ],
 )

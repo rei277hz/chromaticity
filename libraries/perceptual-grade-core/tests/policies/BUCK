@@ -25,6 +25,7 @@ python_test(
     base_module = "tests.policies",
     deps = [
         "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
         "//libraries/perceptual-grade-core:machines",
     ],
 )
@@ -35,6 +36,7 @@ python_test(
     base_module = "tests.policies",
     deps = [
         "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
         "//libraries/perceptual-grade-core:machines",
     ],
 )
@@ -45,6 +47,7 @@ python_test(
     base_module = "tests.policies",
     deps = [
         "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
         "//libraries/perceptual-grade-core:machines",
     ],
 )
@@ -55,6 +58,7 @@ python_test(
     base_module = "tests.policies",
     deps = [
         "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
         "//libraries/perceptual-grade-core:runtime",
     ],
 )
@@ -65,6 +69,7 @@ python_test(
     base_module = "tests.policies",
     deps = [
         "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
         "//libraries/perceptual-grade-core:machines",
     ],
 )
@@ -75,6 +80,7 @@ python_test(
     base_module = "tests.policies",
     deps = [
         "//libraries/blender-runtime:abi",
+        "//libraries/invariant:runtime",
         "//libraries/perceptual-grade-core:machines",
     ],
 )
