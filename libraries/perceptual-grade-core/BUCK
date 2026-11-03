@@ -45,12 +45,11 @@ COORDINATORS = [
 
 component_library(
     name = "machines",
-    srcs = {
-        path: source
-        for path, source in SOURCES.items()
-        if path.startswith("graph/policies/") or path.startswith("graph/coordinators/")
-    },
+    srcs = {path: source for path, source in SOURCES.items() if path.startswith("graph/policies/") or path.startswith("graph/coordinators/")} |
+           {"graph/policies/_" + machine + "_contracts.py": "//libraries/perceptual-grade-core/proofs:proof_" + machine + "[validators]" for machine in MACHINES} |
+           {"graph/coordinators/_" + machine + "_contracts.py": "//libraries/perceptual-grade-core/proofs:proof_" + machine + "_coordinator[validators]" for machine in COORDINATORS},
     package = "perceptual_grade_core",
+    deps = ["//libraries/invariant:runtime"],
 )
 
 export_file(
@@ -136,7 +135,7 @@ component_library(
 )
 
 # Minimal legacy numerical closure for the independent reference oracle. Keep
-# this separate from the host/runtime machine code in model_code.
+# this separate from model_code, whose machine dependency requires old proofs.
 component_library(
     name = "reference_math_for_tests",
     srcs = {

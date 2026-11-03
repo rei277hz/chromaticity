@@ -1,0 +1,367 @@
+load("//build_defs:artifacts.bzl", "generate", "source_tree")
+load("//build_defs:python_packages.bzl", "component_library")
+
+PREFIX = "src/"
+
+SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+# The native host supplies bpy. Preparation can be imported without Blender.
+component_library(
+    name = "code",
+    srcs = SOURCES,
+    external_deps = ["//third_party:numpy"],
+    package = "perceptual_grade_nodes",
+    visibility = ["PUBLIC"],
+    deps = ["//libraries/color-core:runtime"],
+)
+
+python_library(
+    name = "boundary_generator_sources",
+    srcs = {"boundary.py": "tools/build_boundary.py"},
+    base_module = "pg_nodes_build",
+    visibility = ["PUBLIC"],
+    deps = [":code"],
+)
+
+python_binary(
+    name = "boundary_generator",
+    main_module = "pg_nodes_build.boundary",
+    deps = [":boundary_generator_sources"],
+)
+
+generate(
+    name = "boundary_resource",
+    outputs = {
+        "npz": "output_boundary.npz",
+        "report": "report.json",
+    },
+    tool = ":boundary_generator",
+    visibility = ["PUBLIC"],
+)
+
+component_library(
+    name = "runtime",
+    srcs = {},
+    package = "perceptual_grade_nodes",
+    resources = {"output_boundary.npz": ":boundary_resource[npz]"},
+    visibility = ["PUBLIC"],
+    deps = [":code"],
+)
+
+source_tree(
+    name = "sources",
+    srcs = SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "documentation",
+    src = "README.md",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "boundary_documentation",
+    src = "BOUNDARY.md",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "evidence",
+    src = "EVIDENCE.md",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "example",
+    src = "examples/linear_tone.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "full_example",
+    src = "examples/full_grade.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "color_tables_documentation",
+    src = "COLOR_TABLES.md",
+    visibility = ["PUBLIC"],
+)
+
+# Oracle/native comparisons belong to development tooling, not runtime bundles.
+TOOL_PREFIX = "tools/"
+
+EVALUATION_SOURCES = {
+    path[len(TOOL_PREFIX):]: path
+    for path in glob([TOOL_PREFIX + "**/*.py"])
+    if path != TOOL_PREFIX + "gate_policy.py"
+}
+
+python_library(
+    name = "gate_policy_sources",
+    srcs = {"gate_policy.py": "tools/gate_policy.py"},
+    base_module = "tools.perceptual_grade_nodes",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":runtime",
+        "//third_party:numpy",
+    ],
+)
+
+python_library(
+    name = "evaluation_sources",
+    srcs = EVALUATION_SOURCES,
+    base_module = "tools.perceptual_grade_nodes",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":gate_policy_sources",
+        ":runtime",
+        "//libraries/perceptual-grade-reference:model_code",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_binary(
+    name = "evaluate",
+    main_module = "tools.perceptual_grade_nodes.evaluate",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+generate(
+    name = "report",
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+    },
+    tool = ":evaluate",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "ui_report",
+    args = [
+        "--ui-boundaries",
+        "--no-warm",
+    ],
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+    },
+    tool = ":evaluate",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "full_evaluate",
+    main_module = "tools.perceptual_grade_nodes.full_evaluate",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "benchmark",
+    main_module = "tools.perceptual_grade_nodes.benchmark",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "gui_drag",
+    main_module = "tools.perceptual_grade_nodes.gui_drag",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_library(
+    name = "gui_drag_report_sources",
+    srcs = {"gui_drag_report.py": "tools/gui_drag_report.py"},
+    base_module = "tools.perceptual_grade_nodes",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "audit_fields",
+    main_module = "tools.perceptual_grade_nodes.audit_fields",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "field_effects",
+    main_module = "tools.perceptual_grade_nodes.field_effects",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "color_field_local",
+    main_module = "tools.perceptual_grade_nodes.color_field_local",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "gate_sensitivity",
+    main_module = "tools.perceptual_grade_nodes.gate_sensitivity",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "preparation_costs",
+    main_module = "tools.perceptual_grade_nodes.preparation_costs",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "field_costs",
+    main_module = "tools.perceptual_grade_nodes.field_costs",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "prepared_edit_costs",
+    main_module = "tools.perceptual_grade_nodes.prepared_edit_costs",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "hdr_report",
+    main_module = "tools.perceptual_grade_nodes.hdr_report",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "current_texture_sensitivity",
+    main_module = "tools.perceptual_grade_nodes.current_texture_sensitivity",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "current_texture_costs",
+    main_module = "tools.perceptual_grade_nodes.current_texture_costs",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+python_binary(
+    name = "web_toe_local",
+    main_module = "tools.perceptual_grade_nodes.web_toe_local",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+generate(
+    name = "hdr_smoke_report",
+    args = [
+        "--samples",
+        "256",
+        "--cases",
+        "all_active",
+        "--spaces",
+        "ACEScg",
+        "--candidate-ids",
+        "Tone/256",
+        "Output boundary/257x161",
+        "Combined Web/4096+32768",
+    ],
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+    },
+    tool = ":hdr_report",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "benchmark_report",
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+    },
+    tool = ":benchmark",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "full_report",
+    args = [
+        "--jobs",
+        "3",
+    ],
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+    },
+    tool = ":full_evaluate",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "full_ui_report",
+    args = [
+        "--ui-boundaries",
+        "--warm-runs",
+        "0",
+        "--jobs",
+        "3",
+    ],
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+    },
+    tool = ":full_evaluate",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "gpu_evaluate",
+    main_module = "tools.perceptual_grade_nodes.gpu_report",
+    visibility = ["PUBLIC"],
+    deps = [":evaluation_sources"],
+)
+
+generate(
+    name = "gpu_report",
+    args = select({
+        "prelude//os:linux": [
+            "--xvfb",
+            "$(location //third_party:xvfb_linux)",
+        ],
+        "DEFAULT": [],
+    }),
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+        "log": "native.log",
+    },
+    tool = ":gpu_evaluate",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "full_gpu_report",
+    args = ["--full"] + select({
+        "prelude//os:linux": [
+            "--xvfb",
+            "$(location //third_party:xvfb_linux)",
+        ],
+        "DEFAULT": [],
+    }),
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+        "log": "native.log",
+    },
+    tool = ":gpu_evaluate",
+    visibility = ["PUBLIC"],
+)

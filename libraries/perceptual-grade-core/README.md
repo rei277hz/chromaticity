@@ -8,8 +8,8 @@ library. It does not import Blender, execution services, native arenas or any
 product package.
 
 This is the preserved core used by the existing Blender, DCTL and reference
-consumers. The rebuilt Blender product owns separate state-machine policies in
-its `policy` package; preserved proof receipts do not certify those policies.
+consumers. [Next core](../perceptual-grade-next-core/README.md) owns its independent
+numerics and workflows; preserved proof receipts do not certify Next.
 
 `//libraries/perceptual-grade-core:model_code` supplies the source package;
 `:runtime` adds generated numerical and locale resources. Buck's component

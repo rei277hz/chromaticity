@@ -1,0 +1,20 @@
+python_test(
+    name = "stack",
+    srcs = ["test_stack.py"],
+    base_module = "tests.perceptual_grade_core",
+    deps = ["//libraries/perceptual-grade-next-core:runtime"],
+)
+
+python_test(
+    name = "readiness",
+    srcs = ["test_readiness.py"],
+    base_module = "tests.perceptual_grade_core",
+    deps = ["//libraries/perceptual-grade-next-core:runtime"],
+)
+
+python_test(
+    name = "preparation",
+    srcs = ["test_preparation.py"],
+    base_module = "tests.perceptual_grade_core",
+    deps = ["//libraries/perceptual-grade-next-core:runtime"],
+)

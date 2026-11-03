@@ -18,7 +18,7 @@ def _verify_proof(proof, tree, requirements, source, label):
     if report.get("ok") is not True:
         raise ValueError(label + " proof did not pass")
     if receipt.get("source_sha256") != hashlib.sha256(source_bytes).hexdigest():
-        raise ValueError(label + " proof does not match the packaged policy source")
+        raise ValueError(label + " proof does not match the packaged core source")
     if receipt.get("requirements_sha256") != hashlib.sha256(requirement_bytes).hexdigest():
         raise ValueError(label + " proof does not match its requirements")
     if receipt.get("report_sha256") != hashlib.sha256(report_bytes).hexdigest():
@@ -29,13 +29,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("tree", "output-dir", "inventory"):
         parser.add_argument("--" + name, type=Path, required=True)
-    for name in ("node", "preparation"):
+    for name in ("stack", "readiness", "preparation"):
         parser.add_argument("--proof-" + name, type=Path, required=True)
         parser.add_argument("--requirements-" + name, type=Path, required=True)
     args = parser.parse_args()
     for name, source in (
-        ("node", "policy/node.py"),
-        ("preparation", "policy/preparation.py"),
+        ("stack", "perceptual_grade_core/stack.py"),
+        ("readiness", "perceptual_grade_core/readiness.py"),
+        ("preparation", "perceptual_grade_core/preparation.py"),
     ):
         _verify_proof(getattr(args, "proof_" + name), args.tree,
                       getattr(args, "requirements_" + name), source,

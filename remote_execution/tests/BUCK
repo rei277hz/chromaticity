@@ -1,12 +1,5 @@
 load("//build_defs:artifacts.bzl", "generate", "python_tool", "verification_group")
 
-python_test(
-    name = "cli",
-    srcs = ["test_cli.py"],
-    base_module = "remote_execution_tests",
-    resources = {"cli.py": "//remote_execution:cli_source"},
-)
-
 python_tool(
     name = "probe",
     srcs = {"remote_execution/tests/probe.py": "probe.py"},

@@ -19,20 +19,21 @@ from bpy.props import (
     StringProperty,
 )
 
-from .kernel import (
+from .perceptual_grade_nodes import (
     LinearSettings,
     prepare_linear,
     project_source_white_component,
 )
-from .kernel.graph import Graph
-from .kernel.lut import (
+from .perceptual_grade_nodes.graph import Graph
+from .perceptual_grade_nodes.lut import (
     append_lut_lookup,
+    bake_linear_stack,
+    bake_linear_stack_progressive,
 )
-from .lut_gpu import PreparedStack as _PreparedStack
-from .lut_gpu import StackGPUBackend
-from .kernel.settings import D65, SPACES
-from .policy import node as node_policy
-from .policy import preparation as preparation_policy
+from .perceptual_grade_nodes.settings import D65, SPACES
+from .perceptual_grade_core import readiness as kernel_readiness
+from .perceptual_grade_core import preparation as preparation_policy
+from .perceptual_grade_core import stack as stack_policy
 from .preparation_runtime import PreparationRuntime
 
 
@@ -58,6 +59,7 @@ _registered_handlers = []
 _reconciling = False
 _last_working_space = None
 _node_stores = {}
+_stack_stores = {}
 _preparation_runtime = None
 _preparation_sources = {}
 _gesture_routers = {}
@@ -264,6 +266,29 @@ def _kernel(tree_type, prepared, working_space, signature):
         bpy.data.node_groups.remove(tree, do_unlink=True)
         raise
     return tree
+
+
+@dataclass(frozen=True)
+class _PreparedStack:
+    settings: tuple
+    space: str
+    cube: object
+
+
+def _prepare_stack(settings, working_space, on_preview=None):
+    matrices = tuple(prepare_linear(item, working_space).rgb_matrix for item in settings)
+    if on_preview is None:
+        cube = bake_linear_stack(matrices, working_space)
+    else:
+        def publish_preview(cube):
+            on_preview(_PreparedStack(settings, working_space, cube))
+
+        cube = bake_linear_stack_progressive(
+            matrices, working_space, publish_preview
+        )
+    return _PreparedStack(
+        settings, working_space, cube,
+    )
 
 
 def _stack_signature(settings, working_space):
@@ -693,15 +718,14 @@ def _record_for(node, desired_signature=None, source=None):
             kernel_quality, stack=_is_stack_node(node))):
         applied_signature = desired_signature
         applied_quality = kernel_quality
-    state = node_policy.new(
+    state = kernel_readiness.new(
         desired_signature=desired_signature,
         applied_signature=applied_signature,
         applied_quality=applied_quality,
         gesture_active=gesture_active,
-        grade_ids=_stack_grade_ids(node) if _is_stack_node(node) else (),
     )
     record = {"node": node, "state": state, "source": source,
-              "stack": _is_stack_node(node)}
+              "preparation_signature": None, "stack": _is_stack_node(node)}
     _node_stores[pointer] = record
     return record
 
@@ -719,8 +743,8 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
     except Exception as error:
         failures.append(error)
         if effects.error is None and record is not None:
-            record["state"], failed_effects = node_policy.step(
-                record["state"], node_policy.Event(
+            record["state"], failed_effects = kernel_readiness.step(
+                record["state"], kernel_readiness.Event(
                     "installation_result", None, str(error)))
             try:
                 _apply_output_effect(node, failed_effects)
@@ -728,27 +752,19 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
                 failures.append(fallback_error)
             return tuple(failures)
 
-    if effects.rebuild:
-        failures.extend(
-            error for failed_nodes, error in _refresh_nodes((node,))
-        )
-
     if effects.prepare_signature is not None:
         try:
             if preparation is None or _preparation_runtime is None:
                 raise RuntimeError("Grade preparation inputs or runtime are unavailable")
             source, signature, settings, working_space, lane, progressive = preparation
-            if signature != effects.prepare_signature:
-                raise RuntimeError("Preparation effect does not match its snapshot")
             _preparation_runtime.request(
                 source, signature, settings, working_space, lane=lane,
                 progressive=progressive,
             )
             _ensure_timer()
         except Exception as error:
-            failures.extend(_dispatch(node, node_policy.Event(
-                "preparation_result", error=str(error),
-                preparation_signature=effects.prepare_signature)))
+            failures.extend(_dispatch(node, kernel_readiness.Event(
+                "preparation_result", effects.prepare_signature, str(error))))
 
     if effects.build_signature is not None and not defer_build:
         failures.extend(_fail_installation(
@@ -758,7 +774,7 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
 
 
 def _dispatch_transition(node, record, event, preparation=None, defer_build=False):
-    record["state"], effects = node_policy.step(record["state"], event)
+    record["state"], effects = kernel_readiness.step(record["state"], event)
     failures = _consume_effects(node, effects, preparation, record, defer_build=defer_build)
     return effects, failures
 
@@ -779,6 +795,9 @@ def _dispatch(node, event, preparation=None):
 def _request_node(node, working_space, snapshots=None):
     if _is_grade_node(node) and node.pg_grade is None:
         _reset_linear(node.pg_linear)
+    elif _is_stack_node(node):
+        _stack_transition(node, stack_policy.Event(
+            "replace", _stack_grade_ids(node), 0))
     source = _source_for(node, working_space)
     snapshot = None if snapshots is None else snapshots.get(source)
     if snapshot is None:
@@ -796,18 +815,16 @@ def _request_node(node, working_space, snapshots=None):
         preparation_signature = _preparation_signature(snapshot, working_space)
         lane = "linear"
     record = _record_for(node, signature, source)
+    record["preparation_signature"] = preparation_signature
     state = record["state"]
     failures = []
     if (state.applied_signature is not None and not _kernel_is_current(
             node.node_tree, node.id_data.bl_idname, state.applied_signature,
             state.applied_quality or "full", stack=_is_stack_node(node))):
-        failures.extend(_dispatch(node, node_policy.Event(
+        failures.extend(_dispatch(node, kernel_readiness.Event(
             "installation_result", None, "Installed Grade kernel is missing or stale")))
     failures.extend(_dispatch(
-        node, node_policy.Event(
-            "request", signature,
-            preparation_signature=preparation_signature,
-        ),
+        node, kernel_readiness.Event("request", signature),
         (source, preparation_signature, snapshot, working_space, lane,
          lane == "lut" and bool(state.gesture_active)),
     ))
@@ -837,12 +854,13 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
         for record in tuple(_node_stores.values()):
             if record.get("source") is not source:
                 continue
-            if ((record["stack"] and lane != "lut")
-                    or (not record["stack"] and lane != "linear")):
-                continue
             if error is not None:
-                signature = None
+                if record["preparation_signature"] != preparation_signature:
+                    continue
+                signature = record["state"].desired_signature
             else:
+                if (record["stack"] and lane != "lut") or (not record["stack"] and lane != "linear"):
+                    continue
                 try:
                     signature = _publication_signature(record, prepared)
                 except Exception as failure:
@@ -853,10 +871,9 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
                     continue
             effects, transition_failures = _dispatch_transition(
                 record["node"], record,
-                node_policy.Event("preparation_result", signature,
+                kernel_readiness.Event("preparation_result", signature,
                                        None if error is None else str(error),
-                                       quality=quality,
-                                       preparation_signature=preparation_signature),
+                                       quality=quality),
                 defer_build=True,
             )
             failures.extend(transition_failures)
@@ -903,12 +920,12 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
             try:
                 previous = _replace_node_kernel(node, kernel)
             except Exception as error:
-                failures.extend(_dispatch(node, node_policy.Event(
+                failures.extend(_dispatch(node, kernel_readiness.Event(
                     "installation_result", signature, str(error), quality=quality)))
                 continue
             if previous != kernel:
                 _retire_kernels((previous,))
-            failures.extend(_dispatch(node, node_policy.Event(
+            failures.extend(_dispatch(node, kernel_readiness.Event(
                 "installation_result", signature, quality=quality)))
         return tuple(failures)
     finally:
@@ -924,7 +941,7 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
 def _fail_installation(users, signature, error, quality="full"):
     failures = []
     for record in users:
-        failures.extend(_dispatch(record["node"], node_policy.Event(
+        failures.extend(_dispatch(record["node"], kernel_readiness.Event(
             "installation_result", signature, str(error), quality=quality)))
     return tuple(failures)
 
@@ -947,7 +964,6 @@ def _preparation_tick():
     if _preparation_runtime is None:
         return None
     try:
-        _preparation_runtime.pump_main_thread()
         _handle_preparation_completions(_preparation_runtime.collect())
     except Exception as error:
         _block_nodes(tuple(_all_grade_nodes()), error)
@@ -1001,7 +1017,7 @@ def _block_nodes(nodes, error):
             signature = record["state"].desired_signature
             failures.extend(_dispatch(
                 node,
-                node_policy.Event("installation_result", signature, message),
+                kernel_readiness.Event("installation_result", signature, message),
             ))
         except Exception as failure:
             failures.append(((node,), failure))
@@ -1015,11 +1031,14 @@ def _forget_node(node):
         return
     if record is not None:
         _release_source(record.get("source"))
+    if _is_stack_node(node):
+        _stack_stores.pop(node.as_pointer(), None)
 
 
 def _reset_node_stores():
     sources = tuple(_preparation_sources.values())
     _node_stores.clear()
+    _stack_stores.clear()
     _preparation_sources.clear()
     if _preparation_runtime is not None:
         for source in sources:
@@ -1043,6 +1062,16 @@ def _stack_grade_ids(node):
     )
 
 
+def _stack_store(node):
+    return _stack_stores.setdefault(node.as_pointer(), stack_policy.new())
+
+
+def _stack_transition(node, event):
+    state, effects = stack_policy.step(_stack_store(node), event)
+    _stack_stores[node.as_pointer()] = state
+    return effects
+
+
 def _stack_owner(entry):
     pointer = entry.as_pointer()
     for tree in _all_node_trees():
@@ -1061,17 +1090,17 @@ def _stack_changed(entry, _context):
     node = _stack_owner(entry)
     if node is None:
         return
-    failures = _dispatch(node, node_policy.Event(
-        "stack_replace", grade_ids=_stack_grade_ids(node)))
-    if failures:
-        print("Perceptual Grade Stack update failed:", failures[-1])
+    effects = _stack_transition(node, stack_policy.Event(
+        "replace", _stack_grade_ids(node), 0))
+    if effects.rebuild:
+        _replace_kernel(node)
 
 
 def _refresh_stack_policy(node):
-    failures = _dispatch(node, node_policy.Event(
-        "stack_replace", grade_ids=_stack_grade_ids(node)))
-    if failures:
-        print("Perceptual Grade Stack update failed:", failures[-1])
+    effects = _stack_transition(node, stack_policy.Event(
+        "replace", _stack_grade_ids(node), 0))
+    if effects.rebuild:
+        _replace_kernel(node)
 
 
 def _stack_focus_changed(node, _context):
@@ -1147,7 +1176,7 @@ def _activate_gesture(window_key, token):
         was_active = bool(active)
         active.add(token)
         if not was_active:
-            failures = _dispatch(target, node_policy.Event("gesture_begin"))
+            failures = _dispatch(target, kernel_readiness.Event("gesture_begin"))
             if failures:
                 print("Perceptual Grade gesture start failed:", failures[-1])
         pointers.append(pointer)
@@ -1198,7 +1227,7 @@ def _end_gesture(window_key, token):
         try:
             changed = (changed or
                        target[2].get(pointer) != _settings_signature_for(record["node"]))
-            failures = _dispatch(record["node"], node_policy.Event("gesture_release"))
+            failures = _dispatch(record["node"], kernel_readiness.Event("gesture_release"))
             if failures:
                 print("Perceptual Grade gesture release failed:", failures[-1])
         except (ReferenceError, RuntimeError):
@@ -1333,7 +1362,6 @@ def _stack_active_grade(node):
 
 def _grade_changed(grade):
     users = []
-    failures = []
     for tree in _all_node_trees():
         try:
             nodes = tuple(tree.nodes)
@@ -1344,17 +1372,15 @@ def _grade_changed(grade):
                 if (_is_grade_node(node) and node.pg_grade == grade):
                     users.append(node)
                 elif _is_stack_node(node):
-                    failures.extend(
-                        (node, error) for error in _dispatch(
-                            node, node_policy.Event(
-                                "grade_changed", grade_ids=(grade.as_pointer(),)
-                            ),
-                        )
-                    )
+                    effects = _stack_transition(node, stack_policy.Event(
+                        "grade_changed", _stack_grade_ids(node), grade.as_pointer()
+                    ))
+                    if effects.rebuild:
+                        users.append(node)
             except (AttributeError, ReferenceError, RuntimeError):
                 continue
-    failures.extend(_refresh_nodes(tuple(node for node in users
-                                         if not _gesture_is_armed(node.as_pointer()))))
+    failures = _refresh_nodes(tuple(node for node in users
+                                   if not _gesture_is_armed(node.as_pointer())))
     for failed_nodes, error in failures:
         print("Perceptual Grade kernel repair failed:", error)
 
@@ -1482,11 +1508,11 @@ def _drain_preparations():
     for record in tuple(_node_stores.values()):
         state = record["state"]
         node = record["node"]
-        if (not node_policy.output_allowed(state)
+        if (not kernel_readiness.output_allowed(state)
                 or not _kernel_is_current(
                     node.node_tree, node.id_data.bl_idname, state.desired_signature,
                     state.applied_quality or "full", stack=record["stack"])):
-            failures.extend(_dispatch(node, node_policy.Event(
+            failures.extend(_dispatch(node, kernel_readiness.Event(
                 "installation_result", state.desired_signature,
                 state.error or "Grade did not become current for rendering")))
     return tuple(failures)
@@ -2089,8 +2115,8 @@ def register():
     global _preparation_runtime
     if _preparation_runtime is None:
         _preparation_runtime = PreparationRuntime(prepare_linear, workers=1)
-        _preparation_runtime.register_main_thread_lane(
-            "lut", StackGPUBackend(), progressive=True
+        _preparation_runtime.register_lane(
+            "lut", _prepare_stack, workers=1, progressive=True
         )
     classes = (
         PGLinearSettings,

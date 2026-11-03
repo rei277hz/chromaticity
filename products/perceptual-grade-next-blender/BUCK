@@ -1,24 +1,9 @@
-load("//build_defs:artifacts.bzl", "generate", "source_tree", "verification_group")
-load("//build_defs:invariant.bzl", "invariant_proof")
-load("//build_defs:python_packages.bzl", "component_library", "extension_tree")
+load("//build_defs:artifacts.bzl", "generate", "source_tree")
+load("//build_defs:python_packages.bzl", "extension_tree")
 
 PREFIX = "src/"
 
-KERNEL_PREFIX = PREFIX + "kernel/"
-
 SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
-
-KERNEL_SOURCES = {
-    path[len(KERNEL_PREFIX):]: path
-    for path in glob([KERNEL_PREFIX + "**/*.py"])
-}
-
-POLICY_PREFIX = PREFIX + "policy/"
-
-POLICY_SOURCES = {
-    path[len(POLICY_PREFIX):]: path
-    for path in glob([POLICY_PREFIX + "*.py"])
-}
 
 source_tree(
     name = "sources",
@@ -26,177 +11,21 @@ source_tree(
     visibility = ["PUBLIC"],
 )
 
-source_tree(
-    name = "kernel_sources",
-    srcs = KERNEL_SOURCES,
-    visibility = ["PUBLIC"],
-)
-
-component_library(
-    name = "kernel_code",
-    srcs = KERNEL_SOURCES,
-    external_deps = ["//third_party:numpy"],
-    package = "kernel",
-    visibility = ["PUBLIC"],
-    deps = ["//libraries/color-core:runtime"],
-)
-
-python_library(
-    name = "boundary_generator_sources",
-    srcs = {"boundary.py": "tools/build_boundary.py"},
-    base_module = "pg_nodes_build",
-    visibility = ["PUBLIC"],
-    deps = [":kernel_code"],
-)
-
-python_binary(
-    name = "boundary_generator",
-    main_module = "pg_nodes_build.boundary",
-    deps = [":boundary_generator_sources"],
-)
-
-generate(
-    name = "boundary_resource",
-    outputs = {
-        "npz": "output_boundary.npz",
-        "report": "report.json",
-    },
-    tool = ":boundary_generator",
-    visibility = ["PUBLIC"],
-)
-
-component_library(
-    name = "kernel_runtime",
-    srcs = {},
-    package = "kernel",
-    resources = {"output_boundary.npz": ":boundary_resource[npz]"},
-    visibility = ["PUBLIC"],
-    deps = [":kernel_code"],
-)
-
-python_library(
-    name = "lut_gpu_runtime",
-    srcs = {"lut_gpu.py": PREFIX + "lut_gpu.py"},
-    base_module = "color_tools",
-    visibility = ["PUBLIC"],
-    deps = [
-        ":kernel_runtime",
-        "//third_party:bpy",
-        "//third_party:numpy",
-    ],
-)
-
-python_library(
-    name = "boundary_support_sources",
-    srcs = {"build_boundary.py": "tools/build_boundary.py"},
-    base_module = "tools",
-    visibility = ["PUBLIC"],
-    deps = [":kernel_runtime"],
-)
-
-python_library(
-    name = "policy_runtime",
-    srcs = POLICY_SOURCES,
-    base_module = "policy",
-    visibility = ["PUBLIC"],
-)
-
-export_file(
-    name = "node_source",
-    src = POLICY_PREFIX + "node.py",
-    visibility = ["PUBLIC"],
-)
-
-export_file(
-    name = "node_requirements",
-    src = "requirements/node.inv",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "proof_node",
-    required_mutations = ["replacement_ignores_order"],
-    required_properties = [
-        "full_quality_is_required_for_current_output",
-        "request_without_gesture_retains_last_good_output",
-        "gesture_release_retains_last_good_output",
-        "matching_preview_survives_release",
-        "stale_completion_requires_gesture",
-        "stale_full_result_updates_drag_preview",
-        "late_lower_quality_never_replaces_full_quality",
-        "current_failure_clears_applied_output",
-        "return_to_applied_settings_updates_preparation_demand",
-        "kernel_match_does_not_override_preparation_correlation",
-        "preparation_failure_requires_current_preparation_signature",
-        "request_preserves_reducer_owned_stack_membership",
-        "replacement_rebuild_tracks_order_and_multiplicity",
-        "grade_edit_rebuilds_only_when_referenced",
-    ],
-    required_witnesses = [
-        "preview_remains_visible_until_full_installation",
-        "duplicate_grade_occurrences_are_preserved",
-    ],
-    requirements = ":node_requirements",
-    runtime_source = "policy/node.py",
-    source = ":node_source",
-    visibility = ["PUBLIC"],
-)
-
-export_file(
-    name = "preparation_source",
-    src = POLICY_PREFIX + "preparation.py",
-    visibility = ["PUBLIC"],
-)
-
-export_file(
-    name = "preparation_requirements",
-    src = "requirements/preparation.inv",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "proof_preparation",
-    required_properties = [
-        "idle_request_starts_preparation",
-        "running_request_only_replaces_latest_demand",
-        "preview_receipt_keeps_worker_occupied",
-        "final_receipt_starts_latest_successor",
-        "current_final_receipt_does_not_restart",
-        "obsolete_failure_does_not_publish_error",
-        "unmatched_receipt_is_ignored",
-    ],
-    required_witnesses = ["preview_does_not_consume_latest_queued_request"],
-    requirements = ":preparation_requirements",
-    runtime_source = "policy/preparation.py",
-    source = ":preparation_source",
-    visibility = ["PUBLIC"],
-)
-
-verification_group(
-    name = "verify_policies",
-    visibility = ["PUBLIC"],
-    deps = [
-        ":proof_node",
-        ":proof_preparation",
-    ],
-)
-
 extension_tree(
     name = "extension_tree",
     entrypoints = {
         "__init__.py": "src/__init__.py",
-        "lut_gpu.py": "src/lut_gpu.py",
         "nodes.py": "src/nodes.py",
-        "policy/__init__.py": "src/policy/__init__.py",
-        "policy/preparation.py": "src/policy/preparation.py",
-        "policy/node.py": "src/policy/node.py",
         "preparation_runtime.py": "src/preparation_runtime.py",
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
         "README.md": "README.md",
     },
     visibility = ["PUBLIC"],
-    deps = [":kernel_code_bundle"],
+    deps = [
+        "//libraries/perceptual-grade-next-core:runtime_bundle",
+        "//libraries/perceptual-grade-nodes:code_bundle",
+    ],
 )
 
 python_library(
@@ -226,14 +55,18 @@ generate(
         "$(location :extension_tree)",
         "--inventory",
         "$(location :package_inventory)",
-        "--proof-node",
-        "$(location :proof_node)",
-        "--requirements-node",
-        "$(location :node_requirements)",
+        "--proof-stack",
+        "$(location //libraries/perceptual-grade-next-core:proof_stack)",
+        "--requirements-stack",
+        "$(location //libraries/perceptual-grade-next-core:stack_requirements)",
         "--proof-preparation",
-        "$(location :proof_preparation)",
+        "$(location //libraries/perceptual-grade-next-core:proof_preparation)",
         "--requirements-preparation",
-        "$(location :preparation_requirements)",
+        "$(location //libraries/perceptual-grade-next-core:preparation_requirements)",
+        "--proof-readiness",
+        "$(location //libraries/perceptual-grade-next-core:proof_readiness)",
+        "--requirements-readiness",
+        "$(location //libraries/perceptual-grade-next-core:readiness_requirements)",
     ],
     outputs = {
         "zip": "perceptual_grade.zip",

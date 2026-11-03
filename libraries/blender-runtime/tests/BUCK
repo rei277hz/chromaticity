@@ -84,6 +84,7 @@ python_library(
     srcs = ["policy_fixture.py"],
     base_module = "tests.blender_runtime",
     visibility = ["PUBLIC"],
+    deps = ["//libraries/invariant:runtime"],
 )
 
 python_test(
