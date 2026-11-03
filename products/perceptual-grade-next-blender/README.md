@@ -1,7 +1,7 @@
 # Perceptual Grade for Blender
 
 This step adds Grade and Grade Stack nodes to the Shader and Compositor Color Add
-menus. Grade nodes apply Stage 1 through `perceptual-grade-nodes`; Stack nodes
+menus. Grade nodes apply Stage 1 through the product's `kernel` package; Stack nodes
 apply ordered, forward-only Stage 1 Grades through progressive 33³/65³ LUTs.
 Both products use shared Grade datablocks and the same Linear controls.
 Create or select a Grade using the node's datablock selector before adjusting it.

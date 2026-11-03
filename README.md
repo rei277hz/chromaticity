@@ -42,7 +42,7 @@ behavior and installed acceptance remain with the products.
 | [Color core](libraries/color-core/README.md) | Shared Python color mathematics, ACES 2, and Grade modCAM16 |
 | [Color DCTL](libraries/color-dctl/README.md) | Reusable DCTL matrix, chromaticity, and transfer helpers |
 | [Perceptual Grade core](libraries/perceptual-grade-core/README.md) | Preserved grading mathematics, scopes, catalogs, and policies |
-| [Perceptual Grade nodes](libraries/perceptual-grade-nodes/README.md) | Native Linear/Tone/Color graphs and guarded export |
+| [Perceptual Grade kernel](products/perceptual-grade-next-blender/docs/kernel/README.md) | Native Linear/Tone/Color graphs and guarded export, owned by the rebuilt Blender product |
 | [Perceptual Grade reference](libraries/perceptual-grade-reference/README.md) | Reference algorithms and numerical investigation |
 | [HDR Color Picker core](libraries/hdr-color-picker-core/README.md) | Picker coordinates, controls, and authoring rules |
 | [modCAM16 color core](libraries/modcam16-color-core/README.md) | Rust picker appearance model, ACES kernels, and reference fixtures |

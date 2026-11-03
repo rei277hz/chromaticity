@@ -1,10 +1,17 @@
 load("//build_defs:artifacts.bzl", "generate", "source_tree", "verification_group")
 load("//build_defs:invariant.bzl", "invariant_proof")
-load("//build_defs:python_packages.bzl", "extension_tree")
+load("//build_defs:python_packages.bzl", "component_library", "extension_tree")
 
 PREFIX = "src/"
 
+KERNEL_PREFIX = PREFIX + "kernel/"
+
 SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
+
+KERNEL_SOURCES = {
+    path[len(KERNEL_PREFIX):]: path
+    for path in glob([KERNEL_PREFIX + "**/*.py"])
+}
 
 POLICY_PREFIX = PREFIX + "policy/"
 
@@ -17,6 +24,62 @@ source_tree(
     name = "sources",
     srcs = SOURCES,
     visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "kernel_sources",
+    srcs = KERNEL_SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+component_library(
+    name = "kernel_code",
+    srcs = KERNEL_SOURCES,
+    external_deps = ["//third_party:numpy"],
+    package = "kernel",
+    visibility = ["PUBLIC"],
+    deps = ["//libraries/color-core:runtime"],
+)
+
+python_library(
+    name = "boundary_generator_sources",
+    srcs = {"boundary.py": "tools/build_boundary.py"},
+    base_module = "pg_nodes_build",
+    visibility = ["PUBLIC"],
+    deps = [":kernel_code"],
+)
+
+python_binary(
+    name = "boundary_generator",
+    main_module = "pg_nodes_build.boundary",
+    deps = [":boundary_generator_sources"],
+)
+
+generate(
+    name = "boundary_resource",
+    outputs = {
+        "npz": "output_boundary.npz",
+        "report": "report.json",
+    },
+    tool = ":boundary_generator",
+    visibility = ["PUBLIC"],
+)
+
+component_library(
+    name = "kernel_runtime",
+    srcs = {},
+    package = "kernel",
+    resources = {"output_boundary.npz": ":boundary_resource[npz]"},
+    visibility = ["PUBLIC"],
+    deps = [":kernel_code"],
+)
+
+python_library(
+    name = "boundary_support_sources",
+    srcs = {"build_boundary.py": "tools/build_boundary.py"},
+    base_module = "tools",
+    visibility = ["PUBLIC"],
+    deps = [":kernel_runtime"],
 )
 
 python_library(
@@ -140,7 +203,7 @@ extension_tree(
         "README.md": "README.md",
     },
     visibility = ["PUBLIC"],
-    deps = ["//libraries/perceptual-grade-nodes:code_bundle"],
+    deps = [":kernel_code_bundle"],
 )
 
 python_library(

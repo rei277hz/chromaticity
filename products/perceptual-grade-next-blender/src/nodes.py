@@ -19,18 +19,18 @@ from bpy.props import (
     StringProperty,
 )
 
-from .perceptual_grade_nodes import (
+from .kernel import (
     LinearSettings,
     prepare_linear,
     project_source_white_component,
 )
-from .perceptual_grade_nodes.graph import Graph
-from .perceptual_grade_nodes.lut import (
+from .kernel.graph import Graph
+from .kernel.lut import (
     append_lut_lookup,
     bake_linear_stack,
     bake_linear_stack_progressive,
 )
-from .perceptual_grade_nodes.settings import D65, SPACES
+from .kernel.settings import D65, SPACES
 from .policy import readiness as kernel_readiness
 from .policy import preparation as preparation_policy
 from .policy import stack as stack_policy

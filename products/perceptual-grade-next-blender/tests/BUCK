@@ -1,6 +1,27 @@
 python_test(
-    name = "package",
-    srcs = ["test_package.py"],
+    name = "policy_preparation",
+    srcs = ["policy/test_policy_preparation.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
+)
+
+python_test(
+    name = "policy_readiness",
+    srcs = ["policy/test_policy_readiness.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
+)
+
+python_test(
+    name = "policy_stack",
+    srcs = ["policy/test_policy_stack.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
+)
+
+python_test(
+    name = "preparation_runtime",
+    srcs = ["runtime/test_preparation_runtime.py"],
     base_module = "tests.perceptual_grade_blender",
     resources = {
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
@@ -8,8 +29,271 @@ python_test(
 )
 
 python_test(
+    name = "preparation",
+    srcs = ["numerical/test_preparation.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "color_preparation",
+    srcs = ["numerical/test_color_preparation.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:gate_policy_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "lut",
+    srcs = ["numerical/test_lut.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "reference",
+    srcs = ["numerical/test_reference.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "boundary_resource",
+    srcs = ["numerical/test_boundary_resource.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "numerical/boundary_build_report.json": "//products/perceptual-grade-next-blender:boundary_resource[report]",
+    },
+    deps = [
+        "//products/perceptual-grade-next-blender:boundary_support_sources",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "native",
+    srcs = ["native/test_native.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "stages",
+    srcs = ["native/test_stages.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "color_stages",
+    srcs = ["native/test_color_stages.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_library(
+    name = "color_stage_test_sources",
+    srcs = ["native/test_color_stages.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "persistent_color_stages",
+    srcs = ["native/test_persistent_color_stages.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [":color_stage_test_sources"],
+)
+
+python_test(
+    name = "persistent",
+    srcs = ["native/test_persistent.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "guards",
+    srcs = ["native/test_guards.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "saturation",
+    srcs = ["native/test_saturation.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "full",
+    srcs = ["native/test_full.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "gui_drag_report",
+    srcs = ["tools/test_gui_drag_report.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:gui_drag_report_sources"],
+)
+
+python_test(
+    name = "gate_policy",
+    srcs = ["tools/test_gate_policy.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:gate_policy_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "hdr_metrics",
+    srcs = ["tools/test_hdr_metrics.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "hdr_report",
+    srcs = ["tools/test_hdr_report.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "current_texture_candidates",
+    srcs = ["tools/test_current_texture_candidates.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "web_toe_local",
+    srcs = ["tools/test_web_toe_local.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = [
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "architecture",
+    srcs = ["packaging/test_architecture.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "component_manifest.json": "//products/perceptual-grade-next-blender:kernel_runtime_bundle[manifest]",
+        "component_bundle": "//products/perceptual-grade-next-blender:kernel_runtime_bundle",
+        "component_sources": "//products/perceptual-grade-next-blender:kernel_sources",
+    },
+    deps = ["//third_party:numpy"],
+)
+
+python_test(
+    name = "package",
+    srcs = ["packaging/test_package.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+    },
+)
+
+python_test(
+    name = "install_workspace",
+    srcs = ["packaging/test_install_workspace.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender:workspace_install_code"],
+)
+
+python_test(
     name = "installed",
-    srcs = ["test_installed.py"],
+    srcs = ["installed/test_installed.py"],
     base_module = "tests.perceptual_grade_blender",
     labels = [
         "installed",
@@ -18,14 +302,14 @@ python_test(
     resources = {
         "blender": "//third_party:blender_native",
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-        "runner.py": "runner.py",
-        "stack_ui_checks.py": "stack_ui_checks.py",
+        "runner.py": "installed/runner.py",
+        "stack_ui_checks.py": "installed/stack_ui_checks.py",
     },
 )
 
 python_test(
     name = "gesture_undo_gui",
-    srcs = ["test_gesture_undo_gui.py"],
+    srcs = ["installed/test_gesture_undo_gui.py"],
     base_module = "tests.perceptual_grade_blender",
     labels = [
         "installed",
@@ -36,50 +320,13 @@ python_test(
         "prelude//os:linux": {
             "blender": "//third_party:blender_native",
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "gesture_undo_runner.py": "gesture_undo_runner.py",
+            "gesture_undo_runner.py": "installed/gesture_undo_runner.py",
             "xvfb": "//third_party:xvfb_software_linux",
         },
         "prelude//os:macos": {
             "blender": "//third_party:blender_native",
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "gesture_undo_runner.py": "gesture_undo_runner.py",
+            "gesture_undo_runner.py": "installed/gesture_undo_runner.py",
         },
     }),
-)
-
-python_test(
-    name = "install_workspace",
-    srcs = ["test_install_workspace.py"],
-    base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:workspace_install_code"],
-)
-
-python_test(
-    name = "preparation_runtime",
-    srcs = ["test_preparation_runtime.py"],
-    base_module = "tests.perceptual_grade_blender",
-    resources = {
-        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-    },
-)
-
-python_test(
-    name = "policy_preparation",
-    srcs = ["test_policy_preparation.py"],
-    base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
-)
-
-python_test(
-    name = "policy_readiness",
-    srcs = ["test_policy_readiness.py"],
-    base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
-)
-
-python_test(
-    name = "policy_stack",
-    srcs = ["test_policy_stack.py"],
-    base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
 )
