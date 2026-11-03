@@ -7,10 +7,12 @@ import runpy
 import sys
 import threading
 import tempfile
+import time
 from types import SimpleNamespace
 
 import addon_utils
 import bpy
+import numpy as np
 import _bpy_restrict_state as restricted
 
 
@@ -27,6 +29,9 @@ nodes = importlib.import_module(
 )
 node_library = importlib.import_module(
     "bl_ext.pg_grade_smoke.perceptual_grade.kernel"
+)
+lut_kernel = importlib.import_module(
+    "bl_ext.pg_grade_smoke.perceptual_grade.kernel.lut"
 )
 initial_scans = []
 original_ensure_all_kernels = nodes._ensure_all_kernels
@@ -193,6 +198,69 @@ def release_ui_gesture(nodes, router, context):
     if bpy.app.timers.is_registered(callback):
         bpy.app.timers.unregister(callback)
     nodes._gesture_routers.pop(router.window_key, None)
+
+
+class TestStackBackend:
+    """Small deterministic host backend for lifecycle tests without a GPU context."""
+
+    def create_job(self, settings, working_space, progressive):
+        matrices = tuple(nodes.prepare_linear(item, working_space).rgb_matrix
+                         for item in settings)
+        matrix, to_lut, from_lut, signature = lut_kernel._stack_matrix(
+            matrices, working_space
+        )
+
+        def cube(size):
+            coordinates = lut_kernel.axis(lut_kernel.SIZE)
+            if size == lut_kernel.PREVIEW_SIZE:
+                coordinates = coordinates[::2]
+            lattice = np.stack(np.meshgrid(coordinates, coordinates, coordinates,
+                                           indexing="ij"), axis=-1)
+            values = (lattice @ matrix.T).astype(np.float32)
+            edges = np.zeros((3, size, size, size, 3), dtype=np.float32)
+            for direction in range(3):
+                delta = np.zeros(size, dtype=np.float64)
+                delta[:-1] = np.diff(coordinates)
+                shape = [1, 1, 1, 1]
+                shape[direction] = size
+                edges[direction] = (
+                    delta.reshape(shape)
+                    * matrix[:, direction].reshape(1, 1, 1, 3)
+                ).astype(np.float32)
+            values.flags.writeable = False
+            edges.flags.writeable = False
+            to_lut.flags.writeable = False
+            from_lut.flags.writeable = False
+            result = lut_kernel.LinearCube(
+                values, edges, signature, working_space,
+                to_lut, from_lut, size,
+            )
+            return nodes._PreparedStack(settings, working_space, result)
+
+        return TestStackJob(cube, progressive)
+
+    def close(self):
+        pass
+
+
+class TestStackJob:
+    def __init__(self, make_cube, progressive):
+        self.make_cube = make_cube
+        self.progressive = progressive
+        self.step = 0
+
+    def advance(self):
+        self.step += 1
+        if self.progressive and self.step == 1:
+            return "preview", self.make_cube(lut_kernel.PREVIEW_SIZE)
+        return "full", self.make_cube(lut_kernel.SIZE)
+
+    def close(self):
+        pass
+
+
+nodes.StackGPUBackend = TestStackBackend
+nodes._preparation_runtime._lanes["lut"].host_owner = TestStackBackend()
 
 
 extension.register()
@@ -621,7 +689,7 @@ for stack_node in (shader_stack, compositor_stack):
 # then replaces it with the matching 65-cube result.
 runtime = nodes._preparation_runtime
 lut_lane = runtime._lanes["lut"]
-original_stack_prepare = lut_lane.prepare
+original_stack_owner = lut_lane.host_owner
 preview_ready = threading.Event()
 continue_full = threading.Event()
 latest_preview_ready = threading.Event()
@@ -631,27 +699,53 @@ gesture_window = 731
 gesture_token = None
 
 
-def hold_after_stack_preview(settings, working_space, on_preview=None):
-    exposure = settings[0].exposure
-    stack_preparation_exposures.append(exposure)
-    if on_preview is None:
-        return original_stack_prepare(settings, working_space)
-
-    def publish_and_hold(prepared):
-        on_preview(prepared)
+class HoldingStackOwner:
+    def create_job(self, settings, working_space, progressive):
+        exposure = settings[0].exposure
+        stack_preparation_exposures.append(exposure)
+        job = original_stack_owner.create_job(settings, working_space, progressive)
         ready, release = ((preview_ready, continue_full) if exposure == 1.0 else
                           (latest_preview_ready, continue_latest_full))
-        ready.set()
-        assert release.wait(10), "full Stack refinement was not released"
+        return HoldingStackJob(job, ready, release, progressive)
 
-    return original_stack_prepare(settings, working_space, publish_and_hold)
+    def close(self):
+        original_stack_owner.close()
 
 
-lut_lane.prepare = hold_after_stack_preview
+class HoldingStackJob:
+    def __init__(self, job, ready, release, progressive):
+        self.job = job
+        self.ready = ready
+        self.release = release
+        self.progressive = progressive
+        self.preview_sent = False
+
+    def advance(self):
+        if self.progressive and self.preview_sent and not self.release.is_set():
+            return None
+        receipt = self.job.advance()
+        if receipt is not None and receipt[0] == "preview":
+            self.preview_sent = True
+            self.ready.set()
+        return receipt
+
+    def close(self):
+        self.job.close()
+
+
+def pump_until(event):
+    deadline = time.monotonic() + 10
+    while not event.is_set() and time.monotonic() < deadline:
+        nodes._preparation_tick()
+        time.sleep(.001)
+    assert event.is_set(), "GPU host lane did not reach the expected receipt"
+
+
+lut_lane.host_owner = HoldingStackOwner()
 try:
     gesture_token = nodes._begin_gesture(gesture_window, shader_stack)
     stack_grade.pg_linear.exposure = 1.0
-    assert preview_ready.wait(10), "33-cube Stack preview was not prepared"
+    pump_until(preview_ready)
     for exposure in (1.125, 1.25, 1.375):
         stack_grade.pg_linear.exposure = exposure
     nodes._preparation_tick()
@@ -663,7 +757,7 @@ try:
     assert_grade_graph(shader_stack_graph)
     assert_grade_graph(compositor_stack_graph)
     continue_full.set()
-    assert latest_preview_ready.wait(10), "latest Stack waited for Blender polling"
+    pump_until(latest_preview_ready)
     assert stack_preparation_exposures == [1.0, 1.375], stack_preparation_exposures
     nodes._preparation_tick()
     for stack_node in (shader_stack, compositor_stack):
@@ -675,7 +769,7 @@ try:
     for stack_node in (shader_stack, compositor_stack):
         state = nodes._record_for(stack_node)["state"]
         assert not state.gesture_active and state.applied_quality == "preview"
-        assert nodes.kernel_readiness.output_mode(state) == "preview"
+        assert nodes.node_policy.output_mode(state) == "preview"
     assert_grade_graph(shader_stack_graph)
     assert_grade_graph(compositor_stack_graph)
     continue_latest_full.set()
@@ -687,7 +781,7 @@ try:
         assert prepared is not None and prepared[0] == "lut" and prepared[2]
         assert state.applied_quality == "full"
         assert stack_node.node_tree.get(nodes._KERNEL_QUALITY) == "full"
-        assert nodes.kernel_readiness.output_allowed(state)
+        assert nodes.node_policy.output_allowed(state)
     assert_grade_graph(shader_stack_graph)
     assert_grade_graph(compositor_stack_graph)
 finally:
@@ -695,7 +789,7 @@ finally:
     continue_latest_full.set()
     if gesture_token is not None:
         nodes._end_gesture(gesture_window, gesture_token)
-    lut_lane.prepare = original_stack_prepare
+    lut_lane.host_owner = original_stack_owner
 
 # The first drag on an explicitly created Grade coalesces pending settings
 # without replacing its datablock or preparation source.
@@ -764,7 +858,7 @@ try:
     assert local_state.applied_signature == local_old_signature
     assert local_state.applied_quality == "full"
     assert local_state.error is None
-    assert nodes.kernel_readiness.output_mode(local_state) == "preview"
+    assert nodes.node_policy.output_mode(local_state) == "preview"
     assert local_drag_node.node_tree == local_old_kernel
     assert local_drag_node.node_tree.get(nodes._KERNEL_SIGNATURE) == local_old_signature
     assert local_drag_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
@@ -784,7 +878,7 @@ try:
     local_state = nodes._record_for(local_drag_node)["state"]
     assert not local_state.gesture_active
     assert local_state.applied_signature == local_old_signature
-    assert nodes.kernel_readiness.output_mode(local_state) == "preview"
+    assert nodes.node_policy.output_mode(local_state) == "preview"
     assert local_drag_node.node_tree == local_old_kernel
     assert local_drag_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
     assert local_drag_node.get(nodes._NODE_ERROR) is None
@@ -819,7 +913,7 @@ local_final_state = nodes._record_for(local_drag_node)["state"]
 assert local_preparation_exposures == [0.8125, 0.90625], local_preparation_exposures
 assert not local_final_state.gesture_active
 assert local_final_state.applied_signature == local_final_signature
-assert nodes.kernel_readiness.output_allowed(local_final_state)
+assert nodes.node_policy.output_allowed(local_final_state)
 assert local_drag_node.node_tree.get(nodes._KERNEL_SIGNATURE) == local_final_signature
 assert local_drag_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
 assert not local_drag_node.get(nodes._NODE_ERROR)
@@ -875,7 +969,7 @@ try:
         assert state.applied_signature == linked_old_signatures[pointer]
         assert state.desired_signature != state.applied_signature
         assert state.error is None
-        assert nodes.kernel_readiness.output_mode(state) == "preview"
+        assert nodes.node_policy.output_mode(state) == "preview"
         assert node.node_tree == linked_old_kernels[pointer]
         assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
         assert node.get(nodes._NODE_ERROR) is None
@@ -886,7 +980,7 @@ try:
         state = nodes._record_for(node)["state"]
         assert not state.gesture_active
         assert state.applied_signature == linked_old_signatures[node.as_pointer()]
-        assert nodes.kernel_readiness.output_mode(state) == "preview"
+        assert nodes.node_policy.output_mode(state) == "preview"
         assert node.node_tree == linked_old_kernels[node.as_pointer()]
         assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
 
@@ -912,7 +1006,7 @@ for node in linked_drag_nodes:
     )
     assert not state.gesture_active
     assert state.applied_signature == signature
-    assert nodes.kernel_readiness.output_allowed(state)
+    assert nodes.node_policy.output_allowed(state)
     assert node.node_tree.get(nodes._KERNEL_SIGNATURE) == signature
     assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
     assert not node.get(nodes._NODE_ERROR)
@@ -965,7 +1059,7 @@ try:
     click_state = nodes._record_for(click_entry_node)["state"]
     assert not click_state.gesture_active
     assert click_state.applied_signature is not None
-    assert nodes.kernel_readiness.output_mode(click_state) == "preview"
+    assert nodes.node_policy.output_mode(click_state) == "preview"
     assert click_entry_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
     assert click_entry_node.get(nodes._NODE_PENDING) == (
         "Updating - showing last-good result"
@@ -990,14 +1084,14 @@ click_final_signature = nodes._kernel_signature(
 assert click_exposures == [3.25], click_exposures
 assert not click_final_state.gesture_active
 assert click_final_state.applied_signature == click_final_signature
-assert nodes.kernel_readiness.output_allowed(click_final_state)
+assert nodes.node_policy.output_allowed(click_final_state)
 assert click_entry_node.node_tree.get(nodes._KERNEL_SIGNATURE) == click_final_signature
 assert click_entry_node.node_tree.get(nodes._KERNEL_QUALITY) == "full"
 assert click_entry_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
 assert not click_entry_node.get(nodes._NODE_ERROR)
 assert not click_entry_node.get(nodes._NODE_PENDING)
 
-# An invalid working space also blocks through the readiness effect before a
+# An invalid working space also blocks through the node policy effect before a
 # later successful render reconciliation restores all nodes.
 original_working_space = nodes._working_space
 
@@ -1066,7 +1160,7 @@ try:
     assert stale_node.get(nodes._NODE_PENDING) == "Updating - showing last-good result"
     state = nodes._record_for(stale_node)["state"]
     assert state.applied_signature != state.desired_signature
-    assert not nodes.kernel_readiness.output_allowed(state)
+    assert not nodes.node_policy.output_allowed(state)
     for preview_node in (stale_node, stale_compositor_node):
         assert preview_node.get(nodes._NODE_PENDING) == (
             "Updating - showing last-good result"
@@ -1333,14 +1427,14 @@ bpy.data.node_groups.remove(failed_assignment_grade)
 
 # The composed consumer still attempts the error-kernel operation if applying
 # the node presentation operation raises.
-blocked_state, blocked_effect = nodes.kernel_readiness.step(
-    nodes.kernel_readiness.new(),
-    nodes.kernel_readiness.Event("request", "effect-test"),
+blocked_state, blocked_effect = nodes.node_policy.step(
+    nodes.node_policy.new(),
+    nodes.node_policy.Event("request", "effect-test"),
 )
 assert blocked_state.desired_signature is not None
-blocked_state, blocked_effect = nodes.kernel_readiness.step(
+blocked_state, blocked_effect = nodes.node_policy.step(
     blocked_state,
-    nodes.kernel_readiness.Event(
+    nodes.node_policy.Event(
         "preparation_result", "effect-test", "simulated preparation failure"
     ),
 )
@@ -1448,7 +1542,7 @@ def reconcile_after_test_undo(node_name):
         nodes.SHADER_TREE, nodes._settings_for_node(node), nodes._working_space()
     )
     assert record["state"].applied_signature == signature
-    assert nodes.kernel_readiness.output_allowed(record["state"])
+    assert nodes.node_policy.output_allowed(record["state"])
     assert node.node_tree.get(nodes._KERNEL_SIGNATURE) == signature
     del node
 

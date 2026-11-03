@@ -3,6 +3,28 @@
 from types import SimpleNamespace
 
 
+def runtime_status(runtime):
+    with runtime._lock:
+        pending_sources = tuple(source.latest for source in runtime._pending)
+        publications = tuple(
+            (source.key, tuple(slots))
+            for source, slots in runtime._publications.items()
+        )
+        failure = runtime._failure
+    with runtime._host_lock:
+        host_queue = tuple(
+            (work.lane, work.snapshot.request_signature)
+            for work in runtime._host_queue
+        )
+        active = runtime._host_active
+        host_active = (None if active is None else
+                       (active.lane, active.snapshot.request_signature,
+                        active.job is not None))
+    return (f"pending_sources={pending_sources!r}, publications={publications!r}, "
+            f"host_queue={host_queue!r}, host_active={host_active!r}, "
+            f"failure={failure!r}")
+
+
 class Layout:
     def __init__(self, parent=None):
         self.parent = parent
@@ -67,7 +89,8 @@ def check_grade_ui(nodes, tree):
         initial_kernel = node.node_tree
         initial_groups = {group.as_pointer() for group in nodes.bpy.data.node_groups}
         source = nodes._record_for(node)["source"]
-        assert not nodes._preparation_runtime.pending
+        assert not nodes._preparation_runtime.pending, runtime_status(
+            nodes._preparation_runtime)
 
         with nodes._suspend(node.pg_linear):
             node.pg_linear.exposure = 0.5

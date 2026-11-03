@@ -1,7 +1,8 @@
 """Async orchestration of bounded, latest-only Grade preparation."""
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from functools import partial
 import json
@@ -47,8 +48,18 @@ class Publication:
 @dataclass
 class _Lane:
     prepare: object
-    executor: ThreadPoolExecutor
+    executor: Optional[ThreadPoolExecutor]
     progressive: bool
+    host_owner: Optional[object] = None
+
+
+@dataclass
+class _HostWork:
+    lane: str
+    snapshot: _Input
+    future: asyncio.Future
+    on_preview: object
+    job: Optional[object] = None
 
 
 @dataclass(eq=False)
@@ -80,6 +91,9 @@ class PreparationRuntime:
         self.executor = ThreadPoolExecutor(max_workers=workers,
                                            thread_name_prefix="perceptual-grade-linear")
         self._lanes = {"linear": _Lane(prepare, self.executor, False)}
+        self._host_lock = threading.Lock()
+        self._host_queue = deque()
+        self._host_active = None
         self.closed = False
         self._lock = threading.RLock()
         self._close_lock = threading.Lock()
@@ -147,10 +161,32 @@ class PreparationRuntime:
             )
             self._lanes[name] = _Lane(prepare, executor, bool(progressive))
 
+    def register_main_thread_lane(self, name, owner, *, progressive=False):
+        """Register a cooperative lane whose owner advances only on the host thread.
+
+        ``owner.create_job(settings, working_space, progressive)`` returns an
+        object with ``advance()`` and ``close()`` methods. ``advance`` returns
+        ``None`` or a (quality, prepared) receipt. All host lanes share one
+        physical slot and therefore never overlap GPU resource use.
+        """
+        if not isinstance(name, str) or not name:
+            raise ValueError("Preparation lane name must be nonempty")
+        if not callable(getattr(owner, "create_job", None)):
+            raise TypeError("Main-thread lane owner must create jobs")
+        with self._lock:
+            self._raise_failure()
+            if self.closed:
+                raise RuntimeError("Preparation runtime is closed")
+            if name in self._lanes:
+                raise ValueError(f"Preparation lane already exists: {name}")
+            self._lanes[name] = _Lane(None, None, bool(progressive), owner)
+
     @property
     def pending(self):
         with self._lock:
-            return bool(self._pending or self._publications or self._failure)
+            pending = bool(self._pending or self._publications or self._failure)
+        with self._host_lock:
+            return pending or bool(self._host_queue or self._host_active)
 
     def request(self, source, signature, settings, working_space, *, lane="linear",
                 progressive=None):
@@ -182,6 +218,7 @@ class PreparationRuntime:
             )
             subscription.dirty = True
             self._pending.add(subscription)
+            self._discard_unwanted_host_work_locked()
             self._schedule_locked(subscription)
 
     def forget(self, source):
@@ -194,8 +231,32 @@ class PreparationRuntime:
             subscription.latest = None
             subscription.dirty = True
             self._pending.discard(subscription)
+            self._discard_unwanted_host_work_locked()
             if not self.closed:
                 self._schedule_locked(subscription)
+
+    def _has_host_demand_locked(self, signature):
+        return any(source.latest is not None
+                   and source.latest.request_signature == signature
+                   for source in self._sources.values())
+
+    def _discard_unwanted_host_work_locked(self):
+        with self._host_lock:
+            retained = deque()
+            discarded = []
+            while self._host_queue:
+                work = self._host_queue.popleft()
+                if self._has_host_demand_locked(work.snapshot.request_signature):
+                    retained.append(work)
+                else:
+                    discarded.append(work)
+            self._host_queue = retained
+        for work in discarded:
+            self._jobs.pop(_job_key(work.snapshot.request_signature), None)
+            self._finish_host_work(
+                work,
+                error=RuntimeError("Queued host preparation is no longer demanded"),
+            )
 
     def _schedule_locked(self, source):
         if not source.wake_pending:
@@ -300,31 +361,125 @@ class PreparationRuntime:
         job_key = (snapshot.lane, snapshot.signature, snapshot.progressive)
         lane = self._lanes[snapshot.lane]
         try:
-            call = partial(lane.prepare, snapshot.settings, snapshot.working_space)
-            if snapshot.progressive:
-                def call_with_preview():
-                    return lane.prepare(
-                        snapshot.settings, snapshot.working_space,
-                        lambda preview: self._emit_preview(snapshot, preview),
-                    )
-                call = call_with_preview
-            prepared = await self.loop.run_in_executor(lane.executor, call)
-            self._prepared[job_key] = prepared
+            if lane.host_owner is not None:
+                prepared = await self._execute_on_host(snapshot, lane)
+            else:
+                call = partial(lane.prepare, snapshot.settings, snapshot.working_space)
+                if snapshot.progressive:
+                    def call_with_preview():
+                        return lane.prepare(
+                            snapshot.settings, snapshot.working_space,
+                            lambda preview: self._emit_preview(snapshot, preview),
+                        )
+                    call = call_with_preview
+                prepared = await self.loop.run_in_executor(lane.executor, call)
+            with self._lock:
+                self._prepared[job_key] = prepared
             return prepared
         finally:
-            if self._jobs.get(job_key) is asyncio.current_task():
-                del self._jobs[job_key]
+            with self._lock:
+                if self._jobs.get(job_key) is asyncio.current_task():
+                    del self._jobs[job_key]
+
+    async def _execute_on_host(self, snapshot, lane):
+        future = self.loop.create_future()
+        work = _HostWork(
+            snapshot.lane,
+            snapshot,
+            future,
+            (lambda prepared: self._emit_preview(snapshot, prepared))
+            if snapshot.progressive else None,
+        )
+        with self._lock:
+            if self.closed:
+                raise RuntimeError("Preparation runtime is closed")
+            if not self._has_host_demand_locked(snapshot.request_signature):
+                raise RuntimeError("Host preparation is no longer demanded")
+            with self._host_lock:
+                self._host_queue.append(work)
+        return await future
+
+    def pump_main_thread(self):
+        """Advance one authorized host-lane step; callers must be on main thread."""
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError("Host preparation must be pumped on the main thread")
+        with self._host_lock:
+            if self._host_active is None and self._host_queue:
+                self._host_active = self._host_queue.popleft()
+            work = self._host_active
+        if work is None:
+            return False
+
+        lane = self._lanes[work.lane]
+        try:
+            if work.job is None:
+                work.job = lane.host_owner.create_job(
+                    work.snapshot.settings,
+                    work.snapshot.working_space,
+                    work.snapshot.progressive,
+                )
+            receipt = work.job.advance()
+            if receipt is None:
+                return True
+            quality, prepared = receipt
+            if quality == "preview":
+                if not work.snapshot.progressive:
+                    raise RuntimeError("A final-only host job emitted a preview")
+                work.on_preview(prepared)
+                return True
+            if quality != "full":
+                raise RuntimeError(f"Unknown host preparation quality: {quality}")
+        except Exception as error:
+            try:
+                self._retire_host_job(work)
+            except Exception as cleanup_error:
+                error = ExceptionGroup(
+                    "Host preparation and cleanup both failed",
+                    [error, cleanup_error],
+                )
+            self._finish_host_work(work, error=error)
+            return True
+
+        try:
+            self._retire_host_job(work)
+        except Exception as error:
+            self._finish_host_work(work, error=error)
+            return True
+        self._finish_host_work(work, prepared=prepared)
+        return True
+
+    def _retire_host_job(self, work):
+        try:
+            if work.job is not None:
+                work.job.close()
+        finally:
+            work.job = None
+            with self._host_lock:
+                if self._host_active is work:
+                    self._host_active = None
+
+    def _finish_host_work(self, work, *, prepared=None, error=None):
+        def finish():
+            if work.future.done():
+                return
+            if error is not None:
+                work.future.set_exception(error)
+            else:
+                work.future.set_result(prepared)
+
+        self.loop.call_soon_threadsafe(finish)
 
     async def _prepare(self, source, record, snapshot):
         job_key = (snapshot.lane, snapshot.signature, snapshot.progressive)
         try:
-            if job_key in self._prepared:
-                prepared = self._prepared[job_key]
-            else:
+            with self._lock:
+                prepared = self._prepared.get(job_key)
+                has_prepared = job_key in self._prepared
                 job = self._jobs.get(job_key)
-                if job is None:
+                if not has_prepared and job is None:
                     job = self.loop.create_task(self._execute(snapshot))
                     self._jobs[job_key] = job
+            if not has_prepared:
                 prepared = await asyncio.shield(job)
         except Exception as error:
             outcome = (snapshot.lane, snapshot.signature, snapshot.progressive, None, error)
@@ -435,7 +590,25 @@ class PreparationRuntime:
             self._raise_failure()
             if self.closed:
                 return ()
+            if threading.current_thread() is not threading.main_thread():
+                selected = tuple(self._sources.values()) if sources is None else tuple(
+                    self._sources[key] for key in dict.fromkeys(sources)
+                    if key in self._sources
+                )
+                if any(source.latest is not None
+                       and self._lanes[source.latest.lane].host_owner is not None
+                       for source in selected):
+                    raise RuntimeError(
+                        "Main-thread preparation cannot be drained from a worker"
+                    )
             future = asyncio.run_coroutine_threadsafe(self.wait_current(sources), self.loop)
+        if threading.current_thread() is threading.main_thread():
+            while not future.done():
+                self.pump_main_thread()
+                try:
+                    future.result(timeout=0.01)
+                except FutureTimeout:
+                    pass
         return future.result()
 
     async def aclose(self):
@@ -457,6 +630,14 @@ class PreparationRuntime:
                 source.latest = None
                 source.dirty = True
                 self._sync_locked(source)
+        with self._host_lock:
+            queued = tuple(self._host_queue)
+            self._host_queue.clear()
+        for work in queued:
+            if not work.future.done():
+                work.future.set_exception(
+                    RuntimeError("Preparation runtime is shutting down")
+                )
         while self._tasks:
             await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
         if self._jobs:
@@ -472,15 +653,38 @@ class PreparationRuntime:
         with self._close_lock:
             if not self._thread.is_alive():
                 for lane in self._lanes.values():
-                    lane.executor.shutdown(wait=True)
+                    if lane.host_owner is not None:
+                        if threading.current_thread() is not threading.main_thread():
+                            raise RuntimeError("Host preparation must close on the main thread")
+                        lane.host_owner.close()
+                        lane.host_owner = None
+                    if lane.executor is not None:
+                        lane.executor.shutdown(wait=True)
                 return
+            if (threading.current_thread() is not threading.main_thread()
+                    and any(lane.host_owner is not None for lane in self._lanes.values())):
+                raise RuntimeError("Host preparation must close on the main thread")
             with self._lock:
                 self.closed = True
                 future = asyncio.run_coroutine_threadsafe(self.aclose(), self.loop)
             try:
+                if any(lane.host_owner is not None for lane in self._lanes.values()):
+                    if threading.current_thread() is not threading.main_thread():
+                        raise RuntimeError("Host preparation must close on the main thread")
+                    while not future.done():
+                        self.pump_main_thread()
+                        try:
+                            future.result(timeout=0.01)
+                        except FutureTimeout:
+                            pass
                 future.result()
             finally:
+                for lane in self._lanes.values():
+                    if lane.host_owner is not None:
+                        lane.host_owner.close()
+                        lane.host_owner = None
                 self.loop.call_soon_threadsafe(self._stop.set)
                 self._thread.join()
                 for lane in self._lanes.values():
-                    lane.executor.shutdown(wait=True)
+                    if lane.executor is not None:
+                        lane.executor.shutdown(wait=True)

@@ -1,4 +1,4 @@
-"""Progressive 33/65-cube LUT baking and tetrahedral Stage 1 lookup."""
+"""LUT metadata, host-side packaging, and tetrahedral Stage 1 lookup."""
 from dataclasses import dataclass
 import hashlib
 import math
@@ -17,7 +17,6 @@ KAPPA = 0.01
 LOG_RANGE = math.log1p(MAXIMUM / KAPPA)
 ATLAS_WIDTH = 1024
 ATLAS_HEIGHT = (4 * SIZE**3 + ATLAS_WIDTH - 1) // ATLAS_WIDTH
-_COUNT = SIZE**3
 _SPACE = "ACEScg"
 
 
@@ -216,9 +215,8 @@ class LinearCube:
     def pixels(self, *, encoded=False):
         """Return a four-plane atlas: base then forward R, G, and B edges.
 
-        Edge differences are computed in float64 during baking, before their
-        independent float32 storage. This avoids subtracting rounded high-offset
-        vertices, which can erase small but valid slopes.
+        The GPU baker computes affine edge vectors directly from the matrix and
+        axis spacing, avoiding subtraction of rounded high-offset vertices.
         """
         count = self.size**3
         fields = np.concatenate((self.values[None, ...], self.edge_values), axis=0)
@@ -246,61 +244,6 @@ class LinearCube:
         return np.stack([pack_rgbe(field.reshape(-1, 3)) for field in fields])
 
 
-def bake_linear_stack(matrices, space="Linear Rec.709"):
-    """Bake ordered Stage 1 matrices into a 65^3 fixed ACEScg LUT.
-
-    ``matrices`` are scene-space RGB transforms in application order. The
-    returned cube applies the last matrix after the first. An empty stack is
-    the identity transform. Lookup cell addresses are bounded, but the
-    physical interpolation fractions are not, so boundary cells extrapolate
-    for negative and above-domain RGB inputs.
-    """
-    lut_matrix, to_lut, from_lut, signature = _stack_matrix(matrices, space)
-    coordinate = axis()
-    lattice = np.stack(np.meshgrid(coordinate, coordinate, coordinate,
-                                   indexing="ij"), axis=-1)
-    values64 = lattice @ lut_matrix.T
-    return _linear_cube(values64, signature, space, to_lut, from_lut, SIZE)
-
-
-def bake_linear_stack_progressive(matrices, space="Linear Rec.709", on_preview=None):
-    """Emit a nested 33-cube preview, then return the completed 65-cube LUT.
-
-    ``on_preview`` is called synchronously after the exact even-indexed subset
-    of the final grid has been evaluated. The remaining final-grid samples are
-    then evaluated before returning. Both cubes carry the same settings
-    signature; their ``size`` distinguishes lookup quality.
-    """
-    if not callable(on_preview):
-        raise TypeError("Progressive LUT baking requires an on_preview callback")
-    lut_matrix, to_lut, from_lut, signature = _stack_matrix(matrices, space)
-    final_axis = axis()
-    preview_axis = final_axis[::2]
-    preview_lattice = np.stack(np.meshgrid(preview_axis, preview_axis, preview_axis,
-                                           indexing="ij"), axis=-1)
-    preview_values = preview_lattice @ lut_matrix.T
-    preview_cube = _linear_cube(
-        preview_values, signature, space, to_lut, from_lut, PREVIEW_SIZE,
-    )
-    on_preview(preview_cube)
-
-    full_values = np.empty((_COUNT, 3), dtype=np.float64)
-    coordinates = np.arange(SIZE, dtype=np.int64)
-    r, g, b = np.meshgrid(coordinates, coordinates, coordinates, indexing="ij")
-    shared_mask = (r % 2 == 0) & (g % 2 == 0) & (b % 2 == 0)
-    shared = np.flatnonzero(shared_mask)
-    remaining = np.flatnonzero(~shared_mask)
-    full_values[shared] = preview_values.reshape(-1, 3)
-
-    ri, gi, bi = np.unravel_index(remaining, (SIZE, SIZE, SIZE))
-    native = np.stack((final_axis[ri], final_axis[gi], final_axis[bi]), axis=-1)
-    full_values[remaining] = native @ lut_matrix.T
-    return _linear_cube(
-        full_values.reshape(SIZE, SIZE, SIZE, 3),
-        signature, space, to_lut, from_lut, SIZE,
-    )
-
-
 def _stack_matrix(matrices, space):
     stages = []
     for matrix in matrices:
@@ -320,25 +263,6 @@ def _stack_matrix(matrices, space):
     return lut_matrix, to_lut, from_lut, digest.hexdigest()
 
 
-def _linear_cube(values64, signature, space, to_lut, from_lut, size):
-    edges64 = np.zeros((3, size, size, size, 3), dtype=np.float64)
-    for index in range(3):
-        low = [slice(None)] * 4
-        high = low.copy()
-        low[index] = slice(None, -1)
-        high[index] = slice(1, None)
-        np.subtract(values64[tuple(high)], values64[tuple(low)],
-                    out=edges64[(index, *low)])
-    values = np.asarray(values64, dtype=np.float32)
-    edge_values = np.asarray(edges64, dtype=np.float32)
-    values.flags.writeable = False
-    edge_values.flags.writeable = False
-    to_lut.flags.writeable = False
-    from_lut.flags.writeable = False
-    return LinearCube(values, edge_values, signature, space, to_lut, from_lut, size)
-
-
 __all__ = ("SIZE", "PREVIEW_SIZE", "CELLS", "MINIMUM", "MAXIMUM", "KAPPA",
            "LOG_RANGE", "ATLAS_WIDTH", "ATLAS_HEIGHT", "LinearCube", "axis",
-           "atlas_height", "basis", "bake_linear_stack",
-           "bake_linear_stack_progressive", "pack_rgbe", "unpack_rgbe")
+           "atlas_height", "basis", "pack_rgbe", "unpack_rgbe")

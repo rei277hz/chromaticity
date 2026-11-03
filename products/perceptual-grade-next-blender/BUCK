@@ -75,6 +75,18 @@ component_library(
 )
 
 python_library(
+    name = "lut_gpu_runtime",
+    srcs = {"lut_gpu.py": PREFIX + "lut_gpu.py"},
+    base_module = "color_tools",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":kernel_runtime",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_library(
     name = "boundary_support_sources",
     srcs = {"build_boundary.py": "tools/build_boundary.py"},
     base_module = "tools",
@@ -90,46 +102,20 @@ python_library(
 )
 
 export_file(
-    name = "stack_source",
-    src = POLICY_PREFIX + "stack.py",
+    name = "node_source",
+    src = POLICY_PREFIX + "node.py",
     visibility = ["PUBLIC"],
 )
 
 export_file(
-    name = "stack_requirements",
-    src = "requirements/stack.inv",
+    name = "node_requirements",
+    src = "requirements/node.inv",
     visibility = ["PUBLIC"],
 )
 
 invariant_proof(
-    name = "proof_stack",
+    name = "proof_node",
     required_mutations = ["replacement_ignores_order"],
-    required_properties = [
-        "replacement_rebuild_tracks_order_and_multiplicity",
-        "selection_never_rebuilds",
-        "grade_edit_rebuilds_only_when_referenced",
-    ],
-    required_witnesses = ["duplicate_grade_occurrences_are_preserved"],
-    requirements = ":stack_requirements",
-    runtime_source = "policy/stack.py",
-    source = ":stack_source",
-    visibility = ["PUBLIC"],
-)
-
-export_file(
-    name = "readiness_source",
-    src = POLICY_PREFIX + "readiness.py",
-    visibility = ["PUBLIC"],
-)
-
-export_file(
-    name = "readiness_requirements",
-    src = "requirements/readiness.inv",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "proof_readiness",
     required_properties = [
         "full_quality_is_required_for_current_output",
         "request_without_gesture_retains_last_good_output",
@@ -140,11 +126,19 @@ invariant_proof(
         "late_lower_quality_never_replaces_full_quality",
         "current_failure_clears_applied_output",
         "return_to_applied_settings_updates_preparation_demand",
+        "kernel_match_does_not_override_preparation_correlation",
+        "preparation_failure_requires_current_preparation_signature",
+        "request_preserves_reducer_owned_stack_membership",
+        "replacement_rebuild_tracks_order_and_multiplicity",
+        "grade_edit_rebuilds_only_when_referenced",
     ],
-    required_witnesses = ["preview_remains_visible_until_full_installation"],
-    requirements = ":readiness_requirements",
-    runtime_source = "policy/readiness.py",
-    source = ":readiness_source",
+    required_witnesses = [
+        "preview_remains_visible_until_full_installation",
+        "duplicate_grade_occurrences_are_preserved",
+    ],
+    requirements = ":node_requirements",
+    runtime_source = "policy/node.py",
+    source = ":node_source",
     visibility = ["PUBLIC"],
 )
 
@@ -182,9 +176,8 @@ verification_group(
     name = "verify_policies",
     visibility = ["PUBLIC"],
     deps = [
+        ":proof_node",
         ":proof_preparation",
-        ":proof_readiness",
-        ":proof_stack",
     ],
 )
 
@@ -192,11 +185,11 @@ extension_tree(
     name = "extension_tree",
     entrypoints = {
         "__init__.py": "src/__init__.py",
+        "lut_gpu.py": "src/lut_gpu.py",
         "nodes.py": "src/nodes.py",
         "policy/__init__.py": "src/policy/__init__.py",
         "policy/preparation.py": "src/policy/preparation.py",
-        "policy/readiness.py": "src/policy/readiness.py",
-        "policy/stack.py": "src/policy/stack.py",
+        "policy/node.py": "src/policy/node.py",
         "preparation_runtime.py": "src/preparation_runtime.py",
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
@@ -233,18 +226,14 @@ generate(
         "$(location :extension_tree)",
         "--inventory",
         "$(location :package_inventory)",
-        "--proof-stack",
-        "$(location :proof_stack)",
-        "--requirements-stack",
-        "$(location :stack_requirements)",
+        "--proof-node",
+        "$(location :proof_node)",
+        "--requirements-node",
+        "$(location :node_requirements)",
         "--proof-preparation",
         "$(location :proof_preparation)",
         "--requirements-preparation",
         "$(location :preparation_requirements)",
-        "--proof-readiness",
-        "$(location :proof_readiness)",
-        "--requirements-readiness",
-        "$(location :readiness_requirements)",
     ],
     outputs = {
         "zip": "perceptual_grade.zip",

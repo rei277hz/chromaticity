@@ -1,3 +1,17 @@
+python_library(
+    name = "lut_gpu_support",
+    srcs = {
+        "gpu_test_main.py": "gpu/gpu_test_main.py",
+        "gpu_support.py": "gpu/gpu_support.py",
+    },
+    base_module = "tests.perceptual_grade_blender.gpu",
+    resources = select({
+        "prelude//os:linux": {"xvfb": "//third_party:xvfb_software_linux"},
+        "DEFAULT": {},
+    }),
+    deps = ["//third_party:bpy"],
+)
+
 python_test(
     name = "policy_preparation",
     srcs = ["policy/test_policy_preparation.py"],
@@ -6,15 +20,11 @@ python_test(
 )
 
 python_test(
-    name = "policy_readiness",
-    srcs = ["policy/test_policy_readiness.py"],
-    base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
-)
-
-python_test(
-    name = "policy_stack",
-    srcs = ["policy/test_policy_stack.py"],
+    name = "policy_node",
+    srcs = [
+        "policy/test_policy_node_readiness.py",
+        "policy/test_policy_node_stack.py",
+    ],
     base_module = "tests.perceptual_grade_blender",
     deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
 )
@@ -58,6 +68,19 @@ python_test(
     deps = [
         "//products/perceptual-grade-next-blender:kernel_runtime",
         "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "lut_gpu",
+    srcs = ["gpu/test_lut_gpu.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["gpu"],
+    main_module = "tests.perceptual_grade_blender.gpu.gpu_test_main",
+    target_compatible_with = ["prelude//os:linux"],
+    deps = [
+        ":lut_gpu_support",
+        "//products/perceptual-grade-next-blender:lut_gpu_runtime",
     ],
 )
 

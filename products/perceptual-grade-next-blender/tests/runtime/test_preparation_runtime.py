@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 
@@ -58,6 +59,15 @@ class PreparationRuntimeTests(unittest.TestCase):
                 subscription = runtime._sources[source]
             await runtime._wait_source(subscription)
         asyncio.run_coroutine_threadsafe(settle(), runtime.loop).result(10)
+
+    def wait_host_work(self, runtime):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with runtime._host_lock:
+                if runtime._host_active is not None or runtime._host_queue:
+                    return
+            time.sleep(.001)
+        self.fail("main-thread preparation was not queued")
 
     def test_drag_keeps_only_latest_and_starts_successor_without_polling(self):
         started_a, started_d = threading.Event(), threading.Event()
@@ -215,6 +225,206 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertIsNone(calls[0])
         self.assertEqual([item.quality for item in publications], ["full"])
         self.assertFalse(publications[0].progressive)
+
+    def test_main_thread_lane_coalesces_and_holds_job_through_preview(self):
+        main_ident = threading.get_ident()
+        advanced = []
+        closed = []
+
+        class Job:
+            def __init__(self, settings, progressive):
+                self.settings = settings
+                self.progressive = progressive
+                self.step = 0
+
+            def advance(self):
+                self.assert_main()
+                self.step += 1
+                advanced.append((self.settings, self.step))
+                if self.progressive and self.step == 1:
+                    return "preview", ("preview", self.settings)
+                if self.step == 2 or not self.progressive:
+                    return "full", ("full", self.settings)
+                return None
+
+            @staticmethod
+            def assert_main():
+                if threading.get_ident() != main_ident:
+                    raise AssertionError("GPU job advanced off the host thread")
+
+            def close(self):
+                self.assert_main()
+                closed.append(self.settings)
+
+        class Owner:
+            def create_job(self, settings, _space, progressive):
+                return Job(settings, progressive)
+
+            def close(self):
+                pass
+
+        runtime = self.runtime(lambda _settings, _space: None)
+        runtime.register_main_thread_lane("lut", Owner(), progressive=True)
+        source = object()
+        runtime.request(source, "A", "A", "space", lane="lut")
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pending)
+        self.assertTrue(runtime.pump_main_thread())
+        previews = runtime.collect()
+        self.assertEqual([(item.signature, item.quality, item.prepared)
+                          for item in previews],
+                         [("A", "preview", ("preview", "A"))])
+
+        runtime.request(source, "B", "B", "space", lane="lut")
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertTrue(runtime.pending)
+        self.assertEqual(advanced, [("A", 1), ("A", 2)])
+        self.assertEqual(closed, ["A"])
+
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertEqual(advanced, [("A", 1), ("A", 2), ("B", 1)])
+        previews = runtime.collect()
+        self.assertEqual([(item.signature, item.quality, item.prepared)
+                          for item in previews],
+                         [("B", "preview", ("preview", "B"))])
+        self.assertTrue(runtime.pump_main_thread())
+        results = runtime.wait((source,))
+        self.assertEqual([(item.signature, item.quality, item.prepared)
+                          for item in results],
+                         [("B", "full", ("full", "B"))])
+        self.assertEqual(closed, ["A", "B"])
+
+    def test_main_thread_wait_pumps_the_host_lane(self):
+        calls = []
+
+        class Job:
+            def advance(self):
+                calls.append(threading.get_ident())
+                return "full", "prepared"
+
+            def close(self):
+                pass
+
+        class Owner:
+            def create_job(self, *_args):
+                return Job()
+
+            def close(self):
+                pass
+
+        runtime = self.runtime(lambda _settings, _space: None)
+        runtime.register_main_thread_lane("lut", Owner())
+        source = object()
+        runtime.request(source, "A", "A", "space", lane="lut")
+        result = runtime.wait((source,))
+        self.assertEqual([(item.signature, item.prepared, item.quality)
+                          for item in result], [("A", "prepared", "full")])
+        self.assertTrue(calls)
+        self.assertEqual(set(calls), {threading.get_ident()})
+
+    def test_forgotten_host_request_is_removed_before_gpu_job_starts(self):
+        created = []
+
+        class Job:
+            def advance(self):
+                raise AssertionError("forgotten GPU work must not start")
+
+            def close(self):
+                pass
+
+        class Owner:
+            def create_job(self, settings, *_args):
+                created.append(settings)
+                return Job()
+
+            def close(self):
+                pass
+
+        runtime = self.runtime(lambda _settings, _space: None)
+        runtime.register_main_thread_lane("lut", Owner())
+        source = object()
+        runtime.request(source, "A", "A", "space", lane="lut")
+        self.wait_host_work(runtime)
+
+        runtime.forget(source)
+
+        with runtime._host_lock:
+            self.assertFalse(runtime._host_queue)
+            self.assertIsNone(runtime._host_active)
+        self.assertEqual(created, [])
+        self.assertFalse(runtime.pending)
+
+    def test_latest_host_request_replaces_queued_work_before_gpu_job_starts(self):
+        created = []
+
+        class Job:
+            def __init__(self, settings):
+                self.settings = settings
+
+            def advance(self):
+                return "full", self.settings
+
+            def close(self):
+                pass
+
+        class Owner:
+            def create_job(self, settings, *_args):
+                created.append(settings)
+                return Job(settings)
+
+            def close(self):
+                pass
+
+        runtime = self.runtime(lambda _settings, _space: None)
+        runtime.register_main_thread_lane("lut", Owner())
+        source = object()
+        runtime.request(source, "A", "A", "space", lane="lut")
+        self.wait_host_work(runtime)
+
+        runtime.request(source, "B", "B", "space", lane="lut")
+
+        result = runtime.wait((source,))
+        self.assertEqual([(item.signature, item.prepared, item.quality)
+                          for item in result], [("B", "B", "full")])
+        self.assertEqual(created, ["B"])
+        self.assertFalse(runtime.pending)
+
+    def test_re_requested_signature_does_not_join_withdrawn_host_work(self):
+        created = []
+
+        class Job:
+            def __init__(self, settings):
+                self.settings = settings
+
+            def advance(self):
+                return "full", self.settings
+
+            def close(self):
+                pass
+
+        class Owner:
+            def create_job(self, settings, *_args):
+                created.append(settings)
+                return Job(settings)
+
+            def close(self):
+                pass
+
+        runtime = self.runtime(lambda _settings, _space: None)
+        runtime.register_main_thread_lane("lut", Owner())
+        old_source, new_source = object(), object()
+        runtime.request(old_source, "same", "same", "space", lane="lut")
+        self.wait_host_work(runtime)
+        runtime.forget(old_source)
+
+        runtime.request(new_source, "same", "same", "space", lane="lut")
+
+        result = runtime.wait((new_source,))
+        self.assertEqual([(item.signature, item.prepared, item.error)
+                          for item in result], [("same", "same", None)])
+        self.assertEqual(created, ["same"])
+        self.assertFalse(runtime.pending)
 
     def test_unsupported_progressive_request_is_rejected_before_admission(self):
         calls = []

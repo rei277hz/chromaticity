@@ -1,6 +1,6 @@
 import unittest
 
-from policy.readiness import (
+from policy.node import (
     Event,
     new,
     output_allowed,
@@ -10,8 +10,18 @@ from policy.readiness import (
 
 
 class KernelReadinessTests(unittest.TestCase):
-    def transition(self, state, kind, signature=None, error=None, quality="full"):
-        updated, effects = step(state, Event(kind, signature, error, quality))
+    def transition(self, state, kind, signature=None, error=None, quality="full",
+                   preparation_signature=None):
+        if kind == "preparation_result" and error is not None \
+                and preparation_signature is None:
+            preparation_signature = signature
+        updated, effects = step(
+            state,
+            Event(
+                kind, signature, error, quality,
+                preparation_signature=preparation_signature,
+            ),
+        )
         self.assertEqual(effects.output_mode, output_mode(updated))
         self.assertEqual(effects.error, updated.error)
         self.assertEqual(effects.output_mode == "current", output_allowed(updated))
@@ -169,6 +179,43 @@ class KernelReadinessTests(unittest.TestCase):
         self.assertEqual(effects.output_mode, "preview")
         self.assertEqual(effects.prepare_signature, "grade-b")
         self.assertFalse(output_allowed(state))
+
+    def test_request_tracks_preparation_correlation_without_losing_stack_order(self):
+        state = new(grade_ids=(1, 2, 1))
+        state, effects = self.transition(
+            state,
+            "request",
+            "kernel-a",
+            preparation_signature="preparation-a",
+        )
+        self.assertEqual(state.grade_ids, (1, 2, 1))
+        self.assertEqual(state.desired_preparation_signature, "preparation-a")
+        self.assertEqual(effects.prepare_signature, "preparation-a")
+
+    def test_only_failure_for_current_preparation_demand_sets_error(self):
+        state, _ = self.transition(
+            new(), "request", "kernel-a", preparation_signature="preparation-a"
+        )
+        state, _ = self.transition(
+            state, "request", "kernel-b", preparation_signature="preparation-b"
+        )
+        unchanged, effects = self.transition(
+            state,
+            "preparation_result",
+            error="late failure",
+            preparation_signature="preparation-a",
+        )
+        self.assertEqual(unchanged, state)
+        self.assertEqual(effects.output_mode, "pending")
+
+        failed, effects = self.transition(
+            unchanged,
+            "preparation_result",
+            error="current failure",
+            preparation_signature="preparation-b",
+        )
+        self.assertEqual(failed.error, "current failure")
+        self.assertEqual(effects.output_mode, "error")
 
     def test_stale_result_after_release_does_not_replace_last_good(self):
         state, _ = self.transition(self.installed("grade-a"), "gesture_begin")

@@ -1,1 +1,1 @@
-"""Host-free evaluation and readiness policies for Perceptual Grade."""
+"""Host-free policies for Perceptual Grade node decisions."""

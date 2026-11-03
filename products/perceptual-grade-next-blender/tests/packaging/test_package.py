@@ -11,14 +11,14 @@ class PackageTests(unittest.TestCase):
             names = set(archive.namelist())
             self.assertTrue({
                 "__init__.py",
+                "lut_gpu.py",
                 "nodes.py",
                 "blender_manifest.toml",
                 "LICENSE",
                 "README.md",
                 "policy/__init__.py",
-                "policy/readiness.py",
                 "policy/preparation.py",
-                "policy/stack.py",
+                "policy/node.py",
                 "kernel/__init__.py",
                 "kernel/graph.py",
                 "kernel/prepare.py",

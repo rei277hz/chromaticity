@@ -29,13 +29,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("tree", "output-dir", "inventory"):
         parser.add_argument("--" + name, type=Path, required=True)
-    for name in ("stack", "readiness", "preparation"):
+    for name in ("node", "preparation"):
         parser.add_argument("--proof-" + name, type=Path, required=True)
         parser.add_argument("--requirements-" + name, type=Path, required=True)
     args = parser.parse_args()
     for name, source in (
-        ("stack", "policy/stack.py"),
-        ("readiness", "policy/readiness.py"),
+        ("node", "policy/node.py"),
         ("preparation", "policy/preparation.py"),
     ):
         _verify_proof(getattr(args, "proof_" + name), args.tree,

@@ -12,15 +12,18 @@ A private asyncio loop owns the preparation schedulers. Each shared
 Grade has one active preparation and one replaceable latest settings snapshot;
 rapid edits do not enqueue a history of slider positions. Pure preparation runs
 on one worker thread. Shader and Compositor share that prepared result, while
-Blender's main thread owns their separate kernel graphs and readiness state.
+Blender's main thread owns their separate kernel graphs and per-node policy state.
 The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
-Stack LUT preparation runs on its own worker lane. A continuous pointer drag may
-publish a nested 33³ preview before the 65³ refinement; at most one latest Stack
-snapshot waits behind active work. Direct value entry requests the final 65³
-cube without a preview. A matching 33³ result remains marked as a preview until
-the full cube installs.
+Stack LUT preparation uses Blender's main thread for bounded GPU compute batches.
+Each bake owns a private output texture, and its preview or final result is read
+from that texture. A continuous pointer drag may publish a nested 33³ preview
+before the 65³ refinement; at most one latest Stack snapshot waits behind active
+work. Direct value entry requests the final 65³ cube without a preview. Texture
+readback synchronizes with the GPU and may block the host briefly at each quality
+boundary. A matching 33³ result remains marked as a preview until the full cube
+installs.
 
 A complete previous result can remain visible with an amber `Updating` indication.
 Only the exact current kernel is ready for rendering. Render reconciliation joins
