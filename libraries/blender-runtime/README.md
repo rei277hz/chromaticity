@@ -26,24 +26,22 @@ until reconciliation determines its exact outcome. It cannot authorize retry or
 rollback.
 
 For a consumer policy defining `initial(owner)`, `current(state)` and its event
-type, bind the policy's generated contracts and selected functions explicitly:
+type, bind the policy and selected functions explicitly:
 
 ```python
 from color_tools.blender_runtime import App, Machine
 
 app = App(package=package_path, storage_name="example")
-machine = Machine(policy_module, contracts=generated_contracts,
-                  initializers=("initial",), queries=("current",))
+machine = Machine(policy_module, initializers=("initial",), queries=("current",))
 store = app.store(machine=machine, initial={"owner": 1})
 prospective = store.preview(event)  # Transition(state, effects), no commit
 effects = store.dispatch(event)    # waits for the actor-owned commit
 value = store.query("current")    # uses the current state
 ```
 
-Machines capture the source functions and load runtime contracts without Z3 or
-proof receipts. Input types and `.inv` preconditions are checked atomically in
-the owner task. See [Invariant](../invariant/README.md) for the source language,
-contract binding and unbounded loop proofs.
+Machines capture the source functions. Input types and policy preconditions are
+checked atomically in the owner task. See [Invariant](../invariant/README.md)
+for source-bound proofs and unbounded loop verification.
 
 Effects are immutable semantic data. Product adapters perform native work and
 dispatch observations against the Store's current state, since callbacks or Undo
@@ -64,9 +62,7 @@ lifecycle coordinators compose them. Their
 [leaf requirements](requirements/inventory.bzl) and
 [coordinator requirements](requirements/coordinators/inventory.bzl) enumerate
 the mandatory source-bound properties, witnesses and mutation controls.
-Generated modules contain runtime contracts; the Python modules remain the
-implementation authority. Tuple counting retains duplicate occurrences and
-empty-input behavior, with runtime type and domain checks independent of tests.
+Tuple counting retains duplicate occurrences and empty-input behavior.
 
 The `native_evaluation` policy owns an unbounded immutable ledger of exact native
 reader leases. Ordered ingress revisions prevent a cached ready observation from

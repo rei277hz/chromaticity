@@ -1,7 +1,4 @@
 COMPONENTS = {
-    "perceptual-grade-blender": "//products/perceptual-grade-blender",
-    "perceptual-grade-next-blender": "//products/perceptual-grade-next-blender",
-    "hdr-color-picker-blender": "//products/hdr-color-picker-blender",
     "perceptual-grade-reference": "//libraries/perceptual-grade-reference",
 }
 
