@@ -32,6 +32,9 @@ services:
     networks:
       re:
         aliases: [perceptual-grade-nativelink]
+    ports:
+      - "127.0.0.1:50051:50051"
+      - "127.0.0.1:50052:50052"
     healthcheck:
       # Readiness must not require the worker that waits on this service.
       test: [CMD, curl, --fail, --silent, --max-time, "5", http://127.0.0.1:50052/status]

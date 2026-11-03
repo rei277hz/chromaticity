@@ -1,7 +1,7 @@
 # Perceptual Grade for Blender
 
 This step adds Grade and Grade Stack nodes to the Shader and Compositor Color Add
-menus. Grade nodes apply Stage 1 through `perceptual-grade-nodes`; Stack nodes
+menus. Grade nodes apply Stage 1 through the product's `kernel` package; Stack nodes
 apply ordered, forward-only Stage 1 Grades through progressive 33³/65³ LUTs.
 Both products use shared Grade datablocks and the same Linear controls.
 Create or select a Grade using the node's datablock selector before adjusting it.
@@ -12,15 +12,18 @@ A private asyncio loop owns the preparation schedulers. Each shared
 Grade has one active preparation and one replaceable latest settings snapshot;
 rapid edits do not enqueue a history of slider positions. Pure preparation runs
 on one worker thread. Shader and Compositor share that prepared result, while
-Blender's main thread owns their separate kernel graphs and readiness state.
+Blender's main thread owns their separate kernel graphs and per-node policy state.
 The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
-Stack LUT preparation runs on its own worker lane. A continuous pointer drag may
-publish a nested 33³ preview before the 65³ refinement; at most one latest Stack
-snapshot waits behind active work. Direct value entry requests the final 65³
-cube without a preview. A matching 33³ result remains marked as a preview until
-the full cube installs.
+Stack LUT preparation uses Blender's main thread for bounded GPU compute batches.
+Each bake owns a private output texture, and its preview or final result is read
+from that texture. A continuous pointer drag may publish a nested 33³ preview
+before the 65³ refinement; at most one latest Stack snapshot waits behind active
+work. Direct value entry requests the final 65³ cube without a preview. Texture
+readback synchronizes with the GPU and may block the host briefly at each quality
+boundary. A matching 33³ result remains marked as a preview until the full cube
+installs.
 
 A complete previous result can remain visible with an amber `Updating` indication.
 Only the exact current kernel is ready for rendering. Render reconciliation joins
@@ -31,8 +34,9 @@ and Grade reassignment fence obsolete source subscriptions and reconcile kernels
 Shutdown withdraws pending demand and waits for active physical work to retire.
 
 The extension ZIP uses `src/__init__.py` directly as its root entrypoint and
-places the product's `nodes.py` beside it. Shared libraries remain root-level
-packages in the archive.
+places the product's `nodes.py` beside it. Product-owned state-machine policies
+are packaged under `policy/`; shared library dependencies remain separate
+root-level packages in the archive.
 
 Build the package and run the installed smoke test with:
 
