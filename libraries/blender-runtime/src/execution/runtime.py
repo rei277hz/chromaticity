@@ -2,10 +2,11 @@
 import atexit
 from collections import OrderedDict, deque
 from collections.abc import Mapping
-from concurrent.futures import CancelledError
+from concurrent.futures import CancelledError, InvalidStateError
 from dataclasses import asdict, dataclass, field, replace
 from itertools import count
 from pathlib import Path
+from typing import Optional
 import time
 import weakref
 import logging
@@ -15,8 +16,8 @@ import json
 import numpy as np
 
 from . import constants as policy
-from ..app import ForeignOwnerError
-from ..protocol import Protocol
+from .owner import ForeignOwnerError
+from .protocol import Protocol
 from .machines import ExecutionMachines
 from .contracts import CapacityError, ExecutionDiagnostic, ExecutionError, JobEvent, JobFailure, JobSpec, PROTOCOL, RuntimeLimits, RuntimeProfile, ShutdownReport
 from .journal import Session
@@ -37,6 +38,12 @@ def _size(value, seen=None):
     if isinstance(value, (tuple, list)):
         return sum(_size(v, seen) for v in value)
     return 0
+
+
+def _cache_key(spec):
+    return None if spec.key is None else (
+        spec.lane, spec.operation, repr(spec.key), spec.requires_gpu,
+    )
 
 
 @dataclass
@@ -146,6 +153,75 @@ class JobHandle:
             return type(error)(*error.args)
         return None
 
+
+class JobGroup:
+    """A polled, ordered join; errors publish only after every writer retires.
+
+    ``poll`` and ``done`` pump transport without waiting for computations.
+    ``result`` and ``exception`` never wait and raise ``InvalidStateError``
+    until physical retirement. Child handles retain their own cancellation
+    interests, so cancelling a group does not cancel unrelated consumers.
+    """
+
+    def __init__(self, runtime, handles):
+        self.runtime = runtime
+        self.handles = tuple(handles)
+        for handle in self.handles:
+            runtime._require_handle(handle)
+        self._failure: Optional[JobFailure] = None
+
+    def _reconcile(self):
+        if self._failure is None:
+            for handle in self.handles:
+                if handle._cancelled:
+                    self._failure = JobFailure('Joined computation cancelled', True)
+                    break
+                if handle._job.finished and handle._job.error is not None:
+                    self._failure = handle._job.error
+                    break
+        if self._failure is not None:
+            for handle in self.handles:
+                if not handle._job.finished and not handle._cancelled:
+                    handle.cancel()
+
+    @property
+    def preview(self):
+        self._reconcile()
+        if self._failure is not None or any(handle.preview is None for handle in self.handles):
+            return None
+        return tuple(handle.preview for handle in self.handles)
+
+    def poll(self, budget_ms=4):
+        self.runtime._pump(budget_ms)
+        self._reconcile()
+        return all(handle._job.finished for handle in self.handles)
+
+    def done(self):
+        return self.poll()
+
+    def retired(self):
+        return self.poll()
+
+    def cancel(self):
+        self._reconcile()
+        if self._failure is not None or all(handle._job.finished for handle in self.handles):
+            return False
+        self._failure = JobFailure('Joined computation cancelled', True)
+        self._reconcile()
+        return True
+
+    def exception(self):
+        self._reconcile()
+        if not all(handle._job.finished for handle in self.handles):
+            raise InvalidStateError('Joined computations have not retired')
+        return None if self._failure is None else self._failure.exception()
+
+    def result(self):
+        error = self.exception()
+        if error is not None:
+            raise error
+        return tuple(handle._job.result for handle in self.handles)
+
 class ExecutionRuntime:
     def __init__(self, directory, *, app, machines, package, limits=None, launcher=None, profile=None,
                  seal=seal_values, worker_host=None, host_settings=None, environment=None):
@@ -227,7 +303,7 @@ class ExecutionRuntime:
         # the independently validated session/lane/helper/attempt identity.
         workflow.require('submit', 'start', job=identity, generation=1, attempt=1,
                          gpu=role in self.gpu_roles,
-                         retryable=spec.operation not in self.gpu_probe_operations)
+                         retryable=not spec.requires_gpu and spec.operation not in self.gpu_probe_operations)
         return _Job(spec, identity, self._new_attempt(identity, generation), role,
                     self.app.store(machine=self.machines.retry, initial=dict(retries=0)), workflow)
 
@@ -276,7 +352,8 @@ class ExecutionRuntime:
         if self.fenced:
             raise ExecutionError('Execution runtime is shutting down')
         if (type(spec) is not JobSpec or type(spec.operation) is not str or
-                type(spec.lane) is not str or type(spec.priority) is not int):
+                type(spec.lane) is not str or type(spec.priority) is not int or
+                type(spec.requires_gpu) is not bool):
             raise TypeError('Execution requires a value-only JobSpec')
         # Seal before the job, its staging generator, or a finalizer can retain
         # the caller's graph. The public dataclass is not an ownership boundary.
@@ -287,16 +364,25 @@ class ExecutionRuntime:
         probe = probe_role is not None
         if probe and (self._starting_probe != probe_role or spec.lane != probe_role or spec.key is not None):
             raise ExecutionError('GPU probes require explicit retry and cannot use a cache')
+        if spec.requires_gpu:
+            if spec.lane not in self.gpu_roles:
+                raise ValueError('GPU-required jobs must target a GPU lane')
+            validation = self.gpu_probes[spec.lane]
+            if (not self._gpu_available(spec.lane) or validation is None
+                    or not validation._job.finished or validation._job.error is not None
+                    or validation._cancelled
+                    or validation.generation != self.generations[spec.lane]):
+                raise ExecutionError('GPU-required jobs need a successful current GPU probe')
         if len(self.handles) >= self.limits.pending_jobs * 4:
             raise CapacityError('Execution consumer budget exhausted')
         if spec.operation in self.profile.uncached_operations and spec.key is not None:
             raise ExecutionError('Operation requires a fresh helper acknowledgement')
-        key = None if spec.key is None else (spec.lane, spec.operation, repr(spec.key))
+        key = _cache_key(spec)
         job = self.cache.get(key) if key is not None else None
         if job is None:
             job = next((item for item in self.jobs.values()
                         if not item.finished and item.state.phase in (policy.QUEUED, policy.RUNNING)
-                        and key is not None and (item.spec.lane, item.spec.operation, repr(item.spec.key)) == key), None)
+                        and key is not None and _cache_key(item.spec) == key), None)
         if job is not None and not job.finished:
             if not self._attempt_event(job, 'attach'):
                 job = None
@@ -319,6 +405,10 @@ class ExecutionRuntime:
         if job.finished:
             self._event(JobEvent(identity, 'complete', job.result))
         return handle
+
+    def join(self, handles):
+        """Join exact consumer handles without adding work or blocking."""
+        return JobGroup(self, handles)
 
     def cancel(self, handle):
         self._require_handle(handle)
@@ -406,7 +496,7 @@ class ExecutionRuntime:
         self.jobs.pop(job.order, None)
         job.spec = replace(job.spec, inputs={})
         if error is None and job.spec.key is not None:
-            key = (job.spec.lane, job.spec.operation, repr(job.spec.key))
+            key = _cache_key(job.spec)
             self.cache[key] = job
             self.cache.move_to_end(key)
             while len(self.cache) > 16 or sum(_size((j.result, j.preview)) for j in self.cache.values()) > self.limits.result_bytes:
@@ -439,7 +529,9 @@ class ExecutionRuntime:
                 Path(diagnostic.diagnostic_path).write_text(json.dumps(asdict(diagnostic), indent=2), encoding='utf8')
             except OSError:
                 log_exception(logging.getLogger(__name__),'Could not persist GPU diagnostic')
-            logging.getLogger(__name__).warning('%s unavailable; using CPU. %s', role, text(diagnostic))
+            fallback = ('GPU-required work will fail. ' if job.spec.requires_gpu
+                        else 'using CPU. ')
+            logging.getLogger(__name__).warning('%s unavailable; %s%s', role, fallback, text(diagnostic))
 
     def _retry(self, job, reason, kind='failed'):
         # A terminal receipt or a confirmed helper exit has already retired
@@ -460,6 +552,8 @@ class ExecutionRuntime:
         self.payloads.release_files(job.input_files)
         job.input_files.clear()
         if job.spec.operation in self.gpu_probe_operations:
+            self._gpu_failed(job, reason)
+        elif job.spec.requires_gpu and job.role in self.gpu_roles:
             self._gpu_failed(job, reason)
         if job.workflow.state.phase in ('cancelled', 'closed'):
             self._finish(job, error=CancelledError(reason))

@@ -1,4 +1,4 @@
-"""Async orchestration of bounded, latest-only Grade preparation."""
+"""Async orchestration of bounded, latest-only value preparation."""
 
 import asyncio
 from collections import deque
@@ -9,14 +9,13 @@ import json
 import threading
 from typing import Optional
 
-from .policy import preparation as preparation_policy
+from ..policy import preparation as preparation_policy
 
 
 @dataclass(frozen=True)
 class _Input:
     signature: str
-    settings: object
-    working_space: str
+    payload: object
     lane: str
     progressive: bool
 
@@ -60,6 +59,7 @@ class _HostWork:
     future: asyncio.Future
     on_preview: object
     job: Optional[object] = None
+    preview_emitted: bool = False
 
 
 @dataclass(eq=False)
@@ -80,17 +80,23 @@ class _Record:
 
 
 class PreparationRuntime:
-    """Own scheduler state on an asyncio loop; workers receive frozen inputs.
+    """Own scheduler state on an asyncio loop; workers receive opaque payloads.
 
     ``request`` and ``collect`` never wait for preparation. ``wait`` is the
-    synchronous render bridge to ``wait_current``; neither waits for Blender
-    graph installation. Source keys are opaque host-owned identities, never RNA.
+    synchronous host bridge to ``wait_current``; neither waits for host-side
+    installation. Source keys are opaque host-owned identities, never RNA.
     """
 
-    def __init__(self, prepare, *, workers=1):
-        self.executor = ThreadPoolExecutor(max_workers=workers,
-                                           thread_name_prefix="perceptual-grade-linear")
-        self._lanes = {"linear": _Lane(prepare, self.executor, False)}
+    def __init__(self, prepare=None, *, workers=1, default_lane="default"):
+        if not isinstance(default_lane, str) or not default_lane:
+            raise ValueError("Default lane name must be nonempty")
+        self.default_lane = default_lane
+        self.executor = None
+        self._lanes = {}
+        if prepare is not None:
+            self.executor = ThreadPoolExecutor(max_workers=workers,
+                                               thread_name_prefix=f"async-runtime-{default_lane}")
+            self._lanes[default_lane] = _Lane(prepare, self.executor, False)
         self._host_lock = threading.Lock()
         self._host_queue = deque()
         self._host_active = None
@@ -110,20 +116,26 @@ class PreparationRuntime:
         self._shutdown_task = None
         self._ready = threading.Event()
         self._thread = threading.Thread(
-            target=self._run, name="perceptual-grade-asyncio", daemon=True
+            target=self._run, name="async-runtime-coordinator", daemon=True
         )
         self._thread.start()
         if not self._ready.wait(10):
-            raise RuntimeError("Grade preparation coordinator did not start")
+            raise RuntimeError("Preparation coordinator did not start")
         self._raise_failure()
 
     @property
     def prepare(self):
-        return self._lanes["linear"].prepare
+        lane = self._lanes.get(self.default_lane)
+        if lane is None:
+            raise RuntimeError("The default lane is not registered")
+        return lane.prepare
 
     @prepare.setter
     def prepare(self, value):
-        self._lanes["linear"].prepare = value
+        lane = self._lanes.get(self.default_lane)
+        if lane is None:
+            raise RuntimeError("The default lane is not registered")
+        lane.prepare = value
 
     def _run(self):
         try:
@@ -144,7 +156,7 @@ class PreparationRuntime:
 
     def _raise_failure(self):
         if self._failure is not None:
-            raise RuntimeError("Grade preparation coordinator failed") from self._failure
+            raise RuntimeError("Preparation coordinator failed") from self._failure
 
     def register_lane(self, name, prepare, *, workers=1, progressive=False):
         """Add an independent worker pool under the existing asyncio coordinator."""
@@ -153,21 +165,22 @@ class PreparationRuntime:
         with self._lock:
             self._raise_failure()
             if self.closed:
-                raise RuntimeError("Grade preparation runtime is closed")
+                raise RuntimeError("Preparation runtime is closed")
             if name in self._lanes:
                 raise ValueError(f"Preparation lane already exists: {name}")
             executor = ThreadPoolExecutor(
-                max_workers=workers, thread_name_prefix=f"perceptual-grade-{name}"
+                max_workers=workers, thread_name_prefix=f"async-runtime-{name}"
             )
             self._lanes[name] = _Lane(prepare, executor, bool(progressive))
 
-    def register_main_thread_lane(self, name, owner, *, progressive=False):
-        """Register a cooperative lane whose owner advances only on the host thread.
+    def register_polled_lane(self, name, owner, *, progressive=False):
+        """Register a lane whose transport advances only on the host thread.
 
-        ``owner.create_job(settings, working_space, progressive)`` returns an
+        ``owner.create_job(payload, progressive)`` returns an
         object with ``advance()`` and ``close()`` methods. ``advance`` returns
         ``None`` or a (quality, prepared) receipt. All host lanes share one
-        physical slot and therefore never overlap GPU resource use.
+        physical slot. A subprocess job's ``cancel`` withdraws interest while
+        ``advance`` continues polling until physical retirement.
         """
         if not isinstance(name, str) or not name:
             raise ValueError("Preparation lane name must be nonempty")
@@ -188,15 +201,17 @@ class PreparationRuntime:
         with self._host_lock:
             return pending or bool(self._host_queue or self._host_active)
 
-    def request(self, source, signature, settings, working_space, *, lane="linear",
+    def request(self, source, signature, payload, *, lane=None,
                 progressive=None):
         """Replace this source's one newest snapshot, without queuing history."""
         if not isinstance(signature, str):
-            raise TypeError("Grade preparation signature must be a string")
+            raise TypeError("Preparation signature must be a string")
+        if lane is None:
+            lane = self.default_lane
         with self._lock:
             self._raise_failure()
             if self.closed:
-                raise RuntimeError("Grade preparation runtime is closed")
+                raise RuntimeError("Preparation runtime is closed")
             if lane not in self._lanes:
                 raise ValueError(f"Unknown preparation lane: {lane}")
             lane_progressive = self._lanes[lane].progressive
@@ -214,7 +229,7 @@ class PreparationRuntime:
                 if not mailbox:
                     self._publications.pop(subscription, None)
             subscription.latest = _Input(
-                signature, settings, working_space, lane, bool(progressive)
+                signature, payload, lane, bool(progressive)
             )
             subscription.dirty = True
             self._pending.add(subscription)
@@ -255,7 +270,7 @@ class PreparationRuntime:
             self._jobs.pop(_job_key(work.snapshot.request_signature), None)
             self._finish_host_work(
                 work,
-                error=RuntimeError("Queued host preparation is no longer demanded"),
+                error=RuntimeError("Queued preparation is no longer demanded"),
             )
 
     def _schedule_locked(self, source):
@@ -364,11 +379,11 @@ class PreparationRuntime:
             if lane.host_owner is not None:
                 prepared = await self._execute_on_host(snapshot, lane)
             else:
-                call = partial(lane.prepare, snapshot.settings, snapshot.working_space)
+                call = partial(lane.prepare, snapshot.payload)
                 if snapshot.progressive:
                     def call_with_preview():
                         return lane.prepare(
-                            snapshot.settings, snapshot.working_space,
+                            snapshot.payload,
                             lambda preview: self._emit_preview(snapshot, preview),
                         )
                     call = call_with_preview
@@ -412,10 +427,27 @@ class PreparationRuntime:
 
         lane = self._lanes[work.lane]
         try:
+            if work.preview_emitted:
+                with self._lock:
+                    still_demanded = self._has_host_demand_locked(
+                        work.snapshot.request_signature
+                    )
+                if not still_demanded:
+                    cancel = getattr(work.job, "cancel", None)
+                    if callable(cancel):
+                        cancel()
+                    else:
+                        self._retire_host_job(work)
+                        self._finish_host_work(
+                            work,
+                            error=RuntimeError(
+                                "Host preparation superseded after its preview"
+                            ),
+                        )
+                        return True
             if work.job is None:
                 work.job = lane.host_owner.create_job(
-                    work.snapshot.settings,
-                    work.snapshot.working_space,
+                    work.snapshot.payload,
                     work.snapshot.progressive,
                 )
             receipt = work.job.advance()
@@ -426,6 +458,7 @@ class PreparationRuntime:
                 if not work.snapshot.progressive:
                     raise RuntimeError("A final-only host job emitted a preview")
                 work.on_preview(prepared)
+                work.preview_emitted = True
                 return True
             if quality != "full":
                 raise RuntimeError(f"Unknown host preparation quality: {quality}")
@@ -571,7 +604,7 @@ class PreparationRuntime:
             await record.changed.wait()
 
     async def wait_current(self, sources=None):
-        """Join current preparations; never await a Blender-side installation."""
+        """Join current preparations; never await host-side installation."""
         if asyncio.get_running_loop() is not self.loop:
             raise RuntimeError("Preparation barrier requires its coordinator loop")
         with self._lock:

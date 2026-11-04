@@ -23,7 +23,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         with zipfile.ZipFile(resource) as archive:
             archive.extractall(package)
         sys.path.insert(0, str(root))
-        cls.runtime_module = importlib.import_module("grade_runtime_test.preparation_runtime")
+        cls.runtime_module = importlib.import_module("grade_runtime_test.runtime.preparation")
 
     @classmethod
     def tearDownClass(cls):
@@ -74,7 +74,8 @@ class PreparationRuntimeTests(unittest.TestCase):
         release_a, release_d = threading.Event(), threading.Event()
         calls, worker_threads = [], []
 
-        def prepare(settings, space):
+        def prepare(payload):
+            settings, space = payload
             calls.append(settings)
             worker_threads.append(threading.get_ident())
             if settings == "A":
@@ -89,24 +90,24 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.addCleanup(release_a.set)
         self.addCleanup(release_d.set)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", ("A", "space"))
         self.wait_started(started_a)
         for value in range(1000):
-            runtime.request(source, str(value), value, "space")
-        runtime.request(source, "D", "D", "space")
+            runtime.request(source, str(value), (value, "space"))
+        runtime.request(source, "D", ("D", "space"))
         counts = self.loop_read(runtime, lambda: (
             len(runtime._sources), len(runtime._jobs), len(runtime._tasks),
             next(iter(runtime._records.values())).state.desired_signature,
         ))
         self.assertEqual(counts, (1, 1, 1,
-                                  self.runtime_module._request_signature("linear", "D", False)))
+                                  self.runtime_module._request_signature("default", "D", False)))
         release_a.set()
         self.wait_started(started_d)
         self.assertEqual(calls, ["A", "D"])
         publications = runtime.collect()
         self.assertEqual(self.outcomes(publications), ((source, "A", ("A", "space"), None),))
         self.assertEqual(publications[0].quality, "full")
-        self.assertEqual(publications[0].lane, "linear")
+        self.assertEqual(publications[0].lane, "default")
         release_d.set()
         publications = runtime.wait()
         self.assertEqual(self.outcomes(publications), ((source, "D", ("D", "space"), None),))
@@ -121,7 +122,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         )
         calls = []
 
-        def prepare(settings, _space, on_preview):
+        def prepare(settings, on_preview):
             calls.append(settings)
             if settings == "A":
                 started_a.set()
@@ -134,15 +135,15 @@ class PreparationRuntimeTests(unittest.TestCase):
                 self.assertTrue(release_b.wait(10))
             return ("65-cube", settings)
 
-        runtime = self.runtime(lambda _settings, _space: None)
+        runtime = self.runtime(lambda _payload: None)
         runtime.register_lane("lut", prepare, progressive=True)
         self.addCleanup(release_a.set)
         self.addCleanup(continue_after_preview.set)
         self.addCleanup(release_b.set)
         source = object()
-        runtime.request(source, "A", "A", "space", lane="lut")
+        runtime.request(source, "A", "A", lane="lut")
         self.wait_started(started_a)
-        runtime.request(source, "B", "B", "space", lane="lut")
+        runtime.request(source, "B", "B", lane="lut")
         release_a.set()
         self.wait_started(preview_returned)
 
@@ -173,19 +174,19 @@ class PreparationRuntimeTests(unittest.TestCase):
                          ((source, "B", ("65-cube", "B"), None),))
         self.assertEqual(calls, ["A", "B"])
 
-    def test_linear_and_lut_lanes_run_on_separate_worker_pools(self):
+    def test_default_and_registered_thread_lanes_run_on_separate_pools(self):
         started_linear = threading.Event()
         started_lut = threading.Event()
         release = threading.Event()
         thread_ids = {}
 
-        def linear(settings, _space):
+        def linear(settings):
             thread_ids["linear"] = threading.get_ident()
             started_linear.set()
             self.assertTrue(release.wait(10))
             return settings
 
-        def lut(settings, _space):
+        def lut(settings):
             thread_ids["lut"] = threading.get_ident()
             started_lut.set()
             self.assertTrue(release.wait(10))
@@ -194,8 +195,8 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime = self.runtime(linear)
         runtime.register_lane("lut", lut)
         self.addCleanup(release.set)
-        runtime.request(object(), "linear", "linear", "space")
-        runtime.request(object(), "lut", "lut", "space", lane="lut")
+        runtime.request(object(), "linear", "linear")
+        runtime.request(object(), "lut", "lut", lane="lut")
         self.wait_started(started_linear)
         self.wait_started(started_lut)
         self.assertNotEqual(thread_ids["linear"], thread_ids["lut"])
@@ -203,21 +204,21 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertNotEqual(thread_ids["lut"], runtime._thread.ident)
         release.set()
         results = runtime.wait()
-        self.assertEqual({item.lane for item in results}, {"linear", "lut"})
+        self.assertEqual({item.lane for item in results}, {"default", "lut"})
 
     def test_lut_final_only_request_skips_preview_callback(self):
         calls = []
 
-        def prepare(settings, _space, on_preview=None):
+        def prepare(settings, on_preview=None):
             calls.append(on_preview)
             if on_preview is not None:
                 on_preview("unexpected preview")
             return ("65-cube", settings)
 
-        runtime = self.runtime(lambda _settings, _space: None)
+        runtime = self.runtime(lambda _payload: None)
         runtime.register_lane("lut", prepare, progressive=True)
         source = object()
-        runtime.request(source, "A", "A", "space", lane="lut", progressive=False)
+        runtime.request(source, "A", "A", lane="lut", progressive=False)
         publications = runtime.wait()
         self.assertEqual(self.outcomes(publications),
                          ((source, "A", ("65-cube", "A"), None),))
@@ -226,7 +227,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertEqual([item.quality for item in publications], ["full"])
         self.assertFalse(publications[0].progressive)
 
-    def test_main_thread_lane_coalesces_and_holds_job_through_preview(self):
+    def test_main_thread_lane_retires_superseded_refinement_after_preview(self):
         main_ident = threading.get_ident()
         advanced = []
         closed = []
@@ -257,16 +258,16 @@ class PreparationRuntimeTests(unittest.TestCase):
                 closed.append(self.settings)
 
         class Owner:
-            def create_job(self, settings, _space, progressive):
+            def create_job(self, settings, progressive):
                 return Job(settings, progressive)
 
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _settings, _space: None)
-        runtime.register_main_thread_lane("lut", Owner(), progressive=True)
+        runtime = self.runtime(lambda _payload: None)
+        runtime.register_polled_lane("lut", Owner(), progressive=True)
         source = object()
-        runtime.request(source, "A", "A", "space", lane="lut")
+        runtime.request(source, "A", "A", lane="lut")
         self.wait_host_work(runtime)
         self.assertTrue(runtime.pending)
         self.assertTrue(runtime.pump_main_thread())
@@ -275,15 +276,15 @@ class PreparationRuntimeTests(unittest.TestCase):
                           for item in previews],
                          [("A", "preview", ("preview", "A"))])
 
-        runtime.request(source, "B", "B", "space", lane="lut")
+        runtime.request(source, "B", "B", lane="lut")
         self.assertTrue(runtime.pump_main_thread())
         self.assertTrue(runtime.pending)
-        self.assertEqual(advanced, [("A", 1), ("A", 2)])
+        self.assertEqual(advanced, [("A", 1)])
         self.assertEqual(closed, ["A"])
 
         self.wait_host_work(runtime)
         self.assertTrue(runtime.pump_main_thread())
-        self.assertEqual(advanced, [("A", 1), ("A", 2), ("B", 1)])
+        self.assertEqual(advanced, [("A", 1), ("B", 1)])
         previews = runtime.collect()
         self.assertEqual([(item.signature, item.quality, item.prepared)
                           for item in previews],
@@ -313,10 +314,10 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _settings, _space: None)
-        runtime.register_main_thread_lane("lut", Owner())
+        runtime = self.runtime(lambda _payload: None)
+        runtime.register_polled_lane("lut", Owner())
         source = object()
-        runtime.request(source, "A", "A", "space", lane="lut")
+        runtime.request(source, "A", "A", lane="lut")
         result = runtime.wait((source,))
         self.assertEqual([(item.signature, item.prepared, item.quality)
                           for item in result], [("A", "prepared", "full")])
@@ -341,10 +342,10 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _settings, _space: None)
-        runtime.register_main_thread_lane("lut", Owner())
+        runtime = self.runtime(lambda _payload: None)
+        runtime.register_polled_lane("lut", Owner())
         source = object()
-        runtime.request(source, "A", "A", "space", lane="lut")
+        runtime.request(source, "A", "A", lane="lut")
         self.wait_host_work(runtime)
 
         runtime.forget(source)
@@ -376,13 +377,13 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _settings, _space: None)
-        runtime.register_main_thread_lane("lut", Owner())
+        runtime = self.runtime(lambda _payload: None)
+        runtime.register_polled_lane("lut", Owner())
         source = object()
-        runtime.request(source, "A", "A", "space", lane="lut")
+        runtime.request(source, "A", "A", lane="lut")
         self.wait_host_work(runtime)
 
-        runtime.request(source, "B", "B", "space", lane="lut")
+        runtime.request(source, "B", "B", lane="lut")
 
         result = runtime.wait((source,))
         self.assertEqual([(item.signature, item.prepared, item.quality)
@@ -411,14 +412,14 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _settings, _space: None)
-        runtime.register_main_thread_lane("lut", Owner())
+        runtime = self.runtime(lambda _payload: None)
+        runtime.register_polled_lane("lut", Owner())
         old_source, new_source = object(), object()
-        runtime.request(old_source, "same", "same", "space", lane="lut")
+        runtime.request(old_source, "same", "same", lane="lut")
         self.wait_host_work(runtime)
         runtime.forget(old_source)
 
-        runtime.request(new_source, "same", "same", "space", lane="lut")
+        runtime.request(new_source, "same", "same", lane="lut")
 
         result = runtime.wait((new_source,))
         self.assertEqual([(item.signature, item.prepared, item.error)
@@ -428,9 +429,9 @@ class PreparationRuntimeTests(unittest.TestCase):
 
     def test_unsupported_progressive_request_is_rejected_before_admission(self):
         calls = []
-        runtime = self.runtime(lambda settings, _space: calls.append(settings))
-        with self.assertRaisesRegex(ValueError, "does not support previews: linear"):
-            runtime.request(object(), "A", "A", "space", progressive=True)
+        runtime = self.runtime(lambda settings: calls.append(settings))
+        with self.assertRaisesRegex(ValueError, "does not support previews: default"):
+            runtime.request(object(), "A", "A", progressive=True)
         self.assertEqual(self.loop_read(runtime, lambda: (
             len(runtime._sources), len(runtime._records), len(runtime._jobs),
             len(runtime._tasks), len(runtime._publications),
@@ -439,16 +440,16 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertFalse(runtime.pending)
 
     def test_uncollected_results_keep_only_latest_success_per_source(self):
-        def prepare(settings, _space, on_preview):
+        def prepare(settings, on_preview):
             on_preview(("33-cube", settings))
             return ("65-cube", settings)
 
-        runtime = self.runtime(lambda settings, _space: settings)
+        runtime = self.runtime(lambda settings: settings)
         runtime.register_lane("lut", prepare, progressive=True)
         source = object()
         for index in range(30):
             signature = str(index)
-            runtime.request(source, signature, signature, "space", lane="lut")
+            runtime.request(source, signature, signature, lane="lut")
             self.wait_settled(runtime, source)
             self.assertEqual(self.loop_read(runtime, lambda: (
                 len(runtime._publications),
@@ -461,14 +462,14 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertEqual(result[0].quality, "full")
 
     def test_current_failure_supersedes_uncollected_preview(self):
-        def prepare(settings, _space, on_preview):
+        def prepare(settings, on_preview):
             on_preview(("33-cube", settings))
             raise ValueError("refinement failed")
 
-        runtime = self.runtime(lambda settings, _space: settings)
+        runtime = self.runtime(lambda settings: settings)
         runtime.register_lane("lut", prepare, progressive=True)
         source = object()
-        runtime.request(source, "A", "A", "space", lane="lut")
+        runtime.request(source, "A", "A", lane="lut")
         self.wait_settled(runtime, source)
         self.assertEqual(self.loop_read(runtime, lambda: (
             len(runtime._publications),
@@ -480,12 +481,12 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertEqual(result[0].signature, "A")
 
     def test_forget_retires_uncollected_receipts_before_source_key_reuse(self):
-        runtime = self.runtime(lambda settings, _space: settings)
+        runtime = self.runtime(lambda settings: settings)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         self.wait_settled(runtime, source)
         runtime.forget(source)
-        runtime.request(source, "B", "B", "space")
+        runtime.request(source, "B", "B")
         result = runtime.wait()
         self.assertEqual(self.outcomes(result), ((source, "B", "B", None),))
 
@@ -496,7 +497,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         release_final = threading.Event()
         calls = []
 
-        def prepare(settings, _space, on_preview=None):
+        def prepare(settings, on_preview=None):
             calls.append(on_preview is not None)
             if on_preview is not None:
                 on_preview(("33-cube", settings))
@@ -507,15 +508,15 @@ class PreparationRuntimeTests(unittest.TestCase):
                 self.assertTrue(release_final.wait(10))
             return ("65-cube", settings)
 
-        runtime = self.runtime(lambda _settings, _space: None)
+        runtime = self.runtime(lambda _payload: None)
         runtime.register_lane("lut", prepare, progressive=True)
         self.addCleanup(release_progressive.set)
         self.addCleanup(release_final.set)
         source = object()
-        runtime.request(source, "same", "same", "space", lane="lut", progressive=True)
+        runtime.request(source, "same", "same", lane="lut", progressive=True)
         self.wait_started(started_progressive)
         self.assertEqual(runtime.collect()[0].quality, "preview")
-        runtime.request(source, "same", "same", "space", lane="lut", progressive=False)
+        runtime.request(source, "same", "same", lane="lut", progressive=False)
         state = self.loop_read(
             runtime, lambda: next(iter(runtime._records.values())).state
         )
@@ -545,7 +546,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         release_final = threading.Event()
         calls = []
 
-        def prepare(settings, _space, on_preview=None):
+        def prepare(settings, on_preview=None):
             calls.append(on_preview is not None)
             if on_preview is not None:
                 started_progressive.set()
@@ -558,15 +559,15 @@ class PreparationRuntimeTests(unittest.TestCase):
                 self.assertTrue(release_final.wait(10))
             return ("65-cube", settings)
 
-        runtime = self.runtime(lambda _settings, _space: None)
+        runtime = self.runtime(lambda _payload: None)
         runtime.register_lane("lut", prepare, progressive=True)
         self.addCleanup(allow_preview.set)
         self.addCleanup(continue_bake.set)
         self.addCleanup(release_final.set)
         source = object()
-        runtime.request(source, "same", "same", "space", lane="lut", progressive=True)
+        runtime.request(source, "same", "same", lane="lut", progressive=True)
         self.wait_started(started_progressive)
-        runtime.request(source, "same", "same", "space", lane="lut", progressive=False)
+        runtime.request(source, "same", "same", lane="lut", progressive=False)
         allow_preview.set()
         self.wait_started(preview_returned)
         self.assertEqual(runtime.collect(), ())
@@ -588,7 +589,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         started, release = threading.Event(), threading.Event()
         calls = []
 
-        def prepare(settings, _space):
+        def prepare(settings):
             calls.append(settings)
             started.set()
             self.assertTrue(release.wait(10))
@@ -597,10 +598,10 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime = self.runtime(prepare)
         self.addCleanup(release.set)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         self.wait_started(started)
-        runtime.request(source, "B", "B", "space")
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "B", "B")
+        runtime.request(source, "A", "A")
         release.set()
         self.assertEqual(self.outcomes(runtime.wait()), ((source, "A", "A", None),))
         self.assertEqual(calls, ["A"])
@@ -610,7 +611,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         release_a, release_c = threading.Event(), threading.Event()
         calls = []
 
-        def prepare(settings, _space):
+        def prepare(settings):
             calls.append(settings)
             if settings == "A":
                 started_a.set()
@@ -624,10 +625,10 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.addCleanup(release_a.set)
         self.addCleanup(release_c.set)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         self.wait_started(started_a)
-        runtime.request(source, "B", "B", "space")
-        runtime.request(source, "C", "C", "space")
+        runtime.request(source, "B", "B")
+        runtime.request(source, "C", "C")
         release_a.set()
         self.wait_started(started_c)
         self.assertEqual(runtime.collect(), ())
@@ -638,7 +639,7 @@ class PreparationRuntimeTests(unittest.TestCase):
     def test_current_failure_waits_for_an_explicit_retry(self):
         calls = []
 
-        def prepare(settings, _space):
+        def prepare(settings):
             calls.append(settings)
             if len(calls) == 1:
                 raise ValueError("current preparation failed")
@@ -646,7 +647,7 @@ class PreparationRuntimeTests(unittest.TestCase):
 
         runtime = self.runtime(prepare)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         result = runtime.wait()
         self.assertEqual((result[0].source, result[0].signature, result[0].prepared),
                          (source, "A", None))
@@ -655,7 +656,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertFalse(runtime.pending)
         self.assertEqual(runtime.wait(), ())
         self.assertEqual(calls, ["A"])
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         self.assertEqual(self.outcomes(runtime.wait()), ((source, "A", "A", None),))
         self.assertEqual(calls, ["A", "A"])
 
@@ -664,7 +665,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         calls = []
         prepared = object()
 
-        def prepare(settings, _space):
+        def prepare(settings):
             calls.append(settings)
             started.set()
             self.assertTrue(release.wait(10))
@@ -673,9 +674,9 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime = self.runtime(prepare)
         self.addCleanup(release.set)
         first, second = object(), object()
-        runtime.request(first, "shared", 42, "space")
+        runtime.request(first, "shared", 42)
         self.wait_started(started)
-        runtime.request(second, "shared", 42, "space")
+        runtime.request(second, "shared", 42)
         self.assertEqual(self.loop_read(runtime, lambda: (
             len(runtime._tasks), len(runtime._jobs)
         )), (2, 1))
@@ -683,7 +684,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         results = runtime.wait()
         self.assertEqual({item.source for item in results}, {first, second})
         self.assertTrue(all(item.prepared is prepared and item.error is None for item in results))
-        runtime.request(first, "shared", 42, "space")
+        runtime.request(first, "shared", 42)
         self.assertEqual(self.outcomes(runtime.wait()), ((first, "shared", prepared, None),))
         self.assertEqual(calls, [42])
 
@@ -691,7 +692,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         retry_started, release_retry = threading.Event(), threading.Event()
         calls = []
 
-        def prepare(settings, _space):
+        def prepare(settings):
             calls.append(settings)
             if len(calls) == 1:
                 raise ValueError("first attempt failed")
@@ -702,7 +703,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime = self.runtime(prepare)
         self.addCleanup(release_retry.set)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
 
         async def wait_for_failure_publication():
             while True:
@@ -715,7 +716,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         asyncio.run_coroutine_threadsafe(
             wait_for_failure_publication(), runtime.loop
         ).result(10)
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         self.wait_started(retry_started)
         self.assertEqual(runtime.collect(), ())
         release_retry.set()
@@ -726,7 +727,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         started_b, release_b = threading.Event(), threading.Event()
         calls = []
 
-        def prepare(settings, _space):
+        def prepare(settings):
             calls.append(settings)
             if settings == "B":
                 started_b.set()
@@ -736,11 +737,11 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime = self.runtime(prepare)
         self.addCleanup(release_b.set)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         self.assertEqual(self.outcomes(runtime.wait()), ((source, "A", "A", None),))
-        runtime.request(source, "B", "B", "space")
+        runtime.request(source, "B", "B")
         self.wait_started(started_b)
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         release_b.set()
         self.assertEqual(self.outcomes(runtime.wait()), ((source, "A", "A", None),))
         self.assertEqual(calls, ["A", "B"])
@@ -749,7 +750,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         started_a, started_b = threading.Event(), threading.Event()
         release_a, release_b = threading.Event(), threading.Event()
 
-        def prepare(settings, _space):
+        def prepare(settings):
             if settings == "A":
                 started_a.set()
                 self.assertTrue(release_a.wait(10))
@@ -762,12 +763,12 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.addCleanup(release_a.set)
         self.addCleanup(release_b.set)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         self.wait_started(started_a)
         with runtime._lock:
             previous_subscription = runtime._sources[source]
         runtime.forget(source)
-        runtime.request(source, "B", "B", "space")
+        runtime.request(source, "B", "B")
         release_a.set()
         self.wait_started(started_b)
 
@@ -785,7 +786,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         started, release = threading.Event(), threading.Event()
         calls = []
 
-        def prepare(settings, _space):
+        def prepare(settings):
             calls.append(settings)
             started.set()
             self.assertTrue(release.wait(10))
@@ -794,9 +795,9 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime = self.runtime(prepare)
         self.addCleanup(release.set)
         source = object()
-        runtime.request(source, "A", "A", "space")
+        runtime.request(source, "A", "A")
         self.wait_started(started)
-        runtime.request(source, "B", "B", "space")
+        runtime.request(source, "B", "B")
         closing = asyncio.run_coroutine_threadsafe(runtime.aclose(), runtime.loop)
 
         async def wait_for_fence():
@@ -805,7 +806,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         asyncio.run_coroutine_threadsafe(wait_for_fence(), runtime.loop).result(10)
         self.assertFalse(closing.done())
         with self.assertRaisesRegex(RuntimeError, "closed"):
-            runtime.request(source, "C", "C", "space")
+            runtime.request(source, "C", "C")
         release.set()
         closing.result(10)
         runtime.close()

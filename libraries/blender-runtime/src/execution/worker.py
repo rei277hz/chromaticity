@@ -59,7 +59,9 @@ def run(config, namespace):
     if 'gpu_probes' in settings:
         settings['gpu_probes'] = tuple(tuple(pair) for pair in settings['gpu_probes'])
     profile = RuntimeProfile(**settings)
-    dispatch = import_module(namespace + '.' + profile.dispatcher).dispatch
+    operations = import_module(namespace + '.' + profile.dispatcher)
+    create = getattr(operations, 'create', None)
+    owner_factory = create if callable(create) else None
     gpu_roles = tuple(role for _, role in profile.gpu_probes)
     host = (None if config.get('worker_host') is None
             else import_module(namespace + '.' + config['worker_host']))
@@ -67,6 +69,8 @@ def run(config, namespace):
     lease = Lease(os.path.join(config['directory'], 'lease'))
     sock = socket.create_connection(tuple(config['address']), timeout=30)
     sock.settimeout(None)
+    owner = owner_factory() if owner_factory is not None else None
+    dispatch = operations.dispatch if owner is None else owner.dispatch
     send_lock = threading.Lock()
     def send(message):
         message.update(session=config['session'], generation=config['generation'])
@@ -151,3 +155,5 @@ def run(config, namespace):
         reader.join(timeout=2)
         sock.close()
         lease.close()
+        if owner is not None:
+            owner.close()

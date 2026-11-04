@@ -1,7 +1,9 @@
-"""Blender main-thread GPU baker for forward Stage 1 Grade Stack LUTs."""
+"""Blender GPU compute baker owned by the private helper process."""
 
 from dataclasses import dataclass
 from threading import current_thread, main_thread
+import time
+from typing import Optional
 
 import numpy as np
 
@@ -18,10 +20,11 @@ class PreparedStack:
     settings: tuple
     space: str
     cube: object
+    diagnostics: Optional[object] = None
 
 
 class StackGPUBackend:
-    """Own one immutable shader program and serialize its active bake on host."""
+    """Own one shader program and serialize bakes on the helper's Blender thread."""
 
     def __init__(self):
         self._gpu = None
@@ -75,11 +78,10 @@ class StackGPUBackend:
 
 
 class StackLUTBaker:
-    """Incrementally dispatch one cube on the main thread, then read its texture."""
+    """One helper-thread bake; each advance dispatches one batch or collects a result."""
 
     def __init__(self, backend, matrix, to_lut, from_lut, signature, space,
                  progressive, settings):
-        _require_main_thread()
         self.backend = backend
         self.matrix = np.asarray(matrix, dtype=np.float32)
         if self.matrix.shape != (3, 3) or not np.isfinite(self.matrix).all():
@@ -96,6 +98,8 @@ class StackLUTBaker:
         self._axis_texture = None
         self._readback_pending = False
         self._closed = False
+        self.texture_allocation_seconds = {"preview": 0.0, "full": 0.0}
+        self.readback_seconds = {"preview": 0.0, "full": 0.0}
         self._create_phase()
 
     @property
@@ -103,6 +107,8 @@ class StackLUTBaker:
         return self.size**3
 
     def _create_phase(self):
+        phase = "preview" if self.size == lut.PREVIEW_SIZE else "full"
+        started = time.perf_counter()
         gpu = self.backend._gpu
         coordinates = lut.axis(lut.SIZE)
         if self.size == lut.PREVIEW_SIZE:
@@ -117,6 +123,7 @@ class StackLUTBaker:
         self._output = gpu.types.GPUTexture(
             (lut.ATLAS_WIDTH, lut.atlas_height(self.size)), format="RGBA32F",
         )
+        self.texture_allocation_seconds[phase] += time.perf_counter() - started
 
     def advance(self):
         """Dispatch one 4096-sample batch or collect a completed quality result."""
@@ -156,6 +163,8 @@ class StackLUTBaker:
 
     def _readback(self):
         _require_main_thread()
+        phase = "preview" if self.size == lut.PREVIEW_SIZE else "full"
+        started = time.perf_counter()
         count = self.sample_count
         size = self.size
         height = lut.atlas_height(size)
@@ -175,6 +184,7 @@ class StackLUTBaker:
         )
         self._output = None
         self._axis_texture = None
+        self.readback_seconds[phase] += time.perf_counter() - started
         return cube
 
     def close(self):
@@ -186,7 +196,7 @@ class StackLUTBaker:
 
 def _require_main_thread():
     if current_thread() is not main_thread():
-        raise RuntimeError("Grade Stack GPU baking requires Blender's main thread")
+        raise RuntimeError("Grade Stack GPU baking requires the current Blender process's main thread")
 
 
 _SHADER_SOURCE = r"""

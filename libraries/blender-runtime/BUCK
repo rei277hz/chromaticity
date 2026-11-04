@@ -7,12 +7,41 @@ load("//libraries/blender-runtime/requirements/coordinators:inventory.bzl", "COO
 # Runtime fragments have one package owner and explicit source ownership.
 PREFIX = "src/"
 
-ABI_SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "*.py"]) if path != PREFIX + "machines.py"}
+ABI_SOURCES = {
+    path[len(PREFIX):]: path
+    for path in glob([PREFIX + "*.py"])
+    if path not in [
+        PREFIX + "machines.py",
+        PREFIX + "__init__.py",
+    ]
+}
+
+EXECUTION_POLICIES = [
+    "attempt",
+    "gpu",
+    "retry",
+    "startup",
+]
+
+component_library(
+    name = "execution",
+    srcs = {
+               "__init__.py": PREFIX + "__init__.py",
+               "policies/__init__.py": PREFIX + "policies/__init__.py",
+               "coordinators/__init__.py": PREFIX + "coordinators/__init__.py",
+               "coordinators/execution.py": PREFIX + "coordinators/execution.py",
+           } | {path[len(PREFIX):]: path for path in glob([PREFIX + "execution/**/*.py"])} |
+           {"policies/" + name + ".py": PREFIX + "policies/" + name + ".py" for name in EXECUTION_POLICIES},
+    external_deps = ["//third_party:numpy"],
+    package = "blender_runtime",
+    visibility = ["PUBLIC"],
+)
 
 component_library(
     name = "abi",
     srcs = ABI_SOURCES,
     package = "blender_runtime",
+    deps = [":execution"],
 )
 
 [
@@ -52,7 +81,14 @@ verification_group(
 
 component_library(
     name = "coordinators",
-    srcs = {path[len(PREFIX):]: path for path in glob([PREFIX + "coordinators/*.py"])},
+    srcs = {
+        path[len(PREFIX):]: path
+        for path in glob([PREFIX + "coordinators/*.py"])
+        if path not in [
+            PREFIX + "coordinators/__init__.py",
+            PREFIX + "coordinators/execution.py",
+        ]
+    },
     package = "blender_runtime",
     deps = [":abi"],
 )
@@ -68,8 +104,7 @@ MACHINES = [
 
 component_library(
     name = "machines",
-    srcs = {"policies/__init__.py": PREFIX + "policies/__init__.py"} |
-           {"policies/" + name + ".py": PREFIX + "policies/" + name + ".py" for name in MACHINES},
+    srcs = {"policies/" + name + ".py": PREFIX + "policies/" + name + ".py" for name in MACHINES if name not in EXECUTION_POLICIES},
     package = "blender_runtime",
     deps = [":abi"],
 )
@@ -87,7 +122,6 @@ component_library(
     name = "runtime",
     srcs = {path[len(PREFIX):]: path for path in glob([
         PREFIX + "machines.py",
-        PREFIX + "execution/**/*.py",
         PREFIX + "ownership/**/*.py",
     ])},
     external_deps = ["//third_party:numpy"],

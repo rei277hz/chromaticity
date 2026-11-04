@@ -35,10 +35,12 @@ class Layout:
             self.context = {}
             self.property_states = []
             self.operator_states = []
+            self.operator_options = []
             self.templates = []
+            self.rows = []
         else:
             for name in ("operators", "properties", "context", "property_states",
-                         "operator_states", "templates"):
+                         "operator_states", "operator_options", "templates", "rows"):
                 setattr(self, name, getattr(parent, name))
 
     @property
@@ -51,7 +53,9 @@ class Layout:
         self.context[name] = value
 
     def row(self, **_kwargs):
-        return Layout(self)
+        layout = Layout(self)
+        self.rows.append(layout)
+        return layout
 
     def column(self, **_kwargs):
         return Layout(self)
@@ -64,10 +68,11 @@ class Layout:
     def template_ID(self, owner, name, **kwargs):
         self.templates.append((owner.as_pointer(), name, kwargs))
 
-    def operator(self, operator_id, **_kwargs):
+    def operator(self, operator_id, **kwargs):
         properties = SimpleNamespace()
         self.operators.append((operator_id, properties))
         self.operator_states.append((operator_id, self.effective_enabled))
+        self.operator_options.append((operator_id, kwargs, self.effective_enabled))
         return properties
 
     def separator(self):
@@ -193,6 +198,8 @@ def check_grade_ui(nodes, tree):
 
 
 def check_stack_ui(nodes, tree):
+    assert nodes.PGShaderGradeStack.bl_width_default == 320
+    assert nodes.PGCompositorGradeStack.bl_width_default == 320
     previous_active = tree.nodes.active
     node = nodes.create_stack_node(tree)
     created_grades = []
@@ -205,10 +212,44 @@ def check_stack_ui(nodes, tree):
         nodes._draw_stack_node(node, context, layout)
         buttons = [properties for operator_id, properties in layout.operators
                    if operator_id == nodes.PG_OT_new_stack_grade.bl_idname]
-        assert all("new" not in kwargs for _owner, _name, kwargs in layout.templates)
+        entries = tuple(node.pg_stack_entries)
+        assert layout.templates == [
+            (entry.as_pointer(), "grade", {}) for entry in entries
+        ]
+        assert len(layout.rows) == len(entries)
+        assert all(row.alignment == "EXPAND" for row in layout.rows)
+        assert all(entry.grade is None for entry in entries)
+        assert layout.properties == [
+            (entry.as_pointer(), "enabled") for entry in entries
+        ]
         assert [button.index for button in buttons] == [0, 1]
         assert layout.context["pg_stack_node"] == node
         assert nodes.PG_OT_new_stack_grade.poll(context)
+
+        select_buttons = [properties for operator_id, properties in layout.operators
+                          if operator_id == nodes.PG_OT_stack_action.bl_idname
+                          and properties.action == "SELECT"]
+        assert [button.index for button in select_buttons] == [0, 1]
+        select_states = [enabled for (operator_id, enabled), (_id, properties)
+                         in zip(layout.operator_states, layout.operators)
+                         if operator_id == nodes.PG_OT_stack_action.bl_idname
+                         and properties.action == "SELECT"]
+        assert select_states == [True, True]
+        select_options = [(kwargs, enabled)
+                          for (operator_id, kwargs, enabled), (_id, properties)
+                          in zip(layout.operator_options, layout.operators)
+                          if operator_id == nodes.PG_OT_stack_action.bl_idname
+                          and properties.action == "SELECT"]
+        assert [kwargs.get("icon") for kwargs, _enabled in select_options] == [
+            "GREASEPENCIL", "GREASEPENCIL"
+        ]
+        assert [kwargs.get("depress") for kwargs, _enabled in select_options] == [
+            True, False
+        ]
+        assert all(enabled for _kwargs, enabled in select_options)
+        select_zero = next(button for button in select_buttons if button.index == 0)
+        assert nodes.PG_OT_stack_action.execute(select_zero, context) == {"FINISHED"}
+        assert node.pg_active_index == 0
 
         for button in reversed(buttons):
             assert nodes.PG_OT_new_stack_grade.execute(button, context) == {"FINISHED"}
@@ -221,6 +262,18 @@ def check_stack_ui(nodes, tree):
         assert nodes.PG_OT_new_stack_grade.execute(
             SimpleNamespace(index=2), context) == {"CANCELLED"}
 
+        populated_layout = Layout()
+        nodes._draw_stack_node(node, context, populated_layout)
+        assert populated_layout.templates == [
+            (entry.as_pointer(), "grade", {}) for entry in node.pg_stack_entries
+        ]
+        assert len(populated_layout.rows) == len(node.pg_stack_entries)
+        assert all(row.alignment == "EXPAND" for row in populated_layout.rows)
+        assert all(entry.grade is not None for entry in node.pg_stack_entries)
+        assert populated_layout.properties == [
+            (entry.as_pointer(), "enabled") for entry in node.pg_stack_entries
+        ]
+
         tree.nodes.active = node
         sidebar_context = SimpleNamespace(space_data=SimpleNamespace(edit_tree=tree))
         assert nodes.PG_PT_linear.poll(sidebar_context)
@@ -228,6 +281,8 @@ def check_stack_ui(nodes, tree):
         nodes.PG_PT_linear.draw(SimpleNamespace(layout=sidebar), sidebar_context)
         settings = nodes._stack_active_grade(node).pg_linear.as_pointer()
         assert all((settings, field) in sidebar.properties for field in nodes._LINEAR_FIELDS)
+        assert all(enabled for owner, _field, enabled in sidebar.property_states
+                   if owner == settings)
     finally:
         tree.nodes.remove(node)
         tree.nodes.active = previous_active

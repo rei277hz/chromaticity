@@ -1,4 +1,4 @@
-"""One active Grade preparation, one latest demand, and staged results."""
+"""One active preparation, one latest demand, and staged results."""
 
 from dataclasses import dataclass
 from typing import Literal, Optional
@@ -32,8 +32,10 @@ def new() -> State:
 def step(state: State, event: Event) -> tuple[State, Effects]:
     """Finish active work before starting the latest requested replacement.
 
-    A preview receipt publishes an intermediate result but keeps the worker
-    occupied. Only the final receipt retires it and starts the latest request.
+    A preview receipt publishes an intermediate result while the active job
+    remains demanded. A cooperative host job may be retired after preview when
+    its request is superseded; its stale failure then starts the latest request.
+    Otherwise the final receipt retires the job and starts the latest request.
     A superseded final success can be delivered as a pending preview. Only a
     failure of current demand is delivered. Withdrawing demand does not claim
     that the physical worker has stopped; its final receipt retires it. The

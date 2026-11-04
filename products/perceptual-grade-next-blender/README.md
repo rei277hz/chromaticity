@@ -16,14 +16,14 @@ Blender's main thread owns their separate kernel graphs and per-node policy stat
 The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
-Stack LUT preparation uses Blender's main thread for bounded GPU compute batches.
-Each bake owns a private output texture, and its preview or final result is read
-from that texture. A continuous pointer drag may publish a nested 33³ preview
-before the 65³ refinement; at most one latest Stack snapshot waits behind active
-work. Direct value entry requests the final 65³ cube without a preview. Texture
-readback synchronizes with the GPU and may block the host briefly at each quality
-boundary. A matching 33³ result remains marked as a preview until the full cube
-installs.
+Stack LUT preparation runs in a private Blender GPU helper. Each helper job
+dispatches its 33³ preview and 65³ refinement back-to-back, with a private output
+texture per quality. A continuous pointer drag can install the matching preview
+while the helper continues; at most one latest Stack snapshot waits behind active
+work. Direct value entry requests only the final 65³ cube. The main thread polls
+helper receipts asynchronously, so GPU dispatch and texture readback do not block
+Blender's UI thread. A matching 33³ result remains marked as a preview until the
+full cube installs.
 
 A complete previous result can remain visible with an amber `Updating` indication.
 Only the exact current kernel is ready for rendering. Render reconciliation joins

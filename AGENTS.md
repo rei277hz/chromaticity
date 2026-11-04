@@ -12,3 +12,12 @@
 - Represent absence with `Optional[T]` and `None`, not sentinel values such as an empty string. Keep annotations and formal requirements consistent with that choice.
 - Preserve asynchronous safety with the smallest useful correlation data. Accept a completion only when its signature or generation still matches current demand; use a generation when equal signatures cannot make results interchangeable or request ordering is not guaranteed.
 - Treat a machine's returned effects as the sole authorization for the external side effects they represent. Route every such mutation through an effect consumer; use composition so one decision applies all required operations, without class inheritance or direct side effects in callbacks and error handlers.
+
+# Contributing with Sapling
+
+- Keep the working copy on the local `main` bookmark. To sync it, first ensure the working copy is clean, then run `sl pull -B main`, `sl bookmark -f -r remote/main main`, and `sl goto main`. `sl pull` fetches commits; it does not switch the working copy by itself.
+- Start each change from `main` by creating and activating a topic bookmark before the first commit: `sl bookmark <topic>`. This keeps the local `main` bookmark at its base while the topic bookmark advances with commits.
+- Make signed commits with `sl commit -m "..."`. Use `sl amend` or `sl amend -m "..."` to update the latest unpublished commit. Do not amend commits already pushed to a shared branch or PR; add a follow-up commit instead. When GPG pinentry is needed, do not attempt the command in the agent shell; give the user the exact commit or amend command to run in an interactive terminal.
+- A change may contain several commits, but submit them together as one PR based on `main`. Push the topic head with `sl push --to <topic> --no-rebase -r .`, then create the PR with `gh pr create --base main --head <topic> --title "..." --body "..."`. Use an explicit `main` base; do not rely on inferred bases or create a PR per commit. Pushing later commits to the same topic bookmark updates that PR.
+- After a PR is merged, sync and return to `main` with `sl pull -B main`, `sl bookmark -f -r remote/main main`, and `sl goto main` before starting the next change.
+- Check `sl status` before committing. Do not commit local build outputs or tool state such as `buck-out/` or `.sl/`.

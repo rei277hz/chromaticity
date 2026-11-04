@@ -12,21 +12,33 @@ class PackageTests(unittest.TestCase):
             self.assertTrue({
                 "__init__.py",
                 "lut_gpu.py",
+                "lut_codec.py",
+                "lut_helper.py",
+                "lut_worker.py",
+                "runtime/__init__.py",
+                "runtime/preparation.py",
+                "runtime/execution.py",
+                "runtime/host.py",
+                "runtime/payloads.py",
+                "runtime/transport.py",
+                "runtime/worker.py",
+                "runtime/worker_main.py",
                 "nodes.py",
                 "blender_manifest.toml",
                 "LICENSE",
                 "README.md",
                 "policy/__init__.py",
+                "policy/helper.py",
                 "policy/preparation.py",
                 "policy/node.py",
                 "kernel/__init__.py",
                 "kernel/graph.py",
                 "kernel/prepare.py",
                 "kernel/lut.py",
-                "preparation_runtime.py",
                 "color_core/__init__.py",
                 "color_core/linear.py",
             }.issubset(names))
+            self.assertFalse(any(name.startswith("blender_runtime/") for name in names))
             self.assertFalse(any(name.startswith("perceptual_grade_blender/")
                                  for name in names))
             self.assertNotIn("perceptual_grade_core/registration.py", names)
