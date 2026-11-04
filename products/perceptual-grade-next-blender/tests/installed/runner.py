@@ -685,18 +685,21 @@ for stack_node in (shader_stack, compositor_stack):
     assert prepared is not None and prepared[0] == "lut" and not prepared[2]
     assert stack_node.node_tree.get(nodes._KERNEL_QUALITY) == "full"
 
-# A continuous Stack drag installs the 33-cube preview, keeps it after release,
-# then replaces it with the matching 65-cube result.
+# A continuous sidebar drag replaces stale 65-cube refinement with the newest
+# 33-cube preview, then finishes that setting at 65-cube quality after release.
 runtime = nodes._preparation_runtime
 lut_lane = runtime._lanes["lut"]
 original_stack_owner = lut_lane.host_owner
 preview_ready = threading.Event()
 continue_full = threading.Event()
+stale_refinement_advanced = threading.Event()
+stale_refinement_retired = threading.Event()
 latest_preview_ready = threading.Event()
 continue_latest_full = threading.Event()
 stack_preparation_exposures = []
 gesture_window = 731
-gesture_token = None
+gesture_router = None
+gesture_context = None
 
 
 class HoldingStackOwner:
@@ -706,22 +709,26 @@ class HoldingStackOwner:
         job = original_stack_owner.create_job(settings, working_space, progressive)
         ready, release = ((preview_ready, continue_full) if exposure == 1.0 else
                           (latest_preview_ready, continue_latest_full))
-        return HoldingStackJob(job, ready, release, progressive)
+        retired = stale_refinement_retired if exposure == 1.0 else None
+        return HoldingStackJob(job, ready, release, progressive, retired)
 
     def close(self):
         original_stack_owner.close()
 
 
 class HoldingStackJob:
-    def __init__(self, job, ready, release, progressive):
+    def __init__(self, job, ready, release, progressive, retired):
         self.job = job
         self.ready = ready
         self.release = release
         self.progressive = progressive
+        self.retired = retired
         self.preview_sent = False
 
     def advance(self):
         if self.progressive and self.preview_sent and not self.release.is_set():
+            if self.retired is stale_refinement_retired:
+                stale_refinement_advanced.set()
             return None
         receipt = self.job.advance()
         if receipt is not None and receipt[0] == "preview":
@@ -731,6 +738,8 @@ class HoldingStackJob:
 
     def close(self):
         self.job.close()
+        if self.preview_sent and self.retired is not None:
+            self.retired.set()
 
 
 def pump_until(event):
@@ -743,29 +752,26 @@ def pump_until(event):
 
 lut_lane.host_owner = HoldingStackOwner()
 try:
-    gesture_token = nodes._begin_gesture(gesture_window, shader_stack)
+    gesture_router, gesture_context = begin_ui_gesture(
+        nodes, shader_tree, shader_stack, gesture_window
+    )
     stack_grade.pg_linear.exposure = 1.0
     pump_until(preview_ready)
     for exposure in (1.125, 1.25, 1.375):
         stack_grade.pg_linear.exposure = exposure
-    nodes._preparation_tick()
-    for stack_node in (shader_stack, compositor_stack):
-        state = nodes._record_for(stack_node)["state"]
-        assert state.applied_quality == "preview"
-        assert state.applied_signature != state.desired_signature
-        assert stack_node.node_tree.get(nodes._KERNEL_QUALITY) == "preview"
-    assert_grade_graph(shader_stack_graph)
-    assert_grade_graph(compositor_stack_graph)
-    continue_full.set()
     pump_until(latest_preview_ready)
+    assert stale_refinement_retired.is_set()
+    assert not stale_refinement_advanced.is_set()
     assert stack_preparation_exposures == [1.0, 1.375], stack_preparation_exposures
-    nodes._preparation_tick()
     for stack_node in (shader_stack, compositor_stack):
         state = nodes._record_for(stack_node)["state"]
         assert state.applied_quality == "preview"
         assert state.applied_signature == state.desired_signature
-    nodes._end_gesture(gesture_window, gesture_token)
-    gesture_token = None
+        assert stack_node.node_tree.get(nodes._KERNEL_QUALITY) == "preview"
+    assert_grade_graph(shader_stack_graph)
+    assert_grade_graph(compositor_stack_graph)
+    release_ui_gesture(nodes, gesture_router, gesture_context)
+    gesture_router = None
     for stack_node in (shader_stack, compositor_stack):
         state = nodes._record_for(stack_node)["state"]
         assert not state.gesture_active and state.applied_quality == "preview"
@@ -787,8 +793,11 @@ try:
 finally:
     continue_full.set()
     continue_latest_full.set()
-    if gesture_token is not None:
-        nodes._end_gesture(gesture_window, gesture_token)
+    if gesture_router is not None:
+        token = gesture_router.gesture_token
+        if token is not None:
+            nodes._end_gesture(gesture_window, token)
+        nodes._gesture_routers.pop(gesture_window, None)
     lut_lane.host_owner = original_stack_owner
 
 # The first drag on an explicitly created Grade coalesces pending settings

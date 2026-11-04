@@ -226,7 +226,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertEqual([item.quality for item in publications], ["full"])
         self.assertFalse(publications[0].progressive)
 
-    def test_main_thread_lane_coalesces_and_holds_job_through_preview(self):
+    def test_main_thread_lane_retires_superseded_refinement_after_preview(self):
         main_ident = threading.get_ident()
         advanced = []
         closed = []
@@ -278,12 +278,12 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime.request(source, "B", "B", "space", lane="lut")
         self.assertTrue(runtime.pump_main_thread())
         self.assertTrue(runtime.pending)
-        self.assertEqual(advanced, [("A", 1), ("A", 2)])
+        self.assertEqual(advanced, [("A", 1)])
         self.assertEqual(closed, ["A"])
 
         self.wait_host_work(runtime)
         self.assertTrue(runtime.pump_main_thread())
-        self.assertEqual(advanced, [("A", 1), ("A", 2), ("B", 1)])
+        self.assertEqual(advanced, [("A", 1), ("B", 1)])
         previews = runtime.collect()
         self.assertEqual([(item.signature, item.quality, item.prepared)
                           for item in previews],

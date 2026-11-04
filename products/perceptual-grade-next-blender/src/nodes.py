@@ -1617,6 +1617,7 @@ def _draw_stack_node(node, context, layout):
     layout.context_pointer_set("pg_stack_node", node)
     for index, entry in enumerate(node.pg_stack_entries):
         row = layout.row(align=True)
+        row.alignment = "EXPAND"
         row.prop(entry, "enabled", text="", icon="HIDE_OFF" if entry.enabled else "HIDE_ON",
                  toggle=True)
         row.template_ID(entry, "grade")
@@ -1633,13 +1634,6 @@ def _draw_stack_node(node, context, layout):
         op.action, op.index = "REMOVE", index
     op = layout.operator(PG_OT_stack_action.bl_idname, text="Add Grade", icon="ADD")
     op.action = "ADD"
-    grade = _stack_active_grade(node)
-    if grade is not None:
-        layout.separator()
-        layout.label(text=grade.name, icon="COLOR")
-        settings = grade.pg_linear
-        for field in _LINEAR_FIELDS:
-            layout.prop(settings, field, slider=field not in {"source_x", "source_y"})
     pending = node.get(_NODE_PENDING)
     if pending:
         layout.label(text=pending, icon="TIME")
@@ -1649,9 +1643,21 @@ def _draw_stack_node(node, context, layout):
         layout.label(text=error)
 
 
+def _draw_stack_settings(node, layout):
+    grade = _stack_active_grade(node)
+    if grade is None:
+        return
+    layout.separator()
+    layout.label(text=grade.name, icon="COLOR")
+    settings = grade.pg_linear
+    for field in _LINEAR_FIELDS:
+        layout.prop(settings, field, slider=field not in {"source_x", "source_y"})
+
+
 class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
     bl_idname = "PGShaderGradeStack"
     bl_label = "Grade Stack"
+    bl_width_default = 320
     pg_stack_entries: CollectionProperty(type=PGStackEntry)
     pg_active_index: IntProperty(default=0, min=0, update=_stack_focus_changed)
 
@@ -1671,6 +1677,7 @@ class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
 class PGCompositorGradeStack(bpy.types.CompositorNodeCustomGroup):
     bl_idname = "PGCompositorGradeStack"
     bl_label = "Grade Stack"
+    bl_width_default = 320
     pg_stack_entries: CollectionProperty(type=PGStackEntry)
     pg_active_index: IntProperty(default=0, min=0, update=_stack_focus_changed)
 
@@ -1979,6 +1986,7 @@ class PG_PT_linear(bpy.types.Panel):
         node = getattr(context, "pg_stack_node", None)
         if _is_stack_node(node):
             _draw_stack_node(node, context, self.layout)
+            _draw_stack_settings(node, self.layout)
             return
         node = _node_from_context(context)
         if node is None:
@@ -1987,6 +1995,7 @@ class PG_PT_linear(bpy.types.Panel):
             node = getattr(getattr(tree, "nodes", None), "active", None)
             if _is_stack_node(node):
                 _draw_stack_node(node, context, self.layout)
+                _draw_stack_settings(node, self.layout)
                 return
         if node is None:
             return

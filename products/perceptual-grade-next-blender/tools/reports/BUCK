@@ -93,6 +93,42 @@ python_library(
     visibility = ["PUBLIC"],
 )
 
+python_library(
+    name = "stack_lut_timing_report_sources",
+    srcs = {"stack_lut_timing_report.py": TOOL_PREFIX + "stack_lut_timing_report.py"},
+    base_module = "tools.perceptual_grade.reports",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "stack_lut_timing_sources",
+    srcs = {"stack_lut_timing.py": TOOL_PREFIX + "stack_lut_timing.py"},
+    base_module = "tools.perceptual_grade.reports",
+    resources = {
+        "blender": "//third_party:blender_native",
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+        "stack_lut_timing_runner.py": TOOL_PREFIX + "stack_lut_timing_runner.py",
+        "xvfb": "//third_party:xvfb_software_linux",
+    },
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    visibility = ["PUBLIC"],
+    deps = [":stack_lut_timing_report_sources"],
+)
+
+python_binary(
+    name = "stack_lut_timing",
+    main_module = "tools.perceptual_grade.reports.stack_lut_timing",
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    visibility = ["PUBLIC"],
+    deps = [":stack_lut_timing_sources"],
+)
+
 python_binary(
     name = "audit_fields",
     main_module = "tools.perceptual_grade.reports.audit_fields",

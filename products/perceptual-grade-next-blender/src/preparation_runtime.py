@@ -60,6 +60,7 @@ class _HostWork:
     future: asyncio.Future
     on_preview: object
     job: Optional[object] = None
+    preview_emitted: bool = False
 
 
 @dataclass(eq=False)
@@ -412,6 +413,20 @@ class PreparationRuntime:
 
         lane = self._lanes[work.lane]
         try:
+            if work.preview_emitted:
+                with self._lock:
+                    still_demanded = self._has_host_demand_locked(
+                        work.snapshot.request_signature
+                    )
+                if not still_demanded:
+                    self._retire_host_job(work)
+                    self._finish_host_work(
+                        work,
+                        error=RuntimeError(
+                            "Host preparation superseded after its preview"
+                        ),
+                    )
+                    return True
             if work.job is None:
                 work.job = lane.host_owner.create_job(
                     work.snapshot.settings,
@@ -426,6 +441,7 @@ class PreparationRuntime:
                 if not work.snapshot.progressive:
                     raise RuntimeError("A final-only host job emitted a preview")
                 work.on_preview(prepared)
+                work.preview_emitted = True
                 return True
             if quality != "full":
                 raise RuntimeError(f"Unknown host preparation quality: {quality}")

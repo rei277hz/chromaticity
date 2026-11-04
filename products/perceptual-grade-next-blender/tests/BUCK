@@ -236,6 +236,13 @@ python_test(
 )
 
 python_test(
+    name = "stack_lut_timing_report",
+    srcs = ["tools/test_stack_lut_timing_report.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:stack_lut_timing_report_sources"],
+)
+
+python_test(
     name = "gate_policy",
     srcs = ["tools/test_gate_policy.py"],
     base_module = "tests.perceptual_grade_blender",
