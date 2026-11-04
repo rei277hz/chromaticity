@@ -25,29 +25,29 @@ class StackLUTTimingReportTests(unittest.TestCase):
             {
                 "preview_seconds_after_last_update": 0.2,
                 "release_to_full_seconds": 1.4,
-                "preview_request_to_phase_start_seconds": 0.1,
-                "full_request_to_phase_start_seconds": 0.8,
+                "preview_request_to_helper_submit_seconds": 0.1,
+                "full_request_to_helper_submit_seconds": 0.8,
                 "preview_texture_allocation_seconds": 0.03,
-                "preview_inter_step_wait_seconds": 0.5,
+                "preview_worker_between_batches_seconds": 0.5,
                 "full_install_seconds": 0.9,
             },
             {
                 "preview_seconds_after_last_update": None,
                 "release_to_full_seconds": 1.6,
-                "preview_request_to_phase_start_seconds": None,
-                "full_request_to_phase_start_seconds": 0.9,
+                "preview_request_to_helper_submit_seconds": None,
+                "full_request_to_helper_submit_seconds": 0.9,
                 "preview_texture_allocation_seconds": 0.04,
-                "preview_inter_step_wait_seconds": 0.7,
+                "preview_worker_between_batches_seconds": 0.7,
                 "full_install_seconds": 1.0,
             },
         ]
         report = summarize_drags(rows)
         self.assertEqual(report["preview_seconds_after_last_update"]["count"], 1)
         self.assertEqual(report["release_to_full_seconds"]["count"], 2)
-        self.assertEqual(report["preview_request_to_phase_start_seconds"]["count"], 1)
-        self.assertEqual(report["full_request_to_phase_start_seconds"]["count"], 2)
+        self.assertEqual(report["preview_request_to_helper_submit_seconds"]["count"], 1)
+        self.assertEqual(report["full_request_to_helper_submit_seconds"]["count"], 2)
         self.assertEqual(report["preview_texture_allocation_seconds"]["count"], 2)
-        self.assertEqual(report["preview_inter_step_wait_seconds"]["count"], 2)
+        self.assertEqual(report["preview_worker_between_batches_seconds"]["count"], 2)
         self.assertEqual(report["full_install_seconds"]["count"], 2)
 
     def test_missing_preview_is_reported_without_a_latency_gate(self):
@@ -70,6 +70,7 @@ class StackLUTTimingReportTests(unittest.TestCase):
             markdown = (output / "report.md").read_text()
         self.assertFalse(saved["drags"][0]["preview_installed"])
         self.assertIn("not observed", markdown)
+        self.assertIn("does not include a Blender timer interval", markdown)
         self.assertIn("No latency threshold is applied", markdown)
 
     def test_profile_validation_accepts_default_shape_and_rejects_invalid_counts(self):

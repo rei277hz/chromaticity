@@ -47,10 +47,10 @@ def main():
     if enabled is not extension or errors:
         raise RuntimeError("Could not enable the packaged extension: " + repr(errors))
     nodes = importlib.import_module(extension.__package__ + ".nodes")
-    lut_gpu = importlib.import_module(extension.__package__ + ".lut_gpu")
+    lut_helper = importlib.import_module(extension.__package__ + ".lut_helper")
 
     report = {
-        "schema": 1,
+        "schema": 2,
         "completed": False,
         "blender": bpy.app.version_string,
         "blender_build": bpy.app.build_hash.decode("ascii", errors="replace"),
@@ -68,12 +68,14 @@ def main():
     }
     state = {
         "active_sample": None,
-        "job_creation": None,
         "jobs": {},
         "sample_by_signature": {},
         "ready_at": {},
         "request_at": {},
         "build_context": None,
+        "gpu_probe_started_at": None,
+        "gpu_probe_seconds": None,
+        "gpu_probe_recorded": False,
         "baseline_started": time.perf_counter(),
     }
 
@@ -82,9 +84,13 @@ def main():
             "jobs_started": 0,
             "dispatch_batches": 0,
             "dispatch_submission_seconds": 0.0,
-            "inter_step_wait_seconds": 0.0,
+            "worker_between_batches_seconds": 0.0,
             "texture_allocation_seconds": 0.0,
             "readback_seconds": 0.0,
+            "worker_setup_seconds": 0.0,
+            "worker_calculation_seconds": 0.0,
+            "request_to_helper_submit_seconds": None,
+            "helper_submit_to_result_seconds": None,
             "result_to_install_seconds": None,
             "kernel_build_seconds": 0.0,
             "kernel_swap_seconds": 0.0,
@@ -102,7 +108,7 @@ def main():
                 for key, item in value.items()
                 if key not in {
                     "sample", "gesture_token", "started_signatures",
-                    "_phase_start_at", "_request_to_phase_start",
+                    "request_signatures", "reported_phases", "received_qualities",
                 }
             }
         if isinstance(value, (tuple, list)):
@@ -119,185 +125,146 @@ def main():
 
     runtime = nodes._preparation_runtime
     backend = runtime._lanes["lut"].host_owner
-
-    original_ensure_shader = backend._ensure_shader
-
-    def timed_ensure_shader(self):
-        if self._shader is not None:
-            return original_ensure_shader()
-        print("PG_STACK_LUT shader initialization started", flush=True)
-        started = time.perf_counter()
-        result = original_ensure_shader()
-        record_initial("shader_initialization_seconds", time.perf_counter() - started)
-        print("PG_STACK_LUT shader initialization finished", flush=True)
-        return result
-
-    backend._ensure_shader = MethodType(timed_ensure_shader, backend)
-
     original_create_job = backend.create_job
 
     def timed_create_job(self, settings, working_space, progressive):
         sample = state["active_sample"]
         signature = nodes._stack_signature(settings, working_space)
-        shader_cold = self._shader is None
-        creation = {
-            "sample": sample,
-            "signature": signature,
-            "progressive": bool(progressive),
-            "texture_seconds": {"preview": 0.0, "full": 0.0},
-        }
-        state["job_creation"] = creation
         print(
-            f"PG_STACK_LUT job creation started progressive={bool(progressive)}",
+            f"PG_STACK_LUT helper request started progressive={bool(progressive)}",
             flush=True,
         )
         started = time.perf_counter()
-        try:
-            baker = original_create_job(settings, working_space, progressive)
-        finally:
-            state["job_creation"] = None
-        setup_seconds = time.perf_counter() - started
+        job = original_create_job(settings, working_space, progressive)
+        creation_seconds = time.perf_counter() - started
         print(
-            f"PG_STACK_LUT job creation finished progressive={bool(progressive)} "
-            f"seconds={setup_seconds:.6f}",
+            f"PG_STACK_LUT helper request queued progressive={bool(progressive)} "
+            f"seconds={creation_seconds:.6f}",
             flush=True,
         )
-        job = {
+        record = {
             "signature": signature,
             "progressive": bool(progressive),
-            "setup_seconds": setup_seconds,
-            "texture_seconds": creation["texture_seconds"],
-            "last_advance_finished_at": None,
-            "phases": {
-                "preview": {"dispatch_batches": 0, "dispatch_submission_seconds": 0.0,
-                            "readback_seconds": 0.0},
-                "full": {"dispatch_batches": 0, "dispatch_submission_seconds": 0.0,
-                         "readback_seconds": 0.0},
-            },
+            "created_at": started,
+            "submitted_at": None,
+            "reported_phases": set(),
+            "received_qualities": set(),
             "sample": sample,
         }
-        state["jobs"][id(baker)] = job
+        state["jobs"][id(job)] = record
         if sample is None:
-            report["initialization"].setdefault("jobs", []).append(job)
+            report["initialization"].setdefault("jobs", []).append({
+                "signature": signature,
+                "progressive": bool(progressive),
+            })
         else:
-            sample.setdefault("jobs", []).append(job)
+            sample.setdefault("jobs", []).append({
+                "signature": signature,
+                "progressive": bool(progressive),
+            })
             sample["started_signatures"].add(signature)
             sample["signature"] = signature
-            sample["shader_was_cold"] = sample.get("shader_was_cold", False) or shader_cold
             state["sample_by_signature"][signature] = sample
             setup_phase = "preview" if progressive else "full"
-            metrics = phase_record(sample, setup_phase)
-            metrics["jobs_started"] += 1
-            metrics["setup_seconds"] = metrics.get("setup_seconds", 0.0) + setup_seconds
-        return baker
+            phase_record(sample, setup_phase)["jobs_started"] += 1
+        return job
 
     backend.create_job = MethodType(timed_create_job, backend)
 
-    original_create_phase = lut_gpu.StackLUTBaker._create_phase
+    original_ensure_runtime = backend._ensure_runtime
 
-    def timed_create_phase(self):
-        started = time.perf_counter()
-        result = original_create_phase(self)
-        elapsed = time.perf_counter() - started
-        phase_name = "preview" if self.size == 33 else "full"
-        job = state["jobs"].get(id(self))
-        creation = state["job_creation"]
-        if job is not None:
-            job["texture_seconds"][phase_name] += elapsed
-            sample = job["sample"]
-        elif creation is not None:
-            creation["texture_seconds"][phase_name] += elapsed
-            sample = creation["sample"]
-        else:
-            sample = state["active_sample"]
-        if sample is not None:
-            record = phase_record(sample, phase_name)
-            record["texture_allocation_seconds"] += elapsed
-        return result
+    def timed_ensure_runtime(self):
+        if self.runtime is None and state["gpu_probe_started_at"] is None:
+            state["gpu_probe_started_at"] = time.perf_counter()
+        return original_ensure_runtime()
 
-    lut_gpu.StackLUTBaker._create_phase = timed_create_phase
+    backend._ensure_runtime = MethodType(timed_ensure_runtime, backend)
 
-    original_readback = lut_gpu.StackLUTBaker._readback
+    original_advance = lut_helper.HelperStackJob.advance
 
-    def timed_readback(self):
-        phase_name = "preview" if self.size == 33 else "full"
-        started = time.perf_counter()
-        result = original_readback(self)
-        elapsed = time.perf_counter() - started
-        job = state["jobs"].get(id(self))
-        sample = job["sample"] if job is not None else state["active_sample"]
-        if sample is not None:
-            phase_record(sample, phase_name)["readback_seconds"] += elapsed
-        if job is not None:
-            job["phases"][phase_name]["readback_seconds"] += elapsed
-        return result
-
-    lut_gpu.StackLUTBaker._readback = timed_readback
-
-    original_advance = lut_gpu.StackLUTBaker.advance
+    def record_worker_metrics(job, prepared, quality, received_at):
+        diagnostics = prepared.diagnostics or {}
+        sample = job["sample"] or state["sample_by_signature"].get(job["signature"])
+        if sample is None:
+            return
+        if diagnostics.get("worker_program_reused") is not None:
+            sample["gpu_program_reused"] = bool(diagnostics["worker_program_reused"])
+        worker_started = diagnostics.get("worker_started_at")
+        worker_finished = diagnostics.get("worker_calculated_at")
+        if worker_started is not None and worker_finished is not None:
+            phase_record(sample, quality)["worker_calculation_seconds"] = max(
+                0.0, worker_finished - worker_started
+            )
+        setup = diagnostics.get("worker_setup_seconds")
+        if setup is not None and not job.get("setup_recorded"):
+            phase_record(sample, "preview" if job["progressive"] else "full")[
+                "worker_setup_seconds"
+            ] += setup
+            job["setup_recorded"] = True
+        phase_values = diagnostics.get("phases", {})
+        for phase_name, values in phase_values.items():
+            if phase_name in job["reported_phases"]:
+                continue
+            metrics = phase_record(sample, phase_name)
+            for name in (
+                "dispatch_batches", "dispatch_submission_seconds",
+                "inter_step_wait_seconds", "texture_allocation_seconds",
+                "readback_seconds",
+            ):
+                if name in values:
+                    target = (
+                        "worker_between_batches_seconds"
+                        if name == "inter_step_wait_seconds" else name
+                    )
+                    metrics[target] += values[name]
+            job["reported_phases"].add(phase_name)
+        metrics = phase_record(sample, quality)
+        if job["submitted_at"] is not None:
+            metrics["helper_submit_to_result_seconds"] = max(
+                0.0, received_at - job["submitted_at"]
+            )
 
     def timed_advance(self):
-        size = self.size
-        waiting_for_readback = self._readback_pending
         job = state["jobs"].get(id(self))
-        sample = job["sample"] if job is not None else state["active_sample"]
-        phase_name = "preview" if size == 33 else "full"
-        step_started = time.perf_counter()
-        if job is not None and sample is not None:
-            previous_step = job["last_advance_finished_at"]
-            if previous_step is not None:
-                phase_record(sample, phase_name)["inter_step_wait_seconds"] += max(
-                    0.0, step_started - previous_step
-                )
-        if not waiting_for_readback and sample is not None:
-            starts = sample.setdefault("_phase_start_at", {}).setdefault(phase_name, {})
-            request_signature = job["signature"] if job is not None else self.signature
-            if request_signature not in starts:
-                phase_started_at = time.perf_counter()
-                request_progressive = job["progressive"] if job is not None else True
-                requested_at = state["request_at"].get(
-                    (request_signature, request_progressive)
-                )
-                if requested_at is not None:
-                    sample.setdefault("_request_to_phase_start", {}).setdefault(
-                        phase_name, {}
-                    )[request_signature] = max(
-                        0.0, phase_started_at - requested_at
-                    )
-                starts[request_signature] = phase_started_at
-        cursor = self.cursor
-        if not waiting_for_readback:
-            print(f"PG_STACK_LUT dispatch started size={size} cursor={cursor}", flush=True)
-        started = time.perf_counter()
+        had_group = self.group is not None
         receipt = original_advance(self)
-        elapsed = time.perf_counter() - started
-        if job is not None:
-            job["last_advance_finished_at"] = time.perf_counter()
-        if not waiting_for_readback:
-            print(
-                f"PG_STACK_LUT dispatch finished size={size} cursor={cursor} "
-                f"seconds={elapsed:.6f}",
-                flush=True,
+        received_at = time.perf_counter()
+        if job is not None and not had_group and self.group is not None:
+            job["submitted_at"] = received_at
+            requested_at = state["request_at"].get(
+                (job["signature"], job["progressive"])
             )
-        if not waiting_for_readback and sample is not None:
-            record = phase_record(sample, phase_name)
-            record["dispatch_batches"] += 1
-            record["dispatch_submission_seconds"] += elapsed
-            if job is not None:
-                job["phases"][phase_name]["dispatch_batches"] += 1
-                job["phases"][phase_name]["dispatch_submission_seconds"] += elapsed
+            if requested_at is not None and job["sample"] is not None:
+                phase = "preview" if job["progressive"] else "full"
+                phase_record(job["sample"], phase)[
+                    "request_to_helper_submit_seconds"
+                ] = max(0.0, received_at - requested_at)
+            print("PG_STACK_LUT helper job submitted", flush=True)
+        if (job is not None and state["gpu_probe_started_at"] is not None
+                and not state["gpu_probe_recorded"] and self.group is not None):
+            state["gpu_probe_seconds"] = max(
+                0.0, received_at - state["gpu_probe_started_at"]
+            )
+            state["gpu_probe_recorded"] = True
+            record_initial("gpu_probe_seconds", state["gpu_probe_seconds"])
         if receipt is not None:
             quality, prepared = receipt
             signature = nodes._stack_signature(prepared.settings, prepared.space)
-            ready_at = time.perf_counter()
-            state["ready_at"][(signature, quality)] = ready_at
-            sample = state["sample_by_signature"].get(signature, sample)
-            if sample is not None:
-                phase_record(sample, quality)["result_ready_at"] = ready_at
-            print(f"PG_STACK_LUT {quality} result ready", flush=True)
+            state["ready_at"][(signature, quality)] = received_at
+            job = state["jobs"].get(id(self)) or next(
+                (candidate for candidate in state["jobs"].values()
+                 if candidate["signature"] == signature), None
+            )
+            if job is not None:
+                sample = job["sample"] or state["sample_by_signature"].get(signature)
+                if sample is not None:
+                    job["sample"] = sample
+                    record_worker_metrics(job, prepared, quality, received_at)
+                    job["received_qualities"].add(quality)
+            print(f"PG_STACK_LUT {quality} helper result received", flush=True)
         return receipt
 
-    lut_gpu.StackLUTBaker.advance = timed_advance
+    lut_helper.HelperStackJob.advance = timed_advance
 
     original_request = runtime.request
 
@@ -305,7 +272,9 @@ def main():
                       progressive=None):
         sample = state["active_sample"]
         if lane == "lut" and sample is not None:
-            state["request_at"][(signature, bool(progressive))] = time.perf_counter()
+            progressive = (self._lanes[lane].progressive
+                           if progressive is None else bool(progressive))
+            state["request_at"][(signature, progressive)] = time.perf_counter()
             sample["lut_requests"] += 1
             sample["request_signatures"].append(signature)
             sample["latest_signature"] = signature
@@ -355,7 +324,9 @@ def main():
             context = {"sample": sample, "quality": quality}
             state["build_context"] = context
             if ready_at is not None:
-                phase_record(sample, quality)["result_to_install_seconds"] = max(0.0, started - ready_at)
+                phase_record(sample, quality)["result_to_install_seconds"] = max(
+                    0.0, started - ready_at
+                )
         else:
             state["build_context"] = None
         try:
@@ -432,20 +403,13 @@ def main():
         sample.pop("started_signatures", None)
         for phase_name in ("preview", "full"):
             metric = sample.get(phase_name, {})
-            signature = sample.get(
-                "final_signature" if phase_name == "full" else "latest_signature"
-            )
-            request_starts = sample.get("_request_to_phase_start", {}).get(
-                phase_name, {}
-            )
-            sample[f"{phase_name}_request_to_phase_start_seconds"] = (
-                request_starts.get(signature) if signature is not None else None
-            )
             for field in (
                 "jobs_started", "dispatch_batches", "dispatch_submission_seconds",
-                "inter_step_wait_seconds",
-                "texture_allocation_seconds", "readback_seconds", "result_to_install_seconds",
-                "kernel_build_seconds", "kernel_swap_seconds", "setup_seconds", "install_seconds",
+                "worker_between_batches_seconds", "texture_allocation_seconds",
+                "readback_seconds", "worker_setup_seconds",
+                "worker_calculation_seconds", "request_to_helper_submit_seconds",
+                "helper_submit_to_result_seconds", "result_to_install_seconds",
+                "kernel_build_seconds", "kernel_swap_seconds", "install_seconds",
             ):
                 sample[f"{phase_name}_{field}"] = metric.get(field)
         if sample.get("release_at") is not None and sample.get("full_installed_at") is not None:
@@ -536,7 +500,9 @@ def main():
         sample["last_update_at"] = time.perf_counter()
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report["initialization"]["setup_seconds"] = time.perf_counter() - state["baseline_started"]
+    report["initialization"]["scenario_setup_seconds"] = (
+        time.perf_counter() - state["baseline_started"]
+    )
     save_report()
     first_interval = begin_drag()
     bpy.app.timers.register(run_drag_tick, first_interval=first_interval)

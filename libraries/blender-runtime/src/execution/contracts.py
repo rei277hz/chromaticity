@@ -13,6 +13,7 @@ class JobSpec:
     lane: str = 'bulk'
     priority: int = 0
     key: Any = None
+    requires_gpu: bool = False
 
 
 @dataclass(frozen=True)

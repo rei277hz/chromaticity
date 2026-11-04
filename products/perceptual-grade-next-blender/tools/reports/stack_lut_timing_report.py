@@ -24,23 +24,27 @@ def summary(values):
 def summarize_drags(drags):
     fields = (
         "gesture_seconds",
-        "preview_request_to_phase_start_seconds",
         "preview_seconds_after_last_update",
+        "preview_request_to_helper_submit_seconds",
+        "preview_helper_submit_to_result_seconds",
         "release_to_full_seconds",
-        "preview_setup_seconds",
+        "preview_worker_setup_seconds",
+        "preview_worker_calculation_seconds",
         "preview_texture_allocation_seconds",
         "preview_dispatch_submission_seconds",
-        "preview_inter_step_wait_seconds",
+        "preview_worker_between_batches_seconds",
         "preview_readback_seconds",
         "preview_result_to_install_seconds",
         "preview_install_seconds",
         "preview_kernel_build_seconds",
         "preview_kernel_swap_seconds",
-        "full_request_to_phase_start_seconds",
-        "full_setup_seconds",
+        "full_request_to_helper_submit_seconds",
+        "full_helper_submit_to_result_seconds",
+        "full_worker_setup_seconds",
+        "full_worker_calculation_seconds",
         "full_texture_allocation_seconds",
         "full_dispatch_submission_seconds",
-        "full_inter_step_wait_seconds",
+        "full_worker_between_batches_seconds",
         "full_readback_seconds",
         "full_result_to_install_seconds",
         "full_install_seconds",
@@ -71,16 +75,16 @@ def write_report(output_dir, report):
         f"`{report.get('gpu', {}).get('renderer', 'unknown')}`; "
         f"node tree: `{report.get('node_tree', 'unknown')}`.",
         "",
-        "GPU dispatch values are CPU-side submission time. Texture readback is synchronous "
-        "and includes waiting for the queued GPU work to finish.",
+        "Each 33³ or 65³ phase runs in the Blender GPU helper process. Dispatch batches "
+        "run back-to-back inside that operation. GPU dispatch values are CPU-side submission "
+        "time; texture readback is synchronous and includes waiting for queued GPU work.",
         "",
-        "Request-to-phase-start measures the delay from a matching LUT request to the first "
-        "GPU dispatch for that 33³ or 65³ phase. Progressive jobs can run both phases, so "
-        "the 65³ phase does not necessarily start a separate job.",
-        "Inter-step wait is elapsed time between successive Blender main-thread bake ticks; "
-        "it includes the configured timer delay and any other work between ticks.",
+        "Request-to-helper-submit measures foreground queueing and GPU-probe delay. "
+        "Helper-submit-to-result includes worker calculation, IPC, and foreground polling. "
+        "Worker-between-batches measures time between successive worker dispatch calls; it "
+        "does not include a Blender timer interval.",
         "",
-        "| Drag | Shader | Updates | LUT requests | Jobs | Unique requests without a job | Preview | "
+        "| Drag | GPU program | Updates | LUT requests | Jobs | Unique requests without a job | Preview | "
         "Last update to preview (s) | Release to full install (s) |",
         "|---:|---|---:|---:|---:|---:|---|---:|---:|",
     ]
@@ -89,7 +93,7 @@ def write_report(output_dir, report):
         preview_seconds = row.get("preview_seconds_after_last_update")
         full_seconds = row.get("release_to_full_seconds")
         lines.append(
-            f"| {index} | {'cold' if row.get('shader_was_cold') else 'warm'} | "
+            f"| {index} | {'reused' if row.get('gpu_program_reused') else 'not reused'} | "
             f"{row.get('updates', 0)} | {row.get('lut_requests', 0)} | "
             f"{row.get('started_job_count', 0)} | {row.get('requests_without_started_job', 0)} | "
             f"{preview} | {format_seconds(preview_seconds)} | {format_seconds(full_seconds)} |"
@@ -103,8 +107,8 @@ def write_report(output_dir, report):
             )
     lines.extend((
         "",
-        "Each drag's JSON record includes request/job counts, dispatch batch counts, "
-        "setup, readback, publication, and kernel build/install timings. No latency "
+        "Each drag's JSON record includes request/job counts, helper dispatch batch counts, "
+        "worker setup, readback, polling, publication, and kernel build/install timings. No latency "
         "threshold is applied. A missing preview is reported as data; failure to "
         "install the final matching 65³ kernel fails the run.",
         "",

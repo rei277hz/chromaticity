@@ -259,7 +259,7 @@ class TestStackJob:
         pass
 
 
-nodes.StackGPUBackend = TestStackBackend
+nodes.StackHelperBackend = TestStackBackend
 nodes._preparation_runtime._lanes["lut"].host_owner = TestStackBackend()
 
 

@@ -163,12 +163,13 @@ class PreparationRuntime:
             self._lanes[name] = _Lane(prepare, executor, bool(progressive))
 
     def register_main_thread_lane(self, name, owner, *, progressive=False):
-        """Register a cooperative lane whose owner advances only on the host thread.
+        """Register a polled lane whose transport advances only on the host thread.
 
         ``owner.create_job(settings, working_space, progressive)`` returns an
         object with ``advance()`` and ``close()`` methods. ``advance`` returns
         ``None`` or a (quality, prepared) receipt. All host lanes share one
-        physical slot and therefore never overlap GPU resource use.
+        physical slot. A subprocess job's ``cancel`` withdraws interest while
+        ``advance`` continues polling until physical retirement.
         """
         if not isinstance(name, str) or not name:
             raise ValueError("Preparation lane name must be nonempty")
@@ -419,14 +420,18 @@ class PreparationRuntime:
                         work.snapshot.request_signature
                     )
                 if not still_demanded:
-                    self._retire_host_job(work)
-                    self._finish_host_work(
-                        work,
-                        error=RuntimeError(
-                            "Host preparation superseded after its preview"
-                        ),
-                    )
-                    return True
+                    cancel = getattr(work.job, "cancel", None)
+                    if callable(cancel):
+                        cancel()
+                    else:
+                        self._retire_host_job(work)
+                        self._finish_host_work(
+                            work,
+                            error=RuntimeError(
+                                "Host preparation superseded after its preview"
+                            ),
+                        )
+                        return True
             if work.job is None:
                 work.job = lane.host_owner.create_job(
                     work.snapshot.settings,

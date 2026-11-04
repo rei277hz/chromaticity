@@ -29,7 +29,7 @@ from .kernel.lut import (
     append_lut_lookup,
 )
 from .lut_gpu import PreparedStack as _PreparedStack
-from .lut_gpu import StackGPUBackend
+from .lut_helper import StackHelperBackend
 from .kernel.settings import D65, SPACES
 from .policy import node as node_policy
 from .policy import preparation as preparation_policy
@@ -2099,7 +2099,7 @@ def register():
     if _preparation_runtime is None:
         _preparation_runtime = PreparationRuntime(prepare_linear, workers=1)
         _preparation_runtime.register_main_thread_lane(
-            "lut", StackGPUBackend(), progressive=True
+            "lut", StackHelperBackend(), progressive=True
         )
     classes = (
         PGLinearSettings,

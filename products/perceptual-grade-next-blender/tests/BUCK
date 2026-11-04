@@ -31,11 +31,22 @@ python_test(
 
 python_test(
     name = "preparation_runtime",
-    srcs = ["runtime/test_preparation_runtime.py"],
+    srcs = [
+        "runtime/test_lut_helper.py",
+        "runtime/test_preparation_runtime.py",
+    ],
     base_module = "tests.perceptual_grade_blender",
     resources = {
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
     },
+    deps = ["//third_party:numpy"],
+)
+
+python_test(
+    name = "lut_worker",
+    srcs = ["runtime/test_lut_worker.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender:lut_gpu_runtime"],
 )
 
 python_test(

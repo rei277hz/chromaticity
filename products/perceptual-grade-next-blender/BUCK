@@ -76,7 +76,11 @@ component_library(
 
 python_library(
     name = "lut_gpu_runtime",
-    srcs = {"lut_gpu.py": PREFIX + "lut_gpu.py"},
+    srcs = {
+        "lut_gpu.py": PREFIX + "lut_gpu.py",
+        "lut_codec.py": PREFIX + "lut_codec.py",
+        "lut_worker.py": PREFIX + "lut_worker.py",
+    },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
     deps = [
@@ -186,6 +190,9 @@ extension_tree(
     entrypoints = {
         "__init__.py": "src/__init__.py",
         "lut_gpu.py": "src/lut_gpu.py",
+        "lut_codec.py": "src/lut_codec.py",
+        "lut_helper.py": "src/lut_helper.py",
+        "lut_worker.py": "src/lut_worker.py",
         "nodes.py": "src/nodes.py",
         "policy/__init__.py": "src/policy/__init__.py",
         "policy/preparation.py": "src/policy/preparation.py",
@@ -196,7 +203,10 @@ extension_tree(
         "README.md": "README.md",
     },
     visibility = ["PUBLIC"],
-    deps = [":kernel_code_bundle"],
+    deps = [
+        ":kernel_code_bundle",
+        "//libraries/blender-runtime:execution_bundle",
+    ],
 )
 
 python_library(

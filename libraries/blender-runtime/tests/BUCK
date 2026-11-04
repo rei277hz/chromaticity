@@ -1,4 +1,12 @@
 python_test(
+    name = "execution_join",
+    srcs = ["test_execution_join.py"],
+    base_module = "tests.blender_runtime",
+    resources = {"helper_fixture.py": "helper_fixture.py"},
+    deps = ["//libraries/blender-runtime:execution"],
+)
+
+python_test(
     name = "execution_policies",
     srcs = ["test_execution_policies.py"],
     base_module = "tests.blender_runtime",

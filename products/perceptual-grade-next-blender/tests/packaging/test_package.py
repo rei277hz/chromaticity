@@ -12,6 +12,11 @@ class PackageTests(unittest.TestCase):
             self.assertTrue({
                 "__init__.py",
                 "lut_gpu.py",
+                "lut_codec.py",
+                "lut_helper.py",
+                "lut_worker.py",
+                "blender_runtime/execution/worker_main.py",
+                "blender_runtime/execution/runtime.py",
                 "nodes.py",
                 "blender_manifest.toml",
                 "LICENSE",
