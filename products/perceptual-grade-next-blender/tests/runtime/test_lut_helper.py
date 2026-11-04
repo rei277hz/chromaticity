@@ -63,8 +63,8 @@ class Runtime:
         self.submissions = []
         self.joined = []
 
-    def submit(self, spec):
-        self.submissions.append(spec)
+    def submit(self, operation, inputs):
+        self.submissions.append((operation, inputs))
         return object()
 
     def join(self, handles):
@@ -106,7 +106,7 @@ class LUTHelperTests(unittest.TestCase):
         group = Group(result=({"quality": "full"},))
         backend = self.backend(group, probe_ready=False)
         job = self.module.HelperStackJob(
-            backend, (self.linear_settings(exposure=.25),), "ACEScg", True,
+            backend, ((self.linear_settings(exposure=.25),), "ACEScg"), True,
         )
         with patch.object(self.module, "thaw_prepared", side_effect=lambda item: item):
             self.assertIsNone(job.advance())
@@ -114,10 +114,9 @@ class LUTHelperTests(unittest.TestCase):
             backend.probe.ready = True
             self.assertIsNone(job.advance())
             self.assertEqual(len(backend.runtime.submissions), 1)
-            spec = backend.runtime.submissions[0]
-            self.assertEqual(spec.operation, "stack_lut")
-            self.assertEqual(spec.lane, "gpu")
-            self.assertTrue(spec.requires_gpu)
+            operation, inputs = backend.runtime.submissions[0]
+            self.assertEqual(operation, "stack_lut")
+            self.assertEqual(inputs["working_space"], "ACEScg")
             self.assertEqual(len(backend.runtime.joined), 1)
             self.assertEqual(len(backend.runtime.joined[0]), 1)
             self.assertEqual(group.result_calls, 0)
@@ -135,19 +134,19 @@ class LUTHelperTests(unittest.TestCase):
                       result=({"quality": "full"},), ready=True)
         backend = self.backend(group, probe_ready=True)
         job = self.module.HelperStackJob(
-            backend, (self.linear_settings(),), "ACEScg", False,
+            backend, ((self.linear_settings(),), "ACEScg"), False,
         )
         with patch.object(self.module, "thaw_prepared", side_effect=lambda item: item):
             self.assertEqual(job.advance(), ("full", {"quality": "full"}))
         self.assertFalse(job.preview_emitted)
-        self.assertFalse(backend.runtime.submissions[0].inputs["progressive"])
+        self.assertFalse(backend.runtime.submissions[0][1]["progressive"])
 
     def test_superseding_preview_requests_cancellation_and_waits_for_retirement(self):
         group = Group(preview=({"quality": "preview"},),
                       result=({"quality": "full"},), ready=False)
         backend = self.backend(group, probe_ready=True)
         job = self.module.HelperStackJob(
-            backend, (self.linear_settings(),), "ACEScg", True,
+            backend, ((self.linear_settings(),), "ACEScg"), True,
         )
         with patch.object(self.module, "thaw_prepared", side_effect=lambda item: item):
             self.assertEqual(job.advance(), ("preview", {"quality": "preview"}))

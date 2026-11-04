@@ -33,7 +33,7 @@ from .lut_helper import StackHelperBackend
 from .kernel.settings import D65, SPACES
 from .policy import node as node_policy
 from .policy import preparation as preparation_policy
-from .preparation_runtime import PreparationRuntime
+from .runtime.preparation import PreparationRuntime
 
 
 SHADER_TREE = "ShaderNodeTree"
@@ -95,6 +95,11 @@ _LINEAR_DEFAULTS = {
     "cr_heading": 0.0,
     "yb_heading": 0.0,
 }
+
+
+def _prepare_linear_payload(payload):
+    settings, working_space = payload
+    return prepare_linear(settings, working_space)
 
 
 def _is_grade_node(node):
@@ -741,7 +746,7 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
             if signature != effects.prepare_signature:
                 raise RuntimeError("Preparation effect does not match its snapshot")
             _preparation_runtime.request(
-                source, signature, settings, working_space, lane=lane,
+                source, signature, (settings, working_space), lane=lane,
                 progressive=progressive,
             )
             _ensure_timer()
@@ -2097,8 +2102,10 @@ def _unregister_handlers():
 def register():
     global _preparation_runtime
     if _preparation_runtime is None:
-        _preparation_runtime = PreparationRuntime(prepare_linear, workers=1)
-        _preparation_runtime.register_main_thread_lane(
+        _preparation_runtime = PreparationRuntime(
+            _prepare_linear_payload, workers=1, default_lane="linear"
+        )
+        _preparation_runtime.register_polled_lane(
             "lut", StackHelperBackend(), progressive=True
         )
     classes = (

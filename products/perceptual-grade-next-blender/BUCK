@@ -20,6 +20,18 @@ POLICY_SOURCES = {
     for path in glob([POLICY_PREFIX + "*.py"])
 }
 
+POLICY_ENTRYPOINTS = {
+    "policy/" + path[len(POLICY_PREFIX):]: path
+    for path in glob([POLICY_PREFIX + "*.py"])
+}
+
+RUNTIME_PREFIX = PREFIX + "runtime/"
+
+RUNTIME_ENTRYPOINTS = {
+    "runtime/" + path[len(RUNTIME_PREFIX):]: path
+    for path in glob([RUNTIME_PREFIX + "**/*.py"])
+}
+
 source_tree(
     name = "sources",
     srcs = SOURCES,
@@ -194,18 +206,13 @@ extension_tree(
         "lut_helper.py": "src/lut_helper.py",
         "lut_worker.py": "src/lut_worker.py",
         "nodes.py": "src/nodes.py",
-        "policy/__init__.py": "src/policy/__init__.py",
-        "policy/preparation.py": "src/policy/preparation.py",
-        "policy/node.py": "src/policy/node.py",
-        "preparation_runtime.py": "src/preparation_runtime.py",
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
         "README.md": "README.md",
-    },
+    } | POLICY_ENTRYPOINTS | RUNTIME_ENTRYPOINTS,
     visibility = ["PUBLIC"],
     deps = [
         ":kernel_code_bundle",
-        "//libraries/blender-runtime:execution_bundle",
     ],
 )
 

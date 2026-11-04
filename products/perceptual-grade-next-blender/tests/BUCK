@@ -32,6 +32,7 @@ python_test(
 python_test(
     name = "preparation_runtime",
     srcs = [
+        "runtime/test_helper_runtime.py",
         "runtime/test_lut_helper.py",
         "runtime/test_preparation_runtime.py",
     ],

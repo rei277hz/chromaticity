@@ -127,7 +127,8 @@ def main():
     backend = runtime._lanes["lut"].host_owner
     original_create_job = backend.create_job
 
-    def timed_create_job(self, settings, working_space, progressive):
+    def timed_create_job(self, payload, progressive):
+        settings, working_space = payload
         sample = state["active_sample"]
         signature = nodes._stack_signature(settings, working_space)
         print(
@@ -135,7 +136,7 @@ def main():
             flush=True,
         )
         started = time.perf_counter()
-        job = original_create_job(settings, working_space, progressive)
+        job = original_create_job(payload, progressive)
         creation_seconds = time.perf_counter() - started
         print(
             f"PG_STACK_LUT helper request queued progressive={bool(progressive)} "
@@ -268,7 +269,7 @@ def main():
 
     original_request = runtime.request
 
-    def timed_request(self, source, signature, settings, working_space, *, lane="linear",
+    def timed_request(self, source, signature, payload, *, lane="linear",
                       progressive=None):
         sample = state["active_sample"]
         if lane == "lut" and sample is not None:
@@ -280,7 +281,7 @@ def main():
             sample["latest_signature"] = signature
             if not progressive:
                 sample["final_signature"] = signature
-        return original_request(source, signature, settings, working_space,
+        return original_request(source, signature, payload,
                                 lane=lane, progressive=progressive)
 
     runtime.request = MethodType(timed_request, runtime)

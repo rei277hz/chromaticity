@@ -203,7 +203,8 @@ def release_ui_gesture(nodes, router, context):
 class TestStackBackend:
     """Small deterministic host backend for lifecycle tests without a GPU context."""
 
-    def create_job(self, settings, working_space, progressive):
+    def create_job(self, payload, progressive):
+        settings, working_space = payload
         matrices = tuple(nodes.prepare_linear(item, working_space).rgb_matrix
                          for item in settings)
         matrix, to_lut, from_lut, signature = lut_kernel._stack_matrix(
@@ -389,11 +390,12 @@ original_prepare = runtime.prepare
 original_kernel_builder = nodes._kernel
 
 
-def record_prepare(settings, working_space):
+def record_prepare(payload):
+    settings, working_space = payload
     preparation_threads.append((threading.get_ident(), settings.exposure))
     preparation_started.set()
     assert release_preparation.wait(10), "preparation worker was not released"
-    return original_prepare(settings, working_space)
+    return original_prepare(payload)
 
 
 def record_kernel_build(*args, **kwargs):
@@ -703,10 +705,11 @@ gesture_context = None
 
 
 class HoldingStackOwner:
-    def create_job(self, settings, working_space, progressive):
+    def create_job(self, payload, progressive):
+        settings, working_space = payload
         exposure = settings[0].exposure
         stack_preparation_exposures.append(exposure)
-        job = original_stack_owner.create_job(settings, working_space, progressive)
+        job = original_stack_owner.create_job(payload, progressive)
         ready, release = ((preview_ready, continue_full) if exposure == 1.0 else
                           (latest_preview_ready, continue_latest_full))
         retired = stale_refinement_retired if exposure == 1.0 else None
@@ -825,7 +828,8 @@ release_local_latest = threading.Event()
 local_preparation_exposures = []
 
 
-def hold_local_drag_preparation(settings, working_space):
+def hold_local_drag_preparation(payload):
+    settings, working_space = payload
     exposure = settings.exposure
     local_preparation_exposures.append(exposure)
     if exposure == 0.8125:
@@ -834,7 +838,7 @@ def hold_local_drag_preparation(settings, working_space):
     if exposure == 0.90625:
         local_latest_started.set()
         assert release_local_latest.wait(10), "latest local drag was not released"
-    return original_modal_prepare(settings, working_space)
+    return original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_local_drag_preparation
@@ -952,11 +956,12 @@ release_linked = threading.Event()
 linked_exposures = []
 
 
-def hold_linked_drag_preparation(settings, working_space):
+def hold_linked_drag_preparation(payload):
+    settings, working_space = payload
     linked_exposures.append(settings.exposure)
     linked_started.set()
     assert release_linked.wait(10), "linked drag preparation was not released"
-    return original_modal_prepare(settings, working_space)
+    return original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_linked_drag_preparation
@@ -1036,11 +1041,12 @@ release_click_preparation = threading.Event()
 click_exposures = []
 
 
-def hold_click_preparation(settings, working_space):
+def hold_click_preparation(payload):
+    settings, working_space = payload
     click_exposures.append(settings.exposure)
     click_started.set()
     assert release_click_preparation.wait(10), "click preparation was not released"
-    return original_modal_prepare(settings, working_space)
+    return original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_click_preparation
@@ -1141,7 +1147,8 @@ release_latest_preparation = threading.Event()
 preparation_exposures = []
 
 
-def delay_preparation(settings, working_space):
+def delay_preparation(payload):
+    settings, working_space = payload
     preparation_exposures.append(settings.exposure)
     if settings.exposure == 0.4375:
         old_preparation_started.set()
@@ -1149,7 +1156,7 @@ def delay_preparation(settings, working_space):
     if settings.exposure == 0.875:
         latest_preparation_started.set()
         assert release_latest_preparation.wait(10), "latest preparation was not released"
-    return original_prepare(settings, working_space)
+    return original_prepare(payload)
 
 
 runtime.prepare = delay_preparation
@@ -1260,11 +1267,12 @@ replacement_grade = bpy.data.node_groups.new("Replacement Grade", nodes.PGGradeD
 replacement_grade.pg_linear.exposure = 0.9375
 
 
-def delay_retired(settings, working_space):
+def delay_retired(payload):
+    settings, working_space = payload
     if settings.exposure == 0.3125:
         retired_started.set()
         assert release_retired.wait(10)
-    return original_prepare(settings, working_space)
+    return original_prepare(payload)
 
 
 runtime.prepare = delay_retired
@@ -1274,7 +1282,9 @@ try:
     retired_source = nodes._record_for(stale_node)["source"]
     stale_node.pg_grade = replacement_grade
     assert nodes._record_for(stale_node)["source"] is not retired_source
-    retired_result = original_prepare(nodes._linear_settings(retired_grade.pg_linear), active_space)
+    retired_result = original_prepare((
+        nodes._linear_settings(retired_grade.pg_linear), active_space
+    ))
     nodes._handle_preparation_result(retired_source, "retired", retired_result, None)
     assert stale_node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
     assert stale_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
@@ -1297,12 +1307,13 @@ original_prepare = runtime.prepare
 failure_calls = []
 
 
-def fail_first_preparation(settings, working_space):
+def fail_first_preparation(payload):
+    settings, working_space = payload
     if settings.exposure == 1.25:
         failure_calls.append(threading.get_ident())
         if len(failure_calls) == 1:
             raise RuntimeError("simulated preparation worker failure")
-    return original_prepare(settings, working_space)
+    return original_prepare(payload)
 
 
 runtime.prepare = fail_first_preparation

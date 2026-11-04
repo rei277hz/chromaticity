@@ -1,4 +1,4 @@
-"""One active Grade preparation, one latest demand, and staged results."""
+"""One active preparation, one latest demand, and staged results."""
 
 from dataclasses import dataclass
 from typing import Literal, Optional

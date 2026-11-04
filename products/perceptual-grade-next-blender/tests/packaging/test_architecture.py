@@ -13,7 +13,7 @@ import unittest
 ROOT = Path(__file__).parent.parent
 FORBIDDEN = frozenset({'perceptual_grade_reference', 'perceptual_grade_core',
                       'perceptual_grade_blender', 'perceptual_grade_next_blender',
-                      'invariant', 'blender_runtime'})
+                      'invariant'})
 NATIVE = frozenset({'bpy', 'gpu', 'gpu_extras', 'blf', 'mathutils'})
 
 
