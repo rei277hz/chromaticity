@@ -40,6 +40,16 @@ python_test(
 )
 
 python_test(
+    name = "policy_verification",
+    srcs = ["policy/test_policy_verification.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "helper_inputs": "//products/perceptual-grade-next-blender:proof_helper[inputs]",
+    },
+    deps = ["//libraries/invariant:verification"],
+)
+
+python_test(
     name = "policy_resources",
     srcs = ["policy/test_policy_resources.py"],
     base_module = "tests.perceptual_grade_blender",

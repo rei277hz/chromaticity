@@ -35,6 +35,13 @@ expression and require a named property to produce a concrete counterexample;
 this checks that the property can detect the class of regression it claims to
 cover.
 
+Established input assumptions guide symbolic expansion. The verifier skips a
+branch only when contextual simplification proves its full path condition false;
+inconclusive simplification keeps the branch. Surviving paths retain their
+original guards. Each assumption is evaluated under earlier assumptions only,
+and its safety and the satisfiability of the premises are still checked
+separately. Assertions and unproved postconditions never become pruning facts.
+
 ## Build and evidence
 
 The lifecycle example is [lifecycle.py](src/lifecycle.py), specified by

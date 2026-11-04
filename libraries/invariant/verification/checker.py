@@ -199,8 +199,8 @@ class Checker:
         return self.prove("defined." + name, premises,
                           z3.And(*(condition for _, condition in interpreter.safety)))
 
-    def invariants(self, interpreter, state):
-        return {name: boolean(interpreter.expression(expression, {"state": state})) for name, expression in self.requirements["invariants"].items()}
+    def invariants(self, interpreter, state, guard=True):
+        return {name: boolean(interpreter.expression(expression, {"state": state}, guard)) for name, expression in self.requirements["invariants"].items()}
 
     def run(self):
         # Every function is checked, including helpers not reached by any property.
@@ -233,10 +233,10 @@ class Checker:
             if assumptions_safety:
                 self.prove("defined.premise." + name, input_domain,
                            z3.And(*(p for _, p in assumptions_safety)))
-            result = i.call(name, [], env, check_preconditions=False)
+            result = i.call(name, [], env, input_assumptions, check_preconditions=False)
             assumptions = z3.And(z3.And(*i.domains), *premises)
             env["result"] = result
-            conclusions = [(index, boolean(i.expression(expression, env))) for index, expression in enumerate(contract.get("ensures", []))]
+            conclusions = [(index, boolean(i.expression(expression, env, input_assumptions))) for index, expression in enumerate(contract.get("ensures", []))]
             self.safety(name, i, assumptions)
             for index, conclusion in conclusions:
                 self.prove(f"contract.{name}.{index}", z3.And(assumptions, *i.assumptions), conclusion)
@@ -246,8 +246,9 @@ class Checker:
             premises = []
             for expression in self.requirements.get("contracts", {}).get(name, {}).get("requires", []):
                 premises.append(boolean(i.expression(expression, env, z3.And(*premises))))
-            result = i.call(name, [], env)
-            invariants = self.invariants(i, result)
+            input_assumptions = z3.And(*i.domains, *premises)
+            result = i.call(name, [], env, input_assumptions)
+            invariants = self.invariants(i, result, input_assumptions)
             assumptions = z3.And(*i.domains, *premises)
             self.safety("init." + name, i, assumptions)
             for invariant, conclusion in invariants.items():
@@ -269,8 +270,9 @@ class Checker:
             arguments = dict(zip(self.source.signatures[step_name][0], (state, event)))
             for expression in self.requirements.get('contracts', {}).get(step_name, {}).get('requires', []):
                 premises.append(boolean(i.expression(expression, arguments, z3.And(*premises))))
-            result = i.call(self.requirements["step"], [state, event], {})
-            conclusions = self.invariants(i, result[0])
+            input_assumptions = z3.And(*i.domains, *premises)
+            result = i.call(self.requirements["step"], [state, event], {}, input_assumptions)
+            conclusions = self.invariants(i, result[0], input_assumptions)
             assumptions = z3.And(*i.domains, *premises)
             label = "all" if variant is None else str(variant)
             self.solve("premise.event." + label, assumptions, "sat", "nonvacuity")
@@ -290,14 +292,19 @@ class Checker:
                     premises.append(boolean(i.expression(expression, env, z3.And(*premises))))
                 assumption_safety = list(i.safety)
                 i.safety.clear()
+                # Only established input facts guide expansion. Keep this
+                # snapshot separate from domains introduced by body evaluation
+                # and from the conclusion that remains to be proved.
+                input_domain = z3.And(*i.domains)
+                input_assumptions = z3.And(input_domain, *premises)
                 for key, expression in claim.get("lets", {}).items():
-                    env[key] = i.expression(expression, env)
-                conclusion = boolean(i.expression(claim["assert"], env))
+                    env[key] = i.expression(expression, env, input_assumptions)
+                conclusion = boolean(i.expression(claim["assert"], env, input_assumptions))
                 assumptions = z3.And(*i.domains, *premises)
                 prefix = "property." if kind == "properties" else "witness."
                 name = prefix + claim["name"]
                 if assumption_safety:
-                    self.prove("defined.premise." + name, z3.And(*i.domains),
+                    self.prove("defined.premise." + name, input_domain,
                                z3.And(*(p for _, p in assumption_safety)))
                 self.solve("premise." + name, assumptions, "sat", "nonvacuity")
                 self.safety(name, i, assumptions)
