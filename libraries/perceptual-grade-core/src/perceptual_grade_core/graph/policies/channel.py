@@ -1,4 +1,4 @@
-"""Scheduling channels, replacement decisions, and fair scope selection."""
+"""Scalar channel admission, replacement, and publication decisions."""
 from dataclasses import dataclass, replace
 
 
@@ -117,10 +117,6 @@ def event_domain(event: Event) -> bool:
         and event.phase >= 0
         and event.epoch >= 0
     )
-
-
-def final_scope_resolution(resolutions: tuple[int, ...]) -> bool:
-    return _final_scope_resolution_all_resolution(resolutions)
 
 
 def initial(owner: int, key: int, session: int, scope: bool, linear: bool) -> State:
@@ -281,10 +277,6 @@ def scope_cycle(
 
 def scope_job_admissible(wanted: bool, compatible: bool, exact: bool, dragging: bool, history: bool = False) -> bool:
     return wanted and compatible and (exact or dragging or history)
-
-
-def scope_next(eligible: tuple[bool, ...], start: int) -> int:
-    return _cyclic_first(eligible, start)
 
 
 def _domain_state(state: State) -> bool:
@@ -858,20 +850,3 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
     raise ValueError('Unknown machine event')
 
 
-def _final_scope_resolution_all_resolution(_items: tuple[int, ...]) -> bool:
-    _result = True
-    for resolution in _items:
-        _result = _result and resolution == 65
-    return _result
-
-
-def _cyclic_first(values: tuple[bool, ...], start: int) -> int:
-    count = len(values)
-    if count == 0:
-        return -1
-    cursor = start % count
-    for offset in range(count):
-        index = (cursor + offset) % count
-        if values[index]:
-            return index
-    return -1

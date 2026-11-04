@@ -156,6 +156,9 @@ class Graph(ColorGraph):
         self.cache = {}
         self.images = []
         self.helper_groups = []
+        # Composed by the product's fixed Stage 2 builder. Generic immutable
+        # graphs retain their existing constants and numerical optimizations.
+        self.parameters = None
 
     def connect(self, value, target):
         if _socket(value):
@@ -471,6 +474,8 @@ class Graph(ColorGraph):
         return self.encode_cones(self.matrix(rgb, self.prepared.to_cones))
 
     def _table_image(self):
+        if self.parameters is not None:
+            return self.parameters.image
         return self._packed_image(self.prepared.table.pixels, key=('tone', id(self.prepared.table)),
                                   label='Perceptual Grade tone coefficients')
 
@@ -661,26 +666,27 @@ class Graph(ColorGraph):
         right = self.vector((blend, self.mul(self.mul(u3, v), self.madd(3, u, -4)), self.mul(.5, self.mul(u3, v2))))
         return self.add(self.dot(self._sample(cell), left), self.dot(self._sample(self.add(cell, 1)), right))
 
-    def remap(self, magnitude):
-        tone = self.prepared.tone
-        if not tone.active:
+    def remap(self, magnitude, *, force=False):
+        tone = self.prepared.tone if self.parameters is None else self.parameters.tone
+        if not tone.active and not force:
             return magnitude
         t = self.maximum(0, self.div(self.sub(self.mul(.01, magnitude), tone.black), tone.span))
         # A uniform source-position grid keeps the accepted Fit range within
         # the scalar error gate. Beyond the prepared domain, lookup clamps to
         # the analytic residual asymptote while the linear tail keeps growing.
-        z = self.div(t, self.prepared.table.domain)
+        domain = self.prepared.table.domain if self.parameters is None else self.parameters.domain
+        z = self.div(t, domain)
         value = self.madd(tone.slope, t, self.lookup(z))
         value = self.select(self.op("COMPARE", t, 1, 0), tone.high, value)
         return self.mul(100, value)
 
-    def tone(self, state):
+    def tone(self, state, *, force=False):
         if state.graph is not self:
             raise ValueError("Appearance sockets belong to another Graph")
-        if not self.prepared.tone.active:
+        if not self.prepared.tone.active and not force:
             return state
         h = state.magnitude
-        target = self.remap(h)
+        target = self.remap(h, force=force)
         ratio = self.div(target, h)
         scale = self.maximum(1, ratio)
         rs = self.div(ratio, scale)
@@ -692,6 +698,10 @@ class Graph(ColorGraph):
         gain = self.mul(self.div(rs, self.add(norm, y)), ratio)
         return AppearanceSockets(self, self.mul(state.J_A, gain), self.mul(state.raw_a, gain), self.mul(state.raw_b, gain),
                                  self.mul(state.achromatic, self.power(gain, 1 / self.prepared.gamma)), state.factor, self.mul(state.chroma, gain))
+
+    def guard_input(self, appearance):
+        """Freeze post-Tone reference energy without adding a Color stage."""
+        return self._color_input(appearance)
 
     def _decode_responses(self, achromatic, raw_a, raw_b):
         combined = self.vector((achromatic, raw_a, raw_b))

@@ -123,8 +123,11 @@ dispatch and publication independently of the scope revision cache.
 Nodes intentionally sharing the selected Image observe its new pixels without
 starting another bake. Progress and errors are associated with the initiating
 node; only that node's controls are disabled during its request. The actor-owned
-`bake_queue` coordinator holds eight request reservations and two physical worker
-leases. Snapshots freeze at click; dedicated `bake_0` and `bake_1` lanes evaluate
+`bake_queue` adapter holds eight request reservations and two physical worker
+leases. Its ordinary collection scans feed the scalar `bake_queue_policy`
+decision function; collection maintenance is covered by tests, while proofs
+cover the selected reservation's admission, receipts, and lease lifecycle.
+Snapshots freeze at click; dedicated `bake_0` and `bake_1` lanes evaluate
 independent destinations concurrently. A shared destination waits for every
 earlier request's publication or completed rollback, not merely its worker's
 retirement. Native snapshots and publications remain serialized foreground

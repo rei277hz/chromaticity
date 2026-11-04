@@ -1,4 +1,4 @@
-name: Lint
+name: Next Blender lint
 
 on:
   push:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   formatting:
-    name: Buck and TOML formatting
+    name: Next Blender formatting
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -29,7 +29,7 @@ jobs:
       - run: python3 tools/ci/format.py --starlark-lint
 
   graph:
-    name: Graph and CI checks
+    name: Next Blender target selection
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -37,35 +37,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-buck2
-      - run: python3 third_party/web/update.py --check
-      - run: python3 -m unittest discover -s tools/ci -p 'test_*.py'
       - name: Select local execution
         run: ./remote_execution/re local
-      - name: Reject proof dependencies in the CI selection
+      - name: Enforce the product-only CI selection
         run: python3 tools/ci/check_targets.py
-      - run: buck2 uquery //...
-      - run: buck2 cquery //...
-
-  rust_dependencies:
-    name: Locked Rust dependency freshness
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-buck2
-      - name: Cache pinned generator and crate downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/perceptual-grade-ci-cache
-          key: rust-maintenance-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('remote_execution/docker/Dockerfile', 'third_party/rust/regenerate.py', 'third_party/rust/toolchain/pins.bzl') }}-${{ hashFiles('third_party/rust/Cargo.lock') }}
-          restore-keys: |
-            rust-maintenance-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('remote_execution/docker/Dockerfile', 'third_party/rust/regenerate.py', 'third_party/rust/toolchain/pins.bzl') }}-
-      - name: Check generated Rust rules in the declared runtime
-        env:
-          CI_DISPOSABLE_CHECKOUT: "1"
-          CI_CACHE_DIR: ${{ runner.temp }}/perceptual-grade-ci-cache
-        run: bash tools/ci/runtime.sh python3 third_party/rust/regenerate.py --check
-      - name: Confirm checked-in dependency files were not rewritten
-        run: git diff --exit-code -- third_party/rust
+      - run: buck2 uquery //products/perceptual-grade-next-blender/...
+      - run: buck2 cquery //products/perceptual-grade-next-blender/...

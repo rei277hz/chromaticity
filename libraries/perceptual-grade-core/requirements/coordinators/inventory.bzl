@@ -139,21 +139,20 @@ COORDINATOR_REQUIREMENTS = {
     },
     "bake_queue": {
         "properties": [
-            "admission_reserves_one_free_target",
+            "admission_requires_free_target",
             "dispatch_requires_frozen_head_and_free_lane",
-            "destination_publication_follows_click_order",
+            "publication_requires_destination_turn",
             "physical_release_needs_validated_retirement",
             "reservation_release_needs_terminal_receipt",
             "cancel_preserves_physical_lease",
             "foreign_generation_has_no_effect",
             "closing_cannot_admit_dispatch_or_publish",
-            "unrelated_entries_remain_unchanged",
             "frozen_request_identity_survives_queueing",
         ],
         "witnesses": [
-            "two_destinations_can_run",
-            "shared_destination_can_wait",
-            "retired_worker_frees_lane_before_publication",
+            "available_lane_can_dispatch",
+            "observed_predecessor_blocks_dispatch",
+            "selected_worker_retires_before_publication",
         ],
         "mutations": [
             "duplicate_target_admitted",

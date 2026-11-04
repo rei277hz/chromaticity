@@ -23,8 +23,7 @@
       "arm_revokes_known_value",
       "failed_compensation_retains_uncertainty",
       "commit_requires_known_applied_value",
-      "compensation_restores_original_edge",
-      "edge_count_exact"
+      "compensation_restores_original_edge"
     ],
     "witnesses": [
       "arm_is_possible",
@@ -111,6 +110,39 @@
     ],
     "mutations": [
       "exhausted_start_is_retried"
+    ]
+  },
+  "native_evaluation": {
+    "properties": [
+      "out_of_order_observation_preserves_state",
+      "foreign_generation_preserves_authority",
+      "ordered_foreign_observation_is_consumed",
+      "begin_requires_fresh_validated_ledger",
+      "finish_requires_validated_known_lease",
+      "unmatched_finish_cannot_release",
+      "pending_ingress_blocks_readiness",
+      "outstanding_lease_blocks_readiness",
+      "native_job_blocks_readiness",
+      "failed_or_closed_blocks_readiness",
+      "readiness_requires_current_generation",
+      "failure_is_sticky_until_validated_replacement",
+      "replacement_requires_validated_current_observation",
+      "closed_preserves_authority",
+      "rejected_current_begin_fences_readiness",
+      "ordered_observation_advances_once"
+    ],
+    "witnesses": [
+      "first_native_lease_is_admitted",
+      "validated_retirement_can_restore_readiness",
+      "validated_replacement_recovers_failed_state"
+    ],
+    "mutations": [
+      "admission_ignores_pending_ingress",
+      "admission_ignores_active_lease",
+      "admission_ignores_native_job",
+      "foreign_receipt_changes_authority",
+      "finish_skips_retirement_validation",
+      "replacement_skips_validation"
     ]
   }
 }

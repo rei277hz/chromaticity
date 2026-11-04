@@ -1,0 +1,21 @@
+load("//build_defs:artifacts.bzl", "generate", "source_tree")
+
+source_tree(
+    name = "sources",
+    srcs = {path: path for path in glob(["PerceptualGrade/*.lean"])},
+)
+
+generate(
+    name = "color_model",
+    args = [
+        "--lean",
+        "$(location //tools/verification:lean)",
+        "--dependencies",
+        "$(location //tools/verification:dependencies)",
+        "--sources",
+        "$(location :sources)",
+    ],
+    outputs = {"report": "checked.json"},
+    tool = "//tools/verification:color_model_checker",
+    visibility = ["PUBLIC"],
+)

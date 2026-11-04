@@ -173,6 +173,24 @@ class PreparationRuntime:
             )
             self._lanes[name] = _Lane(prepare, executor, bool(progressive))
 
+    def register_async_lane(self, name, prepare_async):
+        """Register an aggregate coroutine executed on the coordinator loop.
+
+        The coroutine owns any worker fan-out it needs and must not call Blender
+        APIs. This lane is final-only; host-polled work uses register_polled_lane.
+        """
+        if not isinstance(name, str) or not name:
+            raise ValueError("Preparation lane name must be nonempty")
+        if not callable(prepare_async):
+            raise TypeError("Async preparation lane must be callable")
+        with self._lock:
+            self._raise_failure()
+            if self.closed:
+                raise RuntimeError("Preparation runtime is closed")
+            if name in self._lanes:
+                raise ValueError(f"Preparation lane already exists: {name}")
+            self._lanes[name] = _Lane(prepare_async, None, False)
+
     def register_polled_lane(self, name, owner, *, progressive=False):
         """Register a lane whose transport advances only on the host thread.
 
@@ -378,6 +396,10 @@ class PreparationRuntime:
         try:
             if lane.host_owner is not None:
                 prepared = await self._execute_on_host(snapshot, lane)
+            elif lane.executor is None:
+                if snapshot.progressive:
+                    raise RuntimeError("Async preparation lanes are final-only")
+                prepared = await lane.prepare(snapshot.payload)
             else:
                 call = partial(lane.prepare, snapshot.payload)
                 if snapshot.progressive:
@@ -684,15 +706,25 @@ class PreparationRuntime:
         if threading.current_thread() is self._thread:
             raise RuntimeError("The coordinator cannot join its own thread")
         with self._close_lock:
+            failures = []
             if not self._thread.is_alive():
                 for lane in self._lanes.values():
                     if lane.host_owner is not None:
-                        if threading.current_thread() is not threading.main_thread():
-                            raise RuntimeError("Host preparation must close on the main thread")
-                        lane.host_owner.close()
-                        lane.host_owner = None
+                        try:
+                            if threading.current_thread() is not threading.main_thread():
+                                raise RuntimeError("Host preparation must close on the main thread")
+                            lane.host_owner.close()
+                        except Exception as error:
+                            failures.append(error)
+                        else:
+                            lane.host_owner = None
                     if lane.executor is not None:
-                        lane.executor.shutdown(wait=True)
+                        try:
+                            lane.executor.shutdown(wait=True)
+                        except Exception as error:
+                            failures.append(error)
+                if failures:
+                    raise ExceptionGroup("Preparation runtime cleanup failed", failures)
                 return
             if (threading.current_thread() is not threading.main_thread()
                     and any(lane.host_owner is not None for lane in self._lanes.values())):
@@ -711,13 +743,27 @@ class PreparationRuntime:
                         except FutureTimeout:
                             pass
                 future.result()
+            except Exception as error:
+                failures.append(error)
             finally:
                 for lane in self._lanes.values():
                     if lane.host_owner is not None:
-                        lane.host_owner.close()
-                        lane.host_owner = None
-                self.loop.call_soon_threadsafe(self._stop.set)
-                self._thread.join()
+                        try:
+                            lane.host_owner.close()
+                        except Exception as error:
+                            failures.append(error)
+                        else:
+                            lane.host_owner = None
+                try:
+                    self.loop.call_soon_threadsafe(self._stop.set)
+                    self._thread.join()
+                except Exception as error:
+                    failures.append(error)
                 for lane in self._lanes.values():
                     if lane.executor is not None:
-                        lane.executor.shutdown(wait=True)
+                        try:
+                            lane.executor.shutdown(wait=True)
+                        except Exception as error:
+                            failures.append(error)
+            if failures:
+                raise ExceptionGroup("Preparation runtime cleanup failed", failures)

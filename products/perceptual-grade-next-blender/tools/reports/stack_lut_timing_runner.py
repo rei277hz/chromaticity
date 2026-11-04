@@ -3,6 +3,7 @@
 import importlib
 import json
 from pathlib import Path
+import shutil
 import sys
 import time
 import traceback
@@ -48,6 +49,27 @@ def main():
         raise RuntimeError("Could not enable the packaged extension: " + repr(errors))
     nodes = importlib.import_module(extension.__package__ + ".nodes")
     lut_helper = importlib.import_module(extension.__package__ + ".lut_helper")
+    helper_runtime = importlib.import_module(
+        extension.__package__ + ".runtime.execution"
+    )
+    original_helper_cleanup = helper_runtime.HelperRuntime._cleanup
+    helper_log_serial = 0
+
+    def preserve_helper_log(runtime):
+        nonlocal helper_log_serial
+        if (runtime.state.error is not None and runtime._log_path is not None
+                and runtime._log_path.is_file()):
+            helper_log_serial += 1
+            destination = Path(config["output_dir"]).resolve() / f"helper-{helper_log_serial}.log"
+            if runtime._log is not None:
+                runtime._log.flush()
+            shutil.copyfile(runtime._log_path, destination)
+            print(f"PG_STACK_LUT helper log: {destination}", flush=True)
+            print(destination.read_text(encoding="utf8", errors="replace"),
+                  file=sys.stderr, flush=True)
+        original_helper_cleanup(runtime)
+
+    helper_runtime.HelperRuntime._cleanup = preserve_helper_log
 
     report = {
         "schema": 2,
@@ -56,6 +78,7 @@ def main():
         "blender_build": bpy.app.build_hash.decode("ascii", errors="replace"),
         "gpu": gpu_info,
         "node_tree": config["node_tree"],
+        "stage": config.get("stage", "tone"),
         "grade_count": config["grade_count"],
         "profile": {
             "samples": config["samples"],
@@ -188,6 +211,8 @@ def main():
         sample = job["sample"] or state["sample_by_signature"].get(job["signature"])
         if sample is None:
             return
+        sample["grade_preparation"] = diagnostics.get("grade_preparation", [])
+        sample["grade_preparation_wall_seconds"] = diagnostics.get("grade_preparation_wall_seconds")
         if diagnostics.get("worker_program_reused") is not None:
             sample["gpu_program_reused"] = bool(diagnostics["worker_program_reused"])
         worker_started = diagnostics.get("worker_started_at")
@@ -228,7 +253,11 @@ def main():
     def timed_advance(self):
         job = state["jobs"].get(id(self))
         had_group = self.group is not None
-        receipt = original_advance(self)
+        try:
+            receipt = original_advance(self)
+        except Exception:
+            print(traceback.format_exc(), file=sys.stderr, flush=True)
+            raise
         received_at = time.perf_counter()
         if job is not None and not had_group and self.group is not None:
             job["submitted_at"] = received_at
@@ -441,6 +470,9 @@ def main():
         try:
             if time.perf_counter() > deadline:
                 raise TimeoutError("Stack LUT timing session exceeded its deadline")
+            error = nodes._kernel_error_text(node)
+            if error:
+                raise RuntimeError(error)
             if current_sample_index >= config["samples"]:
                 return finish()
 
@@ -496,7 +528,11 @@ def main():
         next_index = sample["updates"]
         fraction = (next_index + 1) / config["updates"]
         exposure = -0.75 + 1.5 * fraction + 0.2 * current_sample_index
-        node.pg_stack_entries[node.pg_active_index].grade.pg_linear.exposure = exposure
+        grade = node.pg_stack_entries[node.pg_active_index].grade
+        if config.get("stage", "tone") == "tone":
+            grade.pg_tone.input_midtones = 22.0 + 28.0 * fraction + current_sample_index
+        else:
+            grade.pg_linear.exposure = exposure
         sample["updates"] += 1
         sample["last_update_at"] = time.perf_counter()
 

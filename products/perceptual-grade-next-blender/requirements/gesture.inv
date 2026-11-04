@@ -1,0 +1,343 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {
+    "serial_is_nonnegative": "state.serial >= 0",
+    "current_token_is_allocated": "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+    "pending_token_is_allocated": "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+    "pending_observer_is_distinct": "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token"
+  },
+  "contracts": {
+    "step": {
+      "requires": [
+        "state.serial >= 0",
+        "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+        "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+        "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "reset_keeps_identity_fence",
+      "variables": {
+        "state": "State"
+      },
+      "assume": [
+        "state.serial >= 0",
+        "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+        "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+        "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token"
+      ],
+      "lets": {
+        "reset": "step(state,Event(\"reset\"))"
+      },
+      "assert": "reset[0] == State(state.serial) and reset[1] == Effects(clear_registry=True) and allocate(reset[0].serial) > state.serial"
+    },
+    {
+      "name": "observer_handoff_commits_only_after_ack",
+      "variables": {
+        "state": "State",
+        "gesture": "int"
+      },
+      "assume": [
+        "state.serial >= 0",
+        "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+        "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+        "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token",
+        "state.current_token is not None",
+        "state.pending_token is None"
+      ],
+      "lets": {
+        "requested": "step(state,Event(\"handoff\",token=state.current_token,gesture_token=gesture,current_gesture_token=gesture,phase=\"active\"))"
+      },
+      "assert": "requested[0].current_token == state.current_token and requested[0].pending_token == state.serial + 1 and requested[1] == Effects(invoke_token=state.serial + 1)"
+    },
+    {
+      "name": "matching_install_commits_candidate",
+      "variables": {
+        "state": "State"
+      },
+      "assume": [
+        "state.serial >= 0",
+        "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+        "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+        "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token",
+        "state.pending_token is not None"
+      ],
+      "lets": {
+        "installed": "step(state,Event(\"installed\",token=state.pending_token,success=True))"
+      },
+      "assert": "installed[0] == State(state.serial,state.pending_token) and installed[1] == Effects(installed=True) and observer_status(state.current_token,state.pending_token,state.pending_token) == \"pending\" and not input_allowed(state.current_token,state.pending_token) and observer_status(installed[0].current_token,installed[0].pending_token,state.pending_token) == \"current\""
+    },
+    {
+      "name": "failed_handoff_preserves_current_observer",
+      "variables": {
+        "state": "State"
+      },
+      "assume": [
+        "state.serial >= 0",
+        "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+        "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+        "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token",
+        "state.pending_token is not None"
+      ],
+      "lets": {
+        "failed": "step(state,Event(\"installed\",token=state.pending_token,success=False))"
+      },
+      "assert": "failed[0] == State(state.serial,state.current_token) and failed[1] == Effects(report_failure=True)"
+    },
+    {
+      "name": "stale_install_receipt_has_no_effect",
+      "variables": {
+        "state": "State",
+        "token": "Optional[int]",
+        "success": "bool"
+      },
+      "assume": [
+        "state.serial >= 0",
+        "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+        "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+        "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token",
+        "token is None or token != state.pending_token"
+      ],
+      "lets": {
+        "ignored": "step(state,Event(\"installed\",token=token,success=success))"
+      },
+      "assert": "ignored == (state,Effects())"
+    },
+    {
+      "name": "pending_install_is_not_requested_twice",
+      "variables": {
+        "state": "State",
+        "gesture": "int"
+      },
+      "assume": [
+        "state.serial >= 0",
+        "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+        "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+        "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token",
+        "state.pending_token is not None"
+      ],
+      "lets": {
+        "observed": "step(state,Event(\"window_seen\"))",
+        "handoff": "step(state,Event(\"handoff\",token=state.current_token,gesture_token=gesture,current_gesture_token=gesture,phase=\"armed\"))"
+      },
+      "assert": "observed == (state,Effects()) and handoff == (state,Effects())"
+    },
+    {
+      "name": "observer_loss_does_not_reinstall_during_teardown",
+      "variables": {
+        "state": "State",
+        "token": "Optional[int]"
+      },
+      "assume": [
+        "state.serial >= 0",
+        "state.current_token is None or (0 < state.current_token and state.current_token <= state.serial)",
+        "state.pending_token is None or (0 < state.pending_token and state.pending_token <= state.serial)",
+        "state.current_token is None or state.pending_token is None or state.current_token != state.pending_token"
+      ],
+      "lets": {
+        "lost": "step(state,Event(\"lost\",token=token))"
+      },
+      "assert": "lost[1] == Effects()"
+    },
+    {
+      "name": "stale_observer_input_has_no_effect",
+      "variables": {
+        "current": "Optional[int]",
+        "token": "int"
+      },
+      "assume": [
+        "token != current"
+      ],
+      "assert": "not input_allowed(current,token)"
+    },
+    {
+      "name": "explicit_adapter_input_remains_available",
+      "variables": {
+        "current": "Optional[int]"
+      },
+      "assert": "input_allowed(current,None) and not press_handoff(None)"
+    },
+    {
+      "name": "handoff_requires_the_current_gesture",
+      "variables": {
+        "current": "Optional[int]",
+        "captured": "Optional[int]",
+        "phase": "Optional[str]"
+      },
+      "assume": [
+        "captured is None or current != captured or phase not in (\"armed\", \"active\")"
+      ],
+      "assert": "not handoff_allowed(current,captured,phase)"
+    },
+    {
+      "name": "new_press_during_install_keeps_its_own_handoff",
+      "variables": {
+        "current": "int",
+        "captured": "Optional[int]",
+        "phase": "str",
+        "latest": "Literal[\"none\", \"move\", \"finish\"]"
+      },
+      "assume": [
+        "captured != current",
+        "phase in (\"armed\", \"active\")"
+      ],
+      "assert": "after_install(current,captured,phase,latest) == \"handoff\""
+    },
+    {
+      "name": "matching_install_replays_latest_observation",
+      "variables": {
+        "token": "int"
+      },
+      "assert": "after_install(token,token,\"armed\",\"move\") == \"move\" and after_install(token,token,\"armed\",\"finish\") == \"finish\" and after_install(token,token,\"armed\",\"none\") is None"
+    },
+    {
+      "name": "movement_below_threshold_does_not_activate",
+      "variables": {
+        "x": "int",
+        "y": "int",
+        "dx": "int",
+        "dy": "int"
+      },
+      "assume": [
+        "-3 < dx and dx < 3",
+        "-3 < dy and dy < 3"
+      ],
+      "assert": "not crossed_threshold(x,y,x+dx,y+dy)"
+    },
+    {
+      "name": "stale_gesture_cannot_activate_or_finish",
+      "variables": {
+        "current": "int",
+        "token": "Optional[int]",
+        "phase": "str"
+      },
+      "assume": [
+        "token != current"
+      ],
+      "assert": "not activation_allowed(current,token,phase) and not finish_allowed(current,token) and deferred_phase(current,token,phase) is None"
+    },
+    {
+      "name": "finish_observation_is_deferred_once",
+      "variables": {
+        "token": "int"
+      },
+      "assert": "deferred_phase(token,token,\"armed\") == \"finishing_armed\" and deferred_phase(token,token,\"active\") == \"finishing_active\" and deferred_phase(token,token,\"finishing_armed\") is None and deferred_phase(token,token,\"finishing_active\") is None and not observation_allowed(\"armed\") and not observation_allowed(\"active\") and observation_allowed(\"finishing_armed\") and observation_allowed(\"finishing_active\")"
+    },
+    {
+      "name": "shared_participation_blocks_release",
+      "variables": {
+        "changed": "bool",
+        "phase": "str"
+      },
+      "assume": [
+        "phase in (\"active\", \"finishing_active\")"
+      ],
+      "assert": "participant_begin(True) == \"refresh\" and participant_finish(phase,True,changed,True) is None and active_participant(\"finishing_active\")"
+    },
+    {
+      "name": "last_participant_authorizes_release",
+      "variables": {
+        "changed": "bool",
+        "phase": "str"
+      },
+      "assume": [
+        "phase in (\"active\", \"finishing_active\")"
+      ],
+      "assert": "participant_begin(False) == \"node_begin\" and participant_finish(phase,True,changed,False) == \"node_release\""
+    },
+    {
+      "name": "unactivated_refresh_requires_change",
+      "variables": {
+        "phase": "str",
+        "shared": "bool"
+      },
+      "assume": [
+        "phase in (\"armed\", \"finishing_armed\")"
+      ],
+      "assert": "participant_finish(phase,True,True,shared) == \"refresh\" and participant_finish(phase,True,False,shared) is None and armed_participant(phase)"
+    },
+    {
+      "name": "missing_target_has_no_output_permission",
+      "variables": {
+        "phase": "str",
+        "changed": "bool",
+        "shared": "bool"
+      },
+      "assert": "participant_finish(phase,False,changed,shared) is None"
+    },
+    {
+      "name": "native_finish_never_pushes_undo",
+      "variables": {
+        "changed": "bool"
+      },
+      "assert": "not manual_undo(\"native\",changed)"
+    },
+    {
+      "name": "adapter_checkpoint_requires_change",
+      "variables": {
+        "changed": "bool"
+      },
+      "assert": "manual_undo(\"adapter\",changed) == changed"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "observer_can_be_installed",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(),Event(\"window_seen\"))",
+        "installed": "step(requested[0],Event(\"installed\",token=requested[1].invoke_token,success=True))"
+      },
+      "assert": "installed[0].current_token == 1 and installed[0].pending_token is None and installed[1].installed"
+    },
+    {
+      "name": "native_gesture_permissions_are_reachable",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(),Event(\"window_seen\"))",
+        "installed": "step(requested[0],Event(\"installed\",token=1,success=True))",
+        "gesture": "allocate(installed[0].serial)",
+        "handoff": "step(State(gesture,installed[0].current_token),Event(\"handoff\",token=1,gesture_token=gesture,current_gesture_token=gesture,phase=\"armed\"))",
+        "committed": "step(handoff[0],Event(\"installed\",token=handoff[1].invoke_token,success=True))"
+      },
+      "assert": "committed[1].installed and after_install(gesture,gesture,\"armed\",\"move\") == \"move\" and activation_allowed(gesture,gesture,\"armed\") and crossed_threshold(0,0,3,0) and deferred_phase(gesture,gesture,\"active\") == \"finishing_active\" and observation_allowed(\"finishing_active\") and finish_allowed(gesture,gesture) and participant_finish(\"finishing_active\",True,True,False) == \"node_release\" and not manual_undo(\"native\",True)"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "handoff_switches_current_before_ack",
+      "function": "step",
+      "target": "State(token, state.current_token, token)",
+      "replacement": "State(token, token, token)",
+      "detects": [
+        "property.observer_handoff_commits_only_after_ack"
+      ]
+    },
+    {
+      "name": "native_finish_pushes_manual_undo",
+      "function": "manual_undo",
+      "target": "owner == \"adapter\" and changed",
+      "replacement": "changed",
+      "detects": [
+        "property.native_finish_never_pushes_undo"
+      ]
+    },
+    {
+      "name": "stale_observer_is_admitted",
+      "function": "input_allowed",
+      "target": "token is None or token == current_token",
+      "replacement": "True",
+      "detects": [
+        "property.stale_observer_input_has_no_effect"
+      ]
+    }
+  ]
+}

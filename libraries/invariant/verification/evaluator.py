@@ -91,28 +91,6 @@ class Evaluator:
             return self._expr(branch, env)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             name = node.func.id
-            if name in ("forall_range", "exists_range", "sum_range"):
-                if (len(node.args) != 4 or node.keywords
-                        or not isinstance(node.args[0], ast.Name)
-                        or node.args[0].id in env):
-                    raise ValueError("Invalid bounded binder")
-                lower, upper = (self._expr(item, env) for item in node.args[1:3])
-                if type(lower) is not int or type(upper) is not int:
-                    raise ValueError("Bounded binder endpoints must be integers")
-                values = (
-                    self._expr(node.args[3], env | {node.args[0].id: index})
-                    for index in range(lower, upper)
-                )
-
-                def checked():
-                    for value in values:
-                        expected = int if name == "sum_range" else bool
-                        if type(value) is not expected:
-                            raise ValueError("Invalid bounded binder body type")
-                        yield value
-
-                return {"forall_range": all, "exists_range": any,
-                        "sum_range": sum}[name](checked())
             if name == "replace":
                 function = replace
             elif name == "len":

@@ -13,7 +13,7 @@ import z3
 
 from .model import Source, Type, Record, VerificationError
 from .symbolic import (Interpreter, Sequence, Label, label_sort, IDENTITY,
-                       OPTIONAL_TEXT, is_identity, is_optional_text, is_text,
+                       OPTIONALS, optional_type, is_identity, is_text,
                        boolean, equal)
 
 
@@ -23,7 +23,7 @@ def sha256(data):
 
 def validate_requirements(source, requirements):
     required = {"version", "state", "event", "initializers", "step", "invariants"}
-    allowed = required | {"contracts", "properties", "witnesses", "mutations", "description", "loops"}
+    allowed = required | {"contracts", "properties", "witnesses", "mutations", "description"}
     if not isinstance(requirements, dict) or set(requirements) - allowed or required - set(requirements):
         raise VerificationError("Missing or unknown requirements fields")
     if requirements["version"] != 1 or type(requirements["version"]) is not int:
@@ -45,8 +45,10 @@ def validate_requirements(source, requirements):
     if returns.kind != "tuple" or len(returns.args) != 2 or returns.args[0] != Type("record", (requirements["state"],)):
         raise VerificationError("Transition must return tuple[State, Effects]")
     invariants = requirements["invariants"]
-    if not isinstance(invariants, dict) or not invariants or any(not isinstance(k, str) or not k for k in invariants):
-        raise VerificationError("At least one named invariant is required")
+    if not isinstance(invariants, dict) or any(not isinstance(k, str) or not k for k in invariants):
+        raise VerificationError("Invariants must be a mapping of nonempty names")
+    if not invariants and not requirements.get("properties"):
+        raise VerificationError("At least one named invariant or property is required")
     for expression in invariants.values():
         source.expression(expression)
     contracts = requirements.get("contracts", {})
@@ -60,32 +62,6 @@ def validate_requirements(source, requirements):
                 raise VerificationError("Contract clauses must be lists")
             for expression in contract.get(key, []):
                 source.expression(expression)
-    loops = requirements.get('loops', [])
-    if not isinstance(loops, list):
-        raise VerificationError('Loop declarations must be a list')
-    matched = set()
-    loop_names = set()
-    for loop in loops:
-        if not isinstance(loop, dict) or set(loop) != {'name', 'function', 'target', 'iter', 'cursor', 'invariants', 'decreases'}:
-            raise VerificationError('Invalid loop declaration')
-        if loop['name'] in loop_names or not isinstance(loop['name'], str) or not loop['name']:
-            raise VerificationError('Loop names must be unique')
-        loop_names.add(loop['name'])
-        function = source.functions.get(loop['function'])
-        if function is None or not isinstance(loop['cursor'], str) or not loop['cursor'].isidentifier():
-            raise VerificationError('Invalid loop function or cursor')
-        selector = ast.dump(source.expression(loop['iter']))
-        nodes = [node for node in ast.walk(function) if isinstance(node, ast.For) and ast.unparse(node.target) == loop['target'] and ast.dump(node.iter) == selector]
-        if len(nodes) != 1 or id(nodes[0]) in matched:
-            raise VerificationError('Loop selector must match exactly one unclaimed source loop')
-        matched.add(id(nodes[0]))
-        if not isinstance(loop['invariants'], list) or not loop['invariants']:
-            raise VerificationError('Loop requires explicit invariants')
-        for expression in [*loop['invariants'], loop['decreases']]:
-            source.expression(expression)
-    actual_loops = {id(node) for function in source.functions.values() for node in ast.walk(function) if isinstance(node, ast.For)}
-    if matched != actual_loops:
-        raise VerificationError('Every source loop requires a declaration')
     names = set()
     for kind in ("properties", "witnesses"):
         if not isinstance(requirements.get(kind, []), list):
@@ -122,76 +98,106 @@ def validate_requirements(source, requirements):
 
 
 class Checker:
-    def __init__(self, source, requirements, output=None, timeout_ms=5000, certificates=None):
+    def __init__(self, source, requirements, output=None, timeout_ms=5000):
         self.source = source
         self.requirements = requirements
         self.output = Path(output) if output is not None else None
         self.timeout_ms = timeout_ms
         self.obligations = []
         self.names = set()
-        self.proved = set()
         self.models = {}
         self.replays = {}
         self.function_inputs = {}
-        self.loop_replays = {}
-        self.certificates = dict(certificates or {})
-
-    def function_fingerprint(self, name):
-        closure = {}
-        def visit(function):
-            if function in closure:
-                return
-            node = self.source.functions[function]
-            contract = self.requirements.get('contracts', {}).get(function, {})
-            loops = [loop for loop in self.requirements.get('loops', []) if loop['function'] == function]
-            closure[function] = (ast.dump(node), contract, loops)
-            expressions = [*contract.get('requires', []), *contract.get('ensures', [])]
-            for loop in loops:
-                expressions.extend([*loop['invariants'], loop['decreases']])
-            if function == self.requirements['step']:
-                expressions.extend(self.requirements['invariants'].values())
-            trees = [node, *(self.source.expression(expression) for expression in expressions)]
-            for tree in trees:
-                for call in ast.walk(tree):
-                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in self.source.functions:
-                        visit(call.func.id)
-        visit(name)
-        declarations = [ast.dump(node) for node in self.source.tree.body if not isinstance(node, ast.FunctionDef)]
-        return sha256(json.dumps((declarations, closure), sort_keys=True).encode())
 
     def interpreter(self):
-        return Interpreter(self.source, self.requirements, summaries=self.proved)
+        return Interpreter(self.source, self.requirements)
 
-    def solve(self, name, condition, expected="unsat", category="proof"):
+    def prove(self, name, premises, conclusion):
+        """Check an exact conjunction as independent counterexample queries.
+
+        Distributing conjunctions through implication does not establish or
+        assume any intermediate lemma: every component retains its original
+        guards and premises. Their counterexamples form the original query's
+        disjunction, so one SAT component refutes the entire conclusion.
+        """
+        def conjuncts(value):
+            if z3.is_and(value):
+                return [part for child in value.children() for part in conjuncts(child)]
+            if z3.is_implies(value):
+                return [z3.Implies(value.arg(0), part) for part in conjuncts(value.arg(1))]
+            return [value]
+
+        premises, conclusion = boolean(premises), boolean(conclusion)
+        clauses = conjuncts(conclusion) or [z3.BoolVal(True)]
+        return self.solve(name, z3.And(premises, z3.Not(conclusion)),
+                          components=[z3.And(premises, z3.Not(clause)) for clause in clauses])
+
+    def solve(self, name, condition, expected="unsat", category="proof", *, components=None):
         if name in self.names:
             raise VerificationError("Duplicate obligation name: " + name)
+        if components is not None and expected != "unsat":
+            raise VerificationError("Only proof conjunctions can be decomposed")
         self.names.add(name)
-        solver = z3.Solver()
-        solver.set(timeout=self.timeout_ms)
-        solver.add(z3.simplify(boolean(condition)))
-        answer = solver.check()
+        queries = [condition] if components is None else components
+        answer, counterexample, reasons, outcomes = z3.unsat, None, [], []
+        solved = {}
+        for index, query in enumerate(queries):
+            simplified = z3.simplify(boolean(query))
+            identity = simplified.get_id()
+            cached = solved.get(identity)
+            if cached is None:
+                model, reason = None, None
+                if z3.is_false(simplified):
+                    actual = z3.unsat
+                else:
+                    solver = z3.Solver()
+                    solver.set(timeout=self.timeout_ms)
+                    solver.add(simplified)
+                    actual = solver.check()
+                    if actual == z3.sat:
+                        model = solver.model()
+                    elif actual == z3.unknown:
+                        reason = solver.reason_unknown()
+                # Retain the AST itself so Z3 cannot reuse its identity while
+                # this obligation is checking another component.
+                solved[identity] = (simplified, actual, model, reason)
+            else:
+                _, actual, model, reason = cached
+            component = {"index": index, "actual": str(actual)}
+            if actual == z3.sat:
+                answer = z3.sat
+                if counterexample is None:
+                    counterexample = model
+            elif actual == z3.unknown:
+                if answer != z3.sat:
+                    answer = z3.unknown
+                reasons.append(reason)
+                component["reason"] = reason
+            outcomes.append(component)
         item = {"name": name, "expected": expected, "actual": str(answer), "ok": str(answer) == expected, "category": category}
+        if components is not None:
+            item["components"] = outcomes
         if answer == z3.sat and expected == "unsat":
-            self.models[name] = solver.model()
-            item["counterexample"] = {str(d): str(solver.model()[d]) for d in solver.model().decls()}
+            self.models[name] = counterexample
+            item["counterexample"] = {str(d): str(counterexample[d]) for d in counterexample.decls()}
         if answer == z3.unknown:
-            item["reason"] = solver.reason_unknown()
+            item["reason"] = "; ".join(dict.fromkeys(reasons))
         if self.output is not None:
+            # The artifact is always the complete original obligation, not a
+            # successfully discharged component or an assumed summary.
+            artifact = z3.Solver()
+            artifact.add(z3.simplify(boolean(condition)))
             filename = f"{len(self.obligations):04d}-" + re.sub(r"[^A-Za-z0-9_.-]", "_", name) + ".smt2"
             directory = self.output / "obligations"
             directory.mkdir(parents=True, exist_ok=True)
-            (directory / filename).write_text("; " + name + "\n; expected " + expected + "\n" + solver.to_smt2())
+            (directory / filename).write_text("; " + name + "\n; expected " + expected + "\n" + artifact.to_smt2())
             item["smt2"] = "obligations/" + filename
         self.obligations.append(item)
         return item
 
     def safety(self, name, interpreter, premises):
-        for index, (label, condition) in enumerate(interpreter.loop_obligations):
-            obligation = 'loop.' + name + '.' + str(index) + '.' + label
-            if index < len(interpreter.loop_replays) and interpreter.loop_replays[index] is not None:
-                self.loop_replays[obligation] = interpreter.loop_replays[index]
-            self.solve(obligation, z3.And(premises, z3.Not(condition)))
-        return self.solve("defined." + name, z3.And(premises, z3.Not(z3.And(*(condition for _, condition in interpreter.safety)))))
+        return self.prove("defined." + name, premises,
+                          z3.And(*(condition for _, condition in interpreter.safety)))
 
     def invariants(self, interpreter, state):
         return {name: boolean(interpreter.expression(expression, {"state": state})) for name, expression in self.requirements["invariants"].items()}
@@ -199,30 +205,17 @@ class Checker:
     def run(self):
         # Every function is checked, including helpers not reached by any property.
         order = []
-        looping = set()
         def visit(name):
             if name in order:
                 return
             for node in ast.walk(self.source.functions[name]):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in self.source.functions:
                     visit(node.func.id)
-                    if node.func.id in looping:
-                        looping.add(name)
-                if isinstance(node, ast.For):
-                    looping.add(name)
             order.append(name)
         for name in self.source.functions:
             visit(name)
         for name in order:
             parameters, _ = self.source.signatures[name]
-            fingerprint = self.function_fingerprint(name)
-            if name in looping and self.certificates.get(name) == fingerprint:
-                # Only a proof from this same run and an identical transitive
-                # source/schema/contract closure can authorize this reuse.
-                self.solve('reuse.' + name, False, category='source_equivalence')
-                self.proved.add(name)
-                continue
-            begin = len(self.obligations)
             i = self.interpreter()
             env = {key: i.symbol(name + "." + key, typ) for key, typ in parameters.items()}
             self.function_inputs[name] = env
@@ -238,24 +231,15 @@ class Checker:
             input_assumptions = z3.And(input_domain, *premises)
             self.solve("premise." + name, input_assumptions, "sat", "nonvacuity")
             if assumptions_safety:
-                self.solve("defined.premise." + name, z3.And(input_domain, z3.Not(z3.And(*(p for _, p in assumptions_safety)))))
+                self.prove("defined.premise." + name, input_domain,
+                           z3.And(*(p for _, p in assumptions_safety)))
             result = i.call(name, [], env, check_preconditions=False)
             assumptions = z3.And(z3.And(*i.domains), *premises)
             env["result"] = result
-            if any(isinstance(node, ast.For) for node in ast.walk(self.source.functions[name])):
-                conclusions = [(str(index) + '.return.' + str(number),
-                                z3.Implies(path, boolean(i.expression(expression, env | {'result': value}, path))))
-                               for index, expression in enumerate(contract.get('ensures', []))
-                               for number, (path, value) in enumerate(i.return_paths[name])]
-            else:
-                conclusions = [(index, boolean(i.expression(expression, env))) for index, expression in enumerate(contract.get("ensures", []))]
+            conclusions = [(index, boolean(i.expression(expression, env))) for index, expression in enumerate(contract.get("ensures", []))]
             self.safety(name, i, assumptions)
             for index, conclusion in conclusions:
-                self.solve(f"contract.{name}.{index}", z3.And(assumptions, *i.assumptions, z3.Not(conclusion)))
-            if name in looping and contract.get('ensures') and all(item['ok'] for item in self.obligations[begin:]):
-                self.proved.add(name)
-                self.certificates[name] = fingerprint
-
+                self.prove(f"contract.{name}.{index}", z3.And(assumptions, *i.assumptions), conclusion)
         for name in self.requirements["initializers"]:
             i = self.interpreter()
             env = {key: i.symbol("init." + key, typ) for key, typ in self.source.signatures[name][0].items()}
@@ -313,7 +297,8 @@ class Checker:
                 prefix = "property." if kind == "properties" else "witness."
                 name = prefix + claim["name"]
                 if assumption_safety:
-                    self.solve("defined.premise." + name, z3.And(*i.domains, z3.Not(z3.And(*(p for _, p in assumption_safety)))))
+                    self.prove("defined.premise." + name, z3.And(*i.domains),
+                               z3.And(*(p for _, p in assumption_safety)))
                 self.solve("premise." + name, assumptions, "sat", "nonvacuity")
                 self.safety(name, i, assumptions)
                 if kind == "properties":
@@ -364,6 +349,8 @@ def _unique_object(pairs):
 
 def _decode_model_value(model, value, module):
     from .model import Record
+    if value is None:
+        return None
     if isinstance(value, Record):
         return getattr(module, value.name)(**{key: _decode_model_value(model, item, module) for key, item in value.fields.items()})
     if isinstance(value, tuple):
@@ -377,19 +364,20 @@ def _decode_model_value(model, value, module):
         # This is a diagnostic resource bound, never a proof-domain restriction.
         if not 0 <= length <= 1000000:
             raise VerificationError('Counterexample is too large to replay')
-        return tuple(_decode_model_value(model, value.values[index], module) for index in range(length))
+        return tuple(_decode_model_value(model, value.at(index), module) for index in range(length))
     if type(value) in (bool, int, str):
         return value
     if is_identity(value):
         if z3.is_true(model.eval(IDENTITY.is_integer_identity(value), model_completion=True)):
             return _decode_model_value(model, IDENTITY.integer_value(value), module)
         return _decode_model_value(model, IDENTITY.text_value(value), module)
-    if is_optional_text(value):
+    if optional_type(value) is not None:
+        sort = OPTIONALS[optional_type(value).kind]
         concrete = model.eval(value, model_completion=True)
-        if concrete.decl() == OPTIONAL_TEXT.optional_none:
+        if z3.is_true(model.eval(sort.is_optional_none(concrete), model_completion=True)):
             return None
-        if concrete.decl() == OPTIONAL_TEXT.optional_some:
-            return _decode_model_value(model, OPTIONAL_TEXT.optional_value(concrete), module)
+        if z3.is_true(model.eval(sort.is_optional_some(concrete), model_completion=True)):
+            return _decode_model_value(model, sort.optional_value(concrete), module)
     if is_text(value):
         length = model.eval(z3.Length(value), model_completion=True).as_long()
         if not 0 <= length <= 1000000:
@@ -426,23 +414,6 @@ def replay(checker, names):
                 if evaluator.expression(claim['assert'], env) is not False:
                     return {'ok': False, 'reason': 'Counterexample conclusion did not replay', 'cases': cases}
                 cases.append({'obligation': name, 'inputs': {key: repr(value) for key, value in original.items()}, 'counterexample': True})
-                continue
-            if name in checker.loop_replays:
-                context = checker.loop_replays[name]
-                function = context['function']
-                arguments = {key: _decode_model_value(model, value, module)
-                             for key, value in context['arguments'].items()}
-                if function not in checker.requirements.get('contracts', {}):
-                    return {'ok': False, 'reason': 'Loop replay requires an independent function postcondition', 'cases': cases}
-                ordered = [arguments[key] for key in checker.source.signatures[function][0]]
-                result = getattr(module, function)(*ordered)
-                failed = [expression for expression in checker.requirements['contracts'][function].get('ensures', [])
-                          if evaluator.expression(expression, arguments | {'result': result}) is False]
-                if not failed:
-                    return {'ok': False, 'reason': 'Loop counterexample did not violate the function postcondition', 'cases': cases}
-                cases.append({'obligation': name, 'function': function,
-                              'inputs': {key: repr(value) for key, value in arguments.items()},
-                              'counterexample': True, 'failed_postconditions': failed})
                 continue
             if name.startswith('contract.'):
                 parts = name.split('.')
@@ -496,7 +467,7 @@ def verify(source_path, requirements_path, output_path=None, timeout_ms=5000, re
         mutated = _mutate(source, mutation)
         validate_requirements(mutated, requirements)
         mutation_output = output / "mutations" / re.sub(r"[^A-Za-z0-9_.-]", "_", mutation["name"]) if output else None
-        mutation_checker = Checker(mutated, requirements, mutation_output, timeout_ms, certificates=checker.certificates)
+        mutation_checker = Checker(mutated, requirements, mutation_output, timeout_ms)
         checks = mutation_checker.run()
         failures = [item["name"] for item in checks if item["category"] == "proof" and item["expected"] == "unsat" and item["actual"] == "sat"]
         detects = mutation.get("detects", [])

@@ -1,94 +1,16 @@
 """Exercise gesture undo boundaries in a native Blender window."""
 
-from contextlib import contextmanager
 from importlib.resources import files
 import json
 import os
 from pathlib import Path
-import selectors
 import signal
 import subprocess
-import sys
 import tempfile
 import unittest
 import zipfile
 
-
-@contextmanager
-def virtual_display(resources, root, env):
-    if sys.platform != "linux":
-        yield
-        return
-    fixture = Path(str(resources / "xvfb")).resolve()
-    library_dir = fixture / "usr/lib/x86_64-linux-gnu"
-    library_path = str(library_dir)
-    if env.get("LD_LIBRARY_PATH"):
-        library_path += os.pathsep + env["LD_LIBRARY_PATH"]
-    runtime = root / "xdg-runtime"
-    runtime.mkdir(mode=0o700)
-    driver_path = str(library_dir / "dri")
-    child_env = dict(
-        env,
-        LD_LIBRARY_PATH=library_path,
-        LIBGL_ALWAYS_SOFTWARE="1",
-        GALLIUM_DRIVER="llvmpipe",
-        LIBGL_DRIVERS_PATH=driver_path,
-    )
-    read_fd, write_fd = os.pipe()
-    process = None
-    with (root / "xvfb.log").open("w") as log:
-        try:
-            process = subprocess.Popen(
-                [
-                    str(fixture / "usr/bin/Xvfb"),
-                    "-displayfd",
-                    str(write_fd),
-                    "-screen",
-                    "0",
-                    "1280x960x24",
-                    "-nolisten",
-                    "tcp",
-                    "-ac",
-                    "+iglx",
-                    "-xkbdir",
-                    str(fixture / "usr/share/X11/xkb"),
-                ],
-                cwd=fixture,
-                env=child_env,
-                pass_fds=(write_fd,),
-                stdout=log,
-                stderr=subprocess.STDOUT,
-            )
-            os.close(write_fd)
-            write_fd = None
-            with selectors.DefaultSelector() as ready:
-                ready.register(read_fd, selectors.EVENT_READ)
-                if not ready.select(timeout=30):
-                    raise RuntimeError("Xvfb did not publish a display number")
-                display = os.read(read_fd, 64).decode("ascii").strip()
-            if not display.isdigit():
-                raise RuntimeError("Xvfb startup failed: " + (root / "xvfb.log").read_text())
-            env.update(
-                DISPLAY=":" + display,
-                XDG_RUNTIME_DIR=str(runtime),
-                LD_LIBRARY_PATH=library_path,
-                LIBGL_ALWAYS_SOFTWARE="1",
-                GALLIUM_DRIVER="llvmpipe",
-                LIBGL_DRIVERS_PATH=driver_path,
-            )
-            env.pop("WAYLAND_DISPLAY", None)
-            yield
-        finally:
-            os.close(read_fd)
-            if write_fd is not None:
-                os.close(write_fd)
-            if process is not None:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=10)
+from .gui_support import virtual_display
 
 
 class GestureUndoGuiTests(unittest.TestCase):

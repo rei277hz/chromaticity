@@ -52,7 +52,7 @@ protocol proofs.
 
 ## Lean mathematics
 
-`//libraries/perceptual-grade-core/proofs:color_model` provisions pinned
+`//libraries/perceptual-grade-reference/proofs:color_model` provisions pinned
 Lean/Mathlib, compiles the model theorems and audits transitive axioms. These
 prove color mathematics, not all Python/shader/DCTL implementations or the
 picker's different appearance model. Packaging requires machine proofs; the root

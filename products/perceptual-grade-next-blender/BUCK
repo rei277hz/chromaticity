@@ -1,5 +1,5 @@
 load("//build_defs:artifacts.bzl", "generate", "source_tree", "verification_group")
-load("//build_defs:invariant.bzl", "invariant_proof")
+load("//build_defs:invariant.bzl", "invariant_bundle", "invariant_proof")
 load("//build_defs:python_packages.bzl", "component_library", "extension_tree")
 
 PREFIX = "src/"
@@ -91,7 +91,12 @@ python_library(
     srcs = {
         "lut_gpu.py": PREFIX + "lut_gpu.py",
         "lut_codec.py": PREFIX + "lut_codec.py",
+        "lut_shader.py": PREFIX + "lut_shader.py",
         "lut_worker.py": PREFIX + "lut_worker.py",
+        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
+        "runtime/grade_preparation.py": PREFIX + "runtime/grade_preparation.py",
+        "policy/__init__.py": PREFIX + "policy/__init__.py",
+        "policy/preparation_join.py": PREFIX + "policy/preparation_join.py",
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
@@ -117,6 +122,18 @@ python_library(
     visibility = ["PUBLIC"],
 )
 
+python_library(
+    name = "gesture_runtime",
+    srcs = {
+        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
+        "runtime/gesture_coordinator.py": PREFIX + "runtime/gesture_coordinator.py",
+        "policy/__init__.py": PREFIX + "policy/__init__.py",
+        "policy/gesture.py": PREFIX + "policy/gesture.py",
+    },
+    base_module = "color_tools",
+    visibility = ["PUBLIC"],
+)
+
 export_file(
     name = "node_source",
     src = POLICY_PREFIX + "node.py",
@@ -131,7 +148,9 @@ export_file(
 
 invariant_proof(
     name = "proof_node",
-    required_mutations = ["replacement_ignores_order"],
+    required_mutations = [
+        "replacement_ignores_order",
+    ],
     required_properties = [
         "full_quality_is_required_for_current_output",
         "request_without_gesture_retains_last_good_output",
@@ -142,11 +161,15 @@ invariant_proof(
         "late_lower_quality_never_replaces_full_quality",
         "current_failure_clears_applied_output",
         "return_to_applied_settings_updates_preparation_demand",
+        "replacement_rebuild_tracks_order_and_multiplicity",
+        "grade_edit_rebuilds_only_when_referenced",
         "kernel_match_does_not_override_preparation_correlation",
         "preparation_failure_requires_current_preparation_signature",
         "request_preserves_reducer_owned_stack_membership",
-        "replacement_rebuild_tracks_order_and_multiplicity",
-        "grade_edit_rebuilds_only_when_referenced",
+        "disposal_clears_node_lifecycle",
+        "disposal_authorizes_cleanup_without_presentation",
+        "disposal_is_idempotent",
+        "disposed_demand_rejects_correlated_late_receipts",
     ],
     required_witnesses = [
         "preview_remains_visible_until_full_installation",
@@ -181,38 +204,207 @@ invariant_proof(
         "obsolete_failure_does_not_publish_error",
         "unmatched_receipt_is_ignored",
     ],
-    required_witnesses = ["preview_does_not_consume_latest_queued_request"],
+    required_witnesses = [
+        "preview_does_not_consume_latest_queued_request",
+    ],
     requirements = ":preparation_requirements",
     runtime_source = "policy/preparation.py",
     source = ":preparation_source",
     visibility = ["PUBLIC"],
 )
 
+export_file(
+    name = "preparation_join_source",
+    src = POLICY_PREFIX + "preparation_join.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "preparation_join_requirements",
+    src = "requirements/preparation_join.inv",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_preparation_join",
+    required_properties = [
+        "first_completion_does_not_authorize_aggregate",
+        "any_completion_order_joins_after_all_three",
+        "child_error_is_retained_until_last_retirement",
+        "stale_and_duplicate_completions_are_ignored",
+    ],
+    required_witnesses = [
+        "error_waits_for_every_component",
+    ],
+    requirements = ":preparation_join_requirements",
+    runtime_source = "policy/preparation_join.py",
+    source = ":preparation_join_source",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_helper",
+    required_mutations = [
+        "cancelled_probe_becomes_ready",
+        "poll_after_terminal_cleanup",
+        "cleanup_before_physical_exit",
+    ],
+    required_properties = [
+        "ready_requires_successful_probe",
+        "cancelled_probe_withdraws_startup",
+        "cancel_before_hello_waits_for_exit",
+        "late_probe_success_cannot_revive_cancelled_helper",
+        "stale_generation_is_ignored",
+        "terminal_poll_never_touches_transport",
+        "shutdown_does_not_cleanup_live_process",
+        "exit_publishes_failure_before_cleanup",
+        "cleanup_failure_retains_owner_and_error",
+        "shutdown_fences_admission",
+        "cancel_request_retains_active_slot",
+        "cancel_acknowledgement_dispatches_successor",
+        "stale_stage_timeout_has_no_effects",
+        "shutdown_escalates_in_order",
+        "duplicate_exit_does_not_republish",
+        "repeated_shutdown_preserves_stage_deadline",
+        "first_causal_error_is_preserved",
+    ],
+    required_witnesses = [
+        "successful_probe_admits_work",
+        "cancelled_startup_completes_retirement",
+    ],
+    requirements = "requirements/helper.inv",
+    runtime_source = "policy/helper.py",
+    source = POLICY_PREFIX + "helper.py",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_resources",
+    required_mutations = [
+        "removal_skips_cache_eviction",
+        "removal_ignores_live_users",
+    ],
+    required_properties = [
+        "deletion_requires_eviction_and_fresh_eligibility",
+        "only_eviction_receipt_reaches_recheck",
+        "live_users_prevent_deletion",
+        "removed_wrappers_never_delete",
+        "failed_eviction_prevents_deletion",
+        "disposal_fences_before_detach",
+        "terminal_receipts_are_inert",
+        "adoption_requires_all_observations",
+    ],
+    required_witnesses = [
+        "shared_survivor_retains_resource",
+        "unused_resource_retires_after_eviction",
+    ],
+    requirements = "requirements/resources.inv",
+    runtime_source = "policy/resources.py",
+    source = POLICY_PREFIX + "resources.py",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_image_publication",
+    required_mutations = [
+        "matching_image_skips_clean_packing",
+        "failed_upload_continues_publication",
+        "failed_delivery_reports_success",
+        "save_packing_includes_user_images",
+    ],
+    required_properties = [
+        "metadata_commit_requires_clean_image",
+        "failed_upload_enters_restoration",
+        "failed_transaction_never_delivers",
+        "restored_metadata_requires_clean_packing",
+        "restoration_failure_still_fails_source",
+        "metadata_failure_restores_shared_image",
+        "failed_delivery_fails_source",
+        "terminal_receipts_are_inert",
+        "save_packing_only_repairs_dirty_generated_images",
+        "save_packing_requires_clean_receipt",
+    ],
+    required_witnesses = [
+        "clean_publication_delivers",
+        "restored_image_still_fails_source",
+    ],
+    requirements = "requirements/image_publication.inv",
+    runtime_source = "policy/image_publication.py",
+    source = POLICY_PREFIX + "image_publication.py",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_gesture",
+    required_mutations = [
+        "handoff_switches_current_before_ack",
+        "native_finish_pushes_manual_undo",
+        "stale_observer_is_admitted",
+    ],
+    required_properties = [
+        "reset_keeps_identity_fence",
+        "observer_handoff_commits_only_after_ack",
+        "matching_install_commits_candidate",
+        "failed_handoff_preserves_current_observer",
+        "stale_install_receipt_has_no_effect",
+        "pending_install_is_not_requested_twice",
+        "observer_loss_does_not_reinstall_during_teardown",
+        "stale_observer_input_has_no_effect",
+        "explicit_adapter_input_remains_available",
+        "handoff_requires_the_current_gesture",
+        "new_press_during_install_keeps_its_own_handoff",
+        "matching_install_replays_latest_observation",
+        "movement_below_threshold_does_not_activate",
+        "stale_gesture_cannot_activate_or_finish",
+        "finish_observation_is_deferred_once",
+        "shared_participation_blocks_release",
+        "last_participant_authorizes_release",
+        "unactivated_refresh_requires_change",
+        "missing_target_has_no_output_permission",
+        "native_finish_never_pushes_undo",
+        "adapter_checkpoint_requires_change",
+    ],
+    required_witnesses = [
+        "observer_can_be_installed",
+        "native_gesture_permissions_are_reachable",
+    ],
+    requirements = "requirements/gesture.inv",
+    runtime_source = "policy/gesture.py",
+    source = POLICY_PREFIX + "gesture.py",
+    visibility = ["PUBLIC"],
+)
+
+POLICY_PROOFS = [
+    ":proof_node",
+    ":proof_preparation",
+    ":proof_preparation_join",
+    ":proof_helper",
+    ":proof_resources",
+    ":proof_image_publication",
+    ":proof_gesture",
+]
+
 verification_group(
     name = "verify_policies",
     visibility = ["PUBLIC"],
-    deps = [
-        ":proof_node",
-        ":proof_preparation",
-    ],
+    deps = POLICY_PROOFS,
+)
+
+invariant_bundle(
+    name = "policy_evidence",
+    deps = POLICY_PROOFS,
 )
 
 extension_tree(
     name = "extension_tree",
-    entrypoints = {
-        "__init__.py": "src/__init__.py",
-        "lut_gpu.py": "src/lut_gpu.py",
-        "lut_codec.py": "src/lut_codec.py",
-        "lut_helper.py": "src/lut_helper.py",
-        "lut_worker.py": "src/lut_worker.py",
-        "nodes.py": "src/nodes.py",
+    entrypoints = {path[len(PREFIX):]: path for path in glob([PREFIX + "*.py"])} | {
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
         "README.md": "README.md",
     } | POLICY_ENTRYPOINTS | RUNTIME_ENTRYPOINTS,
     visibility = ["PUBLIC"],
     deps = [
-        ":kernel_code_bundle",
+        ":kernel_runtime_bundle",
     ],
 )
 
@@ -243,14 +435,8 @@ generate(
         "$(location :extension_tree)",
         "--inventory",
         "$(location :package_inventory)",
-        "--proof-node",
-        "$(location :proof_node)",
-        "--requirements-node",
-        "$(location :node_requirements)",
-        "--proof-preparation",
-        "$(location :proof_preparation)",
-        "--requirements-preparation",
-        "$(location :preparation_requirements)",
+        "--proofs",
+        "$(location :policy_evidence)",
     ],
     outputs = {
         "zip": "perceptual_grade.zip",

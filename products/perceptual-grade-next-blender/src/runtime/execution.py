@@ -180,8 +180,8 @@ class HelperRuntime:
         self._log = None
         self._log_path = None
         self._config_path = None
-        self._started_at = None
-        self._closed = False
+        self._deadline = None
+        self._cleanup_error = None
 
     @property
     def phase(self):
@@ -189,7 +189,7 @@ class HelperRuntime:
 
     @property
     def gpu_ready(self):
-        return self.state.phase == "ready"
+        return helper_policy.admitting(self.state)
 
     def start_probe(self):
         _require_main_thread()
@@ -207,8 +207,6 @@ class HelperRuntime:
 
     def submit(self, operation, inputs):
         _require_main_thread()
-        if self._closed or self.state.phase in ("closing", "closed", "failed"):
-            raise HelperError("GPU helper is unavailable")
         if not self.gpu_ready:
             raise HelperError("GPU helper must pass its startup probe before work")
         if not isinstance(operation, str) or not operation:
@@ -233,8 +231,10 @@ class HelperRuntime:
             return False
         self._transition(helper_policy.Event(
             "cancel", generation=self.state.generation, job_id=job.identity,
+            transport=self._transport(),
         ))
-        return job.state == "finished" or job.identity == self.state.active_id
+        return (job.state == "finished" or job.identity == self.state.active_id
+                or job.identity == self.state.probe_id and self.state.close_requested)
 
     def _new_job(self, operation, inputs, *, probe):
         identity = next(self._serial)
@@ -277,18 +277,64 @@ class HelperRuntime:
             self._send_or_fail({"kind": "cancel", "job": action.job_id})
         elif action.kind == "send_shutdown":
             self._send_or_fail({"kind": "shutdown"})
-        elif action.kind == "terminate":
-            if self._process is not None and self._process.poll() is None:
-                self._process.terminate()
-        elif action.kind == "kill":
-            if self._process is not None and self._process.poll() is None:
-                self._process.kill()
+        elif action.kind in ("terminate", "kill"):
+            try:
+                if self._process is not None and self._process.poll() is None:
+                    getattr(self._process, action.kind)()
+            except OSError as error:
+                self._transition(helper_policy.Event(
+                    "failure", generation=self.state.generation,
+                    error=f"GPU helper process control failed: {error}",
+                ))
         elif action.kind == "cleanup":
-            self._cleanup()
+            try:
+                self._cleanup()
+            except Exception as error:
+                self._cleanup_error = error
+                self._transition(helper_policy.Event(
+                    "cleanup_result", generation=self.state.generation,
+                    error=str(error),
+                ))
+            else:
+                self._cleanup_error = None
+                self._transition(helper_policy.Event(
+                    "cleanup_result", generation=self.state.generation, success=True,
+                ))
         elif action.kind == "fail_queued":
             self._fail_queued(action.error)
         elif action.kind == "cancel_queued":
             self._cancel_queued()
+        elif action.kind == "deadline":
+            durations = {"starting": self.startup_seconds,
+                         "stopping": self.SHUTDOWN_SECONDS,
+                         "terminating": 0.5, "killing": 2.0}
+            self._deadline = (self.state.generation, action.stage,
+                              time.monotonic() + durations[action.stage])
+        elif action.kind == "clear_deadline":
+            self._deadline = None
+        elif action.kind in ("accept", "pump"):
+            try:
+                if action.kind == "accept":
+                    try:
+                        sock, _address = self._listener.accept()
+                    except BlockingIOError:
+                        return
+                    self._channel = Channel(sock)
+                    self._listener.close()
+                    self._listener = None
+                else:
+                    for message in self._channel.pump():
+                        self._message(message)
+            except EOFError as error:
+                self._transition(helper_policy.Event(
+                    "eof", generation=self.state.generation,
+                    error=f"GPU helper protocol failed: {error}",
+                ))
+            except (OSError, ValueError, KeyError, TypeError, BufferError) as error:
+                self._transition(helper_policy.Event(
+                    "failure", generation=self.state.generation,
+                    error=f"GPU helper protocol failed: {error}",
+                ))
         else:
             raise RuntimeError("Unknown helper effect: " + action.kind)
 
@@ -315,23 +361,15 @@ class HelperRuntime:
         self._config_path.write_text(json.dumps(config), encoding="utf8")
         self._log = self._log_path.open("wb")
         environment = host.worker_environment()
-        try:
-            self._process = subprocess.Popen(
-                self.launcher(config),
-                cwd=self.directory,
-                env=environment,
-                stdin=subprocess.DEVNULL,
-                stdout=self._log,
-                stderr=subprocess.STDOUT,
-                close_fds=True,
-            )
-        except BaseException:
-            self._listener.close()
-            self._listener = None
-            self._log.close()
-            self._log = None
-            raise
-        self._started_at = time.monotonic()
+        self._process = subprocess.Popen(
+            self.launcher(config),
+            cwd=self.directory,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=self._log,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+        )
 
     def _host_settings(self):
         try:
@@ -359,13 +397,14 @@ class HelperRuntime:
             job.error = HelperError(f"Could not dispatch helper operation: {error}")
             self._transition(helper_policy.Event(
                 "failure", generation=self.state.generation,
-                job_id=identity, error=str(job.error),
+                error=str(job.error),
             ))
 
     def _send(self, message):
         if self._channel is None:
             raise HelperError("GPU helper is not connected")
-        self._channel.send(message)
+        self._channel.send(dict(message, session=self.session,
+                                generation=self.state.generation))
 
     def _send_or_fail(self, message):
         try:
@@ -383,46 +422,36 @@ class HelperRuntime:
                      and (job := self._jobs.get(identity)) is not None
                      and job.state == "queued"), None)
 
+    def _transport(self):
+        if self._channel is not None:
+            return "channel"
+        if self._listener is not None:
+            return "listener"
+        return None
+
+    def _process_observation(self, kind):
+        code = self._process.poll() if self._process is not None else None
+        return helper_policy.Event(
+            kind, generation=self.state.generation,
+            transport=self._transport(),
+            process_alive=self._process is not None and code is None,
+            exit_code=code,
+            error=f"GPU helper exited with status {code}" if code not in (None, 0) else None,
+        )
+
     def poll(self):
         _require_main_thread()
-        if self._process is None or self.state.phase == "closed":
-            return False
-        try:
-            if self._channel is None:
-                try:
-                    sock, _address = self._listener.accept()
-                except BlockingIOError:
-                    sock = None
-                if sock is not None:
-                    self._channel = Channel(sock)
-                    self._listener.close()
-                    self._listener = None
-            if self._channel is not None:
-                for message in self._channel.pump():
-                    self._message(message)
-        except EOFError as error:
-            if self.state.phase != "closing":
-                self._transition(helper_policy.Event(
-                    "failure", generation=self.state.generation,
-                    error=f"GPU helper protocol failed: {error}",
-                ))
-        except (OSError, ValueError, KeyError, TypeError, BufferError) as error:
-            self._transition(helper_policy.Event(
-                "failure", generation=self.state.generation,
-                error=f"GPU helper protocol failed: {error}",
-            ))
-
-        code = self._process.poll()
-        if code is not None:
+        self._transition(self._process_observation("poll"))
+        # Pumping may have observed a receipt and caused the child to exit.
+        if self._process is not None and self._process.poll() is not None:
             self._process_exited()
-            return self.state.phase == "ready"
-        if (self.state.phase == "starting" and self._started_at is not None
-                and time.monotonic() - self._started_at > self.startup_seconds):
-            self._transition(helper_policy.Event(
-                "failure", generation=self.state.generation,
-                error="GPU helper startup timed out",
-            ))
-        return self.state.phase == "ready"
+        if self._deadline is not None:
+            generation, stage, deadline = self._deadline
+            if time.monotonic() >= deadline:
+                self._transition(helper_policy.Event(
+                    "timeout", generation=generation, stage=stage,
+                ))
+        return self.gpu_ready
 
     def _message(self, message):
         if (message.get("session") != self.session
@@ -444,6 +473,7 @@ class HelperRuntime:
             self._release_message(message)
             return
         files = tuple(message.get("files", ()))
+        self._retain_files(files)
         if kind == "preview":
             job.pending_preview = self.payloads.decode(message["value"], copy=True)
             job.pending_files = files
@@ -468,25 +498,40 @@ class HelperRuntime:
                 next_id = self._next_queued()
                 self._transition(helper_policy.Event(
                     "result", generation=self.state.generation,
-                    job_id=identity, success=True, next_id=next_id,
+                    job_id=identity, next_id=next_id,
                 ))
         elif kind == "cancelled":
             next_id = self._next_queued()
             self._transition(helper_policy.Event(
                 "cancelled", generation=self.state.generation,
-                job_id=identity, next_id=next_id,
+                job_id=identity, next_id=next_id, transport=self._transport(),
             ))
         elif kind == "failed":
             self._transition(helper_policy.Event(
                 "failure", generation=self.state.generation,
-                job_id=identity,
                 error=message.get("error", "GPU helper operation failed"),
             ))
         else:
             raise ValueError("Unknown GPU helper response")
 
+    def _retain_files(self, names):
+        for name in names:
+            if (not isinstance(name, str) or Path(name).name != name
+                    or not name.startswith("array-")):
+                raise ValueError("Invalid helper-owned array path")
+            self.payloads.owned.add(self.directory / name)
+
+    def _release_files(self, names):
+        names = tuple(names)
+        self._retain_files(names)
+        try:
+            self.payloads.release(names)
+        except Exception as error:
+            # The ownership ledger survives job completion for a close retry.
+            self._cleanup_error = error
+
     def _release_message(self, message):
-        self.payloads.release(message.get("files", ()))
+        self._release_files(message.get("files", ()))
 
     def _publish_preview(self, identity):
         job = self._jobs.get(identity)
@@ -494,152 +539,101 @@ class HelperRuntime:
             return
         job.preview = job.pending_preview
         job.pending_preview = None
-        self.payloads.release(job.pending_files)
+        self._release_files(job.pending_files)
         job.pending_files = ()
+
+    def _finish_job(self, job):
+        files = job.pending_files + job.input_files
+        self._retain_files(files)
+        job.pending_files = job.input_files = ()
+        job.pending_value = job.pending_preview = None
+        job.state = "finished"
+        self._jobs.pop(job.identity, None)
+        if job.identity in self._queue:
+            self._queue.remove(job.identity)
+        self._release_files(files)
 
     def _publish_result(self, identity):
         job = self._jobs.get(identity)
         if job is None:
             return
         job.value = job.pending_value
-        job.pending_value = None
-        self.payloads.release(job.pending_files)
-        job.pending_files = ()
-        self.payloads.release(job.input_files)
-        job.input_files = ()
-        job.state = "finished"
-        self._jobs.pop(identity, None)
-        if job.identity in self._queue:
-            self._queue.remove(job.identity)
+        self._finish_job(job)
 
     def _publish_failure(self, identity, error):
         job = self._jobs.get(identity)
         if job is None:
             return
-        self.payloads.release(job.pending_files)
-        self.payloads.release(job.input_files)
-        job.pending_files = job.input_files = ()
-        job.pending_value = job.pending_preview = None
         job.error = job.error or HelperError(error or "GPU helper failed")
-        job.state = "finished"
-        self._jobs.pop(identity, None)
-        if identity in self._queue:
-            self._queue.remove(identity)
+        self._finish_job(job)
 
     def _publish_cancelled(self, identity):
         job = self._jobs.get(identity)
         if job is None:
             return
-        self.payloads.release(job.pending_files)
-        self.payloads.release(job.input_files)
-        job.pending_files = job.input_files = ()
-        job.pending_value = job.pending_preview = None
         job.error = CancelledError("GPU helper computation cancelled")
-        job.state = "finished"
-        self._jobs.pop(identity, None)
-        if identity in self._queue:
-            self._queue.remove(identity)
+        self._finish_job(job)
 
     def _fail_queued(self, error):
         for identity in tuple(self._queue):
-            job = self._jobs.pop(identity, None)
-            if job is None:
-                continue
-            self.payloads.release(job.input_files)
-            job.input_files = ()
-            job.error = HelperError(error or "GPU helper failed")
-            job.state = "finished"
-        self._queue.clear()
+            self._publish_failure(identity, error)
 
     def _cancel_queued(self):
         active_id = self.state.active_id
         for identity in tuple(self._queue):
-            if identity == active_id:
-                continue
-            job = self._jobs.pop(identity, None)
-            if job is None:
-                continue
-            self.payloads.release(job.input_files)
-            job.input_files = ()
-            job.error = CancelledError("GPU helper shut down before dispatch")
-            job.state = "finished"
-        self._queue[:] = [identity for identity in self._queue
-                          if identity == active_id]
+            if identity != active_id:
+                self._publish_cancelled(identity)
 
     def _process_exited(self):
-        error = self.state.error
-        code = self._process.poll() if self._process is not None else 0
-        if error is None and code not in (0, None):
-            error = f"GPU helper exited with status {code}"
-        self._transition(helper_policy.Event(
-            "exited", generation=self.state.generation, error=error,
-        ))
+        self._transition(self._process_observation("exited"))
 
     def physical_terminal(self):
         return self._process is None or self._process.poll() is not None
 
     def close(self):
         _require_main_thread()
-        if self._closed and self.physical_terminal():
-            return
-        self._closed = True
-        if self._process is None:
-            self._transition(helper_policy.Event(
-                "shutdown", generation=self.state.generation,
-            ))
-            return
-        if self._process.poll() is not None:
-            if self.state.phase not in ("failed", "closed"):
-                self._process_exited()
-            if self.state.phase == "failed":
-                self._transition(helper_policy.Event(
-                    "shutdown", generation=self.state.generation,
-                ))
-            return
-        self._transition(helper_policy.Event(
-            "shutdown", generation=self.state.generation,
-        ))
-        deadline = time.monotonic() + self.SHUTDOWN_SECONDS
-        while self._process.poll() is None and time.monotonic() < deadline:
+        self._transition(self._process_observation("shutdown"))
+        while helper_policy.close_pending(self.state):
             self.poll()
-            time.sleep(0.005)
-        if self._process.poll() is None:
-            self._transition(helper_policy.Event(
-                "failure", generation=self.state.generation,
-                error=self.state.error or "GPU helper shutdown timed out",
-            ))
-            deadline = time.monotonic() + 0.5
-            while self._process.poll() is None and time.monotonic() < deadline:
-                self.poll()
+            if helper_policy.close_pending(self.state):
                 time.sleep(0.005)
-        if self._process.poll() is None:
-            self._transition(helper_policy.Event(
-                "kill", generation=self.state.generation,
-            ))
-            try:
-                self._process.wait(timeout=2)
-            except subprocess.TimeoutExpired as error:
-                raise RuntimeError("GPU helper did not physically retire") from error
-        self._process_exited()
-        if self.state.phase == "failed":
-            self._transition(helper_policy.Event(
-                "shutdown", generation=self.state.generation,
-            ))
+        # A later close can finish a child that outlived the kill deadline.
+        if self.state.phase == "unretired":
+            self.poll()
+        problem = helper_policy.close_problem(self.state)
+        if problem is not None:
+            raise RuntimeError(problem) from self._cleanup_error
 
     def _cleanup(self):
-        if self._channel is not None:
-            self._channel.close()
-            self._channel = None
-        if self._listener is not None:
-            self._listener.close()
-            self._listener = None
-        if self._log is not None:
-            self._log.close()
-            self._log = None
-        self.payloads.close()
+        failures = []
+        for attribute in ("_channel", "_listener", "_log"):
+            resource = getattr(self, attribute)
+            if resource is not None:
+                try:
+                    resource.close()
+                except Exception as error:
+                    failures.append(error)
+                else:
+                    setattr(self, attribute, None)
+        try:
+            self.payloads.close()
+        except Exception as error:
+            failures.append(error)
         if self._temporary is not None:
-            self._temporary.cleanup()
-            self._temporary = None
+            try:
+                self._temporary.cleanup()
+            except Exception as error:
+                failures.append(error)
+            else:
+                self._temporary = None
+        # PayloadStore deliberately retains paths when unlink fails. A returned
+        # close call alone is therefore not evidence that storage was released.
+        self.payloads.owned.difference_update(
+            path for path in tuple(self.payloads.owned) if not path.exists())
+        if self.payloads.owned:
+            failures.append(RuntimeError("GPU helper still owns payload files"))
+        if failures:
+            raise ExceptionGroup("GPU helper cleanup failed", failures)
 
 
 def _module_name(value):

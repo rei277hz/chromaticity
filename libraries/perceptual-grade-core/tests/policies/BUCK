@@ -13,6 +13,13 @@ python_test(
 )
 
 python_test(
+    name = "scheduler_queries",
+    srcs = ["test_scheduler_queries.py"],
+    base_module = "tests.policies",
+    deps = ["//libraries/perceptual-grade-core:runtime"],
+)
+
+python_test(
     name = "output",
     srcs = ["test_output.py"],
     base_module = "tests.policies",
@@ -44,7 +51,6 @@ python_test(
     srcs = ["test_bake_queue.py"],
     base_module = "tests.policies",
     deps = [
-        "//libraries/blender-runtime:abi",
         "//libraries/perceptual-grade-core:machines",
     ],
 )

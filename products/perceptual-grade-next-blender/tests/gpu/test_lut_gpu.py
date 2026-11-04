@@ -1,5 +1,8 @@
-"""Actual Blender compute output for forward Stage 1 LUT baking."""
+"""Actual GPU Stage 1/2 Stack evaluation and native lookup parity."""
 
+import asyncio
+from dataclasses import replace
+from functools import partial
 import unittest
 from unittest.mock import patch
 
@@ -8,28 +11,13 @@ import gpu
 import numpy as np
 
 from color_tools.kernel import lut
+from color_tools.kernel.stage2_graph import build_stage2_group
+from color_tools.kernel.settings import LinearSettings, Settings, ToneSettings
 from color_tools.lut_gpu import StackGPUBackend
+from color_tools.runtime.grade_preparation import GradePreparer
+from tools.perceptual_grade.reports.native import NativeFixture
+from tools.perceptual_grade.reports.oracle import evaluate_full
 from .gpu_support import initialize
-
-
-def expected_cube(matrices, size):
-    matrix, to_lut, from_lut, signature = lut._stack_matrix(matrices, "ACEScg")
-    coordinates = lut.axis(lut.SIZE)
-    if size == lut.PREVIEW_SIZE:
-        coordinates = coordinates[::2]
-    lattice = np.stack(np.meshgrid(coordinates, coordinates, coordinates,
-                                   indexing="ij"), axis=-1)
-    values = (lattice @ matrix.T).astype(np.float32)
-    edges = np.zeros((3, size, size, size, 3), dtype=np.float32)
-    for direction in range(3):
-        delta = np.zeros(size, dtype=np.float64)
-        delta[:-1] = np.diff(coordinates)
-        shape = [1, 1, 1, 1]
-        shape[direction] = size
-        edges[direction] = (
-            delta.reshape(shape) * matrix[:, direction].reshape(1, 1, 1, 3)
-        ).astype(np.float32)
-    return values, edges, signature, to_lut, from_lut
 
 
 class LUTGPUComputeTests(unittest.TestCase):
@@ -37,121 +25,119 @@ class LUTGPUComputeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.gpu = initialize()
 
-    def bake_progressive(self, matrices, *, interleave=False):
+    def prepare(self, settings):
+        preparer = GradePreparer()
+        try:
+            async def run():
+                return await asyncio.gather(*(preparer.prepare(item) for item in settings))
+            return tuple(asyncio.run(run()))
+        finally:
+            preparer.close()
+
+    def bake(self, settings=(), *, space="ACEScg", progressive=False, interleave=False):
+        settings = tuple(replace(item, space=space) for item in settings)
+        prepared = self.prepare(settings)
         backend = StackGPUBackend()
-        job = backend.create_matrices(matrices, "ACEScg", True)
-        preview = full = None
+        job = backend.create_prepared(prepared, space, progressive, settings=settings)
+        receipts = {}
         unrelated = None
         try:
-            while full is None:
+            while "full" not in receipts:
                 receipt = job.advance()
-                if interleave and unrelated is None and job.cursor:
-                    pixels = np.tile(
-                        np.array((7.0, 11.0, 13.0, 17.0), np.float32),
-                        (16, 16, 1),
-                    )
+                if interleave and unrelated is None:
+                    pixels = np.tile(np.array((7., 11., 13., 17.), np.float32), (16, 16, 1))
                     unrelated = self.gpu.types.GPUTexture(
                         (16, 16), format="RGBA32F",
                         data=self.gpu.types.Buffer("FLOAT", pixels.shape, pixels),
                     )
-                    values = np.asarray(unrelated.read(), dtype=np.float32)
-                    np.testing.assert_array_equal(
-                        values.reshape(-1, 4),
-                        np.tile(np.array((7.0, 11.0, 13.0, 17.0), np.float32),
-                                (16 * 16, 1)),
-                    )
+                    np.testing.assert_array_equal(np.asarray(unrelated.read()).reshape(16, 16, 4), pixels)
                 if receipt is not None:
-                    quality, prepared = receipt
-                    if quality == "preview":
-                        preview = prepared.cube
-                    else:
-                        full = prepared.cube
+                    quality, result = receipt
+                    receipts[quality] = result.cube
         finally:
             job.close()
             backend.close()
-        self.assertIsNotNone(preview)
-        self.assertIsNotNone(full)
-        return preview, full
+        return receipts, prepared
 
-    def test_gpu_values_and_edge_planes_match_independent_reference(self):
-        matrices = (
-            np.array(((1.0, .25, 0.0), (0.0, .9, .1), (.2, 0.0, 1.1))),
-            np.array(((.8, 0.0, .1), (.1, 1.0, 0.0), (0.0, .2, 1.1))),
-        )
-        preview, full = self.bake_progressive(matrices, interleave=True)
-
-        expected_preview = expected_cube(matrices, lut.PREVIEW_SIZE)
-        expected_full = expected_cube(matrices, lut.SIZE)
-        self.assertEqual(preview.signature, expected_preview[2])
-        self.assertEqual(full.signature, expected_full[2])
-        np.testing.assert_allclose(preview.values, expected_preview[0], rtol=2e-6,
-                                   atol=1e-5)
-        np.testing.assert_allclose(preview.edge_values, expected_preview[1],
-                                   rtol=2e-6, atol=1e-5)
-        np.testing.assert_allclose(full.values, expected_full[0], rtol=2e-6,
-                                   atol=1e-5)
-        np.testing.assert_allclose(full.edge_values, expected_full[1],
-                                   rtol=2e-6, atol=1e-5)
-        np.testing.assert_array_equal(preview.values, full.values[::2, ::2, ::2])
-
-    def test_identity_gpu_cube_and_atlas_packing(self):
-        preview, full = self.bake_progressive((np.eye(3),))
+    def test_empty_stack_identity_and_atlas_packing(self):
+        receipts, _ = self.bake(progressive=True, interleave=True)
+        preview, full = receipts["preview"], receipts["full"]
         axis = lut.axis()
         expected = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
         np.testing.assert_allclose(full.values, expected, rtol=0, atol=1e-4)
-        self.assertEqual(full.shader_pixels().shape,
-                         (lut.ATLAS_HEIGHT, lut.ATLAS_WIDTH, 4))
-        self.assertEqual(full.compositor_pixels().shape, full.shader_pixels().shape)
-        self.assertTrue(np.isfinite(full.shader_pixels()).all())
+        np.testing.assert_array_equal(preview.values, full.values[::2, ::2, ::2])
+        self.assertEqual(full.shader_pixels().shape, (lut.ATLAS_HEIGHT, lut.ATLAS_WIDTH, 4))
         self.assertTrue(np.isfinite(full.compositor_pixels()).all())
-        points = np.array(((-.01, .2, 1.0), (lut.MAXIMUM + 20, 100, 3.0)))
-        np.testing.assert_allclose(preview.apply(points), points, rtol=2e-5,
-                                   atol=2e-4)
 
-    def test_tiny_edge_slope_survives_at_a_large_vertex(self):
-        matrix = np.eye(3)
-        matrix[0, 1] = 1e-5
-        _preview, full = self.bake_progressive((matrix,))
-        expected = 1e-5 * (lut.axis()[1] - lut.axis()[0])
-        actual = full.edge_values[1, lut.SIZE - 1, 0, 0, 0]
-        self.assertGreater(float(actual), 0.0)
-        self.assertAlmostEqual(float(actual), float(expected), delta=1e-8)
+    def test_ordered_tone_grades_match_independent_reference_and_actual_edges(self):
+        settings = (
+            Settings(linear=LinearSettings(exposure=.4, balance=(.1, -.1)),
+                     tone=ToneSettings(input_nits=(0., 6., 42., 235., 1150.), fit=.5)),
+            Settings(linear=LinearSettings(exposure=-.15),
+                     tone=ToneSettings(input_nits=(0., 4., 32., 190., 950.), fit=-.25)),
+        )
+        receipts, _ = self.bake(settings, progressive=True)
+        full, preview = receipts["full"], receipts["preview"]
+        ids = np.array(((0, 0, 0), (8, 13, 20), (20, 17, 28), (32, 30, 24),
+                        (40, 45, 32), (64, 40, 20), (64, 64, 64)))
+        points = lut.axis()[ids]
+        expected = points
+        for item in settings:
+            expected = evaluate_full(expected, item.linear, item.tone, item.color, "ACEScg")["rgb"]
+        actual = full.values[tuple(ids.T)]
+        normalized = np.max(abs(actual - expected), axis=-1) / (1 + np.max(abs(expected), axis=-1))
+        self.assertLessEqual(float(np.max(normalized)), 1e-4)
+        np.testing.assert_array_equal(preview.values, full.values[::2, ::2, ::2])
+        for axis in range(3):
+            selected = [slice(None)] * 4
+            selected[axis] = slice(None, -1)
+            np.testing.assert_array_equal(full.edge_values[axis][tuple(selected)],
+                                          np.diff(full.values, axis=axis))
 
-    def test_compute_unavailability_fails_without_cpu_fallback(self):
+    def test_gpu_vertices_match_shader_and_compositor_grade_graphs_in_scene_basis(self):
+        settings = (Settings(
+            linear=LinearSettings(exposure=.25, source_xy=(.31, .34)),
+            tone=ToneSettings(input_nits=(0., 5., 38., 225., 1200.), fit=.25),
+        ),)
+        receipts, prepared = self.bake(settings, space="Linear Rec.2020")
+        cube = receipts["full"]
+        ids = np.tile(np.array(((8, 13, 20), (20, 17, 28), (32, 30, 24),
+                               (40, 45, 32))), (64, 1))
+        ap1 = lut.axis()[ids]
+        scene = ap1 @ cube.from_lut.T
+        alpha = np.tile(np.array((.1, .3, .7, 1.)), 64)
+        values = np.column_stack((scene, alpha))
+        expected = cube.values[tuple(ids.T)] @ cube.from_lut.T
+        for context in ("shader", "compositor"):
+            fixture = NativeFixture(
+                prepared[0], values, context,
+                builder=partial(build_stage2_group, diagnostics=True),
+            )
+            try:
+                actual = fixture.render()
+            finally:
+                fixture.close()
+            error = np.max(abs(actual["rgb"] - expected), axis=-1) / (1 + np.max(abs(expected), axis=-1))
+            index = int(np.argmax(error))
+            self.assertLessEqual(float(error[index]), 1e-4, {
+                "context": context, "index": index,
+                "actual": actual["rgb"][index].tolist(),
+                "expected": expected[index].tolist(),
+            })
+            np.testing.assert_allclose(actual["alpha"], values[:, 3], rtol=0, atol=1e-6)
+
+    def test_compute_unavailability_and_dispatch_failure_have_no_cpu_fallback(self):
         backend = StackGPUBackend()
-        original = gpu.capabilities.compute_shader_support_get
-        gpu.capabilities.compute_shader_support_get = lambda: False
-        try:
+        with patch.object(gpu.capabilities, "compute_shader_support_get", return_value=False):
             with self.assertRaisesRegex(RuntimeError, "requires GPU compute"):
-                backend.create_matrices((np.eye(3),), "ACEScg", False)
-        finally:
-            gpu.capabilities.compute_shader_support_get = original
-            backend.close()
-
-    def test_direct_request_bakes_only_full_quality_and_dispatch_failure_propagates(self):
-        backend = StackGPUBackend()
-        direct = backend.create_matrices((np.eye(3),), "ACEScg", False)
+                backend.create_prepared((), "ACEScg", False)
+        job = backend.create_prepared((), "ACEScg", False)
         try:
-            qualities = []
-            prepared = None
-            while prepared is None:
-                receipt = direct.advance()
-                if receipt is not None:
-                    quality, prepared = receipt
-                    qualities.append(quality)
-            self.assertEqual(qualities, ["full"])
-            self.assertEqual(prepared.cube.size, lut.SIZE)
-        finally:
-            direct.close()
-
-        failed = backend.create_matrices((np.eye(3),), "ACEScg", False)
-        try:
-            with patch.object(gpu.compute, "dispatch",
-                              side_effect=RuntimeError("synthetic dispatch failure")):
+            with patch.object(gpu.compute, "dispatch", side_effect=RuntimeError("synthetic dispatch failure")):
                 with self.assertRaisesRegex(RuntimeError, "synthetic dispatch failure"):
-                    failed.advance()
+                    job.advance()
         finally:
-            failed.close()
+            job.close()
             backend.close()
 
 

@@ -1,6 +1,6 @@
 """Per-node Grade lifecycle, stack membership, and output policy."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
 
@@ -25,6 +25,7 @@ class Event:
         "gesture_release",
         "stack_replace",
         "grade_changed",
+        "dispose",
     ]
     signature: Optional[str] = None
     error: Optional[str] = None
@@ -35,14 +36,15 @@ class Event:
 
 @dataclass(frozen=True)
 class Effects:
-    """Complete output policy and authorized adapter operations."""
+    """Optional output policy and authorized adapter operations."""
 
-    output_mode: Literal["current", "preview", "pending", "error"]
+    output_mode: Optional[str] = None
     prepare_signature: Optional[str] = None
     build_signature: Optional[str] = None
     build_quality: Optional[str] = None
     error: Optional[str] = None
     rebuild: bool = False
+    dispose: bool = False
 
 
 def new(
@@ -104,7 +106,6 @@ def _effects(
     rebuild: bool = False,
 ) -> Effects:
     return Effects(
-        output_mode(state),
         prepare_signature=prepare,
         build_signature=build,
         build_quality=build_quality,
@@ -113,8 +114,11 @@ def _effects(
     )
 
 
-def step(state: State, event: Event) -> tuple[State, Effects]:
+def _transition(state: State, event: Event) -> tuple[State, Effects]:
     """Reduce node lifecycle and ordered Grade Stack events."""
+    if event.kind == "dispose":
+        return new(), Effects(dispose=True)
+
     if event.kind == "stack_replace":
         changed = state.grade_ids != event.grade_ids
         next_state = State(
@@ -254,3 +258,11 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         return next_state, _effects(next_state)
 
     return state, _effects(state)
+
+
+def step(state: State, event: Event) -> tuple[State, Effects]:
+    """Attach the resulting presentation policy to authorized work effects."""
+    next_state, effects = _transition(state, event)
+    if effects.dispose:
+        return next_state, effects
+    return next_state, replace(effects, output_mode=output_mode(next_state))

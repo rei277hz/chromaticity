@@ -31,8 +31,6 @@ def create(_application):
     _session = _application.app.identity
     _discovered = None
     RECORDS = '_pg_ownership_repairs'
-    _edge_queries = _application.app.store(machine=_application.machines['edge_effect'],
-        initial=dict(occurrence=1, before=0, after=0))
 
 
     def edge_token(value):
@@ -51,8 +49,7 @@ def create(_application):
 
 
     def edge_count(edges, selected):
-        return _edge_queries.query('edge_count', edges=tuple(edge_token(edge) for edge in edges),
-                                   selected=edge_token(selected))
+        return tuple(edge_token(edge) for edge in edges).count(edge_token(selected))
 
 
     def effect_event(store, kind, occurrence):

@@ -84,9 +84,9 @@ class LUTHelperTests(unittest.TestCase):
             extension.extractall(package)
         sys.path.insert(0, str(root))
         cls.module = importlib.import_module("grade_helper_test.lut_helper")
-        cls.linear_settings = importlib.import_module(
-            "grade_helper_test.kernel.settings"
-        ).LinearSettings
+        settings_module = importlib.import_module("grade_helper_test.kernel.settings")
+        cls.settings = settings_module.Settings
+        cls.linear_settings = settings_module.LinearSettings
 
     @classmethod
     def tearDownClass(cls):
@@ -106,7 +106,7 @@ class LUTHelperTests(unittest.TestCase):
         group = Group(result=({"quality": "full"},))
         backend = self.backend(group, probe_ready=False)
         job = self.module.HelperStackJob(
-            backend, ((self.linear_settings(exposure=.25),), "ACEScg"), True,
+            backend, ((self.settings(linear=self.linear_settings(exposure=.25)),), "ACEScg"), True,
         )
         with patch.object(self.module, "thaw_prepared", side_effect=lambda item: item):
             self.assertIsNone(job.advance())
@@ -134,7 +134,7 @@ class LUTHelperTests(unittest.TestCase):
                       result=({"quality": "full"},), ready=True)
         backend = self.backend(group, probe_ready=True)
         job = self.module.HelperStackJob(
-            backend, ((self.linear_settings(),), "ACEScg"), False,
+            backend, ((self.settings(),), "ACEScg"), False,
         )
         with patch.object(self.module, "thaw_prepared", side_effect=lambda item: item):
             self.assertEqual(job.advance(), ("full", {"quality": "full"}))
@@ -146,7 +146,7 @@ class LUTHelperTests(unittest.TestCase):
                       result=({"quality": "full"},), ready=False)
         backend = self.backend(group, probe_ready=True)
         job = self.module.HelperStackJob(
-            backend, ((self.linear_settings(),), "ACEScg"), True,
+            backend, ((self.settings(),), "ACEScg"), True,
         )
         with patch.object(self.module, "thaw_prepared", side_effect=lambda item: item):
             self.assertEqual(job.advance(), ("preview", {"quality": "preview"}))

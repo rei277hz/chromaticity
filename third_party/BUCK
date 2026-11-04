@@ -239,18 +239,18 @@ generate(
     visibility = ["PUBLIC"],
 )
 
-# Header revision matches Clang 22.1.4 bundled with Lean 4.34.1.
+# Header revision matches Clang 23.1.0 bundled with Lean 4.35.0.
 [
     http_file(
         name = name,
         out = filename,
         sha256 = sha256,
-        urls = ["https://raw.githubusercontent.com/llvm/llvm-project/35990504507d79e0b9deb809c8ee5e1b34ceef20/clang/lib/Headers/" + filename],
+        urls = ["https://raw.githubusercontent.com/llvm/llvm-project/ea7d852a70e8bdfaf601d6626a760f9771b2c4b4/clang/lib/Headers/" + filename],
         visibility = ["PUBLIC"],
     )
     for name, filename, sha256 in [
-        ("opencl_c", "opencl-c.h", "aa7e871a8f7d961aa4126a9fadc2196f822c21811946c90147dc7415fe677de9"),
-        ("opencl_c_base", "opencl-c-base.h", "673c4720f879c2f101504979edbd0216c9cb6a982ce2b62bd467b81fd53d8e33"),
+        ("opencl_c", "opencl-c.h", "eb0efd130c3dd4b6fd5325a273bb83dab4f649b997363f30b20970fce678380d"),
+        ("opencl_c_base", "opencl-c-base.h", "2b7694348248cb94e76a1cd3acbf058f31cb99d6fbf95f89f70eb92931762048"),
     ]
 ]
 
@@ -267,14 +267,14 @@ generate(
 
 http_file(
     name = "lean_archive",
-    out = "lean-4.34.1.tar.zst",
+    out = "lean-4.35.0.tar.zst",
     sha256 = select({
-        "prelude//os:linux": "47bf4bbd78f70c2e9670598ab7124d92b6efb7330ff33e5fbb4030f6fd72e4e4",
-        "prelude//os:macos": "65f22a4f047738ec742667b3247e836a86ebf06eabc12655c3dee00637e37866",
+        "prelude//os:linux": "7289597a44543246c9227b8cae501767e095ce17f6d448b95fc4a8dc97268f6d",
+        "prelude//os:macos": "c0c6f34f35ba1dcc5c4a5fd106fefab9eb5e8469712624dd2c868d51b63177c2",
     }),
     urls = select({
-        "prelude//os:linux": ["https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux.tar.zst"],
-        "prelude//os:macos": ["https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-darwin_aarch64.tar.zst"],
+        "prelude//os:linux": ["https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux.tar.zst"],
+        "prelude//os:macos": ["https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-darwin_aarch64.tar.zst"],
     }),
     visibility = ["PUBLIC"],
 )

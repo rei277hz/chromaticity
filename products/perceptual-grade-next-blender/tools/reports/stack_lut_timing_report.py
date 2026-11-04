@@ -23,6 +23,7 @@ def summary(values):
 
 def summarize_drags(drags):
     fields = (
+        "grade_preparation_wall_seconds",
         "gesture_seconds",
         "preview_seconds_after_last_update",
         "preview_request_to_helper_submit_seconds",
@@ -78,6 +79,10 @@ def write_report(output_dir, report):
         "Each 33³ or 65³ phase runs in the Blender GPU helper process. Dispatch batches "
         "run back-to-back inside that operation. GPU dispatch values are CPU-side submission "
         "time; texture readback is synchronous and includes waiting for queued GPU work.",
+        "",
+        "The default scenario edits Stage 2 Tone. Per-Grade Linear, Tone-table and boundary "
+        "preparation and their aggregate join are included in JSON diagnostics. The stack "
+        "then evaluates each complete Grade in order on the GPU.",
         "",
         "Request-to-helper-submit measures foreground queueing and GPU-probe delay. "
         "Helper-submit-to-result includes worker calculation, IPC, and foreground polling. "

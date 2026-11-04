@@ -41,7 +41,8 @@ value = store.query("current")    # uses the current state
 
 Machines capture the source functions. Input types and policy preconditions are
 checked atomically in the owner task. See [Invariant](../invariant/README.md)
-for source-bound proofs and unbounded loop verification.
+for source-bound transition proofs. Collection handling is trusted runtime code
+covered by ordinary tests.
 
 Effects are immutable semantic data. Product adapters perform native work and
 dispatch observations against the Store's current state, since callbacks or Undo
@@ -62,17 +63,21 @@ lifecycle coordinators compose them. Their
 [leaf requirements](requirements/inventory.bzl) and
 [coordinator requirements](requirements/coordinators/inventory.bzl) enumerate
 the mandatory source-bound properties, witnesses and mutation controls.
-Tuple counting retains duplicate occurrences and empty-input behavior.
+Runtime edge counting retains duplicate occurrences and empty-input behavior;
+the edge policy receives those counts and proves compensation decisions.
 
-The `native_evaluation` policy owns an unbounded immutable ledger of exact native
-reader leases. Ordered ingress revisions prevent a cached ready observation from
-admitting work while callbacks remain unprocessed. Candidate append/removal edits
-are checked by inductive source proofs; unmatched or foreign completion receipts
+The `native_evaluation` adapter owns an immutable ledger of exact native reader
+leases and tests candidate append/removal edits with ordinary Python operations.
+Its scalar policy checks generation, ingress revision, admission and validated
+retirement. Ordered ingress revisions prevent a cached ready observation from
+admitting work while callbacks remain unprocessed. The adapter commits a ledger
+edit only when that policy accepts it; unmatched or foreign completion receipts
 cannot release another reader. Only a validated native replacement advances the
-generation and clears old debt. Callback pairing, native-job observations and the
-replacement receipt remain adapter responsibilities. Native callbacks should
-enqueue scalar observations without waiting on the actor; foreground code commits
-them before publishing a revision-bound readiness observation.
+generation and clears old debt. Collection handling, callback pairing, native-job
+observations and the replacement receipt remain adapter responsibilities covered
+by ordinary tests. Native callbacks enqueue observations without waiting on the
+actor; foreground code commits them before publishing a revision-bound readiness
+observation.
 
 The native adapter validates physical outcomes before admitting receipts.
 Cancellation keeps execution occupancy and snapshot leases until a terminal acknowledgement or

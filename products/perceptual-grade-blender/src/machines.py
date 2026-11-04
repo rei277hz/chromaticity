@@ -25,7 +25,7 @@ def create_machines():
         'channel': _machine(channel, initializers=('initial',), queries=(
             'replacement_decision', 'linear_scope_request',
             'scope_job_admissible', 'scope_ack_admissible',
-            'scope_cycle', 'final_scope_resolution', 'scope_next')),
+            'scope_cycle')),
         'lifecycle': _machine(lifecycle, queries=('lifecycle_admits',)),
         'exact': _machine(exact),
         'display': _machine(display, queries=(

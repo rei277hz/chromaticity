@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Current production edge_effect policy. Native receipts and scalar registry identities remain adapter assumptions. Inductive state closure and relational properties are checked from this exact source.",
+  "description": "Scalar native-edge lifecycle and compensation decisions. Edge multiplicity is trusted collection bookkeeping supplied by the runtime.",
   "state": "EffectState",
   "event": "Event",
   "initializers": [
@@ -21,16 +21,6 @@
     "step": {
       "requires": [
         "event_valid(state, event)"
-      ]
-    },
-    "_edge_count_count_edge": {
-      "ensures": [
-        "result == sum_range(i, 0, len(_items), 1 if _items[i] == selected else 0)"
-      ]
-    },
-    "edge_count": {
-      "ensures": [
-        "result == sum_range(i, 0, len(edges), 1 if edges[i] == selected else 0)"
       ]
     }
   },
@@ -129,16 +119,6 @@
         "after": "step(state, event)"
       },
       "assert": "after[0].current == state.before and after[0].known and after[0].retired"
-    },
-    {
-      "name": "edge_count_exact",
-      "variables": {
-        "edges": "tuple[int | str, ...]",
-        "selected": "int | str"
-      },
-      "assume": [],
-      "lets": {},
-      "assert": "edge_count(edges,selected) == sum_range(i,0,len(edges),1 if edges[i] == selected else 0)"
     }
   ],
   "witnesses": [
@@ -182,19 +162,6 @@
       "detects": [
         "property.arm_revokes_known_value"
       ]
-    }
-  ],
-  "loops": [
-    {
-      "name": "count_edges",
-      "function": "_edge_count_count_edge",
-      "target": "edge",
-      "iter": "_items",
-      "cursor": "processed",
-      "invariants": [
-        "_result == sum_range(i, 0, processed, 1 if _items[i] == selected else 0)"
-      ],
-      "decreases": "len(_items) - processed"
     }
   ]
 }

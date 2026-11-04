@@ -22,30 +22,6 @@
       "requires": [
         "event_valid(state,event)"
       ]
-    },
-    "_final_scope_resolution_all_resolution": {
-      "ensures": [
-        "result == forall_range(i,0,len(_items),_items[i] == 65)"
-      ]
-    },
-    "final_scope_resolution": {
-      "ensures": [
-        "result == forall_range(i,0,len(resolutions),resolutions[i] == 65)"
-      ]
-    },
-    "_cyclic_first": {
-      "ensures": [
-        "(result == -1) == forall_range(i,0,len(values),not values[i])",
-        "result == -1 or (0 <= result < len(values) and values[result])",
-        "result == -1 or forall_range(i,0,len(values),(i-start)%len(values) >= (result-start)%len(values) or not values[i])"
-      ]
-    },
-    "scope_next": {
-      "ensures": [
-        "(result == -1) == forall_range(i,0,len(eligible),not eligible[i])",
-        "result == -1 or (0 <= result < len(eligible) and eligible[result])",
-        "result == -1 or forall_range(i,0,len(eligible),(i-start)%len(eligible) >= (result-start)%len(eligible) or not eligible[i])"
-      ]
     }
   },
   "properties": [
@@ -159,27 +135,6 @@
         "after": "step(state, event)"
       },
       "assert": "not after[0].live and after[0].worker == 0 and not after[0].display_available"
-    },
-    {
-      "name": "final_resolution_checks_every_element",
-      "variables": {
-        "resolutions": "tuple[int, ...]"
-      },
-      "assume": [],
-      "lets": {},
-      "assert": "final_scope_resolution(resolutions) == forall_range(i,0,len(resolutions),resolutions[i] == 65)"
-    },
-    {
-      "name": "scope_selection_is_cyclic_first",
-      "variables": {
-        "eligible": "tuple[bool, ...]",
-        "start": "int"
-      },
-      "assume": [],
-      "lets": {
-        "selected": "scope_next(eligible,start)"
-      },
-      "assert": "(selected == -1) == forall_range(i,0,len(eligible),not eligible[i]) and (selected == -1 or (0 <= selected < len(eligible) and eligible[selected] and forall_range(i,0,len(eligible),(i-start)%len(eligible) >= (selected-start)%len(eligible) or not eligible[i])))"
     },
     {
       "variables": {
@@ -413,34 +368,6 @@
       "detects": [
         "property.compatible_cycle_survives_newer_pending"
       ]
-    }
-  ],
-  "loops": [
-    {
-      "name": "all_final_resolutions",
-      "function": "_final_scope_resolution_all_resolution",
-      "target": "resolution",
-      "iter": "_items",
-      "cursor": "processed",
-      "invariants": [
-        "_result == forall_range(i,0,processed,_items[i] == 65)"
-      ],
-      "decreases": "len(_items) - processed"
-    },
-    {
-      "name": "first_eligible_scope",
-      "function": "_cyclic_first",
-      "target": "offset",
-      "iter": "range(count)",
-      "cursor": "processed",
-      "invariants": [
-        "count == len(values)",
-        "count > 0",
-        "cursor == start % count",
-        "0 <= cursor < count",
-        "forall_range(i,0,count,(i-start)%count >= processed or not values[i])"
-      ],
-      "decreases": "count - processed"
     }
   ]
 }

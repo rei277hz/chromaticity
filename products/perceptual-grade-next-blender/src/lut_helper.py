@@ -22,7 +22,7 @@ class StackHelperBackend:
                 return
             if self.runtime.phase not in ("failed", "closed"):
                 self.runtime.poll()
-            if self.runtime.phase not in ("failed", "closed"):
+            if self.runtime.phase not in ("retiring", "failed", "closed"):
                 return
             self.runtime.close()
             self.runtime = None

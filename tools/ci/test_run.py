@@ -99,7 +99,7 @@ if args[:2] == ["log", "show"]:
         self.assertEqual(json.loads((self.reports / "exits.json").read_text()),
                          {"selection": 0, "build": -15, "test": None, "events": None})
 
-    def test_proof_dependency_stops_before_any_build_or_test(self):
+    def test_out_of_scope_selection_stops_before_any_build_or_test(self):
         self.guard.return_value = 1
         with patch.object(ci_run, "execute") as execute:
             self.assertEqual(ci_run.run(self.reports, self.targets), 1)

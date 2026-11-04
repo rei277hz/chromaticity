@@ -2,7 +2,9 @@
   "version": 1,
   "state": "State",
   "event": "Event",
-  "initializers": ["new"],
+  "initializers": [
+    "new"
+  ],
   "step": "step",
   "invariants": {
     "optional_signatures_are_nonempty": "(state.desired_signature is None or state.desired_signature != '') and (state.applied_signature is None or state.applied_signature != '')",
@@ -43,6 +45,40 @@
         "result == ('current' if output_allowed(state) else ('error' if state.error is not None else ('pending' if state.applied_signature is None else 'preview')))"
       ]
     },
+    "_transition": {
+      "requires": [
+        "state.desired_signature is None or state.desired_signature != ''",
+        "state.applied_signature is None or state.applied_signature != ''",
+        "(state.applied_signature is None) == (state.applied_quality is None)",
+        "state.error is None or state.applied_signature is None",
+        "state.desired_signature is not None or state.applied_signature is None",
+        "state.desired_preparation_signature is None or state.desired_preparation_signature != ''",
+        "state.desired_signature is not None or state.desired_preparation_signature is None",
+        "event.signature is None or event.signature != ''",
+        "event.preparation_signature is None or event.preparation_signature != ''",
+        "event.kind != 'request' or event.signature is not None or event.preparation_signature is None",
+        "event.quality in ('preview', 'full')",
+        "state.applied_quality is None or state.applied_quality in ('preview', 'full')"
+      ],
+      "ensures": [
+        "result[0].desired_signature is None or result[0].desired_signature != ''",
+        "result[0].applied_signature is None or result[0].applied_signature != ''",
+        "(result[0].applied_signature is None) == (result[0].applied_quality is None)",
+        "result[0].error is None or result[0].applied_signature is None",
+        "result[0].desired_signature is not None or result[0].applied_signature is None",
+        "result[0].desired_preparation_signature is None or result[0].desired_preparation_signature != ''",
+        "result[0].desired_signature is not None or result[0].desired_preparation_signature is None",
+        "result[1].output_mode is None",
+        "result[1].error == result[0].error",
+        "result[1].dispose == (event.kind == 'dispose')",
+        "event.kind != 'dispose' or (result[0] == new() and result[1] == Effects(dispose=True))",
+        "result[1].prepare_signature is None or result[1].prepare_signature == result[0].desired_preparation_signature",
+        "(result[1].build_signature is None) == (result[1].build_quality is None)",
+        "result[0].grade_ids == (() if event.kind == 'dispose' else (event.grade_ids if event.kind == 'stack_replace' else state.grade_ids))",
+        "result[0].desired_preparation_signature == (None if event.kind == 'dispose' else ((event.preparation_signature if event.preparation_signature is not None else event.signature) if event.kind == 'request' else state.desired_preparation_signature))",
+        "result[1].rebuild == (state.grade_ids != event.grade_ids if event.kind == 'stack_replace' else (len(event.grade_ids) == 1 and event.grade_ids[0] in state.grade_ids if event.kind == 'grade_changed' else False))"
+      ]
+    },
     "step": {
       "requires": [
         "state.desired_signature is None or state.desired_signature != ''",
@@ -65,12 +101,14 @@
         "result[0].desired_signature is not None or result[0].applied_signature is None",
         "result[0].desired_preparation_signature is None or result[0].desired_preparation_signature != ''",
         "result[0].desired_signature is not None or result[0].desired_preparation_signature is None",
-        "result[1].output_mode == output_mode(result[0])",
+        "result[1].output_mode == (None if event.kind == 'dispose' else output_mode(result[0]))",
         "result[1].error == result[0].error",
+        "result[1].dispose == (event.kind == 'dispose')",
+        "event.kind != 'dispose' or (result[0] == new() and result[1] == Effects(dispose=True))",
         "result[1].prepare_signature is None or result[1].prepare_signature == result[0].desired_preparation_signature",
         "(result[1].build_signature is None) == (result[1].build_quality is None)",
-        "result[0].grade_ids == (event.grade_ids if event.kind == 'stack_replace' else state.grade_ids)",
-        "result[0].desired_preparation_signature == ((event.preparation_signature if event.preparation_signature is not None else event.signature) if event.kind == 'request' else state.desired_preparation_signature)",
+        "result[0].grade_ids == (() if event.kind == 'dispose' else (event.grade_ids if event.kind == 'stack_replace' else state.grade_ids))",
+        "result[0].desired_preparation_signature == (None if event.kind == 'dispose' else ((event.preparation_signature if event.preparation_signature is not None else event.signature) if event.kind == 'request' else state.desired_preparation_signature))",
         "result[1].rebuild == (state.grade_ids != event.grade_ids if event.kind == 'stack_replace' else (len(event.grade_ids) == 1 and event.grade_ids[0] in state.grade_ids if event.kind == 'grade_changed' else False))"
       ]
     }
@@ -222,6 +260,43 @@
         "requested": "step(stack, Event('request', 'kernel-a', preparation_signature='prep-a'))"
       },
       "assert": "requested[0].grade_ids == (4, 7, 4) and requested[0].desired_preparation_signature == 'prep-a'"
+    },
+    {
+      "name": "disposal_clears_node_lifecycle",
+      "variables": {},
+      "lets": {
+        "disposed": "step(new('b', 'a', 'preview', True, grade_ids=(4, 7, 4), desired_preparation_signature='prep-b'), Event('dispose'))"
+      },
+      "assert": "disposed[0] == new() and not output_allowed(disposed[0])"
+    },
+    {
+      "name": "disposal_authorizes_cleanup_without_presentation",
+      "variables": {},
+      "lets": {
+        "disposed": "step(new('a', error='failed', grade_ids=(4, 7), desired_preparation_signature='prep-a'), Event('dispose'))"
+      },
+      "assert": "disposed[1] == Effects(dispose=True) and disposed[1].output_mode is None and disposed[1].prepare_signature is None and disposed[1].build_signature is None and disposed[1].build_quality is None and disposed[1].error is None and not disposed[1].rebuild"
+    },
+    {
+      "name": "disposal_is_idempotent",
+      "variables": {},
+      "lets": {
+        "disposed": "step(new('a', 'a'), Event('dispose'))",
+        "repeated": "step(disposed[0], Event('dispose'))"
+      },
+      "assert": "repeated == disposed and repeated[1].dispose"
+    },
+    {
+      "name": "disposed_demand_rejects_correlated_late_receipts",
+      "variables": {},
+      "lets": {
+        "disposed": "step(new('a', 'a', 'full', True, desired_preparation_signature='prep-a'), Event('dispose'))",
+        "prepared": "step(disposed[0], Event('preparation_result', 'a', preparation_signature='prep-a'))",
+        "installed": "step(prepared[0], Event('installation_result', 'a'))",
+        "preparation_failed": "step(installed[0], Event('preparation_result', error='late', preparation_signature='prep-a'))",
+        "installation_failed": "step(preparation_failed[0], Event('installation_result', 'a', 'late'))"
+      },
+      "assert": "prepared[0] == disposed[0] and prepared[1].build_signature is None and installed[0] == disposed[0] and preparation_failed[0] == disposed[0] and installation_failed[0] == disposed[0] and not output_allowed(installation_failed[0])"
     }
   ],
   "witnesses": [
@@ -241,17 +316,21 @@
     {
       "name": "duplicate_grade_occurrences_are_preserved",
       "variables": {},
-      "lets": {"result": "step(new(), Event('stack_replace', grade_ids=(7, 7)))"},
+      "lets": {
+        "result": "step(new(), Event('stack_replace', grade_ids=(7, 7)))"
+      },
       "assert": "result[0].grade_ids == (7, 7) and result[1].rebuild"
     }
   ],
   "mutations": [
     {
       "name": "replacement_ignores_order",
-      "function": "step",
+      "function": "_transition",
       "target": "state.grade_ids != event.grade_ids",
       "replacement": "False",
-      "detects": ["property.replacement_rebuild_tracks_order_and_multiplicity"]
+      "detects": [
+        "property.replacement_rebuild_tracks_order_and_multiplicity"
+      ]
     }
   ]
 }

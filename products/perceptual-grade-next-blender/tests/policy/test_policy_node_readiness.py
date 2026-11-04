@@ -1,6 +1,7 @@
 import unittest
 
 from policy.node import (
+    Effects,
     Event,
     new,
     output_allowed,
@@ -247,6 +248,58 @@ class KernelReadinessTests(unittest.TestCase):
         self.assertEqual(effects.output_mode, "current")
         self.assertEqual(effects.prepare_signature, "grade-a")
         self.assertIsNone(effects.build_signature)
+
+    def test_disposal_clears_lifecycle_and_only_requests_cleanup(self):
+        states = (
+            new(),
+            new("grade-a", desired_preparation_signature="preparation-a"),
+            self.installed(),
+            new("grade-b", "grade-a", "preview", True, grade_ids=(1, 2, 1),
+                desired_preparation_signature="preparation-b"),
+            new("grade-a", error="installation failed", grade_ids=(1, 2),
+                desired_preparation_signature="preparation-a"),
+        )
+        for state in states:
+            with self.subTest(state=state):
+                disposed, effects = step(state, Event("dispose"))
+                self.assertEqual(disposed, new())
+                self.assertEqual(effects, Effects(dispose=True))
+                self.assertFalse(output_allowed(disposed))
+                repeated, repeated_effects = step(disposed, Event("dispose"))
+                self.assertEqual(repeated, disposed)
+                self.assertEqual(repeated_effects, effects)
+
+    def test_correlated_late_receipts_cannot_restore_disposed_demand(self):
+        state, _ = step(
+            new("grade-a", "grade-a", "full", True, grade_ids=(1,),
+                desired_preparation_signature="preparation-a"),
+            Event("dispose"),
+        )
+        for kind in ("preparation_result", "installation_result"):
+            for quality in ("preview", "full"):
+                for error in (None, "late failure"):
+                    with self.subTest(kind=kind, quality=quality, error=error):
+                        unchanged, effects = step(state, Event(
+                            kind, "grade-a", error, quality,
+                            preparation_signature="preparation-a",
+                        ))
+                        self.assertEqual(unchanged, state)
+                        self.assertFalse(output_allowed(unchanged))
+                        self.assertIsNone(effects.prepare_signature)
+                        self.assertIsNone(effects.build_signature)
+                        self.assertIsNone(effects.build_quality)
+                        self.assertIsNone(effects.error)
+                        self.assertFalse(effects.rebuild)
+                        self.assertFalse(effects.dispose)
+
+        # Disposal withdraws demand; it does not introduce a permanent dead
+        # state. A new owner lifecycle may explicitly request work again.
+        requested, effects = self.transition(state, "request", "grade-b")
+        self.assertEqual(effects.prepare_signature, "grade-b")
+        prepared, effects = self.transition(requested, "preparation_result", "grade-b")
+        self.assertEqual(effects.build_signature, "grade-b")
+        installed, _ = self.transition(prepared, "installation_result", "grade-b")
+        self.assertTrue(output_allowed(installed))
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,7 +26,7 @@ class MachineFixture:
             queries = {
                 'attempt': ('occupied', 'can_clean', 'can_admit'),
                 'gpu': ('gpu_available',), 'retry': (), 'startup': (),
-                'ownership': ('admits', 'resolves'), 'edge_effect': ('edge_count',),
+                'ownership': ('admits', 'resolves'), 'edge_effect': (),
             }
             from color_tools.blender_runtime.machines import policy_machine
             cache[name] = policy_machine(name, queries=queries[name])

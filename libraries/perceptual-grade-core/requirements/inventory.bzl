@@ -32,8 +32,6 @@ LEAF_REQUIREMENTS = {
             "foreign_channel_events_preserve_state",
             "new_worker_requires_live_ready_request",
             "shutdown_removes_logical_authority",
-            "final_resolution_checks_every_element",
-            "scope_selection_is_cyclic_first",
             "historical_publication_requires_automatic_authority",
             "historical_publication_preserves_current_failure",
             "frame_cycle_requires_compatible_owner",

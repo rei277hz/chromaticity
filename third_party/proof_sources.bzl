@@ -1,13 +1,13 @@
-"""Hash-pinned mathlib 4.34.1 dependency closure from its upstream manifest."""
+"""Hash-pinned mathlib 4.35.0 dependency closure from its upstream manifest."""
 
 PROOF_SOURCES = {
-    "mathlib": ("leanprover-community/mathlib4", "d13f23b723b8a846827a245b89c10fc7d3f11612", "a8c019444a1edd6091d8416e492e218a311db340dafbea96c61c6dc358c28f05"),
-    "plausible": ("leanprover-community/plausible", "118aa17ee84656b8bd727fef7c458ee8c833385c", "e5ed8b63ae57811987cc68e89b87fdd9932ed8ec4bda187abd4db5d9321a8f48"),
-    "LeanSearchClient": ("leanprover-community/LeanSearchClient", "ddf04cf3949fa556442341e87d47f9f6e6074707", "55f9b52a8134dd4e14176999cda127af2c1190241048864b546ae7c802ae6e37"),
-    "importGraph": ("leanprover-community/import-graph", "e928b72544873815af278d38681b31c0293588e3", "5daec3b3889d425440a93f4a47de29a41836266359e29472abbc767ed2188eed"),
-    "proofwidgets": ("leanprover-community/ProofWidgets4", "106ff4fafc74ef4ac99d81dbf3ab399118f497a5", "c6cf369f63a997035e36c5f6f76afdba77c2e047988cb6abdec362a1098552de"),
-    "aesop": ("leanprover-community/aesop", "355695d523e41d0554926416cba2a2b3544fbbc9", "80792fbdc4f7a12a9783c32ee5eba7387d450bc26ababf5ff6f16c4dc59b633a"),
-    "Qq": ("leanprover-community/quote4", "6a489d9af5d0c47e5b259e2e8bcdfc1811b5a259", "c61940f3fe63e39db9b25b8ac4ce1bc9a9466801055b9218804556d85e9a6e29"),
-    "batteries": ("leanprover-community/batteries", "f2effa3d803fda822b1f97b806c47cf2adfbcbc2", "1987093d3e0af3c75084f48095a8eb0fac0751b11712c51fb05b31e71d64220b"),
-    "Cli": ("leanprover/lean4-cli", "e92c9f15fdfacc8536f31cfb3b7ad26c3c8cd204", "1ccb3440fc468e393b064a446368c4b317b7c57ffe78cee3b2b932333834e007"),
+    "mathlib": ("leanprover-community/mathlib4", "56a005855ea17e0b0958f73ec801ae140b0a1679", "0b7e30024f363b0a29af119780d720430aa625bad56897faff91a9fcb9e0bdec"),
+    "plausible": ("leanprover-community/plausible", "dfa4f38190d07c37e315953e08b90fe2d95b3c24", "38ee06eb210766f8654488c3bef5eaab69da8973df1d3086d7e9d9acd8a62712"),
+    "LeanSearchClient": ("leanprover-community/LeanSearchClient", "d6b4c7be5be75ec4917c873ac50c756dc1436372", "48a1db95bdf50539108c8c3d8d81a6055e5c1634d89d4e027884c50b085cd24c"),
+    "importGraph": ("leanprover-community/import-graph", "a41f0e9a4dea23188ea9cc1c41ac9f8bbafe0b93", "91875838f855188049316843074bef65d4217eb77deb7583859b2b1361890599"),
+    "proofwidgets": ("leanprover-community/ProofWidgets4", "df72b022e558978a1c50264cfc4d7fec86fa8e04", "ecebf36cb328900ef5ad80f32b7685837ebaeedcb560a5b5bb01e1824ca50e8d"),
+    "aesop": ("leanprover-community/aesop", "4a174c490d8707121c4a9290800489f105d85e07", "cfe751d074f39c85c1b8f5f17559055fc97ba566e3e5c04f9cec7b3a2ee3d9ee"),
+    "Qq": ("leanprover-community/quote4", "dce0ad79c486cb1fb504af04f953c3466b0c6db8", "7e52ecadce6e19bef51f3953f23e7fbad8e7ea6e2e7a7220366ad188c4a84797"),
+    "batteries": ("leanprover-community/batteries", "66e469188fe07963e5cf666c7d4433f45b8131c5", "ff42abf6afe22a336c31ebbf9b0caac33dcbcdcc63efa9a9f54d9ff8fb103730"),
+    "Cli": ("leanprover/lean4-cli", "c24fe6078c630e89b489bffe59b3e20ac30d12c8", "a40996a648058268e0c50b562729632414d4742b83060a657c520f4475d12e01"),
 }

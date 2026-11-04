@@ -15,6 +15,13 @@ transactions = _component('ownership.transactions')
 
 
 class OwnershipTests(OwnershipFixture):
+    def test_edge_multiplicity_preserves_typed_nested_identities(self):
+        edges = (3, 3, '3', ('node', 3), ('node', '3'), None)
+        for selected, expected in ((3, 2), ('3', 1), (('node', 3), 1),
+                                   (('node', '3'), 1), (None, 1), ('missing', 0)):
+            with self.subTest(selected=selected):
+                self.assertEqual(transactions.edge_count(edges, selected), expected)
+
     def test_saved_repair_records_never_authorize_runtime_compensation(self):
         tree = bpy.data.node_groups.new('Authored native graph', 'CompositorNodeTree')
         tree[transactions.RECORDS] = 'historical data is not an executable command'

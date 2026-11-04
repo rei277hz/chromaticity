@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new_disposal",
+    "new_retirement"
+  ],
+  "step": "step",
+  "invariants": {},
+  "contracts": {
+    "new_disposal": {
+      "ensures": [
+        "result == State('disposal')"
+      ]
+    },
+    "new_retirement": {
+      "ensures": [
+        "result == State('retirement')"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "deletion_requires_eviction_and_fresh_eligibility",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].action != 'remove' or (state.phase == 'recheck' and (not event.failed) and event.live and event.owned and (event.users == 0) and (not event.protected))"
+    },
+    {
+      "name": "only_eviction_receipt_reaches_recheck",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[0].phase != 'recheck' or (state.phase == 'evict' and not event.failed)"
+    },
+    {
+      "name": "live_users_prevent_deletion",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "event.users > 0"
+      ],
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].action != 'remove'"
+    },
+    {
+      "name": "removed_wrappers_never_delete",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "not event.live"
+      ],
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].action != 'remove'"
+    },
+    {
+      "name": "failed_eviction_prevents_deletion",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('evict'), Event(failed=True))"
+      },
+      "assert": "transition == (State('terminal'), Effects())"
+    },
+    {
+      "name": "disposal_fences_before_detach",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].action != 'detach' or (state.phase == 'fence' and (not event.failed))"
+    },
+    {
+      "name": "terminal_receipts_are_inert",
+      "variables": {
+        "event": "Event"
+      },
+      "assert": "step(State('terminal'), event) == (State('terminal'), Effects())"
+    },
+    {
+      "name": "adoption_requires_all_observations",
+      "variables": {
+        "observation": "Adoption"
+      },
+      "assert": "not may_adopt(observation) or (observation.owner_matches and observation.node_matches and observation.space_matches and observation.complete and observation.image_valid and observation.image_agrees)"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "shared_survivor_retains_resource",
+      "variables": {},
+      "lets": {
+        "started": "step(new_disposal(), Event())",
+        "fenced": "step(started[0], Event())",
+        "detached": "step(fenced[0], Event())",
+        "observed": "step(detached[0], Event(live=True, owned=True, users=1))"
+      },
+      "assert": "fenced[1].action == 'detach' and detached[1].action == 'observe' and (observed[0].phase == 'terminal') and (observed[1] == Effects())"
+    },
+    {
+      "name": "unused_resource_retires_after_eviction",
+      "variables": {},
+      "lets": {
+        "started": "step(new_retirement(), Event())",
+        "observed": "step(started[0], Event(live=True, owned=True))",
+        "evicted": "step(observed[0], Event())",
+        "checked": "step(evicted[0], Event(live=True, owned=True))",
+        "removed": "step(checked[0], Event())"
+      },
+      "assert": "evicted[1].action == 'recheck' and checked[1].action == 'remove' and (removed == (State('terminal'), Effects()))"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "removal_skips_cache_eviction",
+      "function": "step",
+      "target": "(State('evict'), Effects('evict'))",
+      "replacement": "(State('remove'), Effects('remove'))",
+      "detects": [
+        "property.deletion_requires_eviction_and_fresh_eligibility"
+      ]
+    },
+    {
+      "name": "removal_ignores_live_users",
+      "function": "eligible",
+      "target": "event.users == 0",
+      "replacement": "True",
+      "detects": [
+        "property.live_users_prevent_deletion"
+      ]
+    }
+  ]
+}

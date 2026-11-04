@@ -1,20 +1,52 @@
 # Perceptual Grade for Blender
 
 This step adds Grade and Grade Stack nodes to the Shader and Compositor Color Add
-menus. Grade nodes apply Stage 1 through the product's `kernel` package; Stack nodes
-apply ordered, forward-only Stage 1 Grades through progressive 33³/65³ LUTs.
-Both products use shared Grade datablocks and the same Linear controls.
+menus. Grade nodes apply Stage 1 and Tone through the product's `kernel` package;
+Stack nodes apply ordered, forward-only Stage 1 and Tone Grades through progressive
+33³/65³ GPU LUTs. Both products use shared Grade datablocks and the same Grade controls.
 Create or select a Grade using the node's datablock selector before adjusting it.
-Without a Grade, the Linear controls are disabled and local setting writes reset
+Without a Grade, Linear and Tone controls are disabled and local setting writes reset
 to neutral without creating a datablock.
 
 A private asyncio loop owns the preparation schedulers. Each shared
 Grade has one active preparation and one replaceable latest settings snapshot;
-rapid edits do not enqueue a history of slider positions. Pure preparation runs
-on one worker thread. Shader and Compositor share that prepared result, while
-Blender's main thread owns their separate kernel graphs and per-node policy state.
+rapid edits do not enqueue a history of slider positions. Linear, Tone-table, and
+boundary preparation run concurrently from one frozen Grade snapshot and join
+before a complete prepared result can publish. Shader and Compositor share that
+result, while Blender's main thread owns their separate kernel graphs and per-node
+policy state.
 The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
+
+A Grade builds its complete Linear/Tone graph once per working space and tree
+type. Ordinary adjustments replace the pixels of one persistent 512 × 1 RGBA32F
+parameter image (8 KiB), shared by all nodes using that Grade, including Shader
+and Compositor nodes. Equal-valued independent Grades own separate writable
+images. Slots 0–256 contain the Tone endpoint value, slope, and curvature; slots
+257–259 contain the Linear matrix's red/blue columns and neutral row sums; slots
+260–261 contain the Tone scalars and domain. Fixed texture samples read these
+values instead of baking them into socket defaults. The boundary texture,
+viewing constants, links, and output adapter remain fixed within a working space.
+Updates require no graph replacement or image allocation. Publication packs the
+parameter image and invalidates its cached native result before reporting a
+successful installation, so compositor previews refresh automatically. File-load
+reconciliation checks the installed signature and kernel schema before accepting
+restored data.
+
+Compositor Grade graphs support both GPU Auto and Full precision without changing
+the scene setting. The output guard carries signed achromatic lightness and a
+bounded normalized distance to white, avoiding large squared-energy intermediates
+that can clip in Auto's half-precision preview buffers. CPU and GPU Full retain
+the existing full-precision accuracy gates; Auto previews allow half-precision
+rounding.
+
+Foreground publications coalesce to the newest complete result per source and
+process one source per timer turn, with no preview frequency cap. They defer for
+observed render/compositor/bake activity and interface locks. Blender's public
+job notifications provide admission checks, not a universal lock against native
+image readers. A render worker waits at its pre-evaluation callback while a
+foreground timer performs exact reconciliation; synchronous main-thread renders
+use the same scoped preflight directly.
 
 Stack LUT preparation runs in a private Blender GPU helper. Each helper job
 dispatches its 33³ preview and 65³ refinement back-to-back, with a private output
@@ -32,6 +64,50 @@ preparation never waits for graph installation. Current failures produce a visib
 error and magenta output with alpha preserved. File load, working-space changes,
 and Grade reassignment fence obsolete source subscriptions and reconcile kernels.
 Shutdown withdraws pending demand and waits for active physical work to retire.
+
+Measure Grade preparation, texture upload, and node-tree construction with:
+
+```sh
+buck2 run //products/perceptual-grade-next-blender/tools/reports:grade_preparation_timing -- --output-dir /tmp/perceptual-grade-preparation
+```
+
+Measure installed Grade publications during continuous changes in a Shading
+workspace with a sidebar and rendered viewport:
+
+```sh
+buck2 run --remote-only //products/perceptual-grade-next-blender/tools/reports:grade_update_timing -- --output-dir /tmp/perceptual-grade-updates --stage both
+```
+
+This report records preparation, publication, UI heartbeat, and viewport draw
+rates, plus resource identity checks and final settling. It has no performance
+gate. Uploads exceeding 60/s do not by themselves establish visible 60 fps; the
+report distinguishes these measurements. The bundled Linux display fixture
+uses Mesa llvmpipe, so its GPU work executes on CPU cores.
+Use `--viewport solid` to isolate publication and UI work from the rendered
+viewport, and `--verify-render-preflight` to additionally invoke a native GUI
+render with a pending adjustment. The latter is also a regression test:
+
+```sh
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:grade_render_preflight
+```
+
+Check interactive compositor pixels and automatic refresh on the installed
+extension with:
+
+```sh
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:compositor_gui
+```
+
+This test uses a varying image and the live Viewer; final renders alone do not
+exercise Auto's half-precision path. It checks CPU, GPU Full, and GPU Auto,
+including signed/HDR colors and alpha. Auto uses the pixel-normalized error
+`max(abs(actual - expected)) / (1 + max(abs(expected)))` with a 0.01 limit.
+
+Measure continuous Stack Tone LUT publication with:
+
+```sh
+buck2 run //products/perceptual-grade-next-blender/tools/reports:stack_lut_timing -- --output-dir /tmp/perceptual-grade-stack-timing
+```
 
 The extension ZIP uses `src/__init__.py` directly as its root entrypoint and
 places the product's `nodes.py` beside it. Product-owned state-machine policies

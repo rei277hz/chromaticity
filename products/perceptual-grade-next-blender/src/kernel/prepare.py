@@ -1,5 +1,6 @@
 """Host-independent preparation of static matrices and tone coefficients."""
 from dataclasses import dataclass, replace
+from typing import Optional, TYPE_CHECKING
 import math
 import numpy as np
 
@@ -8,6 +9,9 @@ from .settings import D65, LOW_Y, SPACES, LinearSettings, ToneSettings, ColorSet
 from .color_prepare import PreparedColor, prepare_color
 from .tables import TEXTURE_WIDTH, kernel, readonly, build_runtime_table
 from .layouts import TONE_CELLS
+
+if TYPE_CHECKING:
+    from .stage2_parameters import PreparedParameters
 
 GAMMA = .525*(1.48+math.sqrt(.1))
 CAT16 = np.asarray(color_linear.CAT16, dtype=np.float64)
@@ -265,6 +269,7 @@ class PreparedGrade:
     color: PreparedColor
     boundary: object = None
     full_fields: bool = False
+    parameters: Optional['PreparedParameters'] = None
 
     @property
     def linear_rgb(self): return self.linear.rgb_matrix

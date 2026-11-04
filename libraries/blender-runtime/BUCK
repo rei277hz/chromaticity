@@ -12,6 +12,7 @@ ABI_SOURCES = {
     for path in glob([PREFIX + "*.py"])
     if path not in [
         PREFIX + "machines.py",
+        PREFIX + "native_evaluation.py",
         PREFIX + "__init__.py",
     ]
 }
@@ -122,6 +123,7 @@ component_library(
     name = "runtime",
     srcs = {path[len(PREFIX):]: path for path in glob([
         PREFIX + "machines.py",
+        PREFIX + "native_evaluation.py",
         PREFIX + "ownership/**/*.py",
     ])},
     external_deps = ["//third_party:numpy"],

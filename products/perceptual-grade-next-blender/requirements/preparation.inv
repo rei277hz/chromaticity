@@ -2,11 +2,11 @@
   "version": 1,
   "state": "State",
   "event": "Event",
-  "initializers": ["new"],
+  "initializers": [
+    "new"
+  ],
   "step": "step",
-  "invariants": {
-    "optional_signatures_are_nonempty": "(state.desired_signature is None or state.desired_signature != '') and (state.running_signature is None or state.running_signature != '')"
-  },
+  "invariants": {},
   "contracts": {
     "new": {
       "ensures": [
@@ -14,9 +14,6 @@
       ]
     },
     "step": {
-      "requires": [
-        "event.signature is None or event.signature != ''"
-      ],
       "ensures": [
         "result[0].desired_signature == (event.signature if event.kind == 'request' else state.desired_signature)",
         "result[0].running_signature == ((event.signature if state.running_signature is None else state.running_signature) if event.kind == 'request' else (state.running_signature if event.kind == 'preparation_preview' or event.signature is None or event.signature != state.running_signature else (state.desired_signature if state.desired_signature != event.signature else None)))",

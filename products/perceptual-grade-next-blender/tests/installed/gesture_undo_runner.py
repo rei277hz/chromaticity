@@ -73,7 +73,7 @@ def editor_context():
 def commit_gesture(exposure):
     node = current_node()
     nodes._arm_gesture(window_key, node, (0, 0))
-    token = nodes._armed_gestures[window_key][0]
+    token = nodes._gesture_token(window_key)
     nodes._activate_gesture(window_key, token)
     assert node.pg_grade is not None
     assert node.pg_grade.name == grade_name

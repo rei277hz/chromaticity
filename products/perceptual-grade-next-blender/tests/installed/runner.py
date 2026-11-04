@@ -1,5 +1,6 @@
 """Exercise the installed extension package in native Blender."""
 
+import asyncio
 import importlib
 import json
 from pathlib import Path
@@ -55,6 +56,15 @@ with restricted.RestrictBlend():
     assert type(bpy.data).__name__ == "_RestrictData"
     assert nodes._startup_reconcile_tick() == 0.1
 assert not initial_scans
+
+
+def reconcile_for_render(scene):
+    """Exercise the complete native render lifecycle around the preflight."""
+    nodes._render_init(scene)
+    try:
+        nodes._render_pre(scene)
+    finally:
+        nodes._render_finished(scene)
 
 
 def assert_menu_item(tree):
@@ -136,16 +146,100 @@ def assert_grade_graph(graph):
             assert abs(actual - expected) < 1e-6, (name, actual, expected)
 
 
+def parameter_image(node):
+    image = node.node_tree.get(nodes.PARAMETER_BINDING)
+    assert image is not None
+    assert image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
+    return image
+
+
+def assert_grade_current(node):
+    state = nodes._node_stores[node.as_pointer()]["state"]
+    details = (node.name, node.get(nodes._NODE_ERROR), state)
+    assert not node.get(nodes._NODE_ERROR), details
+    assert not node.get(nodes._NODE_PENDING), details
+    assert not node.use_custom_color, details
+    signature = nodes._kernel_signature(
+        node.id_data.bl_idname, nodes._settings_for_node(node), nodes._working_space()
+    )
+    assert state.desired_signature == signature, details
+    assert state.applied_signature == signature, details
+    assert nodes.node_policy.output_allowed(state), details
+    assert nodes._kernel_is_current(
+        node.node_tree, node.id_data.bl_idname, signature, stack=False
+    ), details
+    parameter_image(node)
+    if node.id_data.bl_idname == nodes.SHADER_TREE:
+        group_input = node.node_tree.nodes.get("Group Input")
+        group_output = node.node_tree.nodes.get("Group Output")
+        assert any(link.from_socket == group_input.outputs["Alpha"]
+                   and link.to_socket == group_output.inputs["Alpha"]
+                   for link in node.node_tree.links), details
+
+
+def assert_local_grade_resources(identities):
+    resources = []
+    for collection, owner_name, node_name in identities:
+        owner = getattr(bpy.data, collection)[owner_name]
+        node = owner.node_tree.nodes[node_name]
+        assert node.pg_grade is None
+        assert owner.node_tree.is_embedded_data
+        assert_grade_current(node)
+        kernel = node.node_tree
+        assert kernel.get(nodes.PARAMETER_OWNER) == owner
+        assert not kernel[nodes.PARAMETER_OWNER].is_embedded_data
+        assert kernel.get(nodes.PARAMETER_OWNER_NODE) == node_name
+        resources.append((kernel.name, parameter_image(node).name))
+    assert len({kernel for kernel, _image in resources}) == len(identities)
+    assert len({image for _kernel, image in resources}) == len(identities)
+    return tuple(resources)
+
+
+def grade_resource_inventory(node):
+    """Numerical edits must preserve topology, bindings, and image settings."""
+    seen = set()
+    inventory = []
+
+    def visit(tree):
+        pointer = tree.as_pointer()
+        if pointer in seen:
+            return
+        seen.add(pointer)
+        inventory.append(("tree", pointer))
+        for item in tree.nodes:
+            inventory.append(("node", item.as_pointer(), item.bl_idname))
+            image = getattr(item, "image", None)
+            if image is not None:
+                inventory.append(("image", item.as_pointer(), image.as_pointer(),
+                                  tuple(image.size), image.colorspace_settings.name,
+                                  image.alpha_mode))
+            child = getattr(item, "node_tree", None)
+            if child is not None:
+                visit(child)
+        inventory.extend(("link", link.as_pointer(), link.from_socket.as_pointer(),
+                          link.to_socket.as_pointer()) for link in tree.links)
+
+    visit(node.node_tree)
+    return tuple(inventory)
+
+
 def begin_ui_gesture(nodes, tree, node, window_key, *, activate=True):
-    token = object()
-    nodes._gesture_routers[window_key] = token
-    router = SimpleNamespace(window_key=window_key, token=token,
-                              gesture_token=None, dragging=False,
-                              press_position=None)
+    # Stub only native observer installation; route input through the actual
+    # coordinator and modal adapter below.
+    nodes._gesture_state, effects = nodes.gesture_policy.step(
+        nodes._gesture_state, nodes.gesture_policy.Event("window_seen", window_id=window_key))
+    token = nodes.gesture_policy.pending_observer(nodes._gesture_state, window_key)
+    nodes._dispatch_gesture(nodes.gesture_policy.Event(
+        "observer_install_result", window_id=window_key, token=token, success=True))
+    router = SimpleNamespace(window_key=window_key, token=token)
+    area = SimpleNamespace(
+        type="NODE_EDITOR",
+        spaces=SimpleNamespace(active=SimpleNamespace(edit_tree=tree, show_region_ui=True)),
+        regions=(SimpleNamespace(type="UI", x=50, y=50, width=200, height=200),),
+    )
     context = SimpleNamespace(
-        area=SimpleNamespace(type="NODE_EDITOR"),
-        region=SimpleNamespace(type="UI"),
-        space_data=SimpleNamespace(edit_tree=tree),
+        window=SimpleNamespace(screen=SimpleNamespace(areas=(area,))),
+        area=None, region=None, space_data=None,
     )
     tree.nodes.active = node
 
@@ -154,21 +248,21 @@ def begin_ui_gesture(nodes, tree, node, window_key, *, activate=True):
         return nodes.PG_OT_gesture_router.modal(router, context, event)
 
     assert send("LEFTMOUSE", "PRESS", 100, 100) == {"PASS_THROUGH"}
-    assert router.gesture_token is not None and not router.dragging
+    assert nodes._gesture_token(router.window_key) is not None and nodes._gesture_phase(router.window_key) != "active"
     record = nodes._record_for(node)
     assert not record["state"].gesture_active
 
     assert send("MOUSEMOVE", "NOTHING", 102, 101) == {"PASS_THROUGH"}
-    assert router.gesture_token is not None and not router.dragging
-    assert window_key in nodes._armed_gestures
+    assert nodes._gesture_token(router.window_key) is not None and nodes._gesture_phase(router.window_key) != "active"
+    assert nodes._gesture_phase(window_key) == "armed"
     assert not record["state"].gesture_active
 
     if not activate:
         return router, context
 
     assert send("MOUSEMOVE", "NOTHING", 103, 100) == {"PASS_THROUGH"}
-    assert router.dragging and router.gesture_token is not None
-    assert window_key not in nodes._armed_gestures
+    assert (nodes._gesture_phase(router.window_key) == "active") and nodes._gesture_token(router.window_key) is not None
+    assert nodes._gesture_phase(window_key) not in ("armed", "finishing_armed")
     assert record["state"].gesture_active
     return router, context
 
@@ -179,7 +273,7 @@ def release_ui_gesture(nodes, router, context):
 
     def capture_release_callback(function, *args, **kwargs):
         callback = original_partial(function, *args, **kwargs)
-        if function in (nodes._end_gesture, nodes._release_armed_gesture):
+        if function is nodes._observe_gesture_finish:
             callbacks.append(callback)
         return callback
 
@@ -197,7 +291,7 @@ def release_ui_gesture(nodes, router, context):
     callback()
     if bpy.app.timers.is_registered(callback):
         bpy.app.timers.unregister(callback)
-    nodes._gesture_routers.pop(router.window_key, None)
+    nodes._dispatch_gesture(nodes.gesture_policy.Event("window_gone", window_id=router.window_key))
 
 
 class TestStackBackend:
@@ -205,7 +299,7 @@ class TestStackBackend:
 
     def create_job(self, payload, progressive):
         settings, working_space = payload
-        matrices = tuple(nodes.prepare_linear(item, working_space).rgb_matrix
+        matrices = tuple(nodes.prepare_linear(item.linear, working_space).rgb_matrix
                          for item in settings)
         matrix, to_lut, from_lut, signature = lut_kernel._stack_matrix(
             matrices, working_space
@@ -297,18 +391,73 @@ for handler, callback in (
 ):
     assert handler.count(callback) == 1
 
+# The first Grade is added to the embedded material tree used by the Shader
+# Editor, before any standalone group or shared Grade can mask initialization.
+first_material = bpy.data.materials.new("First Material Grade")
+first_material.use_nodes = True
+first_material.use_fake_user = True
+assert first_material.node_tree.is_embedded_data
+first_context = SimpleNamespace(space_data=SimpleNamespace(
+    edit_tree=first_material.node_tree, cursor_location=(40.0, -20.0)))
+assert nodes.PG_OT_add_grade.poll(first_context)
+assert nodes.PG_OT_add_grade.execute(None, first_context) == {"FINISHED"}
+first_node = first_material.node_tree.nodes.active
+assert first_node.pg_grade is None
+assert nodes._startup_reconcile_tick() is None
+assert len(initial_scans) == 1
+if bpy.app.timers.is_registered(nodes._startup_reconcile_tick):
+    bpy.app.timers.unregister(nodes._startup_reconcile_tick)
+assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(first_node)
+assert first_node.pg_grade is None
+assert first_node.inputs["Alpha"].default_value == 1.0
+first_material_name = first_material.name
+first_node_name = first_node.name
+
+# Deleting and recreating the same local Grade must not reuse removed image
+# wrappers from the previous node's resources. Keep the runtime cache intact.
+removed_kernel_name = first_node.node_tree.name
+removed_image_name = parameter_image(first_node).name
+first_material.node_tree.nodes.remove(first_node)
+del first_node
+assert first_node_name not in first_material.node_tree.nodes
+assert removed_kernel_name not in bpy.data.node_groups
+assert removed_image_name not in bpy.data.images
+assert nodes.PG_OT_add_grade.execute(None, first_context) == {"FINISHED"}
+first_node = first_material.node_tree.nodes.active
+assert first_node.name == first_node_name
+assert first_node.pg_grade is None
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(first_node)
+
+# Equal local settings retain separate writable resources within one tree and
+# across containing datablocks whose Grade nodes have the same name.
+local_grade_identities = [("materials", first_material_name, first_node_name)]
+second_local_node = nodes.create_node(first_material.node_tree)
+local_grade_identities.append(
+    ("materials", first_material_name, second_local_node.name))
+for collection, owner in (
+        ("materials", bpy.data.materials.new("Independent Material Grade")),
+        ("worlds", bpy.data.worlds.new("Local World Grade")),
+        ("lights", bpy.data.lights.new("Local Light Grade", type="POINT"))):
+    owner.use_nodes = True
+    owner.use_fake_user = True
+    local_node = nodes.create_node(owner.node_tree)
+    local_node.name = first_node_name
+    local_grade_identities.append((collection, owner.name, local_node.name))
+local_grade_identities = tuple(local_grade_identities)
+reconcile_for_render(bpy.context.scene)
+assert_local_grade_resources(local_grade_identities)
+del first_context, first_node, first_material, second_local_node, owner, local_node
+
 shader_tree = bpy.data.node_groups.new("Grade Shader Test", "ShaderNodeTree")
 shader_tree.use_fake_user = True
 shader_space = SimpleNamespace(edit_tree=shader_tree, cursor_location=(40.0, -20.0))
 shader_context = SimpleNamespace(space_data=shader_space)
 assert nodes.PG_OT_add_grade.poll(shader_context)
 assert nodes.PG_OT_add_grade.execute(None, shader_context) == {"FINISHED"}
-assert nodes._startup_reconcile_tick() is None
-assert len(initial_scans) == 1
-if bpy.app.timers.is_registered(nodes._startup_reconcile_tick):
-    bpy.app.timers.unregister(nodes._startup_reconcile_tick)
-assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 shader_node = shader_tree.nodes.active
 assert shader_node.bl_idname == "PGShaderGrade"
 assert [socket.name for socket in shader_node.inputs] == ["Color", "Alpha"]
@@ -340,8 +489,21 @@ compositor_space = SimpleNamespace(edit_tree=compositor_tree, cursor_location=(2
 compositor_context = SimpleNamespace(space_data=compositor_space)
 assert nodes.PG_OT_add_grade.poll(compositor_context)
 assert nodes.PG_OT_add_grade.execute(None, compositor_context) == {"FINISHED"}
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 compositor_node = compositor_tree.nodes.active
+assert_grade_current(compositor_node)
+removed_node_name = compositor_node.name
+removed_kernel_name = compositor_node.node_tree.name
+removed_image_name = parameter_image(compositor_node).name
+compositor_tree.nodes.remove(compositor_node)
+del compositor_node
+assert removed_kernel_name not in bpy.data.node_groups
+assert removed_image_name not in bpy.data.images
+assert nodes.PG_OT_add_grade.execute(None, compositor_context) == {"FINISHED"}
+compositor_node = compositor_tree.nodes.active
+assert compositor_node.name == removed_node_name
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(compositor_node)
 assert compositor_node.bl_idname == "PGCompositorGrade"
 assert [socket.name for socket in compositor_node.inputs] == ["Color"]
 assert [socket.name for socket in compositor_node.outputs] == ["Color"]
@@ -350,10 +512,12 @@ assert_menu_item(compositor_tree)
 
 compositor_input = compositor_node.node_tree.nodes.get("Group Input")
 compositor_output = compositor_node.node_tree.nodes.get("Group Output")
-separate = next(node for node in compositor_node.node_tree.nodes
-                if node.bl_idname == "CompositorNodeSeparateColor")
-restore = next(node for node in compositor_node.node_tree.nodes
-               if node.bl_idname == "CompositorNodeSetAlpha")
+restore = next(link.from_node for link in compositor_node.node_tree.links
+               if link.to_socket == compositor_output.inputs["Color"])
+assert restore.bl_idname == "CompositorNodeSetAlpha"
+separate = next(link.from_node for link in compositor_node.node_tree.links
+                if link.to_socket == restore.inputs["Alpha"])
+assert separate.bl_idname == "CompositorNodeSeparateColor"
 assert any(link.from_socket == separate.outputs["Alpha"]
            and link.to_socket == restore.inputs["Alpha"]
            for link in compositor_node.node_tree.links)
@@ -364,7 +528,7 @@ assert any(link.from_socket == compositor_input.outputs["Color"]
            and link.to_socket == separate.inputs["Image"]
            for link in compositor_node.node_tree.links)
 
-# Shared datablock edits rebuild each node with the library-prepared matrix.
+# Shared datablock edits upload one image used by fixed Shader/Compositor graphs.
 shared_grade = bpy.data.node_groups.new("Shared Grade Test", nodes.PGGradeData.bl_idname)
 shader_node.pg_grade = shared_grade
 compositor_node.pg_grade = shared_grade
@@ -373,8 +537,31 @@ for shared_node in shared_shader_nodes:
     shared_node.pg_grade = shared_grade
 shared_compositor_node = nodes.create_node(compositor_tree)
 shared_compositor_node.pg_grade = shared_grade
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
+shared_parameter_image = parameter_image(shader_node)
+assert all(parameter_image(node) == shared_parameter_image
+           for node in (*shared_shader_nodes, compositor_node, shared_compositor_node))
+for tree in (shared_shader_nodes[0].node_tree, shared_compositor_node.node_tree):
+    assert tree.get(nodes.PARAMETER_OWNER) == shared_grade
+    assert tree.get(nodes.PARAMETER_OWNER_NODE, "") == ""
+# Removing one user must retain the kernel and image still used by its peers.
+shared_kernel = shader_node.node_tree
+removed_node_name = shared_shader_nodes[0].name
+shader_tree.nodes.remove(shared_shader_nodes[0])
+assert_grade_current(shader_node)
+assert_grade_current(compositor_node)
+assert shader_node.node_tree == shared_kernel
+assert parameter_image(shader_node) == shared_parameter_image
+shared_shader_nodes[0] = nodes.create_node(shader_tree)
+assert shared_shader_nodes[0].name == removed_node_name
+shared_shader_nodes[0].pg_grade = shared_grade
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(shared_shader_nodes[0])
+assert shared_shader_nodes[0].node_tree == shared_kernel
+assert parameter_image(shared_shader_nodes[0]) == shared_parameter_image
+shared_inventories = tuple(grade_resource_inventory(node)
+                          for node in (shader_node, compositor_node))
 shader_graph = connect_grade_graph(shader_tree, shader_node)
 compositor_graph = connect_grade_graph(compositor_tree, compositor_node,
                                        compositor=True)
@@ -383,19 +570,21 @@ assert_grade_graph(compositor_graph)
 main_thread = threading.get_ident()
 preparation_threads = []
 kernel_build_threads = []
+parameter_write_threads = []
 preparation_started = threading.Event()
 release_preparation = threading.Event()
 runtime = nodes._preparation_runtime
 original_prepare = runtime.prepare
 original_kernel_builder = nodes._kernel
+original_parameter_writer = nodes._write_grade_parameters
 
 
-def record_prepare(payload):
-    settings, working_space = payload
+async def record_prepare(payload):
+    settings = payload.linear
     preparation_threads.append((threading.get_ident(), settings.exposure))
     preparation_started.set()
     assert release_preparation.wait(10), "preparation worker was not released"
-    return original_prepare(payload)
+    return await original_prepare(payload)
 
 
 def record_kernel_build(*args, **kwargs):
@@ -403,8 +592,14 @@ def record_kernel_build(*args, **kwargs):
     return original_kernel_builder(*args, **kwargs)
 
 
+def record_parameter_write(image, pixels):
+    parameter_write_threads.append((threading.get_ident(), image.as_pointer()))
+    return original_parameter_writer(image, pixels)
+
+
 runtime.prepare = record_prepare
 nodes._kernel = record_kernel_build
+nodes._write_grade_parameters = record_parameter_write
 shared_grade.pg_linear.exposure = 1.0
 assert preparation_started.wait(10), "preparation did not start on a worker"
 assert shader_node.pg_linear.exposure == 0.0
@@ -416,13 +611,22 @@ for node in (shader_node, compositor_node):
 assert_grade_graph(shader_graph)
 assert_grade_graph(compositor_graph)
 release_preparation.set()
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 runtime.prepare = original_prepare
 nodes._kernel = original_kernel_builder
+nodes._write_grade_parameters = original_parameter_writer
 assert len(preparation_threads) == 1, preparation_threads
 assert all(thread != main_thread for thread, _exposure in preparation_threads)
-assert len(kernel_build_threads) == 2, kernel_build_threads
-assert all(thread == main_thread for thread in kernel_build_threads)
+assert not kernel_build_threads, kernel_build_threads
+assert parameter_write_threads == [(main_thread, shared_parameter_image.as_pointer())]
+assert shared_parameter_image.get(nodes.PARAMETER_SIGNATURE) == (
+    nodes._preparation_signature(
+        nodes._grade_settings(shared_grade, nodes._working_space()),
+        nodes._working_space(),
+    )
+)
+assert tuple(grade_resource_inventory(node)
+             for node in (shader_node, compositor_node)) == shared_inventories
 assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
 assert_grade_graph(shader_graph)
 assert_grade_graph(compositor_graph)
@@ -437,22 +641,112 @@ shared_grade.pg_linear.cr_balance = 0.5
 assert nodes._linear_settings(shared_grade.pg_linear).balance == (-0.5, 0.0)
 assert shader_node.pg_linear.cr_balance == 0.0
 assert compositor_node.pg_linear.cr_balance == 0.0
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
+
+# Tone settings are part of the authoritative Stage 2 snapshot and its kernel
+# signature. A linked Grade edit updates every Shader/Compositor consumer.
+shared_grade.pg_tone.fit = 0.5
+reconcile_for_render(bpy.context.scene)
+shared_tone_settings = nodes._grade_settings(shared_grade, nodes._working_space())
+shared_tone_signature = nodes._signature(
+    nodes.SHADER_TREE, nodes._snapshot_values(shared_tone_settings), nodes._working_space()
+)
+for node in (*shared_shader_nodes, shader_node, compositor_node):
+    expected_kind = node.id_data.bl_idname
+    expected_signature = nodes._signature(
+        expected_kind, nodes._snapshot_values(shared_tone_settings), nodes._working_space()
+    )
+    assert node.node_tree.get(nodes._KERNEL_SIGNATURE) == expected_signature
+    assert node.node_tree.get("_perceptual_grade_stage2_complete")
+assert shared_tone_signature == nodes._kernel_signature(
+    nodes.SHADER_TREE, shared_grade.pg_linear, nodes._working_space()
+)
+assert any(node.bl_idname == "ShaderNodeTexImage"
+           and "Tone" in node.label
+           for node in shader_node.node_tree.nodes)
 
 # Material node trees are included in shared Grade updates.
 material = bpy.data.materials.new("Grade Material Test")
 material.use_nodes = True
 material.use_fake_user = True
 material_node = nodes.create_node(material.node_tree)
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
+assert material_node.pg_grade is None
+assert_grade_current(material_node)
 material_node.pg_grade = shared_grade
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 material_kernel = material_node.node_tree
 shared_grade.pg_linear.exposure = 1.5
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert material_node.pg_linear.exposure == 0.0
-assert material_node.node_tree != material_kernel
+assert material_node.node_tree == material_kernel
+assert parameter_image(material_node) == shared_parameter_image
+
+# Equal-valued independent Grades must never share writable resources. Selecting
+# another Grade with an equal signature still changes the owner and bindings.
+independent_grade = nodes._make_grade(shared_grade)
+independent_grade.name = "Independent Equal Grade"
+independent_node = nodes.create_node(shader_tree)
+independent_node.pg_grade = independent_grade
+reconcile_for_render(bpy.context.scene)
+independent_image = parameter_image(independent_node)
+assert independent_node.node_tree != shared_shader_nodes[0].node_tree
+assert independent_image != shared_parameter_image
+assert independent_node.node_tree.get(nodes._KERNEL_SIGNATURE) == (
+    shared_shader_nodes[0].node_tree.get(nodes._KERNEL_SIGNATURE)
+)
+# The final user of a shared Grade also releases its generated resources, and
+# relinking that same Grade must build fresh resources from its saved settings.
+removed_node_name = independent_node.name
+removed_kernel_name = independent_node.node_tree.name
+removed_image_name = independent_image.name
+shader_tree.nodes.remove(independent_node)
+del independent_node, independent_image
+assert removed_kernel_name not in bpy.data.node_groups
+assert removed_image_name not in bpy.data.images
+independent_node = nodes.create_node(shader_tree)
+assert independent_node.name == removed_node_name
+independent_node.pg_grade = independent_grade
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(independent_node)
+
+# Native removal can invalidate an image without going through node teardown.
+# A fresh reconciliation must reject the cached wrapper and repair the Grade.
+removed_image = parameter_image(independent_node)
+bpy.data.images.remove(removed_image, do_unlink=True)
+del removed_image
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(independent_node)
+
+# Recover an already-poisoned cache even when no installed kernel remains for
+# ordinary replacement retirement to invalidate the removed resource wrappers.
+removed_kernel = independent_node.node_tree
+removed_image = parameter_image(independent_node)
+bpy.data.node_groups.remove(removed_kernel, do_unlink=True)
+bpy.data.images.remove(removed_image)
+del removed_kernel, removed_image
+assert independent_node.node_tree is None
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(independent_node)
+independent_image = parameter_image(independent_node)
+reselected_node = shared_shader_nodes[2]
+shared_kernel = reselected_node.node_tree
+reselected_node.pg_grade = independent_grade
+reconcile_for_render(bpy.context.scene)
+assert reselected_node.node_tree == independent_node.node_tree
+assert parameter_image(reselected_node) == independent_image
+independent_pixels = np.asarray(independent_image.pixels[:], dtype=np.float32)
+shared_grade.pg_linear.exposure = 1.625
+reconcile_for_render(bpy.context.scene)
+assert np.array_equal(independent_image.pixels[:], independent_pixels)
+assert reselected_node.node_tree == independent_node.node_tree
+reselected_node.pg_grade = shared_grade
+reconcile_for_render(bpy.context.scene)
+assert reselected_node.node_tree == shared_kernel
+assert parameter_image(reselected_node) == shared_parameter_image
+shared_grade.pg_linear.exposure = 1.5
+reconcile_for_render(bpy.context.scene)
 
 # The New operator copies the selected grade; Unlink restores local defaults.
 new_context = SimpleNamespace(pg_node=compositor_node)
@@ -461,6 +755,7 @@ assert nodes.PG_OT_new_grade.execute(None, new_context) == {"FINISHED"}
 copied_grade = compositor_node.pg_grade
 assert copied_grade != shared_grade
 assert copied_grade.pg_linear.exposure == 1.5
+assert abs(copied_grade.pg_tone.fit - 0.5) < 1e-6
 assert nodes.PG_OT_unlink_grade.execute(None, new_context) == {"FINISHED"}
 assert compositor_node.pg_grade is None
 assert compositor_node.pg_linear.exposure == 0.0
@@ -468,7 +763,7 @@ assert compositor_node.pg_linear.exposure == 0.0
 # Local settings cannot create a Grade; adjustment requires explicit creation.
 shader_node.pg_grade = None
 shader_node.pg_linear.exposure = 0.5
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert shader_node.pg_grade is None
 assert all(abs(getattr(shader_node.pg_linear, name) - value) < 1e-6
            for name, value in nodes._LINEAR_DEFAULTS.items())
@@ -476,15 +771,22 @@ assert nodes.PG_OT_new_grade.execute(
     None, SimpleNamespace(pg_node=shader_node)) == {"FINISHED"}
 assert shader_node.pg_grade is not None
 shader_node.pg_grade.pg_linear.exposure = 0.5
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert shader_node.pg_grade.pg_linear.exposure == 0.5
 
 # A partially saved multi-node update is reconciled from the shared Grade's
 # authoritative settings and the signatures stored on generated kernels.
-old_shared_kernel = shared_shader_nodes[1].node_tree
+old_shared_kernel = shared_shader_nodes[1].node_tree.copy()
 old_shared_kernel.use_fake_user = True
+# A legacy/corrupt derived group is not an authoritative owner resource.
+del old_shared_kernel[nodes.PARAMETER_OWNER]
+if nodes.PARAMETER_OWNER_NODE in old_shared_kernel:
+    del old_shared_kernel[nodes.PARAMETER_OWNER_NODE]
+saved_shared_kernel_name = shared_shader_nodes[0].node_tree.name
+saved_shared_image_name = parameter_image(shared_shader_nodes[0]).name
+saved_compositor_kernel_name = shared_compositor_node.node_tree.name
 shared_grade.pg_linear.exposure = 2.0
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 new_signature = nodes._kernel_signature(
     nodes.SHADER_TREE, shared_grade.pg_linear, nodes._working_space()
 )
@@ -493,6 +795,13 @@ assert all(node.node_tree.get(nodes._KERNEL_SIGNATURE) == new_signature
 shared_shader_nodes[1].node_tree = old_shared_kernel
 shared_shader_nodes[2].node_tree = old_shared_kernel
 assert shared_shader_nodes[0].node_tree != shared_shader_nodes[1].node_tree
+saved_parameter_pixels = np.asarray(
+    parameter_image(shared_shader_nodes[0]).pixels[:], dtype=np.float32
+)
+saved_parameter_signature = parameter_image(shared_shader_nodes[0]).get(
+    nodes.PARAMETER_SIGNATURE
+)
+saved_local_resources = assert_local_grade_resources(local_grade_identities)
 
 with tempfile.TemporaryDirectory(prefix="perceptual-grade-recovery-") as temp:
     saved_file = Path(temp) / "partial-grade.blend"
@@ -502,6 +811,7 @@ with tempfile.TemporaryDirectory(prefix="perceptual-grade-recovery-") as temp:
 nodes._drain_preparations()
 
 shader_tree = bpy.data.node_groups["Grade Shader Test"]
+assert assert_local_grade_resources(local_grade_identities) == saved_local_resources
 compositor_tree = bpy.data.node_groups["Grade Compositor Test"]
 material = bpy.data.materials["Grade Material Test"]
 shared_grade = bpy.data.node_groups["Shared Grade Test"]
@@ -527,23 +837,43 @@ new_signature = nodes._kernel_signature(
 assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
 assert all(node.node_tree.get(nodes._KERNEL_SIGNATURE) == new_signature
            for node in shared_shader_nodes)
+assert shared_shader_nodes[0].node_tree.name == saved_shared_kernel_name
+assert parameter_image(shared_shader_nodes[0]).name == saved_shared_image_name
+assert shared_compositor_node.node_tree.name == saved_compositor_kernel_name
+assert parameter_image(shared_compositor_node) == parameter_image(shared_shader_nodes[0])
+assert parameter_image(shared_shader_nodes[0]).get(nodes.PARAMETER_SIGNATURE) == (
+    saved_parameter_signature
+)
+assert np.array_equal(parameter_image(shared_shader_nodes[0]).pixels[:],
+                      saved_parameter_pixels)
 before_repeat = shared_shader_nodes[0].node_tree
+before_repeat_resources = grade_resource_inventory(shared_shader_nodes[0])
+before_repeat_local_pointers = tuple(
+    (bpy.data.node_groups[kernel].as_pointer(), bpy.data.images[image].as_pointer())
+    for kernel, image in saved_local_resources
+)
 nodes._load_post("")
 nodes._drain_preparations()
 assert all(node.node_tree == before_repeat for node in shared_shader_nodes)
+assert grade_resource_inventory(shared_shader_nodes[0]) == before_repeat_resources
+assert assert_local_grade_resources(local_grade_identities) == saved_local_resources
+assert tuple(
+    (bpy.data.node_groups[kernel].as_pointer(), bpy.data.images[image].as_pointer())
+    for kernel, image in saved_local_resources
+) == before_repeat_local_pointers
 
 active_space = nodes._working_space()
 nodes._ensure_all_kernels("ACEScg")
 nodes._drain_preparations()
 assert all(node.node_tree.get("_perceptual_grade_working_space") == "ACEScg"
            for node in shared_shader_nodes)
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert all(node.node_tree.get("_perceptual_grade_working_space") == active_space
            for node in shared_shader_nodes)
 
 # Failed regeneration routes every affected node through a visible magenta
 # error, then a successful pre-render reconciliation restores the Grade.
-original_kernel = nodes._kernel
+original_parameter_writer = nodes._write_grade_parameters
 original_output_effect = nodes._apply_output_effect
 output_effects = []
 
@@ -556,15 +886,29 @@ def record_output_effect(node, effect):
 nodes._apply_output_effect = record_output_effect
 
 
-def fail_kernel(*_args, **_kwargs):
-    raise RuntimeError("simulated kernel build failure")
+upload_attempts = []
+failed_image = parameter_image(shared_shader_nodes[0])
+before_failed_pixels = np.asarray(failed_image.pixels[:], dtype=np.float32)
+before_failed_signature = failed_image.get(nodes.PARAMETER_SIGNATURE)
+failed_image.use_fake_user = True
 
-nodes._kernel = fail_kernel
+
+def fail_first_upload(image, pixels):
+    upload_attempts.append(image.as_pointer())
+    original_parameter_writer(image, pixels)
+    if len(upload_attempts) == 1:
+        raise RuntimeError("simulated parameter upload failure")
+
+
+nodes._write_grade_parameters = fail_first_upload
 shared_grade.pg_linear.exposure = 2.5
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert all(node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
            for node in shared_shader_nodes)
 assert all(node.get(nodes._NODE_ERROR) for node in shared_shader_nodes)
+assert len(upload_attempts) == 2, upload_attempts
+assert np.array_equal(failed_image.pixels[:], before_failed_pixels)
+assert failed_image.get(nodes.PARAMETER_SIGNATURE) == before_failed_signature
 assert all(node.use_custom_color
            and all(abs(actual - expected) < 1e-6
                    for actual, expected in zip(node.color, (0.65, 0.04, 0.04)))
@@ -591,8 +935,9 @@ assert any(link.from_socket == separate_error.outputs["Alpha"]
 assert any(link.from_socket == magenta.outputs[0]
            and link.to_socket == restore_error.inputs["Image"]
            for link in compositor_error.links)
-nodes._kernel = original_kernel
-nodes._render_pre(bpy.context.scene)
+nodes._write_grade_parameters = original_parameter_writer
+reconcile_for_render(bpy.context.scene)
+failed_image.use_fake_user = False
 assert all(node.node_tree.get(nodes._KERNEL_SIGNATURE)
            == nodes._kernel_signature(nodes.SHADER_TREE, shared_grade.pg_linear,
                                       nodes._working_space())
@@ -613,7 +958,7 @@ compositor_stack = nodes.create_stack_node(compositor_tree)
 compositor_entry = compositor_stack.pg_stack_entries.add()
 compositor_entry.key = "compositor-forward"
 compositor_entry.grade = stack_grade
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 for stack_node, color_name, alpha_name in (
         (shader_stack, "Color", "Alpha"), (compositor_stack, "Color", None)):
     kernel = stack_node.node_tree
@@ -660,7 +1005,7 @@ for tree in (shader_tree, compositor_tree):
 stack_grade.pg_linear.exposure = 0.75
 assert_grade_graph(shader_stack_graph)
 assert_grade_graph(compositor_stack_graph)
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 for stack_node in (shader_stack, compositor_stack):
     source = nodes._record_for(stack_node)["source"]
     prepared = nodes._preparation_runtime._sources[source].last_success
@@ -673,12 +1018,12 @@ assert_grade_graph(compositor_stack_graph)
 # A click without pointer movement may edit a value, but it remains final-only.
 click_window = 730
 nodes._arm_gesture(click_window, shader_stack, (0, 0))
-click_token = nodes._armed_gestures[click_window][0]
+click_token = nodes._gesture_token(click_window)
 stack_grade.pg_linear.exposure = 0.875
 assert_grade_graph(shader_stack_graph)
 assert_grade_graph(compositor_stack_graph)
-nodes._release_armed_gesture(click_window, click_token)
-nodes._render_pre(bpy.context.scene)
+nodes._end_gesture(click_window, click_token)
+reconcile_for_render(bpy.context.scene)
 assert_grade_graph(shader_stack_graph)
 assert_grade_graph(compositor_stack_graph)
 for stack_node in (shader_stack, compositor_stack):
@@ -707,7 +1052,7 @@ gesture_context = None
 class HoldingStackOwner:
     def create_job(self, payload, progressive):
         settings, working_space = payload
-        exposure = settings[0].exposure
+        exposure = settings[0].linear.exposure
         stack_preparation_exposures.append(exposure)
         job = original_stack_owner.create_job(payload, progressive)
         ready, release = ((preview_ready, continue_full) if exposure == 1.0 else
@@ -753,6 +1098,20 @@ def pump_until(event):
     assert event.is_set(), "GPU host lane did not reach the expected receipt"
 
 
+def pump_until_latest_stack_previews():
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        nodes._preparation_tick()
+        states = tuple(nodes._record_for(stack_node)["state"]
+                       for stack_node in (shader_stack, compositor_stack))
+        if all(state.applied_quality == "preview"
+               and state.applied_signature == state.desired_signature
+               for state in states):
+            return
+        time.sleep(.001)
+    raise AssertionError("latest Stack preview was not published to both consumers")
+
+
 lut_lane.host_owner = HoldingStackOwner()
 try:
     gesture_router, gesture_context = begin_ui_gesture(
@@ -764,12 +1123,16 @@ try:
         stack_grade.pg_linear.exposure = exposure
     pump_until(latest_preview_ready)
     assert stale_refinement_retired.is_set()
+    pump_until_latest_stack_previews()
     assert not stale_refinement_advanced.is_set()
     assert stack_preparation_exposures == [1.0, 1.375], stack_preparation_exposures
     for stack_node in (shader_stack, compositor_stack):
         state = nodes._record_for(stack_node)["state"]
         assert state.applied_quality == "preview"
-        assert state.applied_signature == state.desired_signature
+        assert state.applied_signature == state.desired_signature, (
+            state.applied_signature, state.desired_signature,
+            stack_node.pg_stack_entries[0].grade.pg_linear.exposure,
+        )
         assert stack_node.node_tree.get(nodes._KERNEL_QUALITY) == "preview"
     assert_grade_graph(shader_stack_graph)
     assert_grade_graph(compositor_stack_graph)
@@ -797,10 +1160,10 @@ finally:
     continue_full.set()
     continue_latest_full.set()
     if gesture_router is not None:
-        token = gesture_router.gesture_token
+        token = nodes._gesture_token(gesture_router.window_key)
         if token is not None:
             nodes._end_gesture(gesture_window, token)
-        nodes._gesture_routers.pop(gesture_window, None)
+        nodes._dispatch_gesture(nodes.gesture_policy.Event("window_gone", window_id=gesture_window))
     lut_lane.host_owner = original_stack_owner
 
 # The first drag on an explicitly created Grade coalesces pending settings
@@ -811,7 +1174,7 @@ local_drag_node = nodes.create_node(shader_tree)
 assert nodes.PG_OT_new_grade.execute(
     None, SimpleNamespace(pg_node=local_drag_node)) == {"FINISHED"}
 local_grade = local_drag_node.pg_grade
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert local_grade is not None
 assert all(abs(getattr(local_grade.pg_linear, name) - value) < 1e-6
            for name, value in nodes._LINEAR_DEFAULTS.items())
@@ -828,8 +1191,8 @@ release_local_latest = threading.Event()
 local_preparation_exposures = []
 
 
-def hold_local_drag_preparation(payload):
-    settings, working_space = payload
+async def hold_local_drag_preparation(payload):
+    settings = payload.linear
     exposure = settings.exposure
     local_preparation_exposures.append(exposure)
     if exposure == 0.8125:
@@ -838,7 +1201,7 @@ def hold_local_drag_preparation(payload):
     if exposure == 0.90625:
         local_latest_started.set()
         assert release_local_latest.wait(10), "latest local drag was not released"
-    return original_modal_prepare(payload)
+    return await original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_local_drag_preparation
@@ -910,13 +1273,13 @@ finally:
     release_local_first.set()
     release_local_latest.set()
     if local_router is not None:
-        token = local_router.gesture_token
+        token = nodes._gesture_token(local_router.window_key)
         if token is not None:
-            if local_router.dragging:
+            if (nodes._gesture_phase(local_router.window_key) == "active"):
                 nodes._end_gesture(local_window, token)
             else:
-                nodes._release_armed_gesture(local_window, token)
-        nodes._gesture_routers.pop(local_window, None)
+                nodes._end_gesture(local_window, token)
+        nodes._dispatch_gesture(nodes.gesture_policy.Event("window_gone", window_id=local_window))
     modal_runtime.prepare = original_modal_prepare
 
 local_final_signature = nodes._kernel_signature(
@@ -942,7 +1305,7 @@ linked_drag_shader = nodes.create_node(shader_tree)
 linked_drag_compositor = nodes.create_node(compositor_tree)
 linked_drag_shader.pg_grade = linked_drag_grade
 linked_drag_compositor.pg_grade = linked_drag_grade
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 linked_drag_nodes = (linked_drag_shader, linked_drag_compositor)
 linked_old_kernels = {node.as_pointer(): node.node_tree for node in linked_drag_nodes}
 linked_old_signatures = {
@@ -956,12 +1319,12 @@ release_linked = threading.Event()
 linked_exposures = []
 
 
-def hold_linked_drag_preparation(payload):
-    settings, working_space = payload
+async def hold_linked_drag_preparation(payload):
+    settings = payload.linear
     linked_exposures.append(settings.exposure)
     linked_started.set()
     assert release_linked.wait(10), "linked drag preparation was not released"
-    return original_modal_prepare(payload)
+    return await original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_linked_drag_preparation
@@ -1003,13 +1366,13 @@ try:
 finally:
     release_linked.set()
     if linked_router is not None:
-        token = linked_router.gesture_token
+        token = nodes._gesture_token(linked_router.window_key)
         if token is not None:
-            if linked_router.dragging:
+            if (nodes._gesture_phase(linked_router.window_key) == "active"):
                 nodes._end_gesture(linked_window, token)
             else:
-                nodes._release_armed_gesture(linked_window, token)
-        nodes._gesture_routers.pop(linked_window, None)
+                nodes._end_gesture(linked_window, token)
+        nodes._dispatch_gesture(nodes.gesture_policy.Event("window_gone", window_id=linked_window))
     modal_runtime.prepare = original_modal_prepare
 
 assert linked_exposures == [2.125], linked_exposures
@@ -1032,7 +1395,7 @@ click_entry_node = nodes.create_node(shader_tree)
 assert nodes.PG_OT_new_grade.execute(
     None, SimpleNamespace(pg_node=click_entry_node)) == {"FINISHED"}
 click_grade = click_entry_node.pg_grade
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert click_grade is not None
 click_old_kernel = click_entry_node.node_tree
 click_old_source = nodes._record_for(click_entry_node)["source"]
@@ -1041,12 +1404,12 @@ release_click_preparation = threading.Event()
 click_exposures = []
 
 
-def hold_click_preparation(payload):
-    settings, working_space = payload
+async def hold_click_preparation(payload):
+    settings = payload.linear
     click_exposures.append(settings.exposure)
     click_started.set()
     assert release_click_preparation.wait(10), "click preparation was not released"
-    return original_modal_prepare(payload)
+    return await original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_click_preparation
@@ -1086,10 +1449,10 @@ try:
 finally:
     release_click_preparation.set()
     if click_router is not None:
-        token = click_router.gesture_token
+        token = nodes._gesture_token(click_router.window_key)
         if token is not None:
-            nodes._release_armed_gesture(click_window, token)
-        nodes._gesture_routers.pop(click_window, None)
+            nodes._end_gesture(click_window, token)
+        nodes._dispatch_gesture(nodes.gesture_policy.Event("window_gone", window_id=click_window))
     modal_runtime.prepare = original_modal_prepare
 
 click_final_state = nodes._record_for(click_entry_node)["state"]
@@ -1121,7 +1484,7 @@ assert not workspace_failures
 assert all(node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
            and node.use_custom_color for node in shared_shader_nodes)
 nodes._working_space = original_working_space
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert all(not node.use_custom_color and not node.get(nodes._NODE_ERROR)
            for node in shared_shader_nodes)
 
@@ -1133,7 +1496,7 @@ stale_node = nodes.create_node(shader_tree)
 stale_node.pg_grade = stale_grade
 stale_compositor_node = nodes.create_node(compositor_tree)
 stale_compositor_node.pg_grade = stale_grade
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 stale_shader_graph = connect_grade_graph(shader_tree, stale_node)
 stale_compositor_graph = connect_grade_graph(
     compositor_tree, stale_compositor_node, compositor=True
@@ -1147,8 +1510,8 @@ release_latest_preparation = threading.Event()
 preparation_exposures = []
 
 
-def delay_preparation(payload):
-    settings, working_space = payload
+async def delay_preparation(payload):
+    settings = payload.linear
     preparation_exposures.append(settings.exposure)
     if settings.exposure == 0.4375:
         old_preparation_started.set()
@@ -1156,7 +1519,7 @@ def delay_preparation(payload):
     if settings.exposure == 0.875:
         latest_preparation_started.set()
         assert release_latest_preparation.wait(10), "latest preparation was not released"
-    return original_prepare(payload)
+    return await original_prepare(payload)
 
 
 runtime.prepare = delay_preparation
@@ -1267,12 +1630,12 @@ replacement_grade = bpy.data.node_groups.new("Replacement Grade", nodes.PGGradeD
 replacement_grade.pg_linear.exposure = 0.9375
 
 
-def delay_retired(payload):
-    settings, working_space = payload
+async def delay_retired(payload):
+    settings = payload.linear
     if settings.exposure == 0.3125:
         retired_started.set()
         assert release_retired.wait(10)
-    return original_prepare(payload)
+    return await original_prepare(payload)
 
 
 runtime.prepare = delay_retired
@@ -1282,19 +1645,51 @@ try:
     retired_source = nodes._record_for(stale_node)["source"]
     stale_node.pg_grade = replacement_grade
     assert nodes._record_for(stale_node)["source"] is not retired_source
-    retired_result = original_prepare((
-        nodes._linear_settings(retired_grade.pg_linear), active_space
+    replacement_pending_tree = stale_node.node_tree
+    replacement_pending_state = nodes._record_for(stale_node)["state"]
+    retired_result = asyncio.run(original_prepare(
+        nodes._grade_settings(retired_grade, active_space)
     ))
     nodes._handle_preparation_result(retired_source, "retired", retired_result, None)
-    assert stale_node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
+    assert stale_node.node_tree == replacement_pending_tree
+    assert nodes._record_for(stale_node)["state"] == replacement_pending_state
     assert stale_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
     release_retired.set()
-    nodes._render_pre(bpy.context.scene)
+    reconcile_for_render(bpy.context.scene)
 finally:
     release_retired.set()
     runtime.prepare = original_prepare
 assert stale_node.node_tree.get(nodes._KERNEL_SIGNATURE) == nodes._kernel_signature(
     nodes.SHADER_TREE, replacement_grade.pg_linear, active_space)
+
+# A deleted node's pending receipt cannot publish into a same-name replacement,
+# even when both nodes requested the exact same settings and signatures.
+pending_deleted_node = nodes.create_node(shader_tree)
+pending_deleted_name = pending_deleted_node.name
+pending_deleted_record = nodes._record_for(pending_deleted_node)
+pending_deleted_source = pending_deleted_record["source"]
+pending_deleted_signature = pending_deleted_record["state"].desired_preparation_signature
+assert not nodes.node_policy.output_allowed(pending_deleted_record["state"])
+pending_deleted_result = asyncio.run(original_prepare(
+    nodes._settings_for_node(pending_deleted_node)
+))
+shader_tree.nodes.remove(pending_deleted_node)
+del pending_deleted_node, pending_deleted_record
+replacement_node = nodes.create_node(shader_tree)
+assert replacement_node.name == pending_deleted_name
+replacement_record = nodes._record_for(replacement_node)
+assert replacement_record["source"] is not pending_deleted_source
+replacement_pending_state = replacement_record["state"]
+replacement_pending_tree = replacement_node.node_tree
+assert not nodes._handle_preparation_result(
+    pending_deleted_source, pending_deleted_signature, pending_deleted_result, None
+)
+assert nodes._record_for(replacement_node)["state"] == replacement_pending_state
+assert replacement_node.node_tree == replacement_pending_tree
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(replacement_node)
+shader_tree.nodes.remove(replacement_node)
+del replacement_node, replacement_record, replacement_pending_tree, pending_deleted_result
 
 # A worker failure is visible and the next reconciliation can recover it.
 worker_failure_grade = bpy.data.node_groups.new(
@@ -1302,18 +1697,18 @@ worker_failure_grade = bpy.data.node_groups.new(
 )
 worker_failure_grade.pg_linear.exposure = 1.25
 worker_failure_node = nodes.create_node(shader_tree)
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 original_prepare = runtime.prepare
 failure_calls = []
 
 
-def fail_first_preparation(payload):
-    settings, working_space = payload
+async def fail_first_preparation(payload):
+    settings = payload.linear
     if settings.exposure == 1.25:
         failure_calls.append(threading.get_ident())
         if len(failure_calls) == 1:
             raise RuntimeError("simulated preparation worker failure")
-    return original_prepare(payload)
+    return await original_prepare(payload)
 
 
 runtime.prepare = fail_first_preparation
@@ -1322,7 +1717,7 @@ try:
     nodes._drain_preparations()
     assert worker_failure_node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
     assert worker_failure_node.get(nodes._NODE_ERROR)
-    nodes._render_pre(bpy.context.scene)
+    reconcile_for_render(bpy.context.scene)
 finally:
     runtime.prepare = original_prepare
 assert len(failure_calls) == 2, failure_calls
@@ -1344,12 +1739,12 @@ def fail_barrier(_sources=None):
 
 runtime.wait = fail_barrier
 try:
-    nodes._render_pre(bpy.context.scene)
+    reconcile_for_render(bpy.context.scene)
     assert all(node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
                and node.get(nodes._NODE_ERROR) for node in shared_shader_nodes)
 finally:
     runtime.wait = original_wait
-nodes._render_pre(bpy.context.scene)
+reconcile_for_render(bpy.context.scene)
 assert all(not node.get(nodes._NODE_PENDING) and not node.get(nodes._NODE_ERROR)
            for node in shared_shader_nodes)
 
@@ -1413,10 +1808,10 @@ def recognize_failure_node(node):
     return node is failure_node or original_is_grade_node(node)
 
 
-def settings_for_failure_node(node):
+def settings_for_failure_node(node, working_space=None):
     if node is failure_node:
-        return failed_assignment_grade.pg_linear
-    return original_settings_for_node(node)
+        return nodes._grade_settings(failed_assignment_grade, working_space or active_space)
+    return original_settings_for_node(node, working_space)
 
 
 def capture_candidate(*args, **kwargs):
@@ -1526,6 +1921,40 @@ bpy.context.preferences.edit.use_global_undo = True
 shader_tree_name_for_cleanup = shader_tree.name
 compositor_tree_name_for_cleanup = compositor_tree.name
 material_name_for_cleanup = material.name
+
+# Native undo remaps the containing material ID used by local ownership.
+# Reacquire nodes after undo/redo instead of retaining invalid RNA wrappers.
+assert_local_grade_resources(local_grade_identities)
+assert bpy.ops.ed.undo_push(message="Local material Grade baseline") == {"FINISHED"}
+local_undo_node = bpy.data.materials[first_material_name].node_tree.nodes[first_node_name]
+assert nodes.PG_OT_new_grade.execute(
+    None, SimpleNamespace(pg_node=local_undo_node)) == {"FINISHED"}
+local_undo_grade_name = local_undo_node.pg_grade.name
+reconcile_for_render(bpy.context.scene)
+assert_grade_current(local_undo_node)
+assert bpy.ops.ed.undo_push(message="Create material Grade datablock") == {"FINISHED"}
+del local_undo_node
+assert bpy.ops.ed.undo.poll()
+assert bpy.ops.ed.undo() == {"FINISHED"}
+assert bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
+nodes._undo_redo_reconcile_tick()
+nodes._drain_preparations()
+assert_local_grade_resources(local_grade_identities)
+assert bpy.ops.ed.redo.poll()
+assert bpy.ops.ed.redo() == {"FINISHED"}
+assert bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
+nodes._undo_redo_reconcile_tick()
+nodes._drain_preparations()
+local_undo_node = bpy.data.materials[first_material_name].node_tree.nodes[first_node_name]
+assert local_undo_node.pg_grade.name == local_undo_grade_name
+assert_grade_current(local_undo_node)
+assert local_undo_node.node_tree.get(nodes.PARAMETER_OWNER) == local_undo_node.pg_grade
+assert nodes.PG_OT_unlink_grade.execute(
+    None, SimpleNamespace(pg_node=local_undo_node)) == {"FINISHED"}
+del local_undo_node
+reconcile_for_render(bpy.context.scene)
+assert_local_grade_resources(local_grade_identities)
+
 undo_tree = bpy.data.node_groups.new("Gesture Undo Regression", nodes.SHADER_TREE)
 undo_tree.use_fake_user = True
 undo_tree_name = undo_tree.name
@@ -1539,7 +1968,7 @@ assert bpy.ops.ed.undo_push(message="Gesture undo baseline") == {"FINISHED"}
 
 def commit_test_gesture(node, window_key, exposure):
     nodes._arm_gesture(window_key, node, (0, 0))
-    token = nodes._armed_gestures[window_key][0]
+    token = nodes._gesture_token(window_key)
     nodes._activate_gesture(window_key, token)
     assert node.pg_grade is not None
     settings = node.pg_grade.pg_linear
@@ -1621,9 +2050,17 @@ for tree in (shader_tree, compositor_tree):
 for node in tuple(material.node_tree.nodes):
     if node.bl_idname in nodes.NODE_TYPES.values():
         material.node_tree.nodes.remove(node)
+for collection, owner_name in dict.fromkeys(
+        (collection, owner_name) for collection, owner_name, _node_name
+        in local_grade_identities):
+    owner = getattr(bpy.data, collection)[owner_name]
+    for node in tuple(owner.node_tree.nodes):
+        if node.bl_idname in nodes.NODE_TYPES.values():
+            owner.node_tree.nodes.remove(node)
+    getattr(bpy.data, collection).remove(owner)
 
 for group in tuple(bpy.data.node_groups):
-    if (group.get("_perceptual_grade_linear_kernel")
+    if (group.get("_perceptual_grade_grade_kernel")
             or group.get("_perceptual_grade_stack_kernel")) and group.users == 0:
         bpy.data.node_groups.remove(group)
     elif group.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA and group.users == 0:

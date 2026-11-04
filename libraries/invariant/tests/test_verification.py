@@ -8,8 +8,8 @@ from unittest.mock import patch
 import z3
 
 from invariant.verification.checker import Checker, verify, verify_receipt
-from invariant.verification.model import Source, VerificationError
-from invariant.verification.symbolic import Interpreter, integer, boolean
+from invariant.verification.model import Source, Type, VerificationError
+from invariant.verification.symbolic import Interpreter, Sequence, OPTIONALS, TEXT, equal, integer, boolean, modulo
 
 
 SOURCE = '''from dataclasses import dataclass, replace
@@ -67,10 +67,10 @@ class VerificationTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
 
-    def verify(self, source=SOURCE, requirements=None, output=False):
+    def verify(self, source=SOURCE, requirements=None, output=False, timeout_ms=5000):
         (self.root / "machine.py").write_text(source)
         (self.root / "requirements.inv").write_text(json.dumps(REQUIREMENTS if requirements is None else requirements))
-        return verify(self.root / "machine.py", self.root / "requirements.inv", self.root / "proof" if output else None)
+        return verify(self.root / "machine.py", self.root / "requirements.inv", self.root / "proof" if output else None, timeout_ms=timeout_ms)
 
     def test_handwritten_source_properties_mutation_and_artifacts(self):
         report = self.verify(output=True)
@@ -89,6 +89,16 @@ class VerificationTests(unittest.TestCase):
         report = self.verify(SOURCE.replace("return State(0, False)", "return State(-1, False)"))
         self.assertFalse(report["ok"])
         self.assertTrue(any(x["name"] == "init.initial.retry_bound" and x["actual"] == "sat" for x in report["obligations"]))
+
+    def test_transition_properties_do_not_require_a_redundant_state_invariant(self):
+        requirements = copy.deepcopy(REQUIREMENTS)
+        requirements['invariants'] = {}
+        report = self.verify(requirements=requirements)
+        self.assertTrue(report['ok'], report)
+        self.assertTrue(report['mutations'][0]['ok'])
+        requirements['properties'] = []
+        with self.assertRaisesRegex(VerificationError, 'named invariant or property'):
+            self.verify(requirements=requirements)
 
     def test_rare_event_preservation_is_not_property_dependent(self):
         requirements = copy.deepcopy(REQUIREMENTS)
@@ -207,12 +217,6 @@ def new() -> State:
 def absent(state: State) -> bool:
     return state.signature is None
 
-def optional_loop(values: tuple[Optional[str], ...]) -> Optional[str]:
-    selected: Optional[str] = None
-    for item in values:
-        selected = item
-    return selected
-
 def step(state: State, event: Event) -> tuple[State, Effects]:
     if event.signature is None:
         return state, Effects()
@@ -242,22 +246,176 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
             ],
             "witnesses": [],
             "mutations": [],
-            "loops": [{
-                "name": "optional_local_prefix",
-                "function": "optional_loop",
-                "target": "item",
-                "iter": "values",
-                "cursor": "processed",
-                "invariants": ["True"],
-                "decreases": "len(values)-processed",
-            }],
         }
         report = self.verify(source, requirements, output=True)
         self.assertTrue(report["ok"], report)
         self.assertFalse((self.root / "proof" / "validators.py").exists())
 
+        for scalar in ("int", "bool"):
+            with self.subTest(scalar=scalar):
+                report = self.verify(source.replace("Optional[str]", "Optional[" + scalar + "]"), requirements)
+                self.assertTrue(report["ok"], report)
         with self.assertRaises(VerificationError):
-            Source(source.replace("Optional[str]", "Optional[int]"))
+            Source(source.replace("Optional[str]", "Optional[tuple[int, ...]]"))
+
+    def test_optional_scalars_preserve_empty_values_and_replay_counterexamples(self):
+        for scalar, present in (("str", "''"), ("int", "0"), ("bool", "False")):
+            source = '''from dataclasses import dataclass
+from typing import Optional
+
+@dataclass(frozen=True)
+class State:
+    value: Optional[SCALAR]
+
+@dataclass(frozen=True)
+class Event:
+    value: Optional[SCALAR]
+
+@dataclass(frozen=True)
+class Effects:
+    pass
+
+def new() -> State:
+    return State(None)
+
+def step(state: State, event: Event) -> tuple[State, Effects]:
+    return State(event.value), Effects()
+'''.replace('SCALAR', scalar)
+            requirements = {
+                "version": 1, "state": "State", "event": "Event",
+                "initializers": ["new"], "step": "step", "invariants": {"optional_value": "state.value is None or state.value is not None"},
+                "properties": [{"name": "present_value_is_preserved",
+                    "variables": {"event": "Event"},
+                    "assume": ["event.value == " + present],
+                    "assert": "step(new(), event)[0].value == event.value and step(new(), event)[0].value is not None"}],
+                "witnesses": [{"name": "empty_value_is_present", "variables": {"event": "Event"},
+                    "assert": "event.value == " + present + " and event.value is not None"}],
+                "mutations": [{"name": "drop_present_value", "function": "step",
+                    "target": "State(event.value)", "replacement": "State(None)",
+                    "detects": ["property.present_value_is_preserved"]}],
+            }
+            with self.subTest(scalar=scalar):
+                report = self.verify(source, requirements, output=True)
+                self.assertTrue(report["ok"], report)
+                self.assertTrue(report["mutations"][0]["replay"]["ok"])
+
+    def test_nested_record_sequences_preserve_members_and_replay_mutations(self):
+        source = '''from dataclasses import dataclass
+from typing import Literal, Optional
+
+@dataclass(frozen=True)
+class Item:
+    identity: Optional[int]
+    labels: tuple[str, ...]
+    status: Literal["ready", "done"] = "ready"
+
+@dataclass(frozen=True)
+class State:
+    items: tuple[Item, ...]
+
+@dataclass(frozen=True)
+class Event:
+    item: Item
+    append: bool
+
+@dataclass(frozen=True)
+class Effects:
+    items: tuple[Item, ...] = ()
+
+def new() -> State:
+    return State(())
+
+def step(state: State, event: Event) -> tuple[State, Effects]:
+    if event.append:
+        return State(state.items + (event.item,)), Effects((event.item,))
+    return state, Effects()
+'''
+        requirements = {
+            "version": 1, "state": "State", "event": "Event",
+            "initializers": ["new"], "step": "step", "invariants": {"nonnegative_length": "len(state.items) >= 0"},
+            "properties": [{"name": "append_retains_nested_item",
+                "variables": {"state": "State", "event": "Event"},
+                "assume": ["event.append"], "lets": {"result": "step(state, event)"},
+                "assert": "len(result[0].items) == len(state.items) + 1 and result[0].items[len(state.items)] == event.item and result[1].items == (event.item,)"}],
+            "witnesses": [{"name": "nested_optional_is_not_absent",
+                "variables": {"event": "Event"},
+                "assert": "event.append and event.item.identity == 0 and event.item.labels == ('', 'x') and event.item.status == 'done'"}],
+            "mutations": [{"name": "drop_nested_effect", "function": "step",
+                "target": "Effects((event.item,))", "replacement": "Effects()",
+                "detects": ["property.append_retains_nested_item"]}],
+        }
+        report = self.verify(source, requirements, output=True)
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["mutations"][0]["replay"]["ok"])
+        invalid_source = source.replace('state.items + (event.item,)',
+                                        'state.items + (Item(event.item.identity, event.item.labels, "invalid"),)')
+        invalid_requirements = copy.deepcopy(requirements)
+        invalid_requirements['mutations'] = []
+        invalid_report = self.verify(invalid_source, invalid_requirements)
+        self.assertFalse(invalid_report['ok'])
+
+    def test_mixed_optional_and_record_storage_smt_is_standalone(self):
+        source = Source(SOURCE.replace('from typing import Literal',
+                                      'from typing import Literal, Optional') + '''
+@dataclass(frozen=True)
+class Item:
+    number: Optional[int]
+    text: Optional[str]
+    enabled: Optional[bool]
+    states: tuple[State, ...]
+''')
+        interpreter = Interpreter(source, {})
+        items = interpreter.symbol('items', Type('sequence', (Type('record', ('Item',)),)))
+        item = items.at(0)
+        solver = z3.Solver()
+        solver.add(*interpreter.domains, items.length == 1,
+                   equal(item.fields['number'], None),
+                   equal(item.fields['text'], ''),
+                   equal(item.fields['enabled'], False))
+        self.assertEqual(solver.check(), z3.sat)
+        replay = z3.Solver()
+        replay.add(z3.parse_smt2_string(solver.to_smt2()))
+        self.assertEqual(replay.check(), z3.sat)
+
+    def test_optional_integer_narrowing_requires_presence(self):
+        source = SOURCE.replace('from typing import Literal', 'from typing import Literal, Optional') + '''
+def increment(value: Optional[int]) -> int:
+    if value is None:
+        return 0
+    return value + 1
+
+def prepend(value: Optional[int], values: tuple[int, ...]) -> tuple[int, ...]:
+    if value is None:
+        return values
+    return (value,) + values
+'''
+        requirements = copy.deepcopy(REQUIREMENTS)
+        requirements['mutations'] = []
+        self.assertTrue(self.verify(source, requirements)['ok'])
+        for guard in ('    if value is None:\n        return 0\n',
+                      '    if value is None:\n        return values\n'):
+            with self.subTest(guard=guard):
+                report = self.verify(source.replace(guard, ''), requirements)
+                self.assertFalse(report['ok'])
+                self.assertTrue(any(not obligation['ok'] and obligation['name'].startswith('defined.')
+                                    for obligation in report['obligations']))
+
+
+    def test_sequence_equality_ignores_storage_outside_tuple_length(self):
+        interpreter = Interpreter(Source(SOURCE), {})
+        zeroes = z3.K(z3.IntSort(), z3.IntVal(0))
+        baseline = Sequence(z3.IntVal(1), zeroes, Type('int'), interpreter)
+        outside = Sequence(z3.IntVal(1), z3.Store(zeroes, 4, 9), Type('int'), interpreter)
+        inside = Sequence(z3.IntVal(1), z3.Store(zeroes, 0, 9), Type('int'), interpreter)
+        longer = Sequence(z3.IntVal(2), zeroes, Type('int'), interpreter)
+        boolean_zero = Sequence(z3.IntVal(1), z3.K(z3.IntSort(), z3.BoolVal(False)),
+                                Type('bool'), interpreter)
+        for other, expected in ((outside, True), (inside, False), (longer, False),
+                                (boolean_zero, True)):
+            with self.subTest(expected=expected, element=other.element):
+                solver = z3.Solver()
+                solver.add(equal(baseline, other) != expected)
+                self.assertEqual(solver.check(), z3.unsat)
 
     def test_python_division_and_modulo_match_concrete_execution(self):
         source = Source(SOURCE + "\ndef divmod_pair(a: int, b: int) -> tuple[int, int]:\n    return a // b, a % b\n")
@@ -266,6 +424,97 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
                 interpreter = Interpreter(source, {})
                 value = interpreter.call("divmod_pair", [a, b], {})
                 self.assertEqual(tuple(z3.simplify(x).as_long() for x in value), (a // b, a % b))
+
+    def test_structural_optional_text_typing_preserves_unicode_domain(self):
+        interpreter = Interpreter(Source(SOURCE), {})
+        text = Type('str')
+        optional_text = Type('optional', (text,))
+        sort = OPTIONALS['str']
+        unknown = z3.Const('untrusted.text', TEXT)
+        wrapped = interpreter.typed(sort.optional_some(unknown), optional_text)
+        for codepoint in (-1, 0x110000):
+            solver = z3.Solver()
+            solver.add(unknown == z3.Unit(z3.IntVal(codepoint)), wrapped)
+            self.assertEqual(solver.check(), z3.unsat)
+        for codepoint in (0, 0xd800, 0x10ffff):
+            unit = z3.Unit(z3.IntVal(codepoint))
+            self.assertTrue(z3.is_true(z3.simplify(interpreter.typed(unit, text))))
+        concatenated = z3.Concat(z3.Unit(z3.IntVal(65)), unknown)
+        solver = z3.Solver()
+        solver.add(unknown == z3.Unit(z3.IntVal(-1)), interpreter.typed(concatenated, text))
+        self.assertEqual(solver.check(), z3.unsat)
+        self.assertTrue(z3.is_true(interpreter.typed(z3.Empty(TEXT), text)))
+        self.assertTrue(z3.is_true(interpreter.typed(sort.optional_none, optional_text)))
+
+    def test_action_sequences_preserve_optional_and_constant_error_text(self):
+        source = '''from dataclasses import dataclass
+from typing import Literal, Optional
+
+@dataclass(frozen=True)
+class Action:
+    kind: Literal['failure', 'cleanup']
+    error: Optional[str]
+
+@dataclass(frozen=True)
+class State:
+    error: Optional[str]
+
+@dataclass(frozen=True)
+class Event:
+    error: Optional[str]
+    cleanup: bool
+
+@dataclass(frozen=True)
+class Effects:
+    actions: tuple[Action, ...]
+
+def new() -> State:
+    return State(None)
+
+def step(state: State, event: Event) -> tuple[State, Effects]:
+    actions = (Action('failure', event.error),)
+    if event.cleanup:
+        actions = actions + (Action('cleanup', 'GPU helper exited unexpectedly'),)
+    return State(event.error), Effects(actions)
+'''
+        requirements = {
+            'version': 1, 'state': 'State', 'event': 'Event',
+            'initializers': ['new'], 'step': 'step',
+            'invariants': {'optional_error': 'state.error is None or state.error is not None'},
+            'properties': [{
+                'name': 'failure_text_survives_action_encoding',
+                'variables': {'event': 'Event'}, 'lets': {'result': 'step(new(), event)'},
+                'assert': "result[0].error == event.error and result[1].actions[0].error == event.error and len(result[1].actions) == (2 if event.cleanup else 1)",
+            }],
+            'witnesses': [{
+                'name': 'empty_text_is_not_absence', 'variables': {},
+                'assert': "step(new(), Event('', True))[1].actions == (Action('failure', ''), Action('cleanup', 'GPU helper exited unexpectedly'))",
+            }],
+        }
+        report = self.verify(source, requirements)
+        self.assertTrue(report['ok'], [item for item in report['obligations'] if not item['ok']])
+
+
+    def test_bounded_modulo_rewrite_is_exact_for_every_integer_divisor(self):
+        dividend, divisor = z3.Ints('rewrite.dividend rewrite.divisor')
+        solver = z3.Solver()
+        solver.set(timeout=5000)
+        # This also checks zero: no shortcut guard may apply there. The source
+        # interpreter separately rejects division by zero before using a result.
+        solver.add(modulo(dividend, divisor) != dividend % divisor)
+        self.assertEqual(solver.check(), z3.unsat)
+
+        source = Source(SOURCE + '\ndef remainder(a: int, b: int) -> int:\n    return a % b\n')
+        for b in (-7, -1, 1, 7):
+            for a in (-2 * abs(b), -abs(b), -1, 0, abs(b) - 1, abs(b), 2 * abs(b)):
+                interpreter = Interpreter(source, {})
+                result = interpreter.call('remainder', [a, b], {})
+                self.assertEqual(z3.simplify(result).as_long(), a % b)
+        interpreter = Interpreter(source, {})
+        interpreter.call('remainder', [1, 0], {})
+        solver = z3.Solver()
+        solver.add(*(condition for _reason, condition in interpreter.safety))
+        self.assertEqual(solver.check(), z3.unsat)
 
     def test_nested_record_fixed_tuple_and_unpacking(self):
         source = SOURCE + '''
@@ -293,6 +542,139 @@ def nested(pair: Pair) -> Pair:
         requirements["mutations"][0]["replacement"] = "missing()"
         with self.assertRaises(VerificationError):
             self.verify(requirements=requirements)
+
+    def test_conjunction_proofs_preserve_nested_guards_and_original_artifact(self):
+        value = z3.Int('conjunction.value')
+        premises = value >= 0
+        conclusion = z3.Implies(value > 2, z3.And(
+            value >= 0, z3.Implies(value > 3, z3.And(value > 2, value >= 4))))
+        checker = Checker(Source(SOURCE), REQUIREMENTS, self.root / 'split')
+        result = checker.prove('guarded', premises, conclusion)
+        self.assertTrue(result['ok'])
+        self.assertEqual([part['actual'] for part in result['components']], ['unsat'] * 3)
+        artifact = z3.And(*z3.parse_smt2_file(str(self.root / 'split' / result['smt2'])))
+        solver = z3.Solver()
+        solver.add(artifact != z3.And(premises, z3.Not(conclusion)))
+        self.assertEqual(solver.check(), z3.unsat)
+        # A false antecedent must not turn its consequence into a premise or
+        # an unconditional proof obligation.
+        guarded = checker.prove('unreachable', value == 0,
+                                z3.Implies(value > 0, z3.And(value < 0, value > 1)))
+        self.assertTrue(guarded['ok'])
+
+    def test_later_conjunction_counterexample_satisfies_complete_obligation(self):
+        value = z3.Int('conjunction.invalid.value')
+        premises = value >= 0
+        conclusion = z3.And(value >= 0,
+                            z3.Implies(value >= 1, z3.And(value >= 0, value >= 2)))
+        checker = Checker(Source(SOURCE), REQUIREMENTS, self.root / 'invalid-split')
+        result = checker.prove('later_clause', premises, conclusion)
+        self.assertFalse(result['ok'])
+        self.assertEqual([part['actual'] for part in result['components']],
+                         ['unsat', 'unsat', 'sat'])
+        original = z3.And(premises, z3.Not(conclusion))
+        self.assertTrue(z3.is_true(checker.models['later_clause'].eval(original)))
+        artifact = z3.And(*z3.parse_smt2_file(str(self.root / 'invalid-split' / result['smt2'])))
+        solver = z3.Solver()
+        solver.add(artifact != original)
+        self.assertEqual(solver.check(), z3.unsat)
+
+    def test_unknown_conjunction_component_cannot_hide_failure_or_prove_success(self):
+        actual_solver = z3.Solver
+        value = z3.Int('conjunction.unknown.value')
+        for invalid_last in (False, True):
+            created = []
+
+            class OneUnknownSolver:
+                def __init__(self):
+                    self.index = len(created)
+                    created.append(self)
+                    self.delegate = actual_solver()
+
+                def set(self, **kwargs):
+                    self.delegate.set(**kwargs)
+
+                def add(self, *args):
+                    self.delegate.add(*args)
+
+                def check(self):
+                    return z3.unknown if self.index == 1 else self.delegate.check()
+
+                def model(self):
+                    return self.delegate.model()
+
+                def reason_unknown(self):
+                    return 'controlled timeout'
+
+            with self.subTest(invalid_last=invalid_last):
+                checker = Checker(Source(SOURCE), REQUIREMENTS)
+                conclusion = z3.And(value >= 0, value >= 1,
+                                    value > 2 if invalid_last else value >= 2)
+                with patch('invariant.verification.checker.z3.Solver', OneUnknownSolver):
+                    result = checker.prove('unknown_component', value >= 2, conclusion)
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['actual'], 'sat' if invalid_last else 'unknown')
+                self.assertEqual(len(result['components']), 3)
+                self.assertEqual(result['components'][1]['actual'], 'unknown')
+                if invalid_last:
+                    self.assertTrue(z3.is_true(checker.models['unknown_component'].eval(
+                        z3.And(value >= 2, z3.Not(conclusion)))))
+                else:
+                    self.assertEqual(result['reason'], 'controlled timeout')
+
+    def test_component_deduplication_preserves_indices_and_counterexample(self):
+        value = z3.Int('dedup.value')
+        impossible = z3.And(value >= 2, value < 1)
+        possible = value == 3
+        queries = [z3.BoolVal(False), impossible, impossible, possible, possible]
+        checker = Checker(Source(SOURCE), REQUIREMENTS)
+        with patch('invariant.verification.checker.z3.Solver', wraps=z3.Solver) as solver:
+            result = checker.solve('dedup', z3.Or(*queries), components=queries)
+        self.assertEqual(solver.call_count, 2)
+        self.assertEqual([part['index'] for part in result['components']], list(range(5)))
+        self.assertEqual([part['actual'] for part in result['components']],
+                         ['unsat', 'unsat', 'unsat', 'sat', 'sat'])
+        self.assertFalse(result['ok'])
+        self.assertTrue(z3.is_true(checker.models['dedup'].eval(z3.Or(*queries))))
+
+    def test_duplicate_unknown_components_remain_unknown(self):
+        value = z3.Int('dedup.unknown.value')
+        query = value > 0
+        checker = Checker(Source(SOURCE), REQUIREMENTS)
+        with patch('invariant.verification.checker.z3.Solver') as solver:
+            solver.return_value.check.return_value = z3.unknown
+            solver.return_value.reason_unknown.return_value = 'controlled timeout'
+            result = checker.solve('dedup_unknown', query, components=[query] * 3)
+        self.assertEqual(solver.call_count, 1)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['actual'], 'unknown')
+        self.assertEqual(result['reason'], 'controlled timeout')
+        self.assertEqual(result['components'], [
+            {'index': index, 'actual': 'unknown', 'reason': 'controlled timeout'}
+            for index in range(3)
+        ])
+
+    def test_later_conjunction_contract_mutation_replays(self):
+        source = SOURCE + '''
+def pair(value: int) -> tuple[int, int]:
+    return value, value + 1
+'''
+        requirements = copy.deepcopy(REQUIREMENTS)
+        requirements['contracts']['pair'] = {
+            'ensures': ['result[0] == value and result[1] == value + 1'],
+        }
+        requirements['mutations'] = [{
+            'name': 'break_second_result', 'function': 'pair',
+            'target': 'value + 1', 'replacement': 'value',
+            'detects': ['contract.pair.0'],
+        }]
+        report = self.verify(source, requirements, output=True)
+        self.assertTrue(report['ok'], report)
+        mutation = report['mutations'][0]
+        self.assertTrue(mutation['replay']['ok'])
+        failed = next(row for row in mutation['obligations'] if row['name'] == 'contract.pair.0')
+        self.assertEqual(failed['components'][-1]['actual'], 'sat')
+        self.assertTrue(all(part['actual'] == 'unsat' for part in failed['components'][:-1]))
 
     def test_unknown_solver_result_fails_closed(self):
         class UnknownSolver:
@@ -367,80 +749,6 @@ def at(values: tuple[int | str, ...], index: int) -> int | str:
         requirements['contracts'].pop('step')
         self.assertFalse(self.verify(source, requirements)['ok'])
 
-    def loop_fixture(self):
-        source = SOURCE + '''
-def count(values: tuple[int, ...], selected: int) -> int:
-    total = 0
-    for item in values:
-        total = total + (1 if item == selected else 0)
-    return total
-
-def all_final(values: tuple[int, ...]) -> bool:
-    total = True
-    for item in values:
-        total = total and item == 65
-    return total
-
-def first(values: tuple[bool, ...], start: int) -> int:
-    length = len(values)
-    if length == 0:
-        return -1
-    cursor = start % length
-    for offset in range(length):
-        index = (cursor + offset) % length
-        if values[index]:
-            return index
-    return -1
-'''
-        requirements = copy.deepcopy(REQUIREMENTS)
-        requirements['mutations'] = []
-        requirements['contracts'].update({
-            'count': {'ensures': ['result == sum_range(i,0,len(values),1 if values[i] == selected else 0)']},
-            'all_final': {'ensures': ['result == forall_range(i,0,len(values),values[i] == 65)']},
-            'first': {'ensures': ['(result == -1) == forall_range(i,0,len(values),not values[i])', 'result == -1 or (0 <= result < len(values) and values[result])', 'result == -1 or forall_range(i,0,len(values),(i-start)%len(values) >= (result-start)%len(values) or not values[i])']},
-        })
-        requirements['loops'] = [
-            {'name': 'count_prefix', 'function': 'count', 'target': 'item', 'iter': 'values', 'cursor': 'processed', 'invariants': ['total == sum_range(i,0,processed,1 if values[i] == selected else 0)'], 'decreases': 'len(values)-processed'},
-            {'name': 'all_prefix', 'function': 'all_final', 'target': 'item', 'iter': 'values', 'cursor': 'processed', 'invariants': ['total == forall_range(i,0,processed,values[i] == 65)'], 'decreases': 'len(values)-processed'},
-            {'name': 'first_prefix', 'function': 'first', 'target': 'offset', 'iter': 'range(length)', 'cursor': 'processed', 'invariants': ['length == len(values)', 'length > 0', 'cursor == start % length', '0 <= cursor < length', 'forall_range(i,0,length,(i-start)%length >= processed or not values[i])'], 'decreases': 'length-processed'},
-        ]
-        return source, requirements
-
-    def test_unbounded_loops_are_inductive_with_early_return_and_empty_inputs(self):
-        source, requirements = self.loop_fixture()
-        report = self.verify(source, requirements)
-        self.assertTrue(report['ok'], [x for x in report['obligations'] if not x['ok']])
-        names = [x['name'] for x in report['obligations']]
-        self.assertTrue(any('.preserve.' in name for name in names))
-        self.assertTrue(any('.decrease.' in name for name in names))
-        namespace = {}
-        exec(source, namespace)
-        for length in (0, 1, 13, 1001):
-            values = tuple(i % 7 for i in range(length))
-            self.assertEqual(namespace['count'](values, 3), values.count(3))
-            self.assertEqual(namespace['all_final']((65,) * length), True)
-            eligible = tuple(i == length - 1 for i in range(length))
-            for start in (-10**30, -1, 0, 10**30):
-                self.assertEqual(namespace['first'](eligible, start), length - 1)
-
-    def test_false_loop_invariant_bad_body_and_non_decrease_fail_closed(self):
-        source, requirements = self.loop_fixture()
-        for mutation in ('base', 'body', 'variant', 'missing'):
-            candidate = copy.deepcopy(requirements)
-            changed = source
-            if mutation == 'base':
-                candidate['loops'][0]['invariants'] = ['total == 1']
-            elif mutation == 'body':
-                changed = source.replace('total + (1 if item == selected else 0)', 'total + 1')
-            elif mutation == 'variant':
-                candidate['loops'][0]['decreases'] = 'processed'
-            else:
-                candidate['loops'].pop()
-                with self.assertRaises(VerificationError):
-                    self.verify(changed, candidate)
-                continue
-            report = self.verify(changed, candidate)
-            self.assertFalse(report['ok'], mutation)
 
     def test_required_witness_and_mutation_inventory_and_concrete_replay(self):
         self.assertTrue(self.verify(output=True)['ok'])
@@ -451,46 +759,6 @@ def first(values: tuple[bool, ...], start: int) -> int:
             with self.assertRaisesRegex(VerificationError, 'Missing required'):
                 verify(self.root / 'machine.py', self.root / 'requirements.inv', **{argument: ['missing']})
 
-    def test_mutation_replay_covers_loop_and_contract_counterexamples(self):
-        source = SOURCE + '''
-def all_valid(values: tuple[int, ...]) -> bool:
-    valid = True
-    for item in values:
-        valid = valid and item >= 0
-    return valid
-
-def agrees(left: int, right: int) -> bool:
-    return left == right
-'''
-        requirements = copy.deepcopy(REQUIREMENTS)
-        requirements['contracts'].update({
-            'all_valid': {'ensures': [
-                'result == forall_range(i,0,len(values),values[i] >= 0)',
-            ]},
-            'agrees': {'ensures': ['result == (left == right)']},
-        })
-        requirements['properties'] = []
-        requirements['witnesses'] = []
-        requirements['mutations'] = [
-            {'name': 'accept_invalid_item', 'function': 'all_valid',
-             'target': 'item >= 0', 'replacement': 'True',
-             'detects': ['loop.all_valid.4.all_valid.all_valid_prefix.preserve.0']},
-            {'name': 'never_agree', 'function': 'agrees',
-             'target': 'left == right', 'replacement': 'False',
-             'detects': ['contract.agrees.0']},
-        ]
-        requirements['loops'] = [{
-            'name': 'all_valid_prefix', 'function': 'all_valid',
-            'target': 'item', 'iter': 'values', 'cursor': 'processed',
-            'invariants': [
-                'valid == forall_range(i,0,processed,values[i] >= 0)',
-            ],
-            'decreases': 'len(values)-processed',
-        }]
-        report = self.verify(source, requirements)
-        self.assertTrue(report['ok'], report)
-        self.assertTrue(all(mutation['ok'] and mutation['replay']['ok']
-                            for mutation in report['mutations']))
 
     def test_helper_memo_preserves_path_and_type_obligations(self):
         source = SOURCE + '''
@@ -551,7 +819,6 @@ def append(values: tuple[int | str, ...], value: int | str) -> tuple[int | str, 
         requirements['contracts']['append'] = {'ensures': [
             'len(result) == len(values) + 1',
             'result[len(values)] == value',
-            'forall_range(i, 0, len(values), result[i] == values[i])',
         ]}
         report = self.verify(source, requirements)
         self.assertTrue(report['ok'], [row for row in report['obligations'] if not row['ok']])
@@ -561,66 +828,6 @@ def append(values: tuple[int | str, ...], value: int | str) -> tuple[int | str, 
         for values, value in (((), 1), ((1, 'a'), 'b'), (('x',), 2)):
             self.assertEqual(namespace['append'](values, value), values + (value,))
 
-    def test_range_aggregates_reject_transitive_loop_summaries(self):
-        source = Source(SOURCE + '''
-def looped(value: int) -> int:
-    total = 0
-    for item in (value,):
-        total = total + item
-    return total
-
-def wrapped(value: int) -> int:
-    return looped(value)
-
-def contract_wrapped(value: int) -> int:
-    return value
-''')
-        requirements = copy.deepcopy(REQUIREMENTS)
-        requirements['contracts']['contract_wrapped'] = {
-            'ensures': ['result == looped(value)'],
-        }
-        expressions = (
-            'forall_range(i, 0, 2, looped(i) == 0)',
-            'exists_range(i, 0, 2, wrapped(i) == 0)',
-            'sum_range(i, 0, 2, contract_wrapped(i))',
-            'forall_range(i, 0, 2, exists_range(j, 0, 2, wrapped(i + j) == 0))',
-        )
-        for expression in expressions:
-            with self.subTest(expression=expression):
-                interpreter = Interpreter(source, requirements, summaries={'looped'})
-                with self.assertRaisesRegex(VerificationError, 'Looping helper calls'):
-                    interpreter.expression(expression, {})
-
-    def test_range_aggregates_preserve_inline_loop_free_helpers(self):
-        source = Source(SOURCE + '''
-def scalar(value: int) -> int:
-    return value + 1
-''')
-        requirements = copy.deepcopy(REQUIREMENTS)
-        requirements['mutations'] = []
-        requirements['contracts']['scalar'] = {
-            'requires': ['value >= 0'],
-            'ensures': ['result == value + 1'],
-        }
-        interpreter = Interpreter(source, requirements, summaries={'scalar'})
-        result = boolean(interpreter.expression(
-            'forall_range(i, 0, 3, scalar(i) == i + 1)', {},
-        ))
-        solver = z3.Solver()
-        solver.add(z3.Not(result))
-        self.assertEqual(solver.check(), z3.unsat)
-        self.assertTrue(interpreter.safety)
-        self.assertTrue(any(z3.is_quantifier(condition)
-                            for _reason, condition in interpreter.safety))
-
-    def test_range_aggregate_rejects_binder_dependent_normalization_assumption(self):
-        source = Source(SOURCE)
-        interpreter = Interpreter(source, {})
-        divisor = interpreter.symbol('divisor', source.signatures['remaining'][0]['n'])
-        interpreter.nonnegative.add(divisor.get_id())
-        with self.assertRaisesRegex(VerificationError, 'assumptions cannot escape'):
-            interpreter.expression('sum_range(i, 1, 5, (divisor + i) % i)',
-                                   {'divisor': divisor})
 
     def test_concrete_identity_sequence_trace_preserves_declared_type(self):
         source = SOURCE + '''
@@ -649,6 +856,25 @@ def append_entry(ledger: Ledger, value: int | str) -> Ledger:
             condition = z3.simplify(z3.And(*(value for _reason, value in interpreter.safety)))
             self.assertEqual(z3.is_true(condition), not guard)
 
+
+    def test_collection_proof_features_are_rejected(self):
+        for name in ('forall_range', 'exists_range', 'sum_range'):
+            with self.subTest(name=name):
+                requirements = copy.deepcopy(REQUIREMENTS)
+                requirements['properties'].append({
+                    'name': 'removed_collection_claim',
+                    'assert': name + '(i, 0, 3, i == 0)',
+                })
+                with self.assertRaisesRegex(VerificationError, 'Only source-defined'):
+                    self.verify(requirements=requirements)
+        with self.assertRaisesRegex(VerificationError, 'Collection slices'):
+            Source(SOURCE + "\ndef remove_first(values: tuple[int, ...]) -> tuple[int, ...]:\n    return values[1:]\n")
+        with self.assertRaisesRegex(VerificationError, 'Unsupported statement: For'):
+            Source(SOURCE + "\ndef scan(values: tuple[int, ...]) -> int:\n    total = 0\n    for value in values:\n        total = total + value\n    return total\n")
+        requirements = copy.deepcopy(REQUIREMENTS)
+        requirements['loops'] = []
+        with self.assertRaisesRegex(VerificationError, 'unknown requirements fields'):
+            self.verify(requirements=requirements)
 
 
 if __name__ == "__main__":
