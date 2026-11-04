@@ -1,0 +1,129 @@
+{
+  "adaptations": [
+    "Imports use isolated build-only packages pg_book_generators and pg_book_legacy.",
+    "Provenance inputs use stable logical names instead of sandbox paths.",
+    "Photographic sample arrays reuse the monorepo fixture source target; the original metadata and PQ input are retained.",
+    "Icon test copies are writable private fixtures even when NativeLink inputs are read-only."
+  ],
+  "copyright": "Rei277Hz and the Perceptual Grade contributors; original GPL-3.0 license retained in LICENSE.",
+  "files": {
+    "LICENSE": {
+      "original_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "source": "LICENSE"
+    },
+    "ab_background.py": {
+      "original_sha256": "892cff17a24d0d82365fbed21cca526c59b016fbc99ca43ce323c8f13cf2c25d",
+      "source": "tools/assets/ab_background.py"
+    },
+    "check_demos.py": {
+      "original_sha256": "f187922ae84d67837060b58147e35af65e75f16d5aea8ac54c87ed8f09e6eb5f",
+      "source": "tests/docs/test_demos.py"
+    },
+    "check_favicon.py": {
+      "original_sha256": "9b9633a068c54938a967a9e2f0b5475469beb7616f89710de0fd6f9bb968de76",
+      "source": "tests/docs/test_favicon.py"
+    },
+    "check_intro.py": {
+      "original_sha256": "525c33a51137b7e33e8d649cef74ab4c48a311878679562cb7da8d2cb139f8c0",
+      "source": "tests/docs/test_intro.py"
+    },
+    "compile_locales.py": {
+      "original_sha256": "8600afec68b5bf295be74e19b9a23c2182603fdcfe9b1cc8a2a637b39f3b0066",
+      "source": "tools/compile_locales.py"
+    },
+    "demos.py": {
+      "original_sha256": "f536f4a0d0573811813b4c7fe640be8908c987b93ffe57f34954e051b482a8e3",
+      "source": "tools/docs/demos.py"
+    },
+    "favicon.py": {
+      "original_sha256": "741cbc93a53d6b7849d6eae09a1481e35b486ecafd2aaee4bbe0cd9f48fada36",
+      "source": "tools/docs/favicon.py"
+    },
+    "figure_common.py": {
+      "original_sha256": "4ad5876f69fabacf5201a3e57870252fed49391b0d11eafc0b2ae34c1ea62fc3",
+      "source": "tools/docs/figure_common.py"
+    },
+    "figures.py": {
+      "original_sha256": "1584c416e7896ab03e7f6ae8977d001e0ee2455e9d895eae6c6f975d4e51fa6c",
+      "source": "tools/docs/figures.py"
+    },
+    "fixtures/IMG_0221.PNG": {
+      "original_sha256": "3eb585ed5de1037a9cd6b628f1cd00a46c591de33bc8ad3f84f9945c807f5c13",
+      "source": "tests/blender/fixtures/hk-pq/IMG_0221.PNG"
+    },
+    "fixtures/exr-metadata.json": {
+      "original_sha256": "819af10a02a5400a4f5ef3ec6b0ad2f20123e11632cf9f27e45d6eaa082c199a",
+      "source": "tests/blender/fixtures/hk-real-world/metadata.json"
+    },
+    "fixtures/pq-metadata.json": {
+      "original_sha256": "0f9ed28d1964121f907e77ada652f22b1bd1afb13032bd5516061410ffb848c9",
+      "source": "tests/blender/fixtures/hk-pq/metadata.json"
+    },
+    "intro.py": {
+      "original_sha256": "a1b28ebba2eb82a924a58779a6c841b62ecaf3978b2995d104cbf8eb3059eacf",
+      "source": "tools/docs/intro.py"
+    },
+    "legacy/locales/en.json": {
+      "original_sha256": "5355b18481b72728a77366a057d28325b2d2d1df0c10a848b2e125ff7f56e419",
+      "source": "src/blender/locales/en.json"
+    },
+    "legacy/locales/zh_HANS.json": {
+      "original_sha256": "df952add8c7ffc7adc4f1dda692afa282422961f318371ff8f43ac8c4c8e69e5",
+      "source": "src/blender/locales/zh_HANS.json"
+    },
+    "legacy/localization/bindings.json": {
+      "original_sha256": "a90fa68707a33806737439500a224599bab2af395e5d6c98c3f42117e09833bb",
+      "source": "src/blender/localization/bindings.json"
+    },
+    "legacy/localization/control-labels.json": {
+      "original_sha256": "ba4d0bdcfb04b175c1cbba3fc21dddee33cb171564d185c9061bda64c0175de1",
+      "source": "src/blender/localization/control-labels.json"
+    },
+    "legacy/localization/controls.py": {
+      "original_sha256": "b6522dfeb3d7b4fe5391904542e8c026779b869a7562a9838f1a4cbba174f319",
+      "source": "src/blender/localization/controls.py"
+    },
+    "legacy/localization/i18n.py": {
+      "original_sha256": "1345758b52effe0a8a1841bb90a6ba81698f6059bb1a47f3277a89dcad58c81a",
+      "source": "src/blender/localization/i18n.py"
+    },
+    "legacy/model/color.py": {
+      "original_sha256": "44463b3b4f3586cf089a80cc556691107054bde8365cd4a954777fb15b0fc1b6",
+      "source": "src/blender/model/color.py"
+    },
+    "legacy/model/curves.py": {
+      "original_sha256": "a2767ec9ff873fea61f5646c4d4c4bfe5762a7fb765273e63c89fb451b9777f7",
+      "source": "src/blender/model/curves.py"
+    },
+    "legacy/model/linear.py": {
+      "original_sha256": "65162fb3c700b68cf90a76fe56d483e4431f3a9b500deb228c546d3c5168f9da",
+      "source": "src/blender/model/linear.py"
+    },
+    "legacy/model/lut.py": {
+      "original_sha256": "6e5f27e18b8e65c66c669221ded3ecaf46dd4efe14aaac2dc772169f7ea3e89c",
+      "source": "src/blender/model/lut.py"
+    },
+    "legacy/model/pipeline.py": {
+      "original_sha256": "bed27b6dbae26557ca0583c94a2bc92acc4d7d78cbe0073066a22a025b3a9f55",
+      "source": "src/blender/model/pipeline.py"
+    },
+    "legacy/model/tone.py": {
+      "original_sha256": "991f7c1398a9ec294ebce0a533cfe307f0c43af6230b016034cf3bef886449a7",
+      "source": "src/blender/model/tone.py"
+    },
+    "locus.py": {
+      "original_sha256": "36955afd070bae4ed6bb9f95eff4a797c37f04bfc649c58211eceb1991f8fd42",
+      "source": "tools/assets/locus.py"
+    },
+    "photos.py": {
+      "original_sha256": "5bd6524b461319ba3a6d2b1b9b120da3223cf1436b59eb41e169bcb1c1456caf",
+      "source": "tools/docs/photos.py"
+    },
+    "screenshots.py": {
+      "original_sha256": "6fbf0f6316fa3b1d7db80d2e635691e56929a65059e75f7f813d950de8311118",
+      "source": "tools/docs/screenshots.py"
+    }
+  },
+  "modified_date": "2026-11-04",
+  "source_release": "perceptual-grade-1.23.2"
+}

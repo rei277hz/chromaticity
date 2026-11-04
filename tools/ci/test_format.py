@@ -29,7 +29,8 @@ class FormattingInventoryTests(unittest.TestCase):
         subprocess.run(["git", "add", "--force", "--", *names], cwd=self.root, check=True)
 
     def maintained(self):
-        tracked = ["BUCK", "third_party/rust/PACKAGE", "build_defs/rules.bzl", "third_party/rust/Cargo.toml"]
+        tracked = ["BUCK", "third_party/rust/PACKAGE", "build_defs/rules.bzl", "third_party/rust/Cargo.toml",
+                   "products/perceptual-grade-book/docs/book/book.toml"]
         untracked = ["products/demo/BUCK", "libraries/demo/BUCK_TREE", "build_defs/query.bxl",
                      "build_defs/untracked.bzl", "third_party/rust/fixups/demo/fixups.toml"]
         for name in tracked + untracked:
@@ -45,14 +46,12 @@ class FormattingInventoryTests(unittest.TestCase):
         self.assertIn("third_party/rust/PACKAGE", groups["starlark"])
         self.assertIn("third_party/rust/fixups/demo/fixups.toml", groups["toml"])
 
-    def test_excludes_programs_generated_files_history_caches_and_symlinks(self):
+    def test_excludes_programs_generated_files_caches_and_symlinks(self):
         expected = self.maintained()
         protected = [f"src/example.{suffix}" for suffix in
                      ("py", "rs", "ts", "js", "mjs", "css", "html", "c", "h", "dctl", "wgsl", "lean", "sh", "json", "yaml")]
         protected += ["third_party/rust/BUCK", "third_party/web/dependencies.bzl",
                       "third_party/rust/tools/versions.json", "third_party/rust/Cargo.lock",
-                      "products/perceptual-grade-book/docs/book/book.toml",
-                      "products/perceptual-grade-book/docs/BUCK",
                       "third_party/rust/.cargo/tracked.toml", "buck-out/tracked.bzl"]
         for name in protected:
             self.write(name)
@@ -73,7 +72,7 @@ class FormattingInventoryTests(unittest.TestCase):
     def test_sapling_inventory_collects_tracked_and_unignored_unknown_files(self):
         expected = self.maintained()
         tracked = ["BUCK", "third_party/rust/PACKAGE", "build_defs/rules.bzl",
-                   "third_party/rust/Cargo.toml"]
+                   "third_party/rust/Cargo.toml", "products/perceptual-grade-book/docs/book/book.toml"]
         unknown = ["products/demo/BUCK", "libraries/demo/BUCK_TREE", "build_defs/query.bxl",
                    "build_defs/untracked.bzl", "third_party/rust/fixups/demo/fixups.toml"]
         commands = []

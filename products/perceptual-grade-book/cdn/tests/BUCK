@@ -1,0 +1,12 @@
+python_test(
+    name = "assets",
+    srcs = ["test_assets.py"],
+    base_module = "tests.perceptual_grade_book_cdn",
+    labels = ["docs"],
+    resources = {
+        "pins.bzl": "//third_party/book:pins",
+        "sources": "//third_party/book:resources",
+        "assets": "//products/perceptual-grade-book/cdn:assets",
+    },
+    deps = ["//products/perceptual-grade-book/cdn:support"],
+)

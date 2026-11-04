@@ -1,0 +1,35 @@
+{
+  "name": "IMG_0221.PNG",
+  "sha256": "3eb585ed5de1037a9cd6b628f1cd00a46c591de33bc8ad3f84f9945c807f5c13",
+  "width": 512,
+  "height": 512,
+  "bit_depth": 16,
+  "cicp": [
+    12,
+    16,
+    0,
+    1
+  ],
+  "primaries": "P3-D65",
+  "transfer": "SMPTE ST 2084 PQ",
+  "range": "full",
+  "alpha": "straight; binary 0 or 65535",
+  "opaque_pixels": 94543,
+  "peak_luminance_nits": 388.7280336332727,
+  "luminance_nits": {
+    "p05": 159.49137825822734,
+    "p50": 313.0084251951977,
+    "p95": 376.49924850980887,
+    "p99": 384.1442673490109,
+    "max": 388.7280336332727
+  },
+  "peak_rgb_channel_nits": [
+    735.7689171231531,
+    398.76478786745577,
+    995.8109504759358
+  ],
+  "fraction_over_reference_white": 0.8710322287213226,
+  "P3_xy_hull_fraction": 0.9767292518248479,
+  "decoding": "Read 16-bit code values, normalize by 65535, ST2084 EOTF to nits, divide by 203, then OCIO Linear DCI-P3 D65 -> ACEScg. Transparent pixels excluded.",
+  "normative_reference": "https://www.w3.org/TR/png-3/#cICP-chunk"
+}

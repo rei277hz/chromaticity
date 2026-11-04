@@ -280,6 +280,22 @@ http_file(
 )
 
 WHEELS = {
+    # The media generators use this wheel's bundled binary, never host FFmpeg.
+    "imageio-ffmpeg": {
+        "url": select({
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/a0/2d/43c8522a2038e9d0e7dbdf3a61195ecc31ca576fb1527a528c877e87d973/imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/40/5c/f3d8a657d362cc93b81aab8feda487317da5b5d31c0e1fdfd5e986e55d17/imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl",
+        }),
+        "sha256": select({
+            "prelude//os:linux": "c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282",
+            "prelude//os:macos": "b1ae3173414b5fc5f538a726c4e48ea97edc0d2cdc11f103afee655c463fa742",
+        }),
+        "filename": select({
+            "prelude//os:linux": "imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl",
+            "prelude//os:macos": "imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl",
+        }),
+        "dependencies": [],
+    },
     # Build-only machine verification; never a runtime bundle dependency.
     "z3-solver": {
         "url": select({

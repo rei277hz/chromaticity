@@ -17,9 +17,9 @@ builds Reindeer. Its maintenance caches are reused across CI runs.
 
 **Formatting does not cover Rust, Python, or other program source files.** The
 maintained `BUCK`, `PACKAGE`, `.bzl`, and `.bxl` files and TOML configuration are
-included, including the central Rust catalogue, Reindeer configuration, and crate
-fixups. Generated Rust rules, generated web declarations, lockfiles, dependency
-caches, build outputs, and the historical handbook snapshot are excluded.
+included, including the central Rust catalogue, Reindeer configuration, crate
+fixups, and the handbook mdBook configuration. Generated Rust rules, generated web declarations, lockfiles, dependency
+caches and build outputs are excluded.
 
 On Linux x86_64, run the formatting commands locally from a Git or Sapling
 working copy root.
@@ -47,8 +47,9 @@ python3 -m unittest discover -s tools/ci -p 'test_*.py'
 
 ## Manual builds and smoke suites
 
-The manual workflow builds the **web app and handbook** and runs the seven smoke
-suites listed in [the CI selection](targets.json). Proof targets are
+The manual workflow builds the **web app and handbook** and runs the smoke
+suites listed in [the CI selection](targets.json), including handbook assembly,
+rendering, archive, and publisher checks. Proof targets are
 under development and excluded from CI. The Blender extensions and DCTL are also
 excluded because their build dependencies execute proofs; their normal packaging
 gates remain intact. A dependency-graph guard rejects any selected build, test, or

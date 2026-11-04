@@ -9,7 +9,7 @@ import shutil
 from urllib.parse import urlsplit, urlunsplit
 
 LANGUAGES = ('en', 'zh-Hans')
-SHARED = ('assets', 'downloads', 'vendor', 'favicon.ico', 'apple-touch-icon.png',
+SHARED = ('assets', 'downloads', 'favicon.ico', 'apple-touch-icon.png',
           'android-192.png', 'android-512.png', 'android-512-maskable.png', 'site.webmanifest')
 GLOBE = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z"/></svg>'
 

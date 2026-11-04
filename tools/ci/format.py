@@ -20,7 +20,6 @@ EXCLUDED_DIRECTORIES = {
     ".git", ".cargo", ".state", ".venv", "__pycache__", "buck-out",
     "dist", "node_modules", "prelude", "target", "vendor",
 }
-HISTORICAL = "products/perceptual-grade-book/docs/"
 
 
 def inventory():
@@ -28,7 +27,7 @@ def inventory():
     groups = {"build": [], "starlark": [], "toml": []}
     for name in sorted(files):
         path = Path(name)
-        if (name in GENERATED or name.startswith(HISTORICAL)
+        if (name in GENERATED
                 or EXCLUDED_DIRECTORIES.intersection(path.parts)
                 or not (ROOT / path).is_file() or (ROOT / path).is_symlink()):
             continue

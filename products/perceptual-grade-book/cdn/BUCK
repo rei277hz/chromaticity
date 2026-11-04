@@ -1,0 +1,22 @@
+load(":rules.bzl", "cdn_assets")
+
+python_library(
+    name = "support",
+    srcs = ["build.py"],
+    base_module = "pg_book_cdn",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "build",
+    main_module = "pg_book_cdn.build",
+    deps = [":support"],
+)
+
+cdn_assets(
+    name = "assets",
+    pins = "//third_party/book:pins",
+    sources = "//third_party/book:resources",
+    tool = ":build",
+    visibility = ["PUBLIC"],
+)

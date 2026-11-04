@@ -1,0 +1,79 @@
+{
+  "source": "User-supplied Archive.zip",
+  "assumed_reference_nits": 203,
+  "method": "Every 12th row and column, using each EXR dataWindow dimensions; no filtering or clipping.",
+  "images": [
+    {
+      "name": "IMG_0436-rec2020.exr",
+      "width": 4032,
+      "height": 3024,
+      "source_sha256": "6cca2c0f4d28cc05cf5355121754c636245f2b083491937fd93091fd6eff266d",
+      "sample_file": "IMG_0436-rec2020.samples.npy",
+      "sample_shape": [
+        252,
+        336,
+        3
+      ],
+      "sample_sha256": "5b7b06c037c07d9f7e9f507a056a593e9aed3546cdcd4161a2d5f114d1f498ce",
+      "minimum": -0.01274871826171875,
+      "maximum": 1.0234375,
+      "negative_channel_fraction": 0.009288730281207132,
+      "nonfinite_channels": 0,
+      "chromaticities": "(0.7080000042915344, 0.2919999957084656) (0.17000000178813934, 0.796999990940094) (0.13099999725818634, 0.04600000008940697) (0.3127000033855438, 0.32899999618530273)"
+    },
+    {
+      "name": "IMG_0441-rec2020.exr",
+      "width": 4032,
+      "height": 3024,
+      "source_sha256": "733e6776b1efdb0a48d24b3ff3add7d245d52074f26b261973bb87c9d3ff3809",
+      "sample_file": "IMG_0441-rec2020.samples.npy",
+      "sample_shape": [
+        252,
+        336,
+        3
+      ],
+      "sample_sha256": "b41e4f3e4bab6a698ab788b4833aaa48bf7cabdd3e98db3a4c80201ced53ee5e",
+      "minimum": -0.0045013427734375,
+      "maximum": 1.0048828125,
+      "negative_channel_fraction": 0.006047327946096134,
+      "nonfinite_channels": 0,
+      "chromaticities": "(0.7080000042915344, 0.2919999957084656) (0.17000000178813934, 0.796999990940094) (0.13099999725818634, 0.04600000008940697) (0.3127000033855438, 0.32899999618530273)"
+    },
+    {
+      "name": "IMG_0446-rec2020.exr",
+      "width": 4032,
+      "height": 3024,
+      "source_sha256": "431b6013f1ebc3b4ed9275ed52f25a389b3394ce5b6d9ae3fb50c244a2c33909",
+      "sample_file": "IMG_0446-rec2020.samples.npy",
+      "sample_shape": [
+        252,
+        336,
+        3
+      ],
+      "sample_sha256": "158c5a0dac1c7734ae7864ae110bd6d6aa2e14a1b4181f80cd096aaa875ba8e6",
+      "minimum": -0.00243377685546875,
+      "maximum": 0.876953125,
+      "negative_channel_fraction": 0.006582535920746899,
+      "nonfinite_channels": 0,
+      "chromaticities": "(0.7080000042915344, 0.2919999957084656) (0.17000000178813934, 0.796999990940094) (0.13099999725818634, 0.04600000008940697) (0.3127000033855438, 0.32899999618530273)"
+    },
+    {
+      "name": "IMG_0472-rec2020.exr",
+      "width": 3024,
+      "height": 4032,
+      "source_sha256": "d050bb0143a157d052cfbb6fd9b49d7691105f6feaabc489de0464ff47bb2362",
+      "sample_file": "IMG_0472-rec2020.samples.npy",
+      "sample_shape": [
+        336,
+        252,
+        3
+      ],
+      "sample_sha256": "5d37c387785bada48f33663e62906f0a02864d7070857f9b048443a3f3c20743",
+      "minimum": -1.7548828125,
+      "maximum": 4.92578125,
+      "negative_channel_fraction": 0.022576935223677947,
+      "nonfinite_channels": 0,
+      "chromaticities": "(0.7080000042915344, 0.2919999957084656) (0.17000000178813934, 0.796999990940094) (0.13099999725818634, 0.04600000008940697) (0.3127000033855438, 0.32899999618530273)"
+    }
+  ]
+}

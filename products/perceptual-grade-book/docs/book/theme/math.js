@@ -1,4 +1,4 @@
-/* Equations and fonts are supplied locally by the Buck2 site inputs. */
+/* The Buck2-generated head loads pinned KaTeX from the CDN before this event. */
 document.addEventListener("DOMContentLoaded", () => {
     for (const equation of document.querySelectorAll("[data-tex]")) {
         try {

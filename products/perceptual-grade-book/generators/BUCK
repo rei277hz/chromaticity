@@ -1,0 +1,337 @@
+load("//build_defs:artifacts.bzl", "python_tool", "source_tree")
+load(":rules.bzl", "book_generate")
+
+python_tool(
+    name = "action",
+    srcs = {"pg_book_generators/action.py": "action.py"},
+    main_module = "pg_book_generators.action",
+)
+
+python_library(
+    name = "common",
+    srcs = [
+        "__init__.py",
+        "figure_common.py",
+    ],
+    base_module = "pg_book_generators",
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "catalog_sources",
+    srcs = {path.removeprefix("legacy/locales/"): path for path in glob(["legacy/locales/*.json"])},
+)
+
+python_tool(
+    name = "compile_locales",
+    srcs = {"pg_book_generators/compile_locales.py": "compile_locales.py"},
+    main_module = "pg_book_generators.compile_locales",
+    deps = ["//third_party:babel"],
+)
+
+CATALOGS = [path.removeprefix("legacy/locales/").removesuffix(".json") for path in glob(["legacy/locales/*.json"])]
+
+book_generate(
+    name = "locales",
+    args = [
+        "--catalog-dir",
+        "$(location :catalog_sources)",
+    ],
+    outputs = {locale: locale + "/LC_MESSAGES/perceptual_grade.mo" for locale in CATALOGS},
+    tool = ":compile_locales",
+)
+
+LEGACY_RESOURCES = {path.removeprefix("legacy/"): path for path in glob(["legacy/**/*.json"])}
+
+LEGACY_RESOURCES.update({"locales/" + locale + "/LC_MESSAGES/perceptual_grade.mo": ":locales[" + locale + "]" for locale in CATALOGS})
+
+python_library(
+    name = "legacy_model",
+    srcs = {path.removeprefix("legacy/"): path for path in glob(["legacy/**/*.py"])},
+    base_module = "pg_book_legacy",
+    resources = LEGACY_RESOURCES,
+    deps = ["//third_party:numpy"],
+)
+
+TOOLS = {
+    "figures": [
+        ":legacy_model",
+        "//third_party:matplotlib",
+    ],
+    "photos": [
+        ":legacy_model",
+        "//third_party:bpy",
+        "//third_party:pillow",
+    ],
+    "screenshots": ["//third_party:pillow"],
+    "demos": [
+        "//third_party:imageio-ffmpeg",
+        "//third_party:numpy",
+        "//third_party:pillow",
+    ],
+    "intro": [":demos_tool_sources"],
+    "favicon": ["//third_party:pillow"],
+    "ab_background": [
+        ":legacy_model",
+        "//third_party:pillow",
+    ],
+    "locus": [
+        "//third_party:colour-science",
+        "//third_party:numpy",
+        "//third_party:pillow",
+    ],
+}
+
+[
+    python_tool(
+        name = name + "_tool",
+        srcs = {"pg_book_generators/" + name + ".py": name + ".py"},
+        main_module = "pg_book_generators." + name,
+        deps = [":common"] + deps,
+    )
+    for name, deps in TOOLS.items()
+]
+
+FIGURES = [
+    "linear-basis",
+    "tone-curves",
+    "tone-saturation",
+    "color-tone-weights",
+    "color-drivers",
+    "color-hue-concentration",
+    "guard-boundary",
+    "guard-energy",
+    "lut-input-grid",
+    "lut-interpolation",
+    "render-benchmark",
+]
+
+FIGURE_OUTPUTS = {name: "images/" + name + ".png" for name in FIGURES}
+
+FIGURE_OUTPUTS.update({
+    "benchmark": "fragments/benchmark.md",
+    "manifest": "manifest.json",
+    "data": "numerical-data.json",
+})
+
+book_generate(
+    name = "figures",
+    args = [
+        "--data",
+        "$(location //products/perceptual-grade-book:book_data)",
+    ],
+    outputs = FIGURE_OUTPUTS,
+    tool = ":figures_tool",
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "photo_fixtures",
+    srcs = {
+        "exr/metadata.json": "fixtures/exr-metadata.json",
+        "pq/metadata.json": "fixtures/pq-metadata.json",
+        "pq/IMG_0221.PNG": "fixtures/IMG_0221.PNG",
+    },
+)
+
+PHOTO_GRADES = [
+    "practical",
+    "chroma-8x",
+    "dark-chroma",
+]
+
+PHOTO_OUTPUTS = {name: "images/photo-" + name + ".png" for name in PHOTO_GRADES}
+
+PHOTO_OUTPUTS.update({
+    "metrics": "metrics.json",
+    "manifest": "manifest.json",
+})
+
+book_generate(
+    name = "photos",
+    args = [
+        "--data",
+        "$(location //products/perceptual-grade-book:book_data)",
+        "--fixtures",
+        "$(location :photo_fixtures)",
+        "--samples",
+        "$(location //products/perceptual-grade-blender/tests/fixtures/photographs:sources)",
+    ],
+    outputs = PHOTO_OUTPUTS,
+    tool = ":photos_tool",
+    visibility = ["PUBLIC"],
+)
+
+SCREENSHOTS = [
+    "blender-install",
+    "blender-shading",
+    "blender-compositing",
+    "resolve-install",
+    "resolve-cst",
+    "colorchecker-connect",
+    "tone-waveforms",
+]
+
+SCREENSHOT_OUTPUTS = {name: "images/" + name + ".png" for name in SCREENSHOTS}
+
+SCREENSHOT_OUTPUTS["manifest"] = "manifest.json"
+
+book_generate(
+    name = "screenshots",
+    args = [
+        "--screenshots",
+        "$(location //products/perceptual-grade-book:book_screenshots)",
+        "--spec",
+        "$(location //products/perceptual-grade-book:book_data)/screenshots.json",
+    ],
+    outputs = SCREENSHOT_OUTPUTS,
+    tool = ":screenshots_tool",
+    visibility = ["PUBLIC"],
+)
+
+DEMOS = [
+    "linear-white-balance",
+    "linear-correction",
+    "colorchecker-match",
+    "tone-curve",
+    "color-j",
+    "color-jc-curves",
+    "color-jc-pads",
+    "color-adaptance",
+    "color-hue-pad",
+    "color-hue-rotation",
+]
+
+DEMO_OUTPUTS = {name: "images/" + name + ".webp" for name in DEMOS}
+
+DEMO_OUTPUTS.update({name + "_still": "images/" + name + "-still.webp" for name in DEMOS})
+
+DEMO_OUTPUTS["manifest"] = "manifest.json"
+
+book_generate(
+    name = "demos",
+    args = [
+        "--recordings",
+        "$(location //products/perceptual-grade-book:book_recordings)",
+        "--spec",
+        "$(location //products/perceptual-grade-book:book_data)/demos.json",
+    ],
+    outputs = DEMO_OUTPUTS,
+    tool = ":demos_tool",
+    visibility = ["PUBLIC"],
+)
+
+book_generate(
+    name = "intro",
+    args = [
+        "--recordings",
+        "$(location //products/perceptual-grade-book:book_intro_recording)",
+        "--spec",
+        "$(location //products/perceptual-grade-book:book_data)/intro-video.json",
+    ],
+    outputs = {
+        "animation": "match-three-images.webp",
+        "still": "match-three-images-still.webp",
+        "manifest": "manifest.json",
+    },
+    tool = ":intro_tool",
+    visibility = ["PUBLIC"],
+)
+
+book_generate(
+    name = "favicon",
+    args = [
+        "--icons",
+        "$(location //products/perceptual-grade-book:book_icons)",
+    ],
+    outputs = {
+        "ico": "favicon.ico",
+        "touch": "apple-touch-icon.png",
+        "android192": "android-192.png",
+        "android512": "android-512.png",
+        "maskable": "android-512-maskable.png",
+        "webmanifest": "site.webmanifest",
+        "manifest": "manifest.json",
+    },
+    tool = ":favicon_tool",
+    visibility = ["PUBLIC"],
+)
+
+book_generate(
+    name = "ab_background",
+    outputs = {
+        "png": "ab_background.png",
+        "calibration": "pad-calibration.json",
+    },
+    tool = ":ab_background_tool",
+    visibility = ["PUBLIC"],
+)
+
+book_generate(
+    name = "locus",
+    outputs = {"png": "cie_1931_xy_locus.png"},
+    tool = ":locus_tool",
+    visibility = ["PUBLIC"],
+)
+
+ASSETS = {
+    "src/favicon.ico": ":favicon[ico]",
+    "src/apple-touch-icon.png": ":favicon[touch]",
+    "src/android-192.png": ":favicon[android192]",
+    "src/android-512.png": ":favicon[android512]",
+    "src/android-512-maskable.png": ":favicon[maskable]",
+    "src/site.webmanifest": ":favicon[webmanifest]",
+    "src/assets/cie_1931_xy_locus.png": ":locus[png]",
+    "src/assets/ab_background.png": ":ab_background[png]",
+    "src/assets/intro/match-three-images.webp": ":intro[animation]",
+    "src/assets/intro/match-three-images-still.webp": ":intro[still]",
+    "src/assets/demos/manifest.json": ":demos[manifest]",
+    "src/assets/fragments/benchmark.md": ":figures[benchmark]",
+    "src/downloads/photo-metrics.json": ":photos[metrics]",
+    "src/downloads/provenance/numerical-figures.json": ":figures[manifest]",
+    "src/downloads/provenance/photographic-figures.json": ":photos[manifest]",
+    "src/downloads/provenance/host-screenshots.json": ":screenshots[manifest]",
+    "src/downloads/provenance/intro-video.json": ":intro[manifest]",
+    "src/downloads/provenance/favicon.json": ":favicon[manifest]",
+    "src/downloads/provenance/legacy-generator-sources.json": "source-provenance.json",
+}
+
+ASSETS.update({"src/assets/figures/" + name + ".png": ":figures[" + name + "]" for name in FIGURES})
+
+ASSETS.update({"src/assets/figures/photo-" + name + ".png": ":photos[" + name + "]" for name in PHOTO_GRADES})
+
+ASSETS.update({"src/assets/screenshots/" + name + ".png": ":screenshots[" + name + "]" for name in SCREENSHOTS})
+
+ASSETS.update({"src/assets/demos/" + name + ".webp": ":demos[" + name + "]" for name in DEMOS})
+
+ASSETS.update({"src/assets/demos/" + name + "-still.webp": ":demos[" + name + "_still]" for name in DEMOS})
+
+source_tree(
+    name = "assets",
+    srcs = ASSETS,
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "tests",
+    srcs = [
+        "check_demos.py",
+        "check_favicon.py",
+        "check_intro.py",
+        "test_generators.py",
+    ],
+    base_module = "pg_book_generators",
+    resources = {
+        "test_resources/data": "//products/perceptual-grade-book:book_data",
+        "test_resources/icons": "//products/perceptual-grade-book:book_icons",
+        "test_resources/intro_source": "//products/perceptual-grade-book:book_intro_recording",
+        "test_resources/intro": ":intro",
+    },
+    deps = [
+        ":common",
+        ":demos_tool_sources",
+        ":favicon_tool_sources",
+        ":intro_tool_sources",
+        ":legacy_model",
+    ],
+)

@@ -40,13 +40,13 @@ The Perceptual Grade DCTL runs inside DaVinci Resolve. [Blackmagic Design’s do
 
 [mdBook](https://rust-lang.github.io/mdBook/), licensed under MPL-2.0, generates this static handbook.
 
-[KaTeX](https://katex.org/), licensed under MIT, renders equations from local site assets.
+[KaTeX](https://katex.org/), licensed under MIT, renders equations using version-pinned JavaScript, CSS, and fonts from jsDelivr. The script and stylesheet use integrity hashes; their payloads are not included in the deployment archive.
 
 The build pins actual dependency releases and hashes. Third-party documentation notices are available as [mdBook](../downloads/licenses/mdbook-LICENSE) and [KaTeX](../downloads/licenses/katex-LICENSE) license files.
 
 ## Tutorial and chapter organization
 
-The ColorChecker2014 reference EXR is supplied by [colour-science/colour-nuke](https://github.com/colour-science/colour-nuke) at the pinned commit recorded in `third_party/docs.bzl`. It is distributed with the project’s [BSD license](../downloads/licenses/colour-nuke-LICENSE).
+The ColorChecker2014 reference EXR is supplied by [colour-science/colour-nuke](https://github.com/colour-science/colour-nuke) at the pinned commit recorded in `third_party/book/pins.bzl`. It is distributed with the project’s [BSD license](../downloads/licenses/colour-nuke-LICENSE).
 
 The [ACES Output Transform structure documentation](https://docs.acescentral.com/system-components/output-transforms/technical-details/rendering-overview/) provides an example of explaining processing stages through purpose, equations and interleaved numerical figures. The handbook’s calculations and figure producers describe Perceptual Grade’s own model.
 

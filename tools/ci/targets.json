@@ -10,6 +10,10 @@
     "//tools/web-build/tests:archive",
     "//third_party/web:manifest_consistency",
     "//libraries/modcam16-color-core:test",
-    "//libraries/modcam16-decomposition:test"
+    "//libraries/modcam16-decomposition:test",
+    "//products/perceptual-grade-book/tests:book",
+    "//products/perceptual-grade-book/tests:publish",
+    "//products/perceptual-grade-book/generators:tests",
+    "//products/perceptual-grade-book/cdn/tests:assets"
   ]
 }
