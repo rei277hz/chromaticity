@@ -1,4 +1,4 @@
-load("//build_defs:artifacts.bzl", "generate", "source_tree", "verification_group")
+load("//build_defs:artifacts.bzl", "verification_group")
 load("//build_defs:invariant.bzl", "invariant_proof")
 load("//libraries/perceptual-grade-core/requirements:inventory.bzl", "LEAF_REQUIREMENTS")
 load("//libraries/perceptual-grade-core/requirements/coordinators:inventory.bzl", "COORDINATOR_REQUIREMENTS")
@@ -31,26 +31,6 @@ verification_group(
     visibility = ["PUBLIC"],
     deps = [":proof_" + machine for machine in LEAF_REQUIREMENTS] +
            [":proof_" + machine + "_coordinator" for machine in COORDINATOR_REQUIREMENTS],
-)
-
-source_tree(
-    name = "color_model_sources",
-    srcs = {path[len("color_model/"):]: path for path in glob(["color_model/PerceptualGrade/*.lean"])},
-)
-
-generate(
-    name = "color_model",
-    args = [
-        "--lean",
-        "$(location //tools/verification:lean)",
-        "--dependencies",
-        "$(location //tools/verification:dependencies)",
-        "--sources",
-        "$(location :color_model_sources)",
-    ],
-    outputs = {"report": "checked.json"},
-    tool = "//tools/verification:color_model_checker",
-    visibility = ["PUBLIC"],
 )
 
 alias(

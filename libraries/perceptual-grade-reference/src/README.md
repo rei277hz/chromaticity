@@ -59,7 +59,7 @@ retains its existing controls, translation envelope and equations; its separate
 oracle is `tests/support/dctl_reference.py`. The retained production low/high
 crossover is ρ=0.4 of AP1 cube capacity; the analytic reference uses the J_A/C
 law above. Visibility remains 4 in both. Lean and mathlib
-remain pinned to 4.34.1.
+remain pinned to 4.35.0.
 
 ### Geometry, controls and evaluation order
 
@@ -352,8 +352,8 @@ edit. Center targets retain the explicit inverse a/b=h·p/sqrt(1−|p|²).
 buck2 build //libraries/perceptual-grade-reference:tonal_web --show-output
 buck2 test //libraries/perceptual-grade-reference/tests:selective_adaptance //libraries/perceptual-grade-reference/tests:web_model //libraries/perceptual-grade-reference/tests:guarded_warp
 buck2 test //products/perceptual-grade-blender/tests/blender:warp //products/perceptual-grade-blender/tests/blender:warp_drag //products/perceptual-grade-blender/tests/blender:warp_guarded //products/perceptual-grade-blender/tests/blender:warp_view //products/perceptual-grade-blender/tests/blender:warp_sidebar
-buck2 build //libraries/perceptual-grade-core/proofs:color_model
-buck2 test //libraries/perceptual-grade-core/tests/proofs:color_model
+buck2 build //libraries/perceptual-grade-reference/proofs:color_model
+buck2 test //libraries/perceptual-grade-reference/tests/proofs:color_model
 ```
 
 `//libraries/perceptual-grade-reference:tonal_web` emits `tonal-web.png`, `tonal-web-reset.png`, report/summary and
@@ -514,7 +514,7 @@ its comparison oracle explicitly disables H–K repair.
 
 Buck2 checks the H–K numerical contracts with `//libraries/perceptual-grade-reference/tests:hk_guard` and
 `//libraries/perceptual-grade-reference/tests:hk_baking`, software GLSL with `//products/perceptual-grade-blender/tests/gpu:inverse_baking`,
-and exact-real properties with `//libraries/perceptual-grade-core/proofs:color_model`. Lean/mathlib remain 4.34.1.
+and exact-real properties with `//libraries/perceptual-grade-reference/proofs:color_model`. Lean/mathlib remain 4.35.0.
 The H–K suites pass 11 independent-reference and 6 portable-CPU tests; the
 21-test inverse software-GLSL suite passes on llvmpipe LLVM 19.1.7, alongside
 the production shader/baking/Stack suites. The proof build and its checker
@@ -579,7 +579,7 @@ not assume fitted-capacity accuracy. `//libraries/perceptual-grade-reference:cub
 outward real cube-ray geometry for binary64 and binary32-rounded adapter
 constants. It does not prove shader/libm execution or inverse convergence.
 The piecewise cube boundary has face/crease derivative changes; no global
-C2 claim is made. Lean/mathlib remain pinned at 4.34.1.
+C2 claim is made. Lean/mathlib remain pinned at 4.35.0.
 
 `//libraries/perceptual-grade-reference:spindle_shape` and `//libraries/perceptual-grade-reference:rec709_cube_ja_sections` retain their target and PNG
 names while plotting raw cube geometry and the reference's hue-independent
@@ -648,14 +648,14 @@ that Metal gate or visible macOS interaction. The
 publication, repair and shutdown, then verifies leased-resource protection and
 recovery from saved pending output. Scheduling, execution and ownership policies
 are directly maintained Python using the
-[Invariant framework](../../../invariant/README.md). Ordinary policy and native
+[Invariant framework](../../invariant/README.md). Ordinary policy and native
 tests provide regression coverage. Packaging checks the final ZIP inventory and
 exact bytes against declared sources; it does not certify machine correctness.
 The former machine proofs and source/effect reports are historical material in
 the external `perceptual-grade-proof-archive` directory beside the repository.
 Native coverage remains incomplete (`coverage_complete=false`), including the
 asynchronous export-startup reader gap described in the
-[product architecture](../../../../products/perceptual-grade-blender/ARCHITECTURE.md).
+[product architecture](../../../products/perceptual-grade-blender/ARCHITECTURE.md).
 
 The fast ownership tests use pinned Python without Blender, numerical resource
 generation or helper processes:
@@ -911,7 +911,7 @@ Normal builds reuse the canonical cached NPZ; `buck2 build //libraries/perceptua
 `buck2 build //libraries/perceptual-grade-reference:rebuild_d65_boundary --show-output`; copy its `d65_boundary.npz`
 to `libraries/perceptual-grade-core/src/perceptual_grade_core/model/d65_boundary.npz` when adopting a rebuilt resource.
 Its primitive tests are `buck2 test
-//libraries/perceptual-grade-reference/tests:spindle`; exact-real scalar proofs use `//libraries/perceptual-grade-core/proofs:color_model`.
+//libraries/perceptual-grade-reference/tests:spindle`; exact-real scalar proofs use `//libraries/perceptual-grade-reference/proofs:color_model`.
 The NumPy float64 model retains independent grading equations and Colour
 conversion. `tools/build/boundary_oracle.py` provides independent geometric
 solves for audits. Regular Grade nodes remain forward-only; Stack occurrences may be
@@ -1000,9 +1000,9 @@ an explicit theorem hypothesis. The result excludes the degenerate B=0 tips
 and does not assert global Cartesian C2 across cube-face or fitted-table
 creases. Scalar release remains polynomial and its scalar inverse is smooth.
 
-Verification in Step 5.57 passes 100 focused numerical cases, four archived
-pole cases and all three proof-checker tests through Buck2. The full Lean
-4.34.1 audit covers 329 theorems in 20 modules, including both Cartesian
+Verification in Step 5.57 passed 100 focused numerical cases, four archived
+pole cases and all three proof-checker tests through Buck2. That historical Lean
+audit covered 329 theorems in 20 modules, including both Cartesian
 neutral identity derivatives, with only Classical.choice, Quot.sound and
 propext. Exact-geometry reset witnesses have maximum absolute RGB error
 1.345e-10 on the [0,1024] cube, within the tightened 2e-10 test budget.
@@ -1028,8 +1028,8 @@ controls changed response at that revision. Mathematical LUT signature schema
 26 invalidated earlier baked LUTs so they rebuilt automatically.
 
 Lean proves neutral zero response, equal drivers at the physical crossover,
-and low/high ordering on either side using exact 3/10. The complete 4.34.1
-kernel/axiom audit now covers 333 theorems in 20 modules, with only
+and low/high ordering on either side using exact 3/10. The historical Step 5.60
+kernel/axiom audit covered 333 theorems in 20 modules, with only
 Classical.choice, Quot.sound and propext.
 
 Buck2 validation covers the reference and scaled drivers, production parity,
@@ -1478,8 +1478,8 @@ adoption remains a later migration step.
 From the repository root:
 
 ```sh
-buck2 build //libraries/perceptual-grade-reference:evaluate //libraries/perceptual-grade-reference:documentation '//libraries/perceptual-grade-core/proofs:color_model[report]'
-buck2 test //libraries/perceptual-grade-reference/tests: //libraries/perceptual-grade-core/tests/proofs:color_model -- --timeout 3600
+buck2 build //libraries/perceptual-grade-reference:evaluate //libraries/perceptual-grade-reference:documentation '//libraries/perceptual-grade-reference/proofs:color_model[report]'
+buck2 test //libraries/perceptual-grade-reference/tests: //libraries/perceptual-grade-reference/tests/proofs:color_model -- --timeout 3600
 echo '{"values":[[0.18,0.18,0.18]],"linear":{"exposure":1}}' | buck2 run //libraries/perceptual-grade-reference:evaluate
 echo '{"operation":"inverse","values":[[0.36,0.36,0.36]],"linear":{"exposure":1}}' | buck2 run //libraries/perceptual-grade-reference:evaluate
 ```
@@ -1981,18 +1981,18 @@ small oracle/regression tests still do not substitute for a fresh full-grid audi
 
 Primary sources: [Colour Hellwig implementation](https://github.com/colour-science/colour/blob/v0.4.7/colour/appearance/hellwig2022.py),
 [ACEScg specification](https://docs.acescentral.com/encodings/acescg/),
-[Lean release](https://github.com/leanprover/lean4/releases/tag/v4.34.1),
-[mathlib manifest](https://github.com/leanprover-community/mathlib4/blob/d13f23b723b8a846827a245b89c10fc7d3f11612/lake-manifest.json).
+[Lean release](https://github.com/leanprover/lean4/releases/tag/v4.35.0),
+[mathlib manifest](https://github.com/leanprover-community/mathlib4/blob/56a005855ea17e0b0958f73ec801ae140b0a1679/lake-manifest.json).
 The stimulus and AP1 chromaticities are external anchors; grading equations and profile
 choices are this project's mathematical specification, not external colorimetric
 ground truth.
 
-NumPy 2.5.3, Colour 0.4.7, CPython 3.13.6, Lean 4.34.1 and mathlib revision
-d13f23b723b8a846827a245b89c10fc7d3f11612 are pinned in Buck2. The eight mathlib
+NumPy 2.5.3, Colour 0.4.7, CPython 3.13.6, Lean 4.35.0 and mathlib revision
+56a005855ea17e0b0958f73ec801ae140b0a1679 are pinned in Buck2. The eight mathlib
 dependencies are commit/hash-pinned in `third_party/proof_sources.bzl` and built
 from sources via local Lake paths. No host Lean/elan, git fetch, cache server,
 npm or pip resolution is required. Pinned zstandard unpacks the Lean archive.
-The DCTL host and portability checks use bundled Clang 22.1.4 with hash-pinned
+The DCTL host and portability checks use bundled Clang 23.1.0 with hash-pinned
 matching OpenCL headers. Buck2 and the native OS SDK/graphics runtime are host
 prerequisites; the tested Buck2 revision is recorded in the workspace checklist.
 

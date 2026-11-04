@@ -1,7 +1,7 @@
 load("//build_defs:artifacts.bzl", "generate", "python_tool", "source_tree")
 load("//build_defs:python_packages.bzl", "component_library")
 
-PREFIX = "src/perceptual_grade_reference/"
+PREFIX = "src/"
 
 SOURCES = {path[len(PREFIX):]: path for path in glob([PREFIX + "**/*.py"])}
 

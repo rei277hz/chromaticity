@@ -16,7 +16,7 @@ DEPENDENCIES = Path(str(RESOURCES / 'dependencies'))
 class ProofTests(unittest.TestCase):
     def test_project_report_covers_core_theorems(self):
         report = json.loads((RESOURCES / 'checked.json').read_text())
-        self.assertEqual(report['toolchain'], '4.34.1')
+        self.assertEqual(report['toolchain'], '4.35.0')
         self.assertLessEqual(set(report['axioms']), ALLOWED_AXIOMS)
         required = {'kernel_strictMono', 'tone_strictMono', 'drivers_complement', 'disk_inverse',
                     'visibility_bounds', 'membership_bounds', 'membership_scale',

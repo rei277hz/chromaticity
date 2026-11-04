@@ -2,7 +2,7 @@
 
 The source package is `color_tools.perceptual_grade_reference`; run its JSON
 CLI with `buck2 run //libraries/perceptual-grade-reference:evaluate`.
-The [source-package README](src/perceptual_grade_reference/README.md) contains
+The [source-package README](src/README.md) contains
 the detailed model contract.
 
 The reference's Colour equations remain independent of production appearance
@@ -21,8 +21,13 @@ lightness/chroma controls before preparation. Other controls remain supported.
 Existing product comparisons opt into `tests.reference.legacy_capacity` through
 the separate `tests:legacy_capacity_support` target; those verification adapters
 are excluded from runtime bundles.
+The reference owns the [Lean color-model proofs](proofs/README.md) and their
+[acceptance tests](tests/proofs/test_checker.py). Build them with
+`//libraries/perceptual-grade-reference/proofs:color_model`; the acceptance target
+is `//libraries/perceptual-grade-reference/tests/proofs:color_model`.
 Preserved production Lean driver proofs retain their capacity-based scope and
-do not certify the reference's newer crossover equation.
+do not certify the reference's newer crossover equation. Proof ownership does not
+expand their implementation-correspondence claims.
 
 See [crossover acceptance evidence](CROSSOVER_EVIDENCE.md) for tests, analysis
 checks, exact build identities and the recorded unrelated GPU-suite limitation.

@@ -60,7 +60,7 @@ def check(lean, dependencies, sources, output):
         axioms.update(a.strip() for a in match[1].split(',') if a.strip())
     if not axioms <= ALLOWED_AXIOMS:
         raise ValueError('Unexpected theorem axioms: '+', '.join(sorted(axioms-ALLOWED_AXIOMS)))
-    report = dict(toolchain='4.34.1', modules=completed, theorems=theorems, axioms=sorted(axioms))
+    report = dict(toolchain='4.35.0', modules=completed, theorems=theorems, axioms=sorted(axioms))
     (output / 'checked.json').write_text(json.dumps(report, indent=2)+'\n')
     return report
 

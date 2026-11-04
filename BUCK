@@ -49,7 +49,7 @@ verification_group(
     deps = [
         "//libraries/blender-runtime:verify",
         "//libraries/invariant:verify",
-        "//libraries/perceptual-grade-core/proofs:color_model",
+        "//libraries/perceptual-grade-reference/proofs:color_model",
         "//libraries/perceptual-grade-core/proofs:verify",
     ],
 )

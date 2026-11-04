@@ -215,7 +215,7 @@ def measure(source):
             "boundary_slope": "Left derivative R'(1); physical wrappers clamp outside the boundary",
         },
         "reference": {"pole": RADIAL_POLE, "profile_boundary_derivative": RADIAL_BOUNDARY_SLOPE,
-                      "shape": RADIAL_SHAPE, "status": "historical pole experiment", "source": "libraries/perceptual-grade-reference/src/perceptual_grade_reference/pole_spindle.py:radius_map"},
+                      "shape": RADIAL_SHAPE, "status": "historical pole experiment", "source": "libraries/perceptual-grade-reference/src/pole_spindle.py:radius_map"},
         "blender": {"release": "R(x)=x+(k-1)x^3", "source": "libraries/perceptual-grade-core/src/perceptual_grade_core/model/spindle.py:map_radius"},
         "capacity_samples": int(source["capacity_samples"]),
         "capacity_quantiles": quantiles.tolist(),

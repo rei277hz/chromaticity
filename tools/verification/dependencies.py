@@ -21,7 +21,7 @@ def main():
         unpack(Path(archive), output / 'packages' / name)
     requirements = ''.join(f'\n[[require]]\nname = "{name}"\npath = "packages/{name}"\n' for name in names)
     (output / 'lakefile.toml').write_text('name = "pg_dependencies"\n\n[[lean_lib]]\nname = "PGDependencies"\n'+requirements)
-    (output / 'lean-toolchain').write_text('leanprover/lean4:v4.34.1\n')
+    (output / 'lean-toolchain').write_text('leanprover/lean4:v4.35.0\n')
     manifest = dict(version='1.1.0', packagesDir='.lake/packages', name='pg_dependencies', lakeDir='.lake',
                     packages=[dict(type='path', name=name, dir='packages/'+name, configFile='lakefile.lean' if
                                    (output / 'packages' / name / 'lakefile.lean').exists() else 'lakefile.toml',

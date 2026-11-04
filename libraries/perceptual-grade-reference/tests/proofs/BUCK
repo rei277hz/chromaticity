@@ -3,7 +3,7 @@ python_test(
     srcs = ["test_checker.py"],
     base_module = "tests.proofs",
     resources = {
-        "checked.json": "//libraries/perceptual-grade-core/proofs:color_model[report]",
+        "checked.json": "//libraries/perceptual-grade-reference/proofs:color_model[report]",
         "README.md": "//libraries/perceptual-grade-reference:documentation",
         "lean": "//tools/verification:lean",
         "dependencies": "//tools/verification:dependencies",

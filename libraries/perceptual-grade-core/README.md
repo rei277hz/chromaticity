@@ -23,9 +23,10 @@ development namespace and private installed package layout.
 color math, signed Grade modCAM16/HK equations, and extended-range arithmetic
 live in `color_core`. The independent reference lives in its own library and
 explicitly supplies its own encoder/response semantics where a shared
-algorithm needs them. Core tests are under `tests/`. Lean
-color-model theorems remain under `proofs/color_model/` and are checked by
-`//libraries/perceptual-grade-core/proofs:color_model`.
+algorithm needs them. Core tests are under `tests/`. Lean color-model theorems
+belong to the [reference library](../perceptual-grade-reference/proofs/README.md)
+and are checked by `//libraries/perceptual-grade-reference/proofs:color_model`.
+Core scheduling and publication policy proofs remain under `proofs/`.
 Grade retains source-white admissibility/projection. Relocating shared appearance
 records does not change scope transport tags, fields or version.
 

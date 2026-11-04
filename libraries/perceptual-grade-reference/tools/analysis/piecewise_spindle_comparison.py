@@ -163,7 +163,7 @@ def measure(source):
         "inner_lifts": list(INNER_LIFTS), "poles": list(POLES),
         "default_inner_lift": DEFAULT_LIFT, "default_pole": DEFAULT_POLE,
         "baseline": {"pole": RADIAL_POLE, "boundary_profile_slope": RADIAL_BOUNDARY_SLOPE,
-                     "source": "libraries/perceptual-grade-reference/src/perceptual_grade_reference/pole_spindle.py", "status": "historical pole experiment"},
+                     "source": "libraries/perceptual-grade-reference/src/pole_spindle.py", "status": "historical pole experiment"},
         "source_capacity_samples": source["capacity_samples"],
         "capacity_quantiles": source["capacity_quantiles"],
         "tested_capacity_ratios": checked_ratios.tolist(),
