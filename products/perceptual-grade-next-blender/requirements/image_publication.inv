@@ -76,6 +76,11 @@
       "assert": "transition == (State('restore_upload'), Effects('restore_upload'))"
     },
     {
+      "name": "failed_delivery_fails_source",
+      "variables": {},
+      "assert": "step(State('deliver'), Event(failed=True)) == (State('fail'), Effects('fail'))"
+    },
+    {
       "name": "terminal_receipts_are_inert",
       "variables": {
         "event": "Event"
@@ -146,6 +151,15 @@
       "replacement": "True",
       "detects": [
         "property.failed_upload_enters_restoration"
+      ]
+    },
+    {
+      "name": "failed_delivery_reports_success",
+      "function": "step",
+      "target": "state.phase == 'deliver'",
+      "replacement": "False",
+      "detects": [
+        "property.failed_delivery_fails_source"
       ]
     },
     {

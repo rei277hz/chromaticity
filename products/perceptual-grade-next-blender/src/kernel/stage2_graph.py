@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from .graph import Graph, BuiltGrade, TREE_TYPES, count_nodes
+from .guard_graph import compositor_stage2_output_guard
 from .stage2_parameters import (
     MATRIX_RED_SLOT, MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT,
     TONE_SCALARS_SLOT, TONE_DOMAIN_SLOT, PARAMETER_SCHEMA, PARAMETER_SHAPE,
@@ -113,7 +114,13 @@ def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,
         output.is_active_output = True
         appearance = graph.encode_cones(graph.parameters.matrix(source.outputs["Color"]))
         toned = graph.tone(appearance, force=True)
-        decoded = graph.output_guard(graph.hk_guard(graph.guard_input(toned)))
+        if tree_type == "CompositorNodeTree":
+            # Without Color adjustments, positive energy needs no H-K repair;
+            # nonpositive energy already exports black. Carry signed J_A to
+            # avoid squared-energy overflow in interactive half-float images.
+            decoded = compositor_stage2_output_guard(graph, toned)
+        else:
+            decoded = graph.output_guard(graph.hk_guard(graph.guard_input(toned)))
         if tree_type == "ShaderNodeTree":
             color, alpha = decoded.color, source.outputs["Alpha"]
         else:

@@ -37,6 +37,7 @@
     "//products/perceptual-grade-next-blender/tests:package",
     "//products/perceptual-grade-next-blender/tests:install_workspace",
     "//products/perceptual-grade-next-blender/tests:installed",
+    "//products/perceptual-grade-next-blender/tests:compositor_gui",
     "//products/perceptual-grade-next-blender/tests:gesture_undo_gui",
     "//products/perceptual-grade-next-blender/tests:gesture_drag_gui",
     "//products/perceptual-grade-next-blender/tests:image_save_gui",

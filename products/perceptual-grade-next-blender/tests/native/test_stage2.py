@@ -3,6 +3,7 @@
 from dataclasses import replace
 from functools import partial
 import unittest
+from unittest.mock import patch
 
 import bpy
 import numpy as np
@@ -80,10 +81,50 @@ class Stage2Tests(unittest.TestCase):
                                              {"wrapper": wrapper_metrics,
                                               "stage2": metrics, "baseline": baseline_metrics})
                         np.testing.assert_array_equal(actual["alpha"], values[:, 3])
+                        np.testing.assert_array_equal(actual["valid"], baseline_actual["valid"])
+                        np.testing.assert_array_equal(actual["saturated"], 0.)
+                        np.testing.assert_array_equal(actual["saturated"], baseline_actual["saturated"])
                         if context == "compositor":
                             np.testing.assert_array_equal(actual["embedded_alpha"], values[:, 3])
                     finally:
                         fixture.close()
+
+    def test_compositor_achromatic_handoff_preserves_energy_guard_diagnostics(self):
+        values = cases.rgba(256)
+
+        def energy_guard(graph, appearance):
+            return graph.output_guard(graph.hk_guard(graph.guard_input(appearance)))
+
+        # Exercise the smallest supported total Tone span and the opposite
+        # anchor/fit/peak extremes, including signed and HDR source pixels.
+        for tone in (
+            ToneSettings(input_nits=(2., 2.1, 2.2, 10., 100.), fit=2., peak_nits=4000.),
+            ToneSettings(input_nits=(0., 50., 250., 1000., 10000.), fit=-2., peak_nits=500.),
+        ):
+            linear = LinearSettings(exposure=6.)
+            cases.assert_ui_settings(linear, tone)
+            with self.subTest(tone=tone):
+                prepared = complete_prepared(linear, tone)
+                builder = partial(build_stage2_group, diagnostics=True)
+                with patch("color_tools.kernel.stage2_graph.compositor_stage2_output_guard",
+                           side_effect=energy_guard):
+                    baseline = NativeFixture(prepared, values, "compositor", builder=builder)
+                try:
+                    expected = baseline.render()
+                finally:
+                    baseline.close()
+                fixture = NativeFixture(prepared, values, "compositor", builder=builder)
+                try:
+                    actual = fixture.render()
+                    self.assertLessEqual(oracle.metrics(actual["rgb"], expected["rgb"])
+                                         ["max_normalized"], 3e-6)
+                    for field in ("valid", "saturated", "alpha", "embedded_alpha"):
+                        np.testing.assert_array_equal(actual[field], expected[field])
+                    np.testing.assert_array_equal(actual["saturated"], 0.)
+                    self.assertTrue(np.isfinite(actual["margin"]).all())
+                    self.assertTrue(np.all(actual["margin"] > 0.))
+                finally:
+                    fixture.close()
 
     def test_incomplete_preparation_cannot_allocate_a_partial_tree(self):
         before_groups = {group.as_pointer() for group in bpy.data.node_groups}

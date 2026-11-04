@@ -27,9 +27,18 @@ images. Slots 0–256 contain the Tone endpoint value, slope, and curvature; slo
 260–261 contain the Tone scalars and domain. Fixed texture samples read these
 values instead of baking them into socket defaults. The boundary texture,
 viewing constants, links, and output adapter remain fixed within a working space.
-Updates therefore require no graph replacement, image allocation, or repacking.
-Dirty parameter images are packed when saving; file-load reconciliation checks
-the installed signature before accepting restored data.
+Updates require no graph replacement or image allocation. Publication packs the
+parameter image and invalidates its cached native result before reporting a
+successful installation, so compositor previews refresh automatically. File-load
+reconciliation checks the installed signature and kernel schema before accepting
+restored data.
+
+Compositor Grade graphs support both GPU Auto and Full precision without changing
+the scene setting. The output guard carries signed achromatic lightness and a
+bounded normalized distance to white, avoiding large squared-energy intermediates
+that can clip in Auto's half-precision preview buffers. CPU and GPU Full retain
+the existing full-precision accuracy gates; Auto previews allow half-precision
+rounding.
 
 Foreground publications coalesce to the newest complete result per source and
 process one source per timer turn, with no preview frequency cap. They defer for
@@ -81,6 +90,18 @@ render with a pending adjustment. The latter is also a regression test:
 ```sh
 buck2 test --remote-only //products/perceptual-grade-next-blender/tests:grade_render_preflight
 ```
+
+Check interactive compositor pixels and automatic refresh on the installed
+extension with:
+
+```sh
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:compositor_gui
+```
+
+This test uses a varying image and the live Viewer; final renders alone do not
+exercise Auto's half-precision path. It checks CPU, GPU Full, and GPU Auto,
+including signed/HDR colors and alpha. Auto uses the pixel-normalized error
+`max(abs(actual - expected)) / (1 + max(abs(expected)))` with a 0.01 limit.
 
 Measure continuous Stack Tone LUT publication with:
 

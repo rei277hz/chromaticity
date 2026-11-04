@@ -133,7 +133,7 @@ def _white_decode(g,t,radius,direction,data,delta):
 def output_guard(g,state):
     """Preserve legal raw decodes; otherwise project at fixed J_A and hue."""
     if state.graph is not g: raise ValueError('Guard sockets belong to another Graph')
-    data=_boundary(g);rw=data.response_white
+    data=_boundary(g)
     e=state.energy
     t=g.minimum(1,g.power(g.div(g.maximum(0,e),data.white*data.white),1/(2*g.prepared.gamma)))
     # A compensated white-energy constant retains the small distance to the
@@ -141,6 +141,32 @@ def output_guard(g,state):
     square=data.white*data.white
     hi=float(data.pixels.dtype.type(square));lo=square-hi
     deficit=g.maximum(0,g.div(g.add(g.sub(hi,e),lo),square))
+    return _output_projection(g,state,data,t,deficit,e,square)
+
+
+def compositor_stage2_output_guard(g,state):
+    """Project Color-free Stage 2 without transporting squared energy.
+
+    Interactive GPU compositing can materialize any shared arithmetic result
+    in a half-float image. J_A and its distance to white fit that transport;
+    white energy and even the subtraction preceding its normalization do not.
+    """
+    if state.graph is not g: raise ValueError('Guard sockets belong to another Graph')
+    data=_boundary(g)
+    j=state.J_A
+    bounded=g.clamp(j,0.,data.white)
+    t=g.power(g.div(bounded,data.white),1/g.prepared.gamma)
+    # Compensate the float32 white constant before forming the bounded
+    # energy deficit: 1-(J_A/J_white)^2 = delta_j*(2-delta_j).
+    hi=float(data.pixels.dtype.type(data.white));lo=data.white-hi
+    delta_j=g.clamp(g.add(g.div(g.sub(hi,bounded),data.white),lo/data.white))
+    deficit=g.mul(delta_j,g.sub(2.,delta_j))
+    return _output_projection(g,state,data,t,deficit,j,data.white)
+
+
+def _output_projection(g,state,data,t,deficit,endpoint,white_point):
+    """Shared actual-decoder projection from bounded solver coordinates."""
+    rw=data.response_white
     small=g.minimum(.1,deficit)
     exponent=1/(2*g.prepared.gamma)
     poly=g.madd(exponent*(exponent-1)*(exponent-2)*(exponent-3)*(exponent-4)/120,small,-exponent*(exponent-1)*(exponent-2)*(exponent-3)/24)
@@ -153,7 +179,7 @@ def output_guard(g,state):
     # error through 1-t. The fifth-order remainder at deficit=.1 is <2.2e-8.
     t=g.select(g.lt(deficit,.1),g.sub(1,physical_delta),t)
     # Solver inputs include limiting geometry at both tips. Endpoint policy
-    # still uses original carried energy rather than this solver clamp.
+    # still uses the original signed coordinate rather than this solver clamp.
     ts=g.clamp(t,1e-9,.9999999);delta=g.sub(1,ts)
     chroma=state.chroma if hasattr(state,"chroma") else g.hypot(state.a,state.b)
     ca,sa=g.div(state.a,chroma),g.div(state.b,chroma)
@@ -236,7 +262,7 @@ def output_guard(g,state):
     neutral_cone=g.minimum(1024,g.mul(1024,g.power(neutral_fraction,P)))
     native=g.vselect(final_legal,native,g.vector((neutral_cone,)*3))
     native=g.vselect(legal,direct_native,native)
-    positive=g.lt(0,e);white=g.sub(1,g.lt(e,data.white*data.white))
+    positive=g.lt(0,endpoint);white=g.sub(1,g.lt(endpoint,white_point))
     native=g.vselect(white,g.vector((1024.,)*3),native)
     native=g.vscale(native,positive)
     # Report the radius of the returned value, including neutral fallback and

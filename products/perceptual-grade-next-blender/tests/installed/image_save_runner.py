@@ -5,6 +5,7 @@ import importlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import bpy
 import numpy as np
@@ -113,6 +114,105 @@ assert grade.pg_linear.exposure == 0.8125
 reconcile()
 assert_clean_shared_image(users)
 del restored
+
+
+class PublicationImage:
+    """Retain real image writes while observing or failing native invalidation."""
+
+    def __init__(self, image, trees, *, fail):
+        self.image = image
+        self.trees = trees
+        self.fail = fail
+
+    def __getattr__(self, name):
+        return getattr(self.image, name)
+
+    def __getitem__(self, key):
+        return self.image[key]
+
+    def __setitem__(self, key, value):
+        self.image[key] = value
+
+    def __delitem__(self, key):
+        del self.image[key]
+
+    def __contains__(self, key):
+        return key in self.image
+
+    def update_tag(self):
+        signature = self.image.get(nodes.PARAMETER_SIGNATURE)
+        assert signature != previous_signature
+        assert all(tree.get(nodes.PARAMETER_SIGNATURE) == signature
+                   for tree in self.trees.values())
+        assert self.image.packed_file is not None and not self.image.is_dirty
+        assert not installation_receipts, installation_receipts
+        tag_attempts.append(self.image.as_pointer())
+        if self.fail:
+            raise RuntimeError("simulated Grade image invalidation failure")
+        self.image.update_tag()
+
+
+original_resource = nodes._grade_resources.resource
+original_dispatch = nodes._dispatch
+original_publication = nodes._publish_grade_parameters
+for fail_invalidation in (False, True):
+    image = assert_clean_shared_image(users)
+    image.use_fake_user = True
+    previous_signature = image.get(nodes.PARAMETER_SIGNATURE)
+    previous_kernels = tuple(node.node_tree.as_pointer() for node in users)
+    tag_attempts, installation_receipts, invalidation_errors = [], [], []
+
+    def observing_resource(node, space):
+        resource = original_resource(node, space)
+        return SimpleNamespace(
+            image=PublicationImage(resource.image, resource.trees, fail=fail_invalidation),
+            trees=resource.trees,
+        )
+
+    def observing_dispatch(node, event, *args, **kwargs):
+        if event.kind == "installation_result" and event.error is None:
+            assert tag_attempts == [image.as_pointer()], tag_attempts
+            installation_receipts.append(node.as_pointer())
+        return original_dispatch(node, event, *args, **kwargs)
+
+    def observing_publication(*args):
+        result = original_publication(*args)
+        invalidation_errors.extend(error for _nodes, error in result)
+        return result
+
+    nodes._grade_resources.resource = observing_resource
+    nodes._dispatch = observing_dispatch
+    nodes._publish_grade_parameters = observing_publication
+    try:
+        grade.pg_linear.exposure += 0.0625
+        reconcile()
+    finally:
+        nodes._grade_resources.resource = original_resource
+        nodes._dispatch = original_dispatch
+        nodes._publish_grade_parameters = original_publication
+    assert tag_attempts == [image.as_pointer()], tag_attempts
+    assert image.packed_file is not None and not image.is_dirty
+    if fail_invalidation:
+        assert not installation_receipts, installation_receipts
+        assert any("simulated Grade image invalidation failure" in str(error)
+                   for error in invalidation_errors), invalidation_errors
+        for node in users:
+            state = nodes._node_stores[node.as_pointer()]["state"]
+            assert not nodes.node_policy.output_allowed(state)
+            assert node.get(nodes._NODE_ERROR)
+            assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+        image.use_fake_user = False
+        bpy.data.images.remove(image)
+        del image
+        reconcile()
+        assert_clean_shared_image(users)
+    else:
+        assert not invalidation_errors, invalidation_errors
+        assert set(installation_receipts) == {node.as_pointer() for node in users}
+        assert tuple(node.node_tree.as_pointer() for node in users) == previous_kernels
+        assert_clean_shared_image(users)
+        image.use_fake_user = False
+        del image
 
 
 class PackingImage:
@@ -378,5 +478,6 @@ report_path.write_text(json.dumps({
     "replacement_retirement_reported": True,
     "returned_presenter_reported": True,
     "serialized_pixels_exact": True,
+    "invalidation_order_and_failure_checked": True,
 }, indent=2))
 bpy.ops.wm.quit_blender("EXEC_DEFAULT")

@@ -46,8 +46,11 @@ gate. Snapshot, upload, packing/verification, metadata commitment, and completio
 are separate authorized effects. Upload, packing, or metadata failure restores
 the snapshot where possible and fails closed for every current source user,
 including users outside the initiating receipt. Rollback does not make stale
-output current. Graph-link replacement and publication-gate admission retain
-their separate adapter contracts.
+output current. The delivery consumer invalidates Blender's cached image result
+after metadata commits and before reporting successful installation. Invalidation
+failure follows the same source-wide failure path; the policy's failed-delivery
+contract covers this receipt. Graph-link replacement and publication-gate
+admission retain their separate adapter contracts.
 
 Gesture policy decides observer admission, handoff, participation, deferred
 completion, and undo permission. Its runtime coordinator stores the per-window

@@ -31,6 +31,8 @@ class Image(dict):
         self.pixels = Pixels((0.1, 0.2, 0.3, 1.0))
         self.packed_file = object()
         self.is_dirty = False
+        self.tags = []
+        self.tag_error = None
 
     def update(self):
         self.is_dirty = True
@@ -38,6 +40,11 @@ class Image(dict):
     def pack(self):
         self.is_dirty = False
         self.packed_file = object()
+
+    def update_tag(self):
+        self.tags.append((self.get("signature"), self.is_dirty))
+        if self.tag_error is not None:
+            raise self.tag_error
 
 
 class Metadata(dict):
@@ -181,9 +188,12 @@ class GradeTransactionTests(unittest.TestCase):
         self.assertIs(raised.exception, failure)
 
     def publish(self, *, failure=None, rollback_failure=None, matching=False,
-                clean=True, second_tree_failure=False, silent_pack=False):
+                clean=True, second_tree_failure=False, silent_pack=False,
+                tag_failure=False):
         image = Image()
         image.is_dirty = not clean
+        if tag_failure:
+            image.tag_error = RuntimeError("image invalidation failed")
         old_pixels = image.pixels.values.copy()
         trees = [Metadata(kernel="old-shader"), Metadata(kernel="old-compositor")]
         if second_tree_failure:
@@ -212,6 +222,12 @@ class GradeTransactionTests(unittest.TestCase):
             image.pack()
             return {"clean": not image.is_dirty}
 
+        def deliver():
+            image.update_tag()
+            self.assertEqual(image.tags, [("new", False)])
+            self.assertEqual(trees[1]["kernel"], "new-compositor")
+            delivered.append("authorized")
+
         def operation(name, function):
             def invoke(errors):
                 calls.append(name)
@@ -231,7 +247,7 @@ class GradeTransactionTests(unittest.TestCase):
             "commit": lambda: self.publication.write_metadata(metadata),
             "restore_upload": restore_upload, "restore_pack": pack,
             "restore_metadata": lambda: self.publication.write_metadata(snapshots[0].metadata),
-            "deliver": lambda: delivered.append("authorized"),
+            "deliver": deliver,
             "fail": lambda: failed_users.extend(("authorized", "shared", "lagging")),
             "retire": lambda: None,
         }
@@ -248,6 +264,16 @@ class GradeTransactionTests(unittest.TestCase):
         self.assertFalse(failed)
         self.assertTrue(delivered)
         self.assertFalse(errors)
+        self.assertEqual(image.tags, [("new", False)])
+
+    def test_image_invalidation_failure_fails_source_without_delivery_receipt(self):
+        calls, image, _old, _trees, failed, delivered, errors = self.publish(tag_failure=True)
+        self.assertEqual(calls, ["prepare", "snapshot", "upload", "pack", "commit",
+                                 "deliver", "fail", "retire"])
+        self.assertEqual(image.tags, [("new", False)])
+        self.assertFalse(delivered)
+        self.assertEqual(failed, ["authorized", "shared", "lagging"])
+        self.assertEqual([str(error) for error in errors], ["image invalidation failed"])
 
     def test_clean_matching_fast_path_skips_upload_and_pack(self):
         calls, _image, _old, _trees, _failed, delivered, errors = self.publish(matching=True)

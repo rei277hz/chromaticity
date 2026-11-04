@@ -87,7 +87,7 @@ _gesture_state = gesture_policy.new()
 _gesture_node_serial = count(1)
 _gesture_nodes = {}
 _gesture_invocations = {}
-_KERNEL_SCHEMA = 3
+_KERNEL_SCHEMA = 4
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
 _KERNEL_QUALITY = "_perceptual_grade_quality"
@@ -1071,6 +1071,10 @@ def _publish_grade_parameters(source, authorized_records, prepared):
 
     def deliver(_errors):
         resource = context["resource"]
+        # Pixel writes update the buffer, but the compositor caches nested
+        # image results until the ID is tagged. Invalidate before acknowledging
+        # installation so a failed notification fails every shared user.
+        resource.image.update_tag()
         for record in users:
             node = record["node"]
             signature = _publication_signature(record, prepared)

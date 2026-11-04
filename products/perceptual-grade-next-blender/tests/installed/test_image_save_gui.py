@@ -63,6 +63,7 @@ class ImageSaveGuiTests(unittest.TestCase):
                 self.assertEqual(data.get("user_image_save"), ["INTERFACE"], details)
                 self.assertTrue(data.get("serialized_pixels_exact"), details)
                 self.assertTrue(data.get("save_fallback_repacked"), details)
+                self.assertTrue(data.get("invalidation_order_and_failure_checked"), details)
                 self.assertEqual(data.get("transaction_diagnostics"), [
                     "transaction presenter failed", "transaction retirement failed",
                     "transaction upload failed",

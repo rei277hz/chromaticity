@@ -309,6 +309,7 @@ invariant_proof(
     required_mutations = [
         "matching_image_skips_clean_packing",
         "failed_upload_continues_publication",
+        "failed_delivery_reports_success",
         "save_packing_includes_user_images",
     ],
     required_properties = [
@@ -318,6 +319,7 @@ invariant_proof(
         "restored_metadata_requires_clean_packing",
         "restoration_failure_still_fails_source",
         "metadata_failure_restores_shared_image",
+        "failed_delivery_fails_source",
         "terminal_receipts_are_inert",
         "save_packing_only_repairs_dirty_generated_images",
         "save_packing_requires_clean_receipt",

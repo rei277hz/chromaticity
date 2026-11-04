@@ -554,3 +554,31 @@ python_test(
         },
     }),
 )
+
+python_test(
+    name = "compositor_gui",
+    srcs = [
+        "installed/gui_support.py",
+        "installed/test_compositor_gui.py",
+    ],
+    base_module = "tests.perceptual_grade_blender",
+    labels = [
+        "installed",
+        "gui",
+        "gpu",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "compositor_runner.py": "installed/compositor_runner.py",
+            "xvfb": "//third_party:xvfb_software_linux",
+        },
+        "prelude//os:macos": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "compositor_runner.py": "installed/compositor_runner.py",
+        },
+    }),
+)

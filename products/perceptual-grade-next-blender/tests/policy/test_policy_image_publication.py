@@ -75,6 +75,11 @@ class ImagePublicationPolicyTests(unittest.TestCase):
         for event in (Event(), Event(failed=True)):
             self.assertEqual(step(state, event), (state, Effects()))
 
+    def test_failed_delivery_fails_source_before_retirement(self):
+        state, effects = step(State("deliver"), Event(failed=True))
+        self.assertEqual((state, effects), (State("fail"), Effects("fail")))
+        self.assertEqual(step(state, Event()), (State("retire"), Effects("retire")))
+
     def test_failure_before_snapshot_has_no_restore_work(self):
         for phase in ("prepare", "snapshot"):
             state, effects = step(State(phase), Event(failed=True))
