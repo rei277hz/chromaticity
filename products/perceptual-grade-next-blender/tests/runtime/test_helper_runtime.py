@@ -6,6 +6,7 @@ from importlib.resources import files
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -99,6 +100,7 @@ class HelperRuntimeTests(unittest.TestCase):
         cls.module = importlib.import_module(
             "grade_helper_runtime_test.runtime.execution"
         )
+        cls.worker = importlib.import_module("grade_helper_runtime_test.runtime.worker")
 
     @classmethod
     def tearDownClass(cls):
@@ -220,6 +222,42 @@ class HelperRuntimeTests(unittest.TestCase):
         self.assertTrue(group.poll())
         with self.assertRaisesRegex(RuntimeError, "child failed"):
             group.result()
+
+    def test_worker_preview_uses_the_run_protocol_job_field(self):
+        class Payloads:
+            def __init__(self):
+                self.prefix = None
+                self.transferred = None
+
+            def encode(self, _value, *, prefix):
+                self.prefix = prefix
+                return {"encoded": True}, ("array-preview.npy",)
+
+            def release(self, files):
+                self.transferred = ("released", files)
+
+            def transfer(self, files):
+                self.transferred = ("transferred", files)
+
+        sent = []
+        payloads = Payloads()
+        context = self.worker.WorkerContext(
+            {"role": "gpu", "generation": 4, "session": "session"},
+            {"kind": "run", "job": 23},
+            threading.Event(),
+            sent.append,
+            payloads,
+        )
+
+        context.preview({"quality": "preview"})
+
+        self.assertEqual(payloads.prefix, "gpu-4-23")
+        self.assertEqual(sent, [{
+            "kind": "preview", "job": 23,
+            "value": {"encoded": True}, "files": ("array-preview.npy",),
+        }])
+        self.assertEqual(payloads.transferred,
+                         ("transferred", ("array-preview.npy",)))
 
 
 if __name__ == "__main__":

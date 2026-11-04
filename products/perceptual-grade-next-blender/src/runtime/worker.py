@@ -32,10 +32,11 @@ class WorkerContext:
 
     def preview(self, value):
         self.checkpoint()
-        prefix = f"{self.role}-{self.generation}-{self.job['id']}"
+        prefix = f"{self.role}-{self.generation}-{self.job['job']}"
         encoded, files = self._payloads.encode(value, prefix=prefix)
         try:
-            self._send(dict(kind="preview", job=self.job["id"], value=encoded, files=files))
+            self._send(dict(kind="preview", job=self.job["job"], value=encoded,
+                            files=files))
         except BaseException:
             self._payloads.release(files)
             raise
