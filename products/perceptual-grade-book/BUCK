@@ -7,21 +7,69 @@ source_tree(
     visibility = ["PUBLIC"],
 )
 
+# Independent authored inputs keep a chapter edit out of media generation.
+[
+    source_tree(
+        name = name,
+        srcs = {path.removeprefix(prefix): path for path in glob(patterns)},
+        visibility = ["PUBLIC"],
+    )
+    for name, prefix, patterns in [
+        (
+            "book_data",
+            "docs/data/",
+            ["docs/data/*.json"],
+        ),
+        (
+            "book_screenshots",
+            "docs/media/screenshots/",
+            ["docs/media/screenshots/*.png"],
+        ),
+        (
+            "book_recordings",
+            "docs/media/demos/",
+            [
+                "docs/media/demos/**/*.mov",
+                "docs/media/demos/**/*.MOV",
+            ],
+        ),
+        (
+            "book_intro_recording",
+            "docs/media/intro/",
+            ["docs/media/intro/*.mp4"],
+        ),
+        (
+            "book_icons",
+            "docs/book/src/assets/icons/",
+            ["docs/book/src/assets/icons/*.png"],
+        ),
+    ]
+]
+
 source_tree(
-    name = "snapshot",
-    srcs = {path.removeprefix("snapshot/"): path for path in glob(["snapshot/**"])},
+    name = "historical",
+    srcs = {path.removeprefix("historical/"): path for path in glob(["historical/**"])},
     visibility = ["PUBLIC"],
 )
 
 export_file(
-    name = "import_manifest",
-    src = "import-manifest.json",
+    name = "historical_manifest",
+    src = "historical-manifest.json",
     visibility = ["PUBLIC"],
 )
 
-export_file(
+alias(
     name = "tool_pins",
-    src = "tool-pins.bzl",
+    actual = "//third_party/book:pins",
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "data_downloads",
+    srcs = {
+        "src/downloads/benchmark.json": "docs/data/benchmark.json",
+        "src/downloads/photo-grades.json": "docs/data/photo-grades.json",
+    },
     visibility = ["PUBLIC"],
 )
 
@@ -50,10 +98,16 @@ generate(
     args = [
         "--docs",
         "$(location :docs)",
-        "--snapshot",
-        "$(location :snapshot)",
+        "--assets",
+        "$(location //products/perceptual-grade-book/generators:assets)",
+        "--assets",
+        "$(location //products/perceptual-grade-book/cdn:assets)",
+        "--assets",
+        "$(location :data_downloads)",
+        "--historical",
+        "$(location :historical)",
         "--manifest",
-        "$(location :import_manifest)",
+        "$(location :historical_manifest)",
     ],
     outputs = {},
     tool = ":assemble_tool",

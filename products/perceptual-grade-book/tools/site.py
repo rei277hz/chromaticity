@@ -1,4 +1,4 @@
-"""Build the handbook from declared inputs, with explicitly pinned CDN typography."""
+"""Build the handbook from declared inputs, with pinned CDN fonts and equations."""
 import argparse
 import ast
 import hashlib
@@ -36,8 +36,7 @@ def tool_pins(path, rust_versions):
     for item in ast.parse(path.read_text(encoding='utf-8')).body:
         if isinstance(item, ast.Assign) and any(isinstance(n, ast.Name) and n.id == 'DOC_TOOLS' for n in item.targets):
             pins = ast.literal_eval(item.value)
-            # The old release archive pins remain historical import evidence.
-            # The central Rust lock now owns the executable used by this build.
+            # The central Rust lock owns the executable used by this build.
             versions = json.loads(rust_versions.read_text(encoding='utf-8'))
             pins['mdbook'] = dict(versions['crates']['mdbook'], source='crates.io',
                                  buck_target='root//third_party/rust:mdbook-mdbook')
@@ -181,12 +180,17 @@ class Page(HTMLParser):
         self.refs = []
         self.iframes = []
         self.font_hints = []
+        self.runtime_tags = []
+        self.has_math = False
         self.feed(text)
 
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
         if 'id' in attrs:
             self.ids.add(attrs['id'])
+        self.runtime_tags.append((tag, attrs))
+        if 'data-tex' in attrs:
+            self.has_math = True
         if tag == 'a' and 'name' in attrs:
             self.ids.add(attrs['name'])
         if tag == 'link' and attrs.get('rel') in ('preconnect', 'preload'):
@@ -206,10 +210,10 @@ class Page(HTMLParser):
             self.refs.append((attrs['data-still'], True))
 
 
-def local_target(root, origin, reference, runtime, allowed_fonts=()):
+def local_target(root, origin, reference, runtime, allowed_resources=()):
     url = urlsplit(reference)
     if url.scheme or url.netloc:
-        if runtime and url.scheme not in ('data', 'mailto') and reference not in allowed_fonts:
+        if runtime and url.scheme not in ('data', 'mailto') and reference not in allowed_resources:
             raise ValueError(f'External runtime resource in {origin.relative_to(root)}: {reference}')
         return None
     if not url.path:
@@ -231,15 +235,52 @@ def validate_site(directory):
     fonts_file = root/'downloads/provenance/fonts.json'
     font_manifest = json.loads(fonts_file.read_text())
     allowed_fonts = {spec['normal']['url'] for spec in font_manifest['fonts'].values()}
-    for url in allowed_fonts:
-        if not url.startswith('https://cdn.jsdelivr.net/npm/@fontsource-variable/') or not url.endswith('.woff2'):
-            raise ValueError('Unexpected CDN font URL: ' + url)
+    for name, spec in font_manifest['fonts'].items():
+        if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', spec['version']):
+            raise ValueError('Expected an exact CDN font version: ' + name)
+        expected = (f'https://cdn.jsdelivr.net/npm/@fontsource-variable/{name}@{spec["version"]}'
+                    f'/files/{name}-latin-wght-normal.woff2')
+        if spec['normal']['url'] != expected:
+            raise ValueError('Unexpected CDN font URL: ' + spec['normal']['url'])
+    math_manifest = json.loads((root/'downloads/provenance/katex.json').read_text())
+    katex = math_manifest['katex']
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', katex['version']):
+        raise ValueError('Expected an exact CDN KaTeX version')
+    math_resources = {}
+    for key, filename in (('stylesheet', 'katex.min.css'), ('script', 'katex.min.js')):
+        expected = f'https://cdn.jsdelivr.net/npm/katex@{katex["version"]}/dist/{filename}'
+        if katex[key]['url'] != expected:
+            raise ValueError('Unexpected CDN KaTeX URL: ' + katex[key]['url'])
+        math_resources[expected] = key
     font_origins = {urlsplit(url).scheme+'://'+urlsplit(url).netloc for url in allowed_fonts}
     pages = {p: Page(p.read_text(encoding='utf-8')) for p in root.rglob('*.html')}
     if root / 'index.html' not in pages:
         raise ValueError('Site has no index.html')
     checked = 0
     for path, page in pages.items():
+        integrated_math = set()
+        for tag, attrs in page.runtime_tags:
+            references = [(key, attrs[key]) for key in ('src', 'poster', 'data-still') if key in attrs]
+            if tag != 'a' and 'href' in attrs:
+                references.append(('href', attrs['href']))
+            references.extend(('srcset', item.strip().split()[0])
+                              for item in attrs.get('srcset', '').split(',') if item.strip())
+            for attribute, reference in references:
+                if reference not in math_resources:
+                    continue
+                kind = math_resources[reference]
+                valid = ((kind == 'script' and tag == 'script' and attribute == 'src'
+                          and 'defer' in attrs and 'async' not in attrs
+                          and attrs.get('type') in (None, 'text/javascript', 'application/javascript'))
+                         or (kind == 'stylesheet' and tag == 'link' and attribute == 'href'
+                             and attrs.get('rel') == 'stylesheet'
+                             and attrs.get('type') in (None, 'text/css')))
+                if (not valid or attrs.get('crossorigin') != 'anonymous'
+                        or attrs.get('integrity') != math_manifest['integrity'][kind]):
+                    raise ValueError(f'Invalid CDN KaTeX integration in {path.relative_to(root)}: {reference}')
+                integrated_math.add(reference)
+        if page.has_math and integrated_math != set(math_resources):
+            raise ValueError(f'Missing CDN KaTeX integration in {path.relative_to(root)}')
         for hint in page.font_hints:
             valid = (hint['rel'] == 'preconnect' and hint.get('href') in font_origins or
                      hint['rel'] == 'preload' and hint.get('as') == 'font' and hint.get('href') in allowed_fonts)
@@ -251,7 +292,7 @@ def validate_site(directory):
         checked += page.iframes.count(INTRO_VIDEO_EMBED)
         references = page.refs + [(ref, True) for ref in page.iframes if ref != INTRO_VIDEO_EMBED]
         for ref, runtime in references:
-            target = local_target(root, path, ref, runtime)
+            target = local_target(root, path, ref, runtime, math_resources)
             fragment = unquote(urlsplit(ref).fragment)
             if target in pages and fragment and fragment not in pages[target].ids:
                 raise ValueError(f'Broken fragment in {path.relative_to(root)}: {ref}')
@@ -270,7 +311,8 @@ def validate_site(directory):
             checked += 1
     if not (root / '.nojekyll').is_file():
         raise ValueError('Missing .nojekyll for GitHub Pages deployment')
-    return {'html_pages': len(pages), 'local_references_checked': checked, 'cdn_font_files': len(allowed_fonts)}
+    return {'html_pages': len(pages), 'local_references_checked': checked,
+            'cdn_font_files': len(allowed_fonts), 'cdn_katex_files': len(math_resources)}
 
 
 def copy_markdown_downloads(book, directory):
@@ -361,11 +403,6 @@ def main(argv=None):
             for name in chapters:
                 path = book/'src'/name
                 path.write_text(prepare_math(path.read_text(encoding='utf-8')), encoding='utf-8')
-            vendor = book/'src/vendor/katex'
-            for child in vendor.iterdir():
-                if child.name not in {'katex.min.js', 'katex.min.css', 'fonts'}:
-                    if child.is_dir(): shutil.rmtree(child)
-                    else: child.unlink()
             edition = site/language
             rendered = subprocess.run([str(executable), 'build', str(book), '--dest-dir', str(edition)],
                                       check=True, capture_output=True, text=True)

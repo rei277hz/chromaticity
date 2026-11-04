@@ -1,0 +1,46 @@
+{
+  "description": "Published release attachments and historical translation review. Ordinary book content and generated assets are not frozen by this inventory.",
+  "files": {
+    "src/downloads/Perceptual-Grade-zh-HANS.dctl": "31541294ef1acd4f749eb79a64d8b964192d60c8034e8ee3f7e3924b65075854",
+    "src/downloads/Perceptual-Grade.dctl": "194e1eeccd7c72afd5778031bd8b95eb77d27cd563e0bf382f61720098c57766",
+    "src/downloads/i18n-review.csv": "7e9241c8d4fc985a336a14eab5540c5302846e8d9974ffd4dc7196505e098470",
+    "src/downloads/licenses/perceptual-grade-LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "src/downloads/perceptual_grade-v1.23.2-20261101.zip": "e40ec53987e47addf9840ef55a840a4b62bb49e75a94f0d9fc35c0792b95cf6b"
+  },
+  "provenance": {
+    "download_replacements": {
+      "src/downloads/perceptual_grade-v1.23.2-20261101.zip": {
+        "blender_manifest_version": "1.23.2",
+        "build_date": "2026-11-01",
+        "change": "Replace the earlier development download with the supplied 2026-11-01 build of Perceptual Grade 1.23.2, using the preserved product rather than Perceptual Grade Next. Preserve the supplied filename and archive bytes.",
+        "original_download": {
+          "path": "src/downloads/perceptual_grade.zip",
+          "sha256": "2298b397beb55094971c4c436ee78a0a510392bd87d66f3460be02cf0937402f",
+          "source": "install/perceptual_grade-1.23.2.zip"
+        },
+        "product": "perceptual-grade-blender",
+        "replaces": {
+          "path": "src/downloads/perceptual_grade-v1.23.0-dev.zip",
+          "sha256": "1cbeac27cd9b6c89a399cb97fcad0adebc972ec0741cdd9aa0eb7f2481a1cba6",
+          "source": "perceptual_grade-v1.23.0-dev.zip (user-supplied at repository root)"
+        },
+        "sha256": "e40ec53987e47addf9840ef55a840a4b62bb49e75a94f0d9fc35c0792b95cf6b",
+        "source": "perceptual_grade-v1.23.2-20261101.zip (user-supplied at repository root)"
+      }
+    },
+    "historical_downloads": {
+      "src/downloads/Perceptual-Grade-zh-HANS.dctl": {
+        "sha256": "31541294ef1acd4f749eb79a64d8b964192d60c8034e8ee3f7e3924b65075854",
+        "source": "install/Perceptual-Grade-zh-HANS.dctl"
+      },
+      "src/downloads/Perceptual-Grade.dctl": {
+        "sha256": "194e1eeccd7c72afd5778031bd8b95eb77d27cd563e0bf382f61720098c57766",
+        "source": "install/Perceptual-Grade.dctl"
+      }
+    },
+    "source_release": "perceptual-grade-1.23.2",
+    "translation_review": "Preserved record of catalog use across the complete original 1.23.2 application sources."
+  },
+  "schema": 1,
+  "version": "1.23.2"
+}

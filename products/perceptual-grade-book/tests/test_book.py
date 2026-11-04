@@ -1,4 +1,4 @@
-"""Check the preserved 1.23.2 inputs and the actual Buck-built publication."""
+"""Check source-driven 1.23.2 assembly and the actual Buck-built publication."""
 import ast
 import hashlib
 import html
@@ -37,60 +37,26 @@ class BookTests(unittest.TestCase):
     def setUpClass(cls):
         cls.resources = Path(__file__).parent
         cls.docs = cls.resources / 'docs'
-        cls.snapshot = cls.resources / 'snapshot'
+        cls.historical = cls.resources / 'historical'
+        cls.inputs = cls.resources / 'book-inputs'
+        cls.assets = [cls.resources / name for name in ('generated-assets', 'cdn-assets', 'data-downloads')]
         cls.output = (cls.resources / 'site').resolve()
         cls.book = cls.docs / 'book'
-        cls.manifest_path = cls.resources / 'import-manifest.json'
+        cls.manifest_path = cls.resources / 'historical-manifest.json'
         cls.manifest = json.loads(cls.manifest_path.read_text())
         cls.publication = json.loads((cls.output / 'site-manifest.json').read_text())
         cls.chapters = site.check_chapters(cls.book)
 
-    def test_original_sources_and_snapshot_match_import(self):
+    def test_authored_and_generated_inputs_are_assembled(self):
         self.assertEqual(self.manifest['schema'], 1)
-        self.assertEqual(self.manifest['version'], '1.23.2')
-        self.assertEqual(len(self.manifest['docs']), 208)
-        self.assertTrue(self.manifest['snapshot'])
-        self.assertTrue(self.manifest['provenance'])
-        self.assertEqual(inventory(self.docs), self.manifest['docs'])
-        self.assertEqual(inventory(self.snapshot), self.manifest['snapshot'])
-        self.assertEqual(assemble.verify_inputs(
-            self.docs, self.snapshot, self.manifest_path), self.manifest)
-
-    def test_document_updates_preserve_original_document_provenance(self):
-        originals = {
-            'book/book.toml':
-                '08b48aa782e00ae0ede01ca39064050e17f598dd1215aa2d3b25a01333c6b464',
-            'book/src/README.md':
-                '38d64086e8ee3209d95ce28952bda5b3c9e888077333a5ff3450d141821e760f',
-            'book/zh-Hans/README.md':
-                '680007f7c808a498c19f36dc5b0082dadcc18e24496df8dcb59b8a9a57958b97',
-            'book/src/development/contributing.md':
-                '4d1cdd2740b9dfb6f5f32691b01fc65097a063827737f9a4733e920be9ea213e',
-            'book/zh-Hans/development/contributing.md':
-                '37a5766311208973a33426c8b61d7a0519b6e6f54a084681ac640fd2fcb93096',
-            'book/src/guide/install.md':
-                '57035faff23c8200e775990ff16aafaec8441fd10a0d38e9824f68b5dc0b2437',
-            'book/zh-Hans/guide/install.md':
-                '7dbd9798cc6cd3fdd7779cb2d66d3b92195b95ae26cf934156f7a4c5a387de4f',
-            'book/src/development/documentation.md':
-                '770ee6a85b0011880734c26ffae8b8971f588fbb8e84ba037a0c7b58cdc7e8dd',
-            'book/src/development/publishing.md':
-                '0f626ccc705e7b3a31699ff4910f0e652041a70ffa01e842741ff2a5ac7939da',
-            'book/src/reference/license.md':
-                'dcb0d18e45b129d8f7bdb6597cc2c51ebfd1c1ca3de45984eda22f1ceffbaddb',
-            'book/zh-Hans/reference/license.md':
-                'cce2164b9991113f14bc9f326f0e814b3317bf07e07d87d64119b9edf515398a',
-            'book/src/reference/credits.md':
-                '659f5bbd7ee029d8ddf3936355367793c340fb6b617180c784f0383633b0a889',
-        }
-        adaptations = self.manifest['provenance']['docs_adaptations']
-        self.assertEqual(set(adaptations), set(originals))
-        for name, original in originals.items():
-            with self.subTest(document=name):
-                self.assertEqual(adaptations[name]['original_sha256'], original)
-                self.assertTrue(adaptations[name]['change'])
-                self.assertNotEqual(original, sha(self.docs / name))
-                self.assertEqual(self.manifest['docs'][name], sha(self.docs / name))
+        self.assertEqual(inventory(self.historical), self.manifest['files'])
+        expected = inventory(self.book)
+        for root in [*self.assets, self.historical]:
+            incoming = inventory(root)
+            self.assertFalse(expected.keys() & incoming.keys())
+            expected.update(incoming)
+        self.assertEqual(inventory(self.inputs), expected)
+        self.assertFalse((self.inputs / 'src/vendor').exists())
 
     def test_both_license_pages_explain_source_and_release_terms(self):
         repository = 'https://github.com/rei277hz/chromaticity/blob/main/'
@@ -110,36 +76,25 @@ class BookTests(unittest.TestCase):
         self.assertIn('DetMCD.pdf', credits)
         self.assertIn('asymptotic Gaussian', credits)
 
-    def test_supplemental_provenance_uses_verified_release_relative_inputs(self):
-        provenance = self.manifest['provenance']
-        expected = dict(provenance['legacy_inputs_sha256'])
-        expected.update({'docs/' + name: digest
-                         for name, digest in self.manifest['docs'].items()})
-        metadata = [
-            'src/downloads/provenance/' + name + '.json'
-            for name in ('numerical-figures', 'photographic-figures', 'host-screenshots')
-        ]
-        self.assertEqual(set(provenance['metadata_adaptations']), set(metadata))
-        for filename in metadata:
-            document = self.snapshot / filename
-            adaptation = provenance['metadata_adaptations'][filename]
-            self.assertRegex(adaptation['original_sha256'], r'^[0-9a-f]{64}$')
-            self.assertNotEqual(adaptation['original_sha256'], sha(document))
-            inputs = json.loads(document.read_text())['inputs']
-            self.assertTrue(inputs)
-            for name, digest in inputs.items():
-                with self.subTest(metadata=filename, input=name):
-                    path = PurePosixPath(name)
+    def test_generated_provenance_uses_stable_input_names(self):
+        for name in ('numerical-figures', 'photographic-figures', 'host-screenshots'):
+            document = self.output / 'downloads/provenance' / (name + '.json')
+            provenance = json.loads(document.read_text())
+            self.assertEqual(provenance['invocation'], 'buck2')
+            self.assertTrue(provenance['inputs'])
+            self.assertTrue(provenance['outputs'])
+            for filename, digest in provenance['inputs'].items():
+                with self.subTest(producer=name, input=filename):
+                    path = PurePosixPath(filename)
                     self.assertFalse(path.is_absolute())
                     self.assertNotIn('..', path.parts)
                     self.assertNotIn('buck-out', path.parts)
-                    self.assertEqual(path.as_posix(), name)
-                    self.assertIn(name, expected)
-                    self.assertEqual(digest, expected[name])
+                    self.assertRegex(digest, r'^[0-9a-f]{64}$')
 
     def test_rendered_links_and_manifest(self):
         checks = site.validate_site(self.output)
         self.assertEqual(checks['cdn_font_files'], 2)
+        self.assertEqual(checks['cdn_katex_files'], 2)
         self.assertGreater(checks['html_pages'], len(self.chapters) * 2)
         self.assertEqual(self.publication['validation'], checks)
         self.assertEqual(self.publication['invocation'], 'buck2')
@@ -163,12 +118,7 @@ class BookTests(unittest.TestCase):
         actual = inventory(self.output)
         actual.pop('site-manifest.json')
         self.assertEqual(actual, self.publication['site_files'])
-        expected_inputs = {
-            name.removeprefix('book/'): digest
-            for name, digest in self.manifest['docs'].items() if name.startswith('book/')
-        }
-        expected_inputs.update(self.manifest['snapshot'])
-        self.assertEqual(self.publication['input_files'], expected_inputs)
+        self.assertEqual(self.publication['input_files'], inventory(self.inputs))
 
     def test_both_language_editions_and_navigation(self):
         self.assertEqual(site.check_chapters(self.book, 'zh-Hans'), self.chapters)
@@ -206,8 +156,13 @@ class BookTests(unittest.TestCase):
         self.assertIn('data-tex="J_{\\mathrm{HK}}"', html.unescape(structure))
         self.assertNotIn('![Published relationship', structure)
         self.assertIn('data-tex=', (self.output / 'en/theory/hk-guard.html').read_text())
-        self.assertTrue((self.output / 'vendor/katex/katex.min.js').is_file())
-        self.assertTrue((self.output / 'vendor/katex/fonts').is_dir())
+        self.assertFalse((self.output / 'vendor').exists())
+        self.assertFalse(any(self.output.rglob('*.woff*')))
+        katex = json.loads((self.output / 'downloads/provenance/katex.json').read_text())
+        self.assertEqual(katex['katex'], assignment(self.resources / 'tool-pins.bzl', 'DOC_TOOLS')['katex'])
+        for kind in ('stylesheet', 'script'):
+            self.assertIn(katex['katex'][kind]['url'], structure)
+            self.assertIn(katex['integrity'][kind], structure)
         for language in ('en', 'zh-Hans'):
             for shared in ('assets', 'downloads', 'vendor'):
                 self.assertFalse((self.output / language / shared).exists())
@@ -232,9 +187,11 @@ class BookTests(unittest.TestCase):
             metadata = tomllib.loads(archive.read('blender_manifest.toml').decode())
             self.assertEqual(metadata['version'], '1.23.2')
         for name in (extension, 'Perceptual-Grade.dctl',
-                     'Perceptual-Grade-zh-HANS.dctl', 'ACEScg_ColorChecker2014.exr'):
+                     'Perceptual-Grade-zh-HANS.dctl'):
             self.assertEqual(sha(downloads / name),
-                             self.manifest['snapshot']['src/downloads/' + name])
+                             self.manifest['files']['src/downloads/' + name])
+        tutorial = assignment(self.resources / 'tool-pins.bzl', 'TUTORIAL_ASSETS')['colorchecker2014']
+        self.assertEqual(sha(downloads / 'ACEScg_ColorChecker2014.exr'), tutorial['sha256'])
         demos = json.loads((self.output / 'assets/demos/manifest.json').read_text())
         spec = json.loads((self.docs / 'data/demos.json').read_text())
         self.assertEqual([demo['name'] for demo in demos['demos']],
@@ -290,76 +247,114 @@ class BookTests(unittest.TestCase):
                          {'sha256': sha(archive_path), 'bytes': archive_path.stat().st_size})
 
 
-class ImportFailureTests(unittest.TestCase):
+class AssemblyTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.docs, self.snapshot = self.root / 'docs', self.root / 'snapshot'
+        self.docs = self.root / 'docs'
+        self.assets = self.root / 'assets'
+        self.historical = self.root / 'historical'
         (self.docs / 'book/src').mkdir(parents=True)
-        (self.docs / 'book/book.toml').write_text('[book]\ntitle = "Preserved"\n')
-        (self.docs / 'book/src/README.md').write_text('# Original chapter\n')
-        self.asset = self.snapshot / 'src/assets/figure.png'
+        (self.docs / 'book/book.toml').write_text('[book]\ntitle = "Handbook"\n')
+        (self.docs / 'book/src/README.md').write_text('# Chapter\n')
+        self.asset = self.assets / 'src/assets/figure.png'
         self.asset.parent.mkdir(parents=True)
-        self.asset.write_bytes(b'preserved supplemental bytes')
-        self.manifest = self.root / 'import-manifest.json'
-        self.spec = {'schema': 1, 'version': '1.23.2',
-                     'docs': inventory(self.docs), 'snapshot': inventory(self.snapshot)}
+        self.asset.write_bytes(b'generated figure')
+        self.download = self.historical / 'src/downloads/release.zip'
+        self.download.parent.mkdir(parents=True)
+        self.download.write_bytes(b'preserved release bytes')
+        self.manifest = self.root / 'historical-manifest.json'
+        self.spec = {'schema': 1, 'files': inventory(self.historical)}
         self.write_manifest()
         self.output = self.root / 'assembled'
 
     def write_manifest(self):
         self.manifest.write_text(json.dumps(self.spec))
 
+    def build(self, assets=None):
+        return assemble.assemble(self.docs, [self.assets] if assets is None else assets,
+                                 self.historical, self.manifest, self.output)
+
+    def test_chapter_edits_and_new_generator_results_are_build_inputs(self):
+        chapter = self.docs / 'book/src/README.md'
+        chapter.write_text('# Edited chapter\n')
+        self.asset.write_bytes(b'regenerated figure')
+        assembled = self.build()
+        self.assertEqual((assembled / 'src/README.md').read_bytes(), chapter.read_bytes())
+        self.assertEqual((assembled / 'src/assets/figure.png').read_bytes(), self.asset.read_bytes())
+        self.assertEqual((assembled / 'src/downloads/release.zip').read_bytes(), self.download.read_bytes())
+
     def test_read_only_sources_produce_writable_private_assembly(self):
+        before = {name: inventory(root) for name, root in
+                  [('docs', self.docs), ('assets', self.assets), ('historical', self.historical)]}
+        for root in (self.docs, self.assets, self.historical):
+            for path in root.rglob('*'):
+                if path.is_file():
+                    path.chmod(0o444)
         directories = [self.docs / 'book', self.docs / 'book/src']
         for path in reversed(directories):
             self.addCleanup(path.chmod, 0o755)
-        for path in self.docs.rglob('*'):
-            if path.is_file():
-                path.chmod(0o444)
-        self.asset.chmod(0o444)
-        for path in directories:
             path.chmod(0o555)
-        assembled = assemble.assemble(self.docs, self.snapshot, self.manifest, self.output)
+        assembled = self.build()
         for path in (assembled / 'book.toml', assembled / 'src/README.md',
-                     assembled / 'src/assets/figure.png'):
+                     assembled / 'src/assets/figure.png', assembled / 'src/downloads/release.zip'):
             self.assertTrue(path.stat().st_mode & 0o200, str(path))
             path.write_bytes(path.read_bytes() + b'\nprivate staging edit')
-        self.assertEqual(inventory(self.docs), self.spec['docs'])
-        self.assertEqual(inventory(self.snapshot), self.spec['snapshot'])
+        for name, root in [('docs', self.docs), ('assets', self.assets), ('historical', self.historical)]:
+            self.assertEqual(inventory(root), before[name])
 
-    def test_missing_supplement_fails_before_assembly(self):
-        self.asset.unlink()
-        with self.assertRaisesRegex(ValueError, 'snapshot inventory mismatch.*missing='):
-            assemble.assemble(self.docs, self.snapshot, self.manifest, self.output)
+    def test_missing_historical_download_fails_before_assembly(self):
+        self.download.unlink()
+        with self.assertRaises(ValueError):
+            self.build()
         self.assertFalse(self.output.exists())
 
-    def test_tampered_supplement_fails_before_assembly(self):
-        self.asset.write_bytes(b'changed bytes')
-        with self.assertRaisesRegex(ValueError, 'snapshot inventory mismatch.*changed='):
-            assemble.assemble(self.docs, self.snapshot, self.manifest, self.output)
+    def test_tampered_historical_download_fails_before_assembly(self):
+        self.download.write_bytes(b'changed bytes')
+        with self.assertRaises(ValueError):
+            self.build()
         self.assertFalse(self.output.exists())
 
-    def test_unlisted_supplement_fails(self):
-        (self.asset.parent / 'unlisted.png').write_bytes(b'unregistered')
-        with self.assertRaisesRegex(ValueError, 'snapshot inventory mismatch.*extra='):
-            assemble.assemble(self.docs, self.snapshot, self.manifest, self.output)
+    def test_unlisted_historical_download_fails(self):
+        (self.download.parent / 'unlisted.zip').write_bytes(b'unregistered')
+        with self.assertRaises(ValueError):
+            self.build()
         self.assertFalse(self.output.exists())
 
-    def test_supplement_cannot_replace_original_even_with_matching_hash(self):
-        conflict = self.snapshot / 'src/README.md'
-        conflict.write_text('# Replacement chapter\n')
-        self.spec['snapshot'] = inventory(self.snapshot)
+    def test_generated_file_cannot_replace_authored_chapter(self):
+        (self.assets / 'src/README.md').write_text('# Replacement chapter\n')
+        with self.assertRaises(ValueError):
+            self.build()
+        self.assertFalse(self.output.exists())
+
+    def test_historical_file_cannot_replace_generated_file(self):
+        conflict = self.historical / 'src/assets/figure.png'
+        conflict.parent.mkdir(parents=True)
+        conflict.write_bytes(self.asset.read_bytes())
+        self.spec['files'] = inventory(self.historical)
         self.write_manifest()
-        with self.assertRaisesRegex(ValueError, 'Snapshot conflicts with original'):
-            assemble.assemble(self.docs, self.snapshot, self.manifest, self.output)
+        with self.assertRaises(ValueError):
+            self.build()
         self.assertFalse(self.output.exists())
 
-    def test_changed_original_is_rejected(self):
-        (self.docs / 'book/src/README.md').write_text('# Edited original chapter\n')
-        with self.assertRaisesRegex(ValueError, 'docs inventory mismatch.*changed='):
-            assemble.assemble(self.docs, self.snapshot, self.manifest, self.output)
+    def test_two_generators_cannot_own_the_same_path(self):
+        with self.assertRaises(ValueError):
+            self.build([self.assets, self.assets])
+        self.assertFalse(self.output.exists())
+
+    def test_file_cannot_shadow_an_authored_directory(self):
+        (self.assets / 'src').rename(self.assets / 'old-src')
+        (self.assets / 'src').write_bytes(b'conflict')
+        with self.assertRaises(ValueError):
+            self.build()
+        self.assertFalse(self.output.exists())
+
+    def test_invalid_historical_path_fails(self):
+        self.spec['files']['../outside'] = '0' * 64
+        self.write_manifest()
+        with self.assertRaises(ValueError):
+            self.build()
         self.assertFalse(self.output.exists())
 
 
@@ -406,12 +401,31 @@ class RenderingFailureTests(unittest.TestCase):
             root = Path(temporary).resolve()
             (root / 'downloads/provenance').mkdir(parents=True)
             (root / 'downloads/provenance/fonts.json').write_text('{"fonts": {}}')
+            (root / 'downloads/provenance/katex.json').write_text(json.dumps({
+                'katex': {'version': '0.19.0',
+                          'stylesheet': {'url': 'https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.css'},
+                          'script': {'url': 'https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js'}},
+                'integrity': {'stylesheet': 'sha384-fixture', 'script': 'sha384-fixture'},
+            }))
             (root / '.nojekyll').write_bytes(b'')
             page = root / 'index.html'
             for markup, message in (
                 ('<a href="#absent">Broken fragment</a>', 'Broken fragment'),
                 ('<script src="https://example.com/math.js"></script>', 'External runtime resource'),
                 ('<img src="missing.png">', 'Broken local link'),
+                ('<script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js" '
+                 'crossorigin="anonymous"></script>', 'Invalid CDN KaTeX integration'),
+                ('<script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js" '
+                 'crossorigin="anonymous" integrity="sha384-wrong"></script>', 'Invalid CDN KaTeX integration'),
+                ('<script defer src="https://cdn.jsdelivr.net/npm/katex@latest/dist/katex.min.js" '
+                 'crossorigin="anonymous" integrity="sha384-fixture"></script>', 'External runtime resource'),
+                ('<img src="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js" '
+                 'crossorigin="anonymous" integrity="sha384-fixture">', 'Invalid CDN KaTeX integration'),
+                ('<script async src="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js" '
+                 'crossorigin="anonymous" integrity="sha384-fixture"></script>', 'Invalid CDN KaTeX integration'),
+                ('<img srcset="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js 2x">',
+                 'Invalid CDN KaTeX integration'),
+                ('<span data-tex="x^2">x^2</span>', 'Missing CDN KaTeX'),
             ):
                 with self.subTest(markup=markup):
                     page.write_text(markup)

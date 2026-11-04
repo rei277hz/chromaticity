@@ -1,6 +1,12 @@
 # Documentation and media
 
-The handbook is an mdBook with declared Buck2 inputs for chapters, recordings, screenshots, numerical figures and runtime assets. Scripts, equations and generated media are local; the text and code fonts load from the pinned CDN described below. Introduction uses the local WebP demonstration. The Bilibili player proof of concept remains commented out in its Markdown source until a real video is ready. Validation retains the exact player URL allowlist for future use.
+This chapter preserves the original 1.23.2 source layout and build commands. For
+the maintained monorepo targets, editable sources, generated resources, and
+deployment ZIP, see the [current handbook build guide](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/README.md).
+The current build regenerates derived media from source and keeps historical
+release downloads as verified attachments.
+
+The handbook is an mdBook with declared Buck2 inputs for chapters, recordings, screenshots, numerical figures and runtime assets. Reader scripts and generated media are local; KaTeX equations and the text and code fonts load from pinned CDN resources. Introduction uses the local WebP demonstration. The Bilibili player proof of concept remains commented out in its Markdown source until a real video is ready. Validation retains the exact player URL allowlist for future use.
 
 ## Edit and build
 
@@ -20,7 +26,7 @@ The CSS and reader controls live in docs/book/theme. The builder runs tools/docs
 
 Pontano Sans supplies text and Roboto Mono supplies code, matching the font families in the ACES overview page. Text sizes, line heights, heading weights and wide-screen scaling follow that page’s styles. The browser loads version-pinned WOFF2 files directly from jsDelivr, with an early connection and preload for the body font. The swap setting lets the intended font appear even when the first request is slow.
 
-The //:book_fonts action first verifies every font and license against third_party/docs.bzl, then generates the CSS and downloads/provenance/fonts.json. Buck2 downloads these declared inputs by exact hash; the rendered site requests the same versioned CDN URLs. It does not serve a local TTF copy. Missing inputs, changed hashes and unexpected external scripts or styles fail validation. KaTeX and its mathematical fonts remain local.
+The original //:book_fonts action verified every font and license against third_party/docs.bzl, then generated the CSS and downloads/provenance/fonts.json. In the current monorepo, the CDN assets action verifies pinned font and KaTeX resources and assembles their configuration, integrity hashes, and license notices. The browser requests their versioned jsDelivr URLs; their payloads are absent from the deployment ZIP. Missing inputs, changed hashes and unexpected external scripts or styles fail validation.
 
 ``` sh
 buck2 build //:book_fonts '//:docs_deploy[zip]' --show-full-output

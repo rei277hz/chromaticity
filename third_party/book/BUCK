@@ -1,0 +1,49 @@
+load("//build_defs:artifacts.bzl", "source_tree")
+load(":pins.bzl", "DOC_FONTS", "DOC_TOOLS", "TUTORIAL_ASSETS")
+
+export_file(
+    name = "pins",
+    src = "pins.bzl",
+    visibility = ["PUBLIC"],
+)
+
+RESOURCES = dict([
+    (
+        "mdbook_license",
+        DOC_TOOLS["mdbook"]["license"],
+    ),
+] + [
+    (
+        "katex_" + resource,
+        DOC_TOOLS["katex"][resource],
+    )
+    for resource in [
+        "stylesheet",
+        "script",
+        "license",
+    ]
+] + [
+    (
+        font.replace("-", "_") + "_" + resource,
+        spec[resource],
+    )
+    for font, spec in DOC_FONTS.items()
+    for resource in [
+        "normal",
+        "license",
+    ]
+] + list(TUTORIAL_ASSETS.items()))
+
+[http_file(
+    name = name,
+    out = spec["out"],
+    sha256 = spec["sha256"],
+    urls = [spec["url"]],
+    visibility = ["PUBLIC"],
+) for name, spec in RESOURCES.items()]
+
+source_tree(
+    name = "resources",
+    srcs = {spec["out"]: ":" + name for name, spec in RESOURCES.items()},
+    visibility = ["PUBLIC"],
+)
