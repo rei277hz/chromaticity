@@ -149,6 +149,25 @@ class HelperRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.phase, "closed")
         self.assertFalse(process.terminated)
 
+    def test_probe_and_shutdown_controls_carry_worker_identity(self):
+        process = FakeProcess()
+        runtime, probe = self.runtime(process)
+        channel = FakeChannel(process)
+        runtime._channel = channel
+        try:
+            runtime._message({"kind": "hello", "protocol": 1,
+                              "session": runtime.session,
+                              "generation": runtime.state.generation,
+                              "token": runtime.token})
+            self.assertEqual(channel.messages[0]["kind"], "run")
+            runtime.close()
+            self.assertEqual(channel.messages[-1]["kind"], "shutdown")
+            for message in channel.messages:
+                self.assertEqual(message["session"], runtime.session)
+                self.assertEqual(message["generation"], runtime.state.generation)
+        finally:
+            runtime.close()
+
     def test_shutdown_timeout_escalates_through_reducer_authorized_kill(self):
         process = FakeProcess(ignore_terminate=True)
         runtime, _probe = self.runtime(process)

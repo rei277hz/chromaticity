@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 
 from color_tools.kernel import lut
-from color_tools.kernel.settings import LinearSettings
+from color_tools.kernel.settings import LinearSettings, Settings, ToneSettings
 from color_tools.lut_codec import (
     freeze_prepared, freeze_settings, thaw_prepared, thaw_settings,
 )
@@ -63,7 +63,7 @@ class Job:
 class Backend:
     _shader = None
 
-    def create_job(self, settings, _space, progressive):
+    def create_prepared(self, _prepared, _space, progressive, *, settings=()):
         self.job = Job(settings, progressive)
         return self.job
 
@@ -78,12 +78,15 @@ class LUTWorkerTests(unittest.TestCase):
             return StackWorker(), backend
 
     def inputs(self, progressive):
-        return {"settings": freeze_settings((LinearSettings(exposure=.4),)),
+        return {"settings": freeze_settings((Settings(linear=LinearSettings(exposure=.4)),)),
                 "working_space": "ACEScg", "progressive": progressive}
 
     def test_settings_and_complete_cube_receipts_roundtrip(self):
-        settings = (LinearSettings(exposure=.5, balance=(.1, .2),
-                                   matrix=((1., 0., 0.), (0., 2., 0.), (0., 0., 3.))),)
+        settings = (Settings(
+            linear=LinearSettings(exposure=.5, balance=(.1, .2),
+                                  matrix=((1., 0., 0.), (0., 2., 0.), (0., 0., 3.))),
+            tone=ToneSettings(fit=.5), space="ACEScg",
+        ),)
         self.assertEqual(thaw_settings(freeze_settings(settings)), settings)
         original = prepared(lut.PREVIEW_SIZE, settings)
         result = thaw_prepared(freeze_prepared(original, {"worker_pid": 12}))

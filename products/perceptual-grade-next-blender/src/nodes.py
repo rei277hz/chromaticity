@@ -1,4 +1,4 @@
-"""Linear Grade nodes and their shared settings UI."""
+"""Guarded Grade nodes and their shared Linear and Tone settings UI."""
 
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -21,19 +21,27 @@ from bpy.props import (
 
 from .kernel import (
     LinearSettings,
+    Settings,
+    ToneSettings,
     prepare_linear,
     project_source_white_component,
 )
 from .kernel.graph import Graph
+from .kernel.stage2_graph import build_stage2_group
 from .kernel.lut import (
     append_lut_lookup,
 )
 from .lut_gpu import PreparedStack as _PreparedStack
 from .lut_helper import StackHelperBackend
 from .kernel.settings import D65, SPACES
+from .kernel.tone_ui import (
+    TONE_DEFAULTS, TONE_FIELDS, TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS,
+    clamp_tone_anchor,
+)
 from .policy import node as node_policy
 from .policy import preparation as preparation_policy
 from .runtime.preparation import PreparationRuntime
+from .runtime.grade_preparation import GradePreparer
 
 
 SHADER_TREE = "ShaderNodeTree"
@@ -59,13 +67,14 @@ _reconciling = False
 _last_working_space = None
 _node_stores = {}
 _preparation_runtime = None
+_grade_preparer = None
 _preparation_sources = {}
 _gesture_routers = {}
 _gesture_targets = {}
 _armed_gestures = {}
 _active_gestures = {}
 _gesture_settings = {}
-_KERNEL_SCHEMA = 1
+_KERNEL_SCHEMA = 2
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
 _KERNEL_QUALITY = "_perceptual_grade_quality"
@@ -96,10 +105,7 @@ _LINEAR_DEFAULTS = {
     "yb_heading": 0.0,
 }
 
-
-def _prepare_linear_payload(payload):
-    settings, working_space = payload
-    return prepare_linear(settings, working_space)
+_TONE_FIELDS = TONE_FIELDS
 
 
 def _is_grade_node(node):
@@ -123,7 +129,9 @@ def _holder(settings):
             return owner
         pointer = settings.as_pointer()
         for node in getattr(owner, "nodes", ()):
-            if _is_grade_node(node) and node.pg_linear.as_pointer() == pointer:
+            if _is_grade_node(node) and any(
+                    getattr(node, name).as_pointer() == pointer
+                    for name in ("pg_linear", "pg_tone")):
                 return node
     except (AttributeError, ReferenceError, RuntimeError, ValueError):
         return None
@@ -153,11 +161,29 @@ def _reset_linear(settings):
                 settings.property_unset(name)
 
 
+def _copy_tone(source, target):
+    with _suspend(target):
+        for name in _TONE_FIELDS:
+            setattr(target, name, getattr(source, name))
+
+
+def _reset_tone(settings):
+    with _suspend(settings):
+        for name in _TONE_FIELDS:
+            if settings.is_property_set(name):
+                settings.property_unset(name)
+
+
 def _make_grade(source=None):
     grade = bpy.data.node_groups.new("Grade", PGGradeData.bl_idname)
     try:
         if source is not None:
-            _copy_linear(source, grade.pg_linear)
+            if _is_grade_node(source):
+                source = source.pg_grade
+            if source is None:
+                return grade
+            _copy_linear(source.pg_linear, grade.pg_linear)
+            _copy_tone(source.pg_tone, grade.pg_tone)
     except BaseException:
         if grade.users == 0:
             bpy.data.node_groups.remove(grade)
@@ -192,8 +218,12 @@ def _linear_settings(settings):
 
 
 def _kernel_signature(tree_type, settings, working_space):
-    values = tuple(float(getattr(settings, name)).hex() for name in _LINEAR_FIELDS)
-    return _signature(tree_type, values, working_space)
+    if isinstance(settings, Settings):
+        return _signature(tree_type, _snapshot_values(settings), working_space)
+    owner = _holder(settings)
+    snapshot = (_grade_settings(owner, working_space) if owner is not None
+                else Settings(linear=_linear_settings(settings), space=working_space))
+    return _signature(tree_type, _snapshot_values(snapshot), working_space)
 
 
 def _signature(kind, values, working_space):
@@ -204,69 +234,55 @@ def _signature(kind, values, working_space):
     return hashlib.sha256(payload).hexdigest()
 
 
+def _tone_settings(settings):
+    # RNA stores binary32 defaults; retain their exact declared portable values.
+    defaults = ToneSettings()
+    values = []
+    import struct
+    for name, default in zip(TONE_LEVEL_FIELDS, defaults.input_nits):
+        value = float(getattr(settings, name))
+        # Use the same binary32 round-trip as Blender's RNA storage.
+        native_default = struct.unpack("f", struct.pack("f", default))[0]
+        values.append(default if value == native_default else value)
+    return ToneSettings(tuple(values), float(settings.fit), 203., float(settings.peak_nits))
+
+
+def _grade_settings(owner, working_space):
+    return Settings(linear=_linear_settings(owner.pg_linear),
+                    tone=_tone_settings(owner.pg_tone), space=working_space)
+
+
 def _snapshot_values(settings):
+    if isinstance(settings, LinearSettings):
+        settings = Settings(linear=settings)
+    linear = settings.linear
+    tone = settings.tone
     return tuple(float(value).hex() for value in (
-        settings.exposure, *settings.source_xy,
-        -settings.balance[0], -settings.balance[1],
-        *settings.spread, *settings.heading,
+        linear.exposure, *linear.source_xy,
+        -linear.balance[0], -linear.balance[1],
+        *linear.spread, *linear.heading,
+        *tone.input_nits, tone.fit, tone.reference_nits, tone.peak_nits,
     ))
 
 
 def _preparation_signature(settings, working_space):
-    return _signature("linear-preparation", _snapshot_values(settings), working_space)
+    return _signature("grade-preparation", _snapshot_values(settings), working_space)
 
 
 def _kernel(tree_type, prepared, working_space, signature):
-    if tree_type not in (SHADER_TREE, COMPOSITOR_TREE):
-        raise ValueError("Grade nodes require a Shader or Compositor tree")
-
-    tree = bpy.data.node_groups.new("Perceptual Grade Linear", tree_type)
+    built = build_stage2_group(prepared, tree_type)
+    tree = built.tree
     try:
-        color_input = tree.interface.new_socket(
-            name="Color", in_out="INPUT", socket_type="NodeSocketColor"
-        )
-        color_input.default_value = (0.0, 0.0, 0.0, 1.0)
-        if tree_type == SHADER_TREE:
-            alpha_input = tree.interface.new_socket(
-                name="Alpha", in_out="INPUT", socket_type="NodeSocketFloat"
-            )
-            alpha_input.default_value = 1.0
-
-        color_output = tree.interface.new_socket(
-            name="Color", in_out="OUTPUT", socket_type="NodeSocketColor"
-        )
-        alpha_output = None
-        if tree_type == SHADER_TREE:
-            alpha_output = tree.interface.new_socket(
-                name="Alpha", in_out="OUTPUT", socket_type="NodeSocketFloat"
-            )
-
-        source = tree.nodes.new("NodeGroupInput")
-        output = tree.nodes.new("NodeGroupOutput")
-        output.is_active_output = True
-        graph = Graph(tree, prepared)
-        transformed = graph.matrix(source.outputs[color_input.name], prepared.rgb_matrix)
-
-        if tree_type == SHADER_TREE:
-            graph.connect(transformed, output.inputs[color_output.name])
-            graph.connect(source.outputs[alpha_input.name], output.inputs[alpha_output.name])
-        else:
-            separate = graph.node("CompositorNodeSeparateColor")
-            separate.mode = "RGB"
-            graph.connect(source.outputs[color_input.name], separate.inputs["Image"])
-            restore = graph.node("CompositorNodeSetAlpha")
-            restore.inputs["Type"].default_value = "Replace Alpha"
-            graph.connect(transformed, restore.inputs["Image"])
-            graph.connect(separate.outputs["Alpha"], restore.inputs["Alpha"])
-            graph.connect(restore.outputs["Image"], output.inputs[color_output.name])
         tree[_KERNEL_KIND] = _KERNEL_SCHEMA
-        tree["_perceptual_grade_linear_kernel"] = True
+        tree["_perceptual_grade_grade_kernel"] = True
         tree[_KERNEL_SIGNATURE] = signature
         tree[_KERNEL_QUALITY] = "full"
         tree["_perceptual_grade_tree_type"] = tree_type
         tree["_perceptual_grade_working_space"] = working_space
+        for image in built.images:
+            image["_perceptual_grade_image"] = signature
     except BaseException:
-        bpy.data.node_groups.remove(tree, do_unlink=True)
+        built.dispose(unlink=True)
         raise
     return tree
 
@@ -426,14 +442,18 @@ def _identity_kernel(tree_type):
     return tree
 
 
-def _settings_for_node(node):
+def _settings_for_node(node, working_space=None):
+    working_space = working_space or _working_space()
     if _is_stack_node(node):
         return tuple(
-            _linear_settings(entry.grade.pg_linear)
+            _grade_settings(entry.grade, working_space)
             for entry in node.pg_stack_entries
             if entry.enabled and entry.grade is not None
         )
-    return node.pg_grade.pg_linear if node.pg_grade is not None else node.pg_linear
+    if node.pg_grade is not None:
+        return _grade_settings(node.pg_grade, working_space)
+    return Settings(linear=_linear_settings(node.pg_linear),
+                    tone=_tone_settings(node.pg_tone), space=working_space)
 
 
 def _kernel_is_current(kernel, tree_type, signature, quality="full", stack=None):
@@ -745,9 +765,9 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
             source, signature, settings, working_space, lane, progressive = preparation
             if signature != effects.prepare_signature:
                 raise RuntimeError("Preparation effect does not match its snapshot")
+            payload = settings if lane == "grade" else (settings, working_space)
             _preparation_runtime.request(
-                source, signature, (settings, working_space), lane=lane,
-                progressive=progressive,
+                source, signature, payload, lane=lane, progressive=progressive,
             )
             _ensure_timer()
         except Exception as error:
@@ -784,11 +804,11 @@ def _dispatch(node, event, preparation=None):
 def _request_node(node, working_space, snapshots=None):
     if _is_grade_node(node) and node.pg_grade is None:
         _reset_linear(node.pg_linear)
+        _reset_tone(node.pg_tone)
     source = _source_for(node, working_space)
     snapshot = None if snapshots is None else snapshots.get(source)
     if snapshot is None:
-        settings = _settings_for_node(node)
-        snapshot = tuple(settings) if _is_stack_node(node) else _linear_settings(settings)
+        snapshot = _settings_for_node(node, working_space)
         if snapshots is not None:
             snapshots[source] = snapshot
     if _is_stack_node(node):
@@ -799,7 +819,7 @@ def _request_node(node, working_space, snapshots=None):
     else:
         signature = _signature(node.id_data.bl_idname, _snapshot_values(snapshot), working_space)
         preparation_signature = _preparation_signature(snapshot, working_space)
-        lane = "linear"
+        lane = "grade"
     record = _record_for(node, signature, source)
     state = record["state"]
     failures = []
@@ -824,15 +844,20 @@ def _publication_signature(record, prepared):
         if not isinstance(prepared, _PreparedStack):
             raise TypeError("LUT preparation returned an invalid Stack result")
         return _stack_signature(prepared.settings, prepared.space)
+    prepared_settings = Settings(
+        linear=prepared.linear.settings,
+        tone=prepared.tone.settings,
+        space=prepared.space,
+    )
     return _signature(
         record["node"].id_data.bl_idname,
-        _snapshot_values(prepared.settings),
+        _snapshot_values(prepared_settings),
         prepared.space,
     )
 
 
 def _handle_preparation_result(source, preparation_signature, prepared, error,
-                               quality="full", lane="linear"):
+                               quality="full", lane="grade"):
     global _reconciling
     failures = []
     authorized_builds = {}
@@ -843,7 +868,7 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
             if record.get("source") is not source:
                 continue
             if ((record["stack"] and lane != "lut")
-                    or (not record["stack"] and lane != "linear")):
+                    or (not record["stack"] and lane != "grade")):
                 continue
             if error is not None:
                 signature = None
@@ -968,14 +993,19 @@ def _retire_kernels(kernels):
             if not pointer or pointer in seen:
                 continue
             seen.add(pointer)
-            if (kernel is not None and kernel.get(_KERNEL_KIND) == _KERNEL_SCHEMA
+            if (kernel is not None and kernel.get(_KERNEL_KIND) is not None
                     and kernel.users == 0 and not kernel.use_fake_user):
                 bpy.data.node_groups.remove(kernel)
-            for image in tuple(bpy.data.images):
-                if image.get("_perceptual_grade_stack_image") and image.users == 0:
-                    bpy.data.images.remove(image)
         except (AttributeError, ReferenceError, RuntimeError):
             continue
+    _retire_images()
+
+
+def _retire_images():
+    for image in tuple(bpy.data.images):
+        if ((image.get("_perceptual_grade_stack_image")
+             or image.get("_perceptual_grade_image")) and image.users == 0):
+            bpy.data.images.remove(image)
 
 
 def _refresh_nodes(nodes, working_space=None):
@@ -1111,14 +1141,14 @@ def _settings_signature_for(node):
         space = _working_space()
         if _is_stack_node(node):
             settings = tuple(
-                _linear_settings(entry.grade.pg_linear)
+                _grade_settings(entry.grade, space)
                 for entry in node.pg_stack_entries
                 if entry.enabled and entry.grade is not None
             )
             return _stack_signature(settings, space)
         return _signature(
             node.id_data.bl_idname,
-            _snapshot_values(_linear_settings(_settings_for_node(node))),
+            _snapshot_values(_settings_for_node(node, space)),
             space,
         )
     except (AttributeError, ReferenceError, RuntimeError, ValueError):
@@ -1527,6 +1557,38 @@ def _linear_changed(settings, _context):
         _reset_linear(settings)
 
 
+def _tone_changed(settings, _context):
+    pointer = settings.as_pointer()
+    if pointer in _syncing:
+        return
+    holder = _holder(settings)
+    if holder is None:
+        return
+    if holder.bl_idname == PGGradeData.bl_idname:
+        _grade_changed(holder)
+        return
+    if holder.pg_grade is None:
+        _reset_tone(settings)
+
+
+def _tone_anchor_changed(index):
+    def update(settings, context):
+        pointer = settings.as_pointer()
+        if pointer in _syncing:
+            return
+        holder = _holder(settings)
+        if holder is None:
+            return
+        name = TONE_LEVEL_FIELDS[index]
+        controls = _tone_settings(settings)
+        value = clamp_tone_anchor(controls, index, float(getattr(settings, name)))
+        if abs(value - getattr(settings, name)) > 1e-6:
+            with _suspend(settings):
+                setattr(settings, name, value)
+        _tone_changed(settings, context)
+    return update
+
+
 def _source_white_changed(axis):
     def update(settings, context):
         pointer = settings.as_pointer()
@@ -1548,6 +1610,7 @@ def _selection_changed(node, _context):
         return
     if node.pg_grade is None:
         _reset_linear(node.pg_linear)
+        _reset_tone(node.pg_tone)
     else:
         _grade_changed(node.pg_grade)
         return
@@ -1574,6 +1637,19 @@ def _node_from_context(context):
     return node if _is_grade_node(node) else None
 
 
+def _output_node_from_context(context):
+    node = getattr(context, "pg_stack_node", None)
+    if _is_stack_node(node):
+        return node
+    node = _node_from_context(context)
+    if node is not None:
+        return node
+    space = getattr(context, "space_data", None)
+    tree = getattr(space, "edit_tree", None)
+    node = getattr(getattr(tree, "nodes", None), "active", None)
+    return node if _is_output_node(node) else None
+
+
 class PGLinearSettings(bpy.types.PropertyGroup):
     exposure: FloatProperty(name="Exposure", default=0.0, min=-6.0, max=6.0,
                              precision=2, update=_linear_changed)
@@ -1595,12 +1671,36 @@ class PGLinearSettings(bpy.types.PropertyGroup):
                               precision=1, update=_linear_changed)
 
 
+class PGToneSettings(bpy.types.PropertyGroup):
+    input_black: FloatProperty(name="Black", default=TONE_DEFAULTS["input_black"],
+        min=TONE_LIMITS[0][0], max=TONE_LIMITS[0][1], precision=3,
+        update=_tone_anchor_changed(0))
+    input_shadows: FloatProperty(name="Shadows", default=TONE_DEFAULTS["input_shadows"],
+        min=TONE_LIMITS[1][0], max=TONE_LIMITS[1][1], precision=3,
+        update=_tone_anchor_changed(1))
+    input_midtones: FloatProperty(name="Midtones", default=TONE_DEFAULTS["input_midtones"],
+        min=TONE_LIMITS[2][0], max=TONE_LIMITS[2][1], precision=2,
+        update=_tone_anchor_changed(2))
+    input_white: FloatProperty(name="White", default=TONE_DEFAULTS["input_white"],
+        min=TONE_LIMITS[3][0], max=TONE_LIMITS[3][1], precision=2,
+        update=_tone_anchor_changed(3))
+    input_highlights: FloatProperty(name="Highlights", default=TONE_DEFAULTS["input_highlights"],
+        min=TONE_LIMITS[4][0], max=TONE_LIMITS[4][1], precision=1,
+        update=_tone_anchor_changed(4))
+    fit: FloatProperty(name="Fit", default=0.0, min=-2.0, max=2.0,
+        precision=2, update=_tone_changed)
+    peak_nits: EnumProperty(name="Peak", default="1000",
+        items=[(str(peak), f"{peak} nits", "") for peak in TONE_PEAKS],
+        update=_tone_changed)
+
+
 class PGGradeData(bpy.types.NodeTree):
     bl_idname = "PGGradeData"
     bl_label = "Grade"
     bl_icon = "COLOR"
 
     pg_linear: PointerProperty(type=PGLinearSettings)
+    pg_tone: PointerProperty(type=PGToneSettings)
 
     @classmethod
     def poll(cls, _context):
@@ -1659,6 +1759,24 @@ def _draw_stack_settings(node, layout):
         layout.prop(settings, field, slider=field not in {"source_x", "source_y"})
 
 
+def _draw_tone_settings(node, layout):
+    layout.context_pointer_set("pg_stack_node" if _is_stack_node(node) else "pg_node", node)
+    grade = _stack_active_grade(node) if _is_stack_node(node) else node.pg_grade
+    settings = grade.pg_tone if grade is not None else (
+        node.pg_tone if _is_grade_node(node) else None
+    )
+    if settings is None:
+        return
+    column = layout.column()
+    column.enabled = grade is not None
+    for field in TONE_LEVEL_FIELDS:
+        column.prop(settings, field, slider=True)
+    column.prop(settings, "fit", slider=True)
+    column.prop(settings, "peak_nits")
+    column.label(text="Reference: 203 nits")
+    column.operator(PG_OT_reset_tone.bl_idname, icon="LOOP_BACK")
+
+
 class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
     bl_idname = "PGShaderGradeStack"
     bl_label = "Grade Stack"
@@ -1703,6 +1821,7 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
     bl_idname = "PGShaderGrade"
     bl_label = "Grade"
     pg_linear: PointerProperty(type=PGLinearSettings)
+    pg_tone: PointerProperty(type=PGToneSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
                               update=_selection_changed)
 
@@ -1730,15 +1849,17 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
         finally:
             _syncing.discard(pointer)
         kernel = self.node_tree
-        if (kernel is not None and kernel.get("_perceptual_grade_linear_kernel")
+        if (kernel is not None and kernel.get("_perceptual_grade_grade_kernel")
                 and kernel.users <= 1):
             bpy.data.node_groups.remove(kernel, do_unlink=True)
+        _retire_images()
 
 
 class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
     bl_idname = "PGCompositorGrade"
     bl_label = "Grade"
     pg_linear: PointerProperty(type=PGLinearSettings)
+    pg_tone: PointerProperty(type=PGToneSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
                               update=_selection_changed)
 
@@ -1766,9 +1887,10 @@ class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
         finally:
             _syncing.discard(pointer)
         kernel = self.node_tree
-        if (kernel is not None and kernel.get("_perceptual_grade_linear_kernel")
+        if (kernel is not None and kernel.get("_perceptual_grade_grade_kernel")
                 and kernel.users <= 1):
             bpy.data.node_groups.remove(kernel, do_unlink=True)
+        _retire_images()
 
 
 class PG_OT_new_grade(bpy.types.Operator):
@@ -1784,7 +1906,7 @@ class PG_OT_new_grade(bpy.types.Operator):
         node = _node_from_context(context)
         if node is None:
             return {"CANCELLED"}
-        source = node.pg_grade.pg_linear if node.pg_grade is not None else None
+        source = node.pg_grade
         grade = _make_grade(source)
         try:
             node.pg_grade = grade
@@ -1846,6 +1968,31 @@ class PG_OT_reset_directions(bpy.types.Operator):
         if node is None or node.pg_grade is None:
             return {"CANCELLED"}
         _assign_values(node, {name: 0.0 for name in _LINEAR_FIELDS[3:]})
+        return {"FINISHED"}
+
+
+class PG_OT_reset_tone(bpy.types.Operator):
+    bl_idname = "perceptual_grade.reset_tone"
+    bl_label = "Reset Tone"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        node = _output_node_from_context(context)
+        if node is None:
+            return False
+        return (_stack_active_grade(node) if _is_stack_node(node)
+                else node.pg_grade) is not None
+
+    def execute(self, context):
+        node = _output_node_from_context(context)
+        if node is None:
+            return {"CANCELLED"}
+        grade = _stack_active_grade(node) if _is_stack_node(node) else node.pg_grade
+        if grade is None:
+            return {"CANCELLED"}
+        _reset_tone(grade.pg_tone)
+        _grade_changed(grade)
         return {"FINISHED"}
 
 
@@ -2025,6 +2172,23 @@ class PG_PT_linear(bpy.types.Panel):
         layout.operator(PG_OT_reset_directions.bl_idname, icon="LOOP_BACK")
 
 
+class PG_PT_tone(bpy.types.Panel):
+    bl_idname = "PG_PT_tone"
+    bl_label = "Tone"
+    bl_space_type = "NODE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Perceptual Grade"
+
+    @classmethod
+    def poll(cls, context):
+        return PG_PT_linear.poll(context)
+
+    def draw(self, context):
+        node = _output_node_from_context(context)
+        if _is_output_node(node):
+            _draw_tone_settings(node, self.layout)
+
+
 def create_node(tree):
     try:
         node_type = NODE_TYPES[tree.bl_idname]
@@ -2100,16 +2264,10 @@ def _unregister_handlers():
 
 
 def register():
-    global _preparation_runtime
-    if _preparation_runtime is None:
-        _preparation_runtime = PreparationRuntime(
-            _prepare_linear_payload, workers=1, default_lane="linear"
-        )
-        _preparation_runtime.register_polled_lane(
-            "lut", StackHelperBackend(), progressive=True
-        )
+    global _preparation_runtime, _grade_preparer
     classes = (
         PGLinearSettings,
+        PGToneSettings,
         PGGradeData,
         PGStackEntry,
         PGShaderGradeStack,
@@ -2120,14 +2278,23 @@ def register():
         PG_OT_unlink_grade,
         PG_OT_match_white,
         PG_OT_reset_directions,
+        PG_OT_reset_tone,
         PG_OT_add_grade,
         PG_OT_add_stack,
         PG_OT_stack_action,
         PG_OT_new_stack_grade,
         PG_OT_gesture_router,
         PG_PT_linear,
+        PG_PT_tone,
     )
     try:
+        if _preparation_runtime is None:
+            _grade_preparer = GradePreparer(workers=3)
+            _preparation_runtime = PreparationRuntime(default_lane="grade")
+            _preparation_runtime.register_async_lane("grade", _grade_preparer.prepare)
+            _preparation_runtime.register_polled_lane(
+                "lut", StackHelperBackend(), progressive=True
+            )
         for cls in classes:
             if cls not in _registered_classes:
                 if not cls.is_registered:
@@ -2158,7 +2325,7 @@ def register():
 
 
 def unregister():
-    global _preparation_runtime
+    global _preparation_runtime, _grade_preparer
     errors = []
     _clear_gestures()
     try:
@@ -2192,6 +2359,12 @@ def unregister():
         except Exception as exc:
             errors.append(exc)
         _preparation_runtime = None
+    if _grade_preparer is not None:
+        try:
+            _grade_preparer.close()
+        except Exception as exc:
+            errors.append(exc)
+        _grade_preparer = None
     _reset_node_stores()
 
     for menu_type, callback in reversed(tuple(_registered_menus)):

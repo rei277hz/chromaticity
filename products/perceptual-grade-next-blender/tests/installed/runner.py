@@ -1,5 +1,6 @@
 """Exercise the installed extension package in native Blender."""
 
+import asyncio
 import importlib
 import json
 from pathlib import Path
@@ -205,7 +206,7 @@ class TestStackBackend:
 
     def create_job(self, payload, progressive):
         settings, working_space = payload
-        matrices = tuple(nodes.prepare_linear(item, working_space).rgb_matrix
+        matrices = tuple(nodes.prepare_linear(item.linear, working_space).rgb_matrix
                          for item in settings)
         matrix, to_lut, from_lut, signature = lut_kernel._stack_matrix(
             matrices, working_space
@@ -350,10 +351,12 @@ assert_menu_item(compositor_tree)
 
 compositor_input = compositor_node.node_tree.nodes.get("Group Input")
 compositor_output = compositor_node.node_tree.nodes.get("Group Output")
-separate = next(node for node in compositor_node.node_tree.nodes
-                if node.bl_idname == "CompositorNodeSeparateColor")
-restore = next(node for node in compositor_node.node_tree.nodes
-               if node.bl_idname == "CompositorNodeSetAlpha")
+restore = next(link.from_node for link in compositor_node.node_tree.links
+               if link.to_socket == compositor_output.inputs["Color"])
+assert restore.bl_idname == "CompositorNodeSetAlpha"
+separate = next(link.from_node for link in compositor_node.node_tree.links
+                if link.to_socket == restore.inputs["Alpha"])
+assert separate.bl_idname == "CompositorNodeSeparateColor"
 assert any(link.from_socket == separate.outputs["Alpha"]
            and link.to_socket == restore.inputs["Alpha"]
            for link in compositor_node.node_tree.links)
@@ -390,12 +393,12 @@ original_prepare = runtime.prepare
 original_kernel_builder = nodes._kernel
 
 
-def record_prepare(payload):
-    settings, working_space = payload
+async def record_prepare(payload):
+    settings = payload.linear
     preparation_threads.append((threading.get_ident(), settings.exposure))
     preparation_started.set()
     assert release_preparation.wait(10), "preparation worker was not released"
-    return original_prepare(payload)
+    return await original_prepare(payload)
 
 
 def record_kernel_build(*args, **kwargs):
@@ -440,6 +443,28 @@ assert compositor_node.pg_linear.cr_balance == 0.0
 nodes._render_pre(bpy.context.scene)
 assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
 
+# Tone settings are part of the authoritative Stage 2 snapshot and its kernel
+# signature. A linked Grade edit updates every Shader/Compositor consumer.
+shared_grade.pg_tone.fit = 0.5
+nodes._render_pre(bpy.context.scene)
+shared_tone_settings = nodes._grade_settings(shared_grade, nodes._working_space())
+shared_tone_signature = nodes._signature(
+    nodes.SHADER_TREE, nodes._snapshot_values(shared_tone_settings), nodes._working_space()
+)
+for node in (*shared_shader_nodes, shader_node, compositor_node):
+    expected_kind = node.id_data.bl_idname
+    expected_signature = nodes._signature(
+        expected_kind, nodes._snapshot_values(shared_tone_settings), nodes._working_space()
+    )
+    assert node.node_tree.get(nodes._KERNEL_SIGNATURE) == expected_signature
+    assert node.node_tree.get("_perceptual_grade_stage2_complete")
+assert shared_tone_signature == nodes._kernel_signature(
+    nodes.SHADER_TREE, shared_grade.pg_linear, nodes._working_space()
+)
+assert any(node.bl_idname == "ShaderNodeTexImage"
+           and "Tone" in node.label
+           for node in shader_node.node_tree.nodes)
+
 # Material node trees are included in shared Grade updates.
 material = bpy.data.materials.new("Grade Material Test")
 material.use_nodes = True
@@ -461,6 +486,7 @@ assert nodes.PG_OT_new_grade.execute(None, new_context) == {"FINISHED"}
 copied_grade = compositor_node.pg_grade
 assert copied_grade != shared_grade
 assert copied_grade.pg_linear.exposure == 1.5
+assert abs(copied_grade.pg_tone.fit - 0.5) < 1e-6
 assert nodes.PG_OT_unlink_grade.execute(None, new_context) == {"FINISHED"}
 assert compositor_node.pg_grade is None
 assert compositor_node.pg_linear.exposure == 0.0
@@ -707,7 +733,7 @@ gesture_context = None
 class HoldingStackOwner:
     def create_job(self, payload, progressive):
         settings, working_space = payload
-        exposure = settings[0].exposure
+        exposure = settings[0].linear.exposure
         stack_preparation_exposures.append(exposure)
         job = original_stack_owner.create_job(payload, progressive)
         ready, release = ((preview_ready, continue_full) if exposure == 1.0 else
@@ -828,8 +854,8 @@ release_local_latest = threading.Event()
 local_preparation_exposures = []
 
 
-def hold_local_drag_preparation(payload):
-    settings, working_space = payload
+async def hold_local_drag_preparation(payload):
+    settings = payload.linear
     exposure = settings.exposure
     local_preparation_exposures.append(exposure)
     if exposure == 0.8125:
@@ -838,7 +864,7 @@ def hold_local_drag_preparation(payload):
     if exposure == 0.90625:
         local_latest_started.set()
         assert release_local_latest.wait(10), "latest local drag was not released"
-    return original_modal_prepare(payload)
+    return await original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_local_drag_preparation
@@ -956,12 +982,12 @@ release_linked = threading.Event()
 linked_exposures = []
 
 
-def hold_linked_drag_preparation(payload):
-    settings, working_space = payload
+async def hold_linked_drag_preparation(payload):
+    settings = payload.linear
     linked_exposures.append(settings.exposure)
     linked_started.set()
     assert release_linked.wait(10), "linked drag preparation was not released"
-    return original_modal_prepare(payload)
+    return await original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_linked_drag_preparation
@@ -1041,12 +1067,12 @@ release_click_preparation = threading.Event()
 click_exposures = []
 
 
-def hold_click_preparation(payload):
-    settings, working_space = payload
+async def hold_click_preparation(payload):
+    settings = payload.linear
     click_exposures.append(settings.exposure)
     click_started.set()
     assert release_click_preparation.wait(10), "click preparation was not released"
-    return original_modal_prepare(payload)
+    return await original_modal_prepare(payload)
 
 
 modal_runtime.prepare = hold_click_preparation
@@ -1147,8 +1173,8 @@ release_latest_preparation = threading.Event()
 preparation_exposures = []
 
 
-def delay_preparation(payload):
-    settings, working_space = payload
+async def delay_preparation(payload):
+    settings = payload.linear
     preparation_exposures.append(settings.exposure)
     if settings.exposure == 0.4375:
         old_preparation_started.set()
@@ -1156,7 +1182,7 @@ def delay_preparation(payload):
     if settings.exposure == 0.875:
         latest_preparation_started.set()
         assert release_latest_preparation.wait(10), "latest preparation was not released"
-    return original_prepare(payload)
+    return await original_prepare(payload)
 
 
 runtime.prepare = delay_preparation
@@ -1267,12 +1293,12 @@ replacement_grade = bpy.data.node_groups.new("Replacement Grade", nodes.PGGradeD
 replacement_grade.pg_linear.exposure = 0.9375
 
 
-def delay_retired(payload):
-    settings, working_space = payload
+async def delay_retired(payload):
+    settings = payload.linear
     if settings.exposure == 0.3125:
         retired_started.set()
         assert release_retired.wait(10)
-    return original_prepare(payload)
+    return await original_prepare(payload)
 
 
 runtime.prepare = delay_retired
@@ -1282,8 +1308,8 @@ try:
     retired_source = nodes._record_for(stale_node)["source"]
     stale_node.pg_grade = replacement_grade
     assert nodes._record_for(stale_node)["source"] is not retired_source
-    retired_result = original_prepare((
-        nodes._linear_settings(retired_grade.pg_linear), active_space
+    retired_result = asyncio.run(original_prepare(
+        nodes._grade_settings(retired_grade, active_space)
     ))
     nodes._handle_preparation_result(retired_source, "retired", retired_result, None)
     assert stale_node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
@@ -1307,13 +1333,13 @@ original_prepare = runtime.prepare
 failure_calls = []
 
 
-def fail_first_preparation(payload):
-    settings, working_space = payload
+async def fail_first_preparation(payload):
+    settings = payload.linear
     if settings.exposure == 1.25:
         failure_calls.append(threading.get_ident())
         if len(failure_calls) == 1:
             raise RuntimeError("simulated preparation worker failure")
-    return original_prepare(payload)
+    return await original_prepare(payload)
 
 
 runtime.prepare = fail_first_preparation
@@ -1413,10 +1439,10 @@ def recognize_failure_node(node):
     return node is failure_node or original_is_grade_node(node)
 
 
-def settings_for_failure_node(node):
+def settings_for_failure_node(node, working_space=None):
     if node is failure_node:
-        return failed_assignment_grade.pg_linear
-    return original_settings_for_node(node)
+        return nodes._grade_settings(failed_assignment_grade, working_space or active_space)
+    return original_settings_for_node(node, working_space)
 
 
 def capture_candidate(*args, **kwargs):
@@ -1623,7 +1649,7 @@ for node in tuple(material.node_tree.nodes):
         material.node_tree.nodes.remove(node)
 
 for group in tuple(bpy.data.node_groups):
-    if (group.get("_perceptual_grade_linear_kernel")
+    if (group.get("_perceptual_grade_grade_kernel")
             or group.get("_perceptual_grade_stack_kernel")) and group.users == 0:
         bpy.data.node_groups.remove(group)
     elif group.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA and group.users == 0:

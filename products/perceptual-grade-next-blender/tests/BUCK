@@ -5,16 +5,19 @@ python_library(
         "gpu_support.py": "gpu/gpu_support.py",
     },
     base_module = "tests.perceptual_grade_blender.gpu",
-    resources = select({
-        "prelude//os:linux": {"xvfb": "//third_party:xvfb_software_linux"},
-        "DEFAULT": {},
-    }),
     deps = ["//third_party:bpy"],
 )
 
 python_test(
     name = "policy_preparation",
     srcs = ["policy/test_policy_preparation.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
+)
+
+python_test(
+    name = "policy_preparation_join",
+    srcs = ["policy/test_policy_preparation_join.py"],
     base_module = "tests.perceptual_grade_blender",
     deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
 )
@@ -32,6 +35,7 @@ python_test(
 python_test(
     name = "preparation_runtime",
     srcs = [
+        "runtime/test_grade_preparation.py",
         "runtime/test_helper_runtime.py",
         "runtime/test_lut_helper.py",
         "runtime/test_preparation_runtime.py",
@@ -52,7 +56,10 @@ python_test(
 
 python_test(
     name = "preparation",
-    srcs = ["numerical/test_preparation.py"],
+    srcs = [
+        "numerical/test_preparation.py",
+        "numerical/test_tone_ui.py",
+    ],
     base_module = "tests.perceptual_grade_blender",
     deps = [
         "//libraries/perceptual-grade-reference:model_code",
@@ -89,10 +96,16 @@ python_test(
     base_module = "tests.perceptual_grade_blender",
     labels = ["gpu"],
     main_module = "tests.perceptual_grade_blender.gpu.gpu_test_main",
+    resources = {
+        "gpu/blender": "//third_party:blender_native",
+        "gpu/native_runner.py": "gpu/native_runner.py",
+        "gpu/xvfb": "//third_party:xvfb_software_linux",
+    },
     target_compatible_with = ["prelude//os:linux"],
     deps = [
         ":lut_gpu_support",
         "//products/perceptual-grade-next-blender:lut_gpu_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
     ],
 )
 
@@ -139,6 +152,20 @@ python_test(
 python_test(
     name = "stages",
     srcs = ["native/test_stages.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["native"],
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender/tools/reports:evaluation_sources",
+        "//third_party:bpy",
+        "//third_party:numpy",
+    ],
+)
+
+python_test(
+    name = "stage2",
+    srcs = ["native/test_stage2.py"],
     base_module = "tests.perceptual_grade_blender",
     labels = ["native"],
     deps = [
@@ -252,6 +279,13 @@ python_test(
     srcs = ["tools/test_stack_lut_timing_report.py"],
     base_module = "tests.perceptual_grade_blender",
     deps = ["//products/perceptual-grade-next-blender/tools/reports:stack_lut_timing_report_sources"],
+)
+
+python_test(
+    name = "grade_preparation_timing_report",
+    srcs = ["tools/test_grade_preparation_timing_report.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:grade_preparation_timing_report_sources"],
 )
 
 python_test(

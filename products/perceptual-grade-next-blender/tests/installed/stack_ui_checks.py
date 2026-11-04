@@ -160,6 +160,16 @@ def check_grade_ui(nodes, tree):
         ]
         assert not sidebar.templates
 
+        tone_sidebar = Layout()
+        assert nodes.PG_PT_tone.poll(context)
+        nodes.PG_PT_tone.draw(SimpleNamespace(layout=tone_sidebar), context)
+        expected_tone = {(node.pg_tone.as_pointer(), field)
+                         for field in nodes._TONE_FIELDS}
+        assert set(tone_sidebar.properties) == expected_tone
+        assert not any(enabled for _owner, _name, enabled
+                       in tone_sidebar.property_states)
+        assert tone_sidebar.operator_states == [(nodes.PG_OT_reset_tone.bl_idname, False)]
+
         # The existing node selector remains the explicit creation action.
         node_layout = Layout()
         getattr(nodes, node.bl_idname).draw_buttons(node, context, node_layout)
@@ -186,10 +196,23 @@ def check_grade_ui(nodes, tree):
         assert all(operator.poll(context)
                    for operator in (nodes.PG_OT_match_white, nodes.PG_OT_reset_directions))
 
+        tone_sidebar = Layout()
+        nodes.PG_PT_tone.draw(SimpleNamespace(layout=tone_sidebar), context)
+        expected_tone = {(grade.pg_tone.as_pointer(), field)
+                         for field in nodes._TONE_FIELDS}
+        assert set(tone_sidebar.properties) == expected_tone
+        assert all(enabled for _owner, _name, enabled
+                   in tone_sidebar.property_states)
+        assert tone_sidebar.operator_states == [(nodes.PG_OT_reset_tone.bl_idname, True)]
+
         assert nodes.PG_OT_unlink_grade.execute(None, context) == {"FINISHED"}
         sidebar = Layout()
         nodes.PG_PT_linear.draw(SimpleNamespace(layout=sidebar), context)
         assert not any(enabled for _owner, _name, enabled in sidebar.property_states)
+        tone_sidebar = Layout()
+        nodes.PG_PT_tone.draw(SimpleNamespace(layout=tone_sidebar), context)
+        assert not any(enabled for _owner, _name, enabled
+                       in tone_sidebar.property_states)
     finally:
         tree.nodes.remove(node)
         tree.nodes.active = previous_active
@@ -210,6 +233,10 @@ def check_stack_ui(nodes, tree):
                                   space_data=SimpleNamespace(edit_tree=tree))
         layout = Layout()
         nodes._draw_stack_node(node, context, layout)
+        assert nodes.PG_PT_tone.poll(context)
+        empty_tone = Layout()
+        nodes.PG_PT_tone.draw(SimpleNamespace(layout=empty_tone), context)
+        assert not empty_tone.properties
         buttons = [properties for operator_id, properties in layout.operators
                    if operator_id == nodes.PG_OT_new_stack_grade.bl_idname]
         entries = tuple(node.pg_stack_entries)
@@ -283,6 +310,15 @@ def check_stack_ui(nodes, tree):
         assert all((settings, field) in sidebar.properties for field in nodes._LINEAR_FIELDS)
         assert all(enabled for owner, _field, enabled in sidebar.property_states
                    if owner == settings)
+
+        tone_sidebar = Layout()
+        nodes.PG_PT_tone.draw(SimpleNamespace(layout=tone_sidebar), sidebar_context)
+        tone_settings = nodes._stack_active_grade(node).pg_tone.as_pointer()
+        assert all((tone_settings, field) in tone_sidebar.properties
+                   for field in nodes._TONE_FIELDS)
+        assert all(enabled for owner, _field, enabled
+                   in tone_sidebar.property_states if owner == tone_settings)
+        assert tone_sidebar.operator_states == [(nodes.PG_OT_reset_tone.bl_idname, True)]
     finally:
         tree.nodes.remove(node)
         tree.nodes.active = previous_active

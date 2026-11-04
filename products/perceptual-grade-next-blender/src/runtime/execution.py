@@ -365,7 +365,8 @@ class HelperRuntime:
     def _send(self, message):
         if self._channel is None:
             raise HelperError("GPU helper is not connected")
-        self._channel.send(message)
+        self._channel.send(dict(message, session=self.session,
+                                generation=self.state.generation))
 
     def _send_or_fail(self, message):
         try:

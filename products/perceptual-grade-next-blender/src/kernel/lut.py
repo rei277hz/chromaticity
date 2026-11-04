@@ -1,4 +1,4 @@
-"""LUT metadata, host-side packaging, and tetrahedral Stage 1 lookup."""
+"""LUT metadata, host-side packaging, and tetrahedral Stack lookup."""
 from dataclasses import dataclass
 import hashlib
 import math
@@ -84,9 +84,10 @@ def _axis_socket(graph, value, size):
 
 
 def append_lut_lookup(graph, cube, rgb):
-    """Append one four-read tetrahedral lookup to a native Graph."""
+    """Convert scene RGB, sample the fixed AP1 lattice, and return scene RGB."""
     size = cube.size
     count = size**3
+    rgb = graph.matrix(rgb, cube.to_lut)
     channels = graph.split(rgb)
     coordinates = [_axis_socket(graph, channel, size) for channel in channels]
     low = [item[0] for item in coordinates]
@@ -154,11 +155,12 @@ def append_lut_lookup(graph, cube, rgb):
             factor = graph.power(2.0, exponent)
             value = graph.vscale(value, factor)
         sampled.append(value)
-    return graph.vadd(
+    result = graph.vadd(
         graph.vadd(sampled[0], graph.vscale(sampled[1], high_fraction)),
         graph.vadd(graph.vscale(sampled[2], middle_fraction),
                    graph.vscale(sampled[3], low_fraction)),
     )
+    return graph.matrix(result, cube.from_lut)
 
 
 def _cell_coordinates(rgb, size=SIZE):
@@ -215,8 +217,8 @@ class LinearCube:
     def pixels(self, *, encoded=False):
         """Return a four-plane atlas: base then forward R, G, and B edges.
 
-        The GPU baker computes affine edge vectors directly from the matrix and
-        axis spacing, avoiding subtraction of rounded high-offset vertices.
+        The GPU baker derives each edge from its actual adjacent grid values,
+        after the complete ordered grading operation has finished.
         """
         count = self.size**3
         fields = np.concatenate((self.values[None, ...], self.edge_values), axis=0)

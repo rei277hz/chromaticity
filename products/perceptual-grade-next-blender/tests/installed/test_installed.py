@@ -35,7 +35,9 @@ class InstalledExtensionTests(unittest.TestCase):
                 [str(blender), "--background", "--factory-startup", "--disable-autoexec",
                  "--python-exit-code", "1", "--python", str(runner), "--",
                  str(repository), str(report)],
-                cwd=root, env=env, capture_output=True, text=True, timeout=180,
+                # This exercises repeated complete guarded Grade graph rebuilds,
+                # save/load recovery, and failures in one Blender lifecycle.
+                cwd=root, env=env, capture_output=True, text=True, timeout=600,
             )
             output = result.stdout + "\n" + result.stderr
             self.assertEqual(result.returncode, 0, output)

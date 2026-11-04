@@ -91,7 +91,12 @@ python_library(
     srcs = {
         "lut_gpu.py": PREFIX + "lut_gpu.py",
         "lut_codec.py": PREFIX + "lut_codec.py",
+        "lut_shader.py": PREFIX + "lut_shader.py",
         "lut_worker.py": PREFIX + "lut_worker.py",
+        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
+        "runtime/grade_preparation.py": PREFIX + "runtime/grade_preparation.py",
+        "policy/__init__.py": PREFIX + "policy/__init__.py",
+        "policy/preparation_join.py": PREFIX + "policy/preparation_join.py",
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
@@ -188,31 +193,53 @@ invariant_proof(
     visibility = ["PUBLIC"],
 )
 
+export_file(
+    name = "preparation_join_source",
+    src = POLICY_PREFIX + "preparation_join.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "preparation_join_requirements",
+    src = "requirements/preparation_join.inv",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_preparation_join",
+    required_properties = [
+        "first_completion_does_not_authorize_aggregate",
+        "any_completion_order_joins_after_all_three",
+        "child_error_is_retained_until_last_retirement",
+        "stale_and_duplicate_completions_are_ignored",
+    ],
+    required_witnesses = ["error_waits_for_every_component"],
+    requirements = ":preparation_join_requirements",
+    runtime_source = "policy/preparation_join.py",
+    source = ":preparation_join_source",
+    visibility = ["PUBLIC"],
+)
+
 verification_group(
     name = "verify_policies",
     visibility = ["PUBLIC"],
     deps = [
         ":proof_node",
         ":proof_preparation",
+        ":proof_preparation_join",
     ],
 )
 
 extension_tree(
     name = "extension_tree",
-    entrypoints = {
-        "__init__.py": "src/__init__.py",
-        "lut_gpu.py": "src/lut_gpu.py",
-        "lut_codec.py": "src/lut_codec.py",
-        "lut_helper.py": "src/lut_helper.py",
-        "lut_worker.py": "src/lut_worker.py",
-        "nodes.py": "src/nodes.py",
+    entrypoints = {path[len(PREFIX):]: path for path in glob([PREFIX + "*.py"])} | {
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
         "README.md": "README.md",
     } | POLICY_ENTRYPOINTS | RUNTIME_ENTRYPOINTS,
     visibility = ["PUBLIC"],
     deps = [
-        ":kernel_code_bundle",
+        ":kernel_runtime_bundle",
     ],
 )
 
@@ -251,6 +278,10 @@ generate(
         "$(location :proof_preparation)",
         "--requirements-preparation",
         "$(location :preparation_requirements)",
+        "--proof-preparation-join",
+        "$(location :proof_preparation_join)",
+        "--requirements-preparation-join",
+        "$(location :preparation_join_requirements)",
     ],
     outputs = {
         "zip": "perceptual_grade.zip",

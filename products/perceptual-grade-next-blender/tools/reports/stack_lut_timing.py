@@ -121,7 +121,9 @@ def run(args):
         config = {
             "repository": str(repository),
             "report": str(result_path),
+            "output_dir": str(output),
             "node_tree": args.node_tree,
+            "stage": args.stage,
             "grade_count": args.grade_count,
             "samples": args.samples,
             "updates": args.updates,
@@ -168,7 +170,7 @@ def run(args):
         report["process_wall_seconds"] = process_seconds
         report["target"] = "//products/perceptual-grade-next-blender/tools/reports:stack_lut_timing"
         report["profile"] = {key: value for key, value in config.items()
-                              if key not in {"repository", "report"}}
+                              if key not in {"repository", "report", "output_dir"}}
         write_report(output, report)
         if code or not report.get("completed"):
             raise RuntimeError(f"Stack LUT timing session failed; see {output / 'native.log'}")
@@ -180,6 +182,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--node-tree", choices=("shader", "compositor"), default="shader")
+    parser.add_argument("--stage", choices=("linear", "tone"), default="tone",
+                        help="Grade controls to exercise during the drag")
     parser.add_argument("--grade-count", type=int, default=3)
     parser.add_argument("--samples", type=int, default=3, help="Number of drags in one Blender session")
     parser.add_argument("--updates", type=int, default=20, help="Property changes per drag")

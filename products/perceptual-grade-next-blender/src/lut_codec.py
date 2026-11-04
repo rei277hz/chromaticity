@@ -5,16 +5,29 @@ from dataclasses import asdict
 import numpy as np
 
 from .kernel import lut
-from .kernel.settings import LinearSettings, SPACES
+from .kernel.settings import ColorSettings, LinearSettings, Settings, SPACES, ToneSettings
 from .lut_gpu import PreparedStack
 
 
 def freeze_settings(settings):
+    if any(not isinstance(item, Settings) for item in settings):
+        raise TypeError("Stack settings must be complete frozen Settings")
     return tuple(asdict(item) for item in settings)
 
 
 def thaw_settings(settings):
-    return tuple(LinearSettings(**item) for item in settings)
+    result = []
+    for item in settings:
+        snapshot = Settings(
+            linear=LinearSettings(**item["linear"]),
+            tone=ToneSettings(**item["tone"]),
+            space=item["space"],
+            color=ColorSettings(**item["color"]),
+        )
+        if snapshot.space not in SPACES or snapshot.color != ColorSettings():
+            raise ValueError("Stack settings require a supported space and neutral Color")
+        result.append(snapshot)
+    return tuple(result)
 
 
 def freeze_prepared(prepared, diagnostics=None):

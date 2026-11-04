@@ -1,18 +1,20 @@
 # Perceptual Grade for Blender
 
 This step adds Grade and Grade Stack nodes to the Shader and Compositor Color Add
-menus. Grade nodes apply Stage 1 through the product's `kernel` package; Stack nodes
-apply ordered, forward-only Stage 1 Grades through progressive 33³/65³ LUTs.
-Both products use shared Grade datablocks and the same Linear controls.
+menus. Grade nodes apply Stage 1 and Tone through the product's `kernel` package;
+Stack nodes apply ordered, forward-only Stage 1 and Tone Grades through progressive
+33³/65³ GPU LUTs. Both products use shared Grade datablocks and the same Grade controls.
 Create or select a Grade using the node's datablock selector before adjusting it.
-Without a Grade, the Linear controls are disabled and local setting writes reset
+Without a Grade, Linear and Tone controls are disabled and local setting writes reset
 to neutral without creating a datablock.
 
 A private asyncio loop owns the preparation schedulers. Each shared
 Grade has one active preparation and one replaceable latest settings snapshot;
-rapid edits do not enqueue a history of slider positions. Pure preparation runs
-on one worker thread. Shader and Compositor share that prepared result, while
-Blender's main thread owns their separate kernel graphs and per-node policy state.
+rapid edits do not enqueue a history of slider positions. Linear, Tone-table, and
+boundary preparation run concurrently from one frozen Grade snapshot and join
+before a complete prepared result can publish. Shader and Compositor share that
+result, while Blender's main thread owns their separate kernel graphs and per-node
+policy state.
 The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
@@ -32,6 +34,18 @@ preparation never waits for graph installation. Current failures produce a visib
 error and magenta output with alpha preserved. File load, working-space changes,
 and Grade reassignment fence obsolete source subscriptions and reconcile kernels.
 Shutdown withdraws pending demand and waits for active physical work to retire.
+
+Measure Grade preparation, texture upload, and node-tree construction with:
+
+```sh
+buck2 run //products/perceptual-grade-next-blender/tools/reports:grade_preparation_timing -- --output-dir /tmp/perceptual-grade-preparation
+```
+
+Measure continuous Stack Tone LUT publication with:
+
+```sh
+buck2 run //products/perceptual-grade-next-blender/tools/reports:stack_lut_timing -- --output-dir /tmp/perceptual-grade-stack-timing
+```
 
 The extension ZIP uses `src/__init__.py` directly as its root entrypoint and
 places the product's `nodes.py` beside it. Product-owned state-machine policies

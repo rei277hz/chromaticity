@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["new"],
+  "step": "step",
+  "invariants": {
+    "signature_is_nonempty": "state.signature != ''"
+  },
+  "contracts": {
+    "new": {
+      "requires": ["signature != ''"],
+      "ensures": [
+        "result.signature == signature",
+        "result.linear_pending and result.tone_pending and result.boundary_pending",
+        "result.error is None"
+      ]
+    },
+    "step": {
+      "requires": [
+        "state.signature != ''",
+        "event.signature != ''"
+      ],
+      "ensures": [
+        "result[0].signature == state.signature",
+        "result[0].linear_pending == (state.linear_pending and not (event.signature == state.signature and event.component == 'linear'))",
+        "result[0].tone_pending == (state.tone_pending and not (event.signature == state.signature and event.component == 'tone'))",
+        "result[0].boundary_pending == (state.boundary_pending and not (event.signature == state.signature and event.component == 'boundary'))",
+        "result[0].error == (state.error if state.error is not None else (event.error if event.signature == state.signature and ((event.component == 'linear' and state.linear_pending) or (event.component == 'tone' and state.tone_pending) or (event.component == 'boundary' and state.boundary_pending)) else None))",
+        "result[1].completion_signature == (state.signature if event.signature == state.signature and ((event.component == 'linear' and state.linear_pending and not state.tone_pending and not state.boundary_pending) or (event.component == 'tone' and state.tone_pending and not state.linear_pending and not state.boundary_pending) or (event.component == 'boundary' and state.boundary_pending and not state.linear_pending and not state.tone_pending)) else None)",
+        "result[1].error == (result[0].error if result[1].completion_signature is not None else None)"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "first_completion_does_not_authorize_aggregate",
+      "variables": {},
+      "lets": {
+        "started": "new('grade')",
+        "linear": "step(started, Event('grade', 'linear'))"
+      },
+      "assert": "linear[0] == State('grade', False, True, True, None) and linear[1] == Effects()"
+    },
+    {
+      "name": "any_completion_order_joins_after_all_three",
+      "variables": {},
+      "lets": {
+        "started": "new('grade')",
+        "boundary": "step(started, Event('grade', 'boundary'))",
+        "tone": "step(boundary[0], Event('grade', 'tone'))",
+        "linear": "step(tone[0], Event('grade', 'linear'))"
+      },
+      "assert": "boundary[1] == Effects() and tone[1] == Effects() and linear[0] == State('grade', False, False, False, None) and linear[1] == Effects('grade', None)"
+    },
+    {
+      "name": "child_error_is_retained_until_last_retirement",
+      "variables": {},
+      "lets": {
+        "started": "new('grade')",
+        "failed": "step(started, Event('grade', 'tone', 'invalid tone'))",
+        "boundary": "step(failed[0], Event('grade', 'boundary'))",
+        "linear": "step(boundary[0], Event('grade', 'linear'))"
+      },
+      "assert": "failed[1] == Effects() and boundary[1] == Effects() and linear[1] == Effects('grade', 'invalid tone')"
+    },
+    {
+      "name": "stale_and_duplicate_completions_are_ignored",
+      "variables": {},
+      "lets": {
+        "started": "new('grade')",
+        "stale": "step(started, Event('old', 'linear'))",
+        "linear": "step(stale[0], Event('grade', 'linear'))",
+        "duplicate": "step(linear[0], Event('grade', 'linear'))"
+      },
+      "assert": "stale == (started, Effects()) and duplicate == (linear[0], Effects())"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "error_waits_for_every_component",
+      "variables": {},
+      "lets": {
+        "started": "new('grade')",
+        "linear": "step(started, Event('grade', 'linear'))",
+        "failed_tone": "step(linear[0], Event('grade', 'tone', 'failed'))",
+        "boundary": "step(failed_tone[0], Event('grade', 'boundary'))"
+      },
+      "assert": "linear[1] == Effects() and failed_tone[1] == Effects() and boundary[1] == Effects('grade', 'failed')"
+    }
+  ]
+}

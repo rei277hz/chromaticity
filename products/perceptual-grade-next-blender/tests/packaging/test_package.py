@@ -17,6 +17,7 @@ class PackageTests(unittest.TestCase):
                 "lut_worker.py",
                 "runtime/__init__.py",
                 "runtime/preparation.py",
+                "runtime/grade_preparation.py",
                 "runtime/execution.py",
                 "runtime/host.py",
                 "runtime/payloads.py",
@@ -30,6 +31,7 @@ class PackageTests(unittest.TestCase):
                 "policy/__init__.py",
                 "policy/helper.py",
                 "policy/preparation.py",
+                "policy/preparation_join.py",
                 "policy/node.py",
                 "kernel/__init__.py",
                 "kernel/graph.py",
@@ -44,7 +46,7 @@ class PackageTests(unittest.TestCase):
             self.assertNotIn("perceptual_grade_core/registration.py", names)
             self.assertFalse(any(name.startswith("perceptual_grade_core/") for name in names))
             self.assertFalse(any(name.startswith("src/") for name in names))
-            self.assertNotIn("kernel/output_boundary.npz", names)
+            self.assertIn("kernel/output_boundary.npz", names)
             manifest = tomllib.loads(archive.read("blender_manifest.toml").decode())
             self.assertEqual(manifest["id"], "perceptual_grade")
             self.assertEqual(manifest["name"], "Perceptual Grade")

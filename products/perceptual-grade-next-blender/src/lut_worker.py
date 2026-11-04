@@ -1,5 +1,6 @@
 """Back-to-back Stack GPU calculations in a private Blender helper process."""
 
+import asyncio
 import os
 import time
 
@@ -8,6 +9,7 @@ import numpy as np
 from .kernel import lut
 from .lut_codec import freeze_prepared, thaw_settings
 from .lut_gpu import StackGPUBackend
+from .runtime.grade_preparation import GradePreparer
 
 
 class StackWorker:
@@ -15,6 +17,7 @@ class StackWorker:
 
     def __init__(self):
         self.backend = StackGPUBackend()
+        self.preparer = GradePreparer()
 
     def dispatch(self, operation, inputs, context):
         if context.role != "gpu":
@@ -28,7 +31,7 @@ class StackWorker:
     def probe(self, context):
         """Exercise dispatch and readback before admitting required-GPU jobs."""
         context.checkpoint()
-        job = self.backend.create_matrices((np.eye(3),), "ACEScg", False)
+        job = self.backend.create_prepared((), "ACEScg", False)
         try:
             prepared = None
             while prepared is None:
@@ -53,8 +56,39 @@ class StackWorker:
         settings = thaw_settings(inputs["settings"])
         space = inputs["working_space"]
         progressive = bool(inputs["progressive"])
+        preparation_rows = {}
+
+        def timing(signature, component, began, finished):
+            row = preparation_rows.setdefault(signature, {
+                "signature": signature, "components": {},
+            })
+            row["components"][component] = finished - began
+
+        self.preparer.on_timing = timing
+
+        async def prepare_all():
+            results = await asyncio.gather(
+                *(self.preparer.prepare(item) for item in settings),
+                return_exceptions=True,
+            )
+            # A preparation may fail while its siblings still own workers.
+            # Wait for every physical writer before propagating any failure.
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+            return tuple(results)
+
+        preparation_started = time.perf_counter()
+        try:
+            prepared_grades = asyncio.run(prepare_all())
+        finally:
+            self.preparer.on_timing = None
+        preparation_wall = time.perf_counter() - preparation_started
+        context.checkpoint()
         reused = self.backend._shader is not None
-        job = self.backend.create_job(settings, space, progressive)
+        job = self.backend.create_prepared(
+            prepared_grades, space, progressive, settings=settings,
+        )
         setup_seconds = time.perf_counter() - started
         phase = "preview" if progressive else "full"
         phases = {}
@@ -96,6 +130,8 @@ class StackWorker:
                     "worker_setup_seconds": setup_seconds,
                     "worker_program_reused": reused,
                     "backend": "GPU",
+                    "grade_preparation": list(preparation_rows.values()),
+                    "grade_preparation_wall_seconds": preparation_wall,
                     "phases": {name: dict(values) for name, values in phases.items()},
                 }
                 payload = freeze_prepared(prepared, diagnostics)
@@ -114,7 +150,10 @@ class StackWorker:
             job.close()
 
     def close(self):
-        self.backend.close()
+        try:
+            self.backend.close()
+        finally:
+            self.preparer.close()
 
 
 def create():
