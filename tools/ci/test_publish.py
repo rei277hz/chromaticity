@@ -18,18 +18,25 @@ class PublishTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.output = self.root / "badges"
         self.env = {**os.environ, "DEFAULT_BRANCH": "main", "GITHUB_REF": "refs/heads/main",
-                    "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REPOSITORY": "owner/repository",
+                    "GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "owner/repository",
                     "GITHUB_TOKEN": "test-placeholder", "GITHUB_SHA": "a" * 40,
                     "GITHUB_RUN_ID": "100", "GITHUB_RUN_NUMBER": "10", "GITHUB_RUN_ATTEMPT": "1",
                     "GITHUB_SERVER_URL": "https://github.com"}
         self.summary = report.collect(self.root / "absent", {"builds": ["//:a"], "tests": ["//test:a"]}, self.env)
         report.write(self.summary, self.output)
 
-    def test_default_branch_and_manual_event_are_required(self):
+    def test_default_branch_push_is_required(self):
         for override in ({"GITHUB_REF": "refs/heads/topic"}, {"DEFAULT_BRANCH": ""},
-                         {"GITHUB_EVENT_NAME": "pull_request"}, {"GITHUB_EVENT_NAME": "push"}):
+                         {"GITHUB_REF": "refs/heads/ci-status"},
+                         {"GITHUB_EVENT_NAME": "pull_request"},
+                         {"GITHUB_EVENT_NAME": "workflow_dispatch"}):
             with self.subTest(override=override), self.assertRaises(ValueError):
                 publish.validate(self.output, {**self.env, **override})
+
+    def test_default_branch_push_accepts_an_incomplete_summary(self):
+        self.assertEqual(self.summary["builds"]["outcome"], "incomplete")
+        self.assertEqual(self.summary["tests"]["outcome"], "incomplete")
+        self.assertEqual(publish.validate(self.output, self.env), self.summary)
 
     def test_summary_must_match_the_current_run(self):
         self.assertEqual(publish.validate(self.output, self.env), self.summary)

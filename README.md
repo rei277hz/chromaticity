@@ -7,9 +7,9 @@
 Color grading, HDR color pickers, and reusable color-science libraries for
 Blender, DaVinci Resolve, and the web.
 
-Build/test badges describe the latest published manual run on the default
-branch, not every commit or the full suite. They become available after the
-first run; see [CI and badge reporting](tools/ci/README.md).
+Build/test badges update automatically from the latest published default-branch
+push run and cover the selected Next Blender builds and tests. They become
+available after the first publication; see [CI and badge reporting](tools/ci/README.md).
 
 ## Products
 

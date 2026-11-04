@@ -245,7 +245,7 @@ def badge(label, section):
 
 def markdown(summary):
     meta = summary["metadata"]
-    lines = ["# Latest published manual Linux run", "",
+    lines = ["# Linux build and test results", "",
              f'- Commit: `{meta["commit"]}`', f'- Recorded at: {meta["timestamp"]}',
              f'- Run: {meta["run_url"] or "local validation"}', "",
              "Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.", ""]

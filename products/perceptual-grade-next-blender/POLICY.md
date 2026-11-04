@@ -83,7 +83,7 @@ buck2 test //products/perceptual-grade-next-blender/tests:policy_node --remote-o
 buck2 test //products/perceptual-grade-next-blender/tests:policy_helper //products/perceptual-grade-next-blender/tests:policy_resources //products/perceptual-grade-next-blender/tests:policy_image_publication //products/perceptual-grade-next-blender/tests:policy_gesture --remote-only
 ```
 
-CI checks this product on pushes, pull requests, and manual runs. Its selection
+CI checks this product automatically on pushes and pull requests. Its selection
 includes policy proofs, the extension package, and unit, runtime, numerical, GPU,
 installed-Blender, and native UI acceptance tests. Tests and proofs from
 `libraries/perceptual-grade-core` and `products/perceptual-grade-blender` are
