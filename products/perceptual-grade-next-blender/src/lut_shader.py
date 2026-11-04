@@ -36,6 +36,9 @@ class _ComputeGraph:
     def __init__(self, boundary):
         self.tree = SimpleNamespace(bl_idname="ShaderNodeTree")
         self.cache = {}
+        # Graph's shared equations use the prepared symbolic values here;
+        # this adapter has no native node-image parameter bindings.
+        self.parameters = None
         self.boundary = boundary
         self.lines = []
         self._expressions = {}

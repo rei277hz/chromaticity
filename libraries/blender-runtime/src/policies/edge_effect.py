@@ -29,10 +29,6 @@ class Event:
     occurrence: int
 
 
-def edge_count(edges: tuple[int | str, ...], selected: int | str) -> int:
-    return _edge_count_count_edge(edges, selected)
-
-
 def new(occurrence: int, before: int, after: int) -> EffectState:
     if not (occurrence > 0 and before >= 0 and (after >= 0)):
         raise ValueError('Invalid domain for new')
@@ -133,10 +129,3 @@ def step(state: EffectState, event: Event) -> tuple[EffectState, Effects]:
     if event.kind == 'COMPENSATION_FAILED':
         return apply_COMPENSATION_FAILED(state, event)
     raise ValueError('Unknown machine event')
-
-
-def _edge_count_count_edge(_items: tuple[int | str, ...], selected: int | str) -> int:
-    _result = 0
-    for edge in _items:
-        _result = _result + (1 if edge == selected else 0)
-    return _result

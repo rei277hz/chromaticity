@@ -123,7 +123,7 @@ def check_grade_ui(nodes, tree):
 
         gesture_window = 9281
         nodes._arm_gesture(gesture_window, node, (0, 0))
-        gesture_token = nodes._armed_gestures[gesture_window][0]
+        gesture_token = nodes._gesture_token(gesture_window)
         try:
             nodes._activate_gesture(gesture_window, gesture_token)
             node.pg_linear.exposure = 0.25
@@ -136,7 +136,7 @@ def check_grade_ui(nodes, tree):
             assert {group.as_pointer() for group in nodes.bpy.data.node_groups} == initial_groups
         finally:
             nodes._end_gesture(gesture_window, gesture_token)
-            nodes._gesture_routers.pop(gesture_window, None)
+            nodes._dispatch_gesture(nodes.gesture_policy.Event("window_gone", window_id=gesture_window))
         assert node.pg_grade is None
         assert all(abs(getattr(node.pg_linear, name) - value) < 1e-6
                    for name, value in nodes._LINEAR_DEFAULTS.items())
@@ -328,23 +328,31 @@ def check_stack_ui(nodes, tree):
 
 
 def check_gesture_region_routing(nodes, tree, window_key):
-    token = object()
-    nodes._gesture_routers[window_key] = token
-    router = SimpleNamespace(window_key=window_key, token=token,
-                             gesture_token=None, dragging=False,
-                             press_position=None)
+    # Stub only native observer installation; route input through the actual
+    # coordinator and modal adapter below.
+    nodes._gesture_state, effects = nodes.gesture_policy.step(
+        nodes._gesture_state, nodes.gesture_policy.Event("window_seen", window_id=window_key))
+    token = nodes.gesture_policy.pending_observer(nodes._gesture_state, window_key)
+    nodes._dispatch_gesture(nodes.gesture_policy.Event(
+        "observer_install_result", window_id=window_key, token=token, success=True))
+    router = SimpleNamespace(window_key=window_key, token=token)
+    area = SimpleNamespace(
+        type="NODE_EDITOR",
+        spaces=SimpleNamespace(active=SimpleNamespace(edit_tree=tree, show_region_ui=True)),
+        regions=(SimpleNamespace(type="WINDOW", x=0, y=0, width=400, height=400),
+                 SimpleNamespace(type="UI", x=100, y=100, width=200, height=300)),
+    )
     context = SimpleNamespace(
-        area=SimpleNamespace(type="NODE_EDITOR"),
-        region=SimpleNamespace(type="WINDOW"),
-        space_data=SimpleNamespace(edit_tree=tree),
+        window=SimpleNamespace(screen=SimpleNamespace(areas=(area,))),
+        area=None, region=None, space_data=None,
     )
     event = SimpleNamespace(type="LEFTMOUSE", value="PRESS", mouse_x=10, mouse_y=10)
     nodes.PG_OT_gesture_router.modal(router, context, event)
-    assert router.gesture_token is None
-    assert window_key not in nodes._armed_gestures
+    assert nodes._gesture_token(router.window_key) is None
+    assert nodes._gesture_phase(window_key) not in ("armed", "finishing_armed")
 
-    context.region.type = "UI"
+    event.mouse_x, event.mouse_y = 110, 110
     nodes.PG_OT_gesture_router.modal(router, context, event)
-    assert router.gesture_token is not None
-    nodes._release_armed_gesture(window_key, router.gesture_token)
-    nodes._gesture_routers.pop(window_key, None)
+    assert nodes._gesture_token(router.window_key) is not None
+    nodes._end_gesture(window_key, nodes._gesture_token(router.window_key))
+    nodes._dispatch_gesture(nodes.gesture_policy.Event("window_gone", window_id=window_key))

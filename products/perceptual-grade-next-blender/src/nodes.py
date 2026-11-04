@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
+from itertools import count
 import hashlib
 import json
 import threading
@@ -42,7 +43,7 @@ from .kernel.tone_ui import (
     clamp_tone_anchor,
 )
 from .policy import node as node_policy
-from .policy import preparation as preparation_policy
+from .runtime import gesture_coordinator as gesture_policy
 from .runtime.preparation import PreparationRuntime
 from .runtime.grade_preparation import GradePreparer
 from .runtime.grade_resources import (
@@ -50,6 +51,10 @@ from .runtime.grade_resources import (
     OWNER_NODE as PARAMETER_OWNER_NODE,
 )
 from .runtime.publication import PublicationDeferred
+from .runtime.resource_lifecycle import run_resource_lifecycle
+from .runtime.image_publication import (
+    ImageSnapshot, pack_image_for_save, run_image_publication, write_metadata,
+)
 
 
 SHADER_TREE = "ShaderNodeTree"
@@ -78,11 +83,10 @@ _preparation_runtime = None
 _grade_preparer = None
 _grade_resources = None
 _preparation_sources = {}
-_gesture_routers = {}
-_gesture_targets = {}
-_armed_gestures = {}
-_active_gestures = {}
-_gesture_settings = {}
+_gesture_state = gesture_policy.new()
+_gesture_node_serial = count(1)
+_gesture_nodes = {}
+_gesture_invocations = {}
 _KERNEL_SCHEMA = 3
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
@@ -672,6 +676,8 @@ def _apply_output_kernel(node, mode):
 
 
 def _apply_output_effect(node, effects):
+    if effects.output_mode is None:
+        return
     failures = []
     previous = getattr(node, "node_tree", None)
     for operation, args in (
@@ -717,7 +723,7 @@ def _kernel_belongs_to_node(node, kernel):
         return True
     if kernel is None:
         return False
-    owner, owner_node = GradeResources.owner(node)
+    owner, owner_node = _grade_resources.owner(node)
     return (kernel.get(PARAMETER_OWNER) == owner
             and kernel.get(PARAMETER_OWNER_NODE) == owner_node)
 
@@ -729,7 +735,7 @@ def _record_for(node, desired_signature=None, source=None):
         record["node"] = node
         return record
     previous_state = record["state"] if record is not None else None
-    gesture_active = bool(_active_gestures.get(pointer))
+    gesture_active = _gesture_is_active(pointer)
     if record is not None:
         del _node_stores[pointer]
         _release_source(record.get("source"))
@@ -773,6 +779,12 @@ def _ensure_timer():
 
 
 def _consume_effects(node, effects, preparation=None, record=None, defer_build=False):
+    if effects.dispose:
+        try:
+            _apply_node_disposal(node)
+        except Exception as error:
+            return (error,)
+        return ()
     failures = []
     try:
         _apply_output_effect(node, effects)
@@ -826,7 +838,14 @@ def _dispatch_transition(node, record, event, preparation=None, defer_build=Fals
 def _dispatch(node, event, preparation=None):
     global _reconciling
     desired_signature = event.signature if event.kind == "request" else None
-    record = _record_for(node, desired_signature)
+    if event.kind == "dispose":
+        # A free callback can also arrive for a node that never initialized.
+        # Do not inspect its derived kernel or create a new subscription.
+        record = _node_stores.get(node.as_pointer())
+        if record is None:
+            record = {"state": node_policy.new()}
+    else:
+        record = _record_for(node, desired_signature)
     previous_reconciling = _reconciling
     _reconciling = True
     try:
@@ -951,6 +970,12 @@ def _write_grade_parameters(image, pixels):
     image.update()
 
 
+def _pack_grade_parameters(image):
+    # Blender checks dirty images before save_pre runs. Keep this small derived
+    # snapshot packed at publication, including restoration after a failed write.
+    image.pack()
+
+
 def _publish_grade_parameters(source, authorized_records, prepared):
     """Consume publication effects once for all users of an authoritative Grade."""
     users = tuple(record for record in authorized_records
@@ -959,7 +984,10 @@ def _publish_grade_parameters(source, authorized_records, prepared):
     if not users:
         return ()
     created = []
-    try:
+    context = {}
+    failures = []
+
+    def prepare(_errors):
         parameters = prepared.parameters or prepare_parameters(prepared)
         resource = _grade_resources.resource(users[0]["node"], prepared.space)
         for record in users:
@@ -984,54 +1012,104 @@ def _publish_grade_parameters(source, authorized_records, prepared):
         preparation_signature = _preparation_signature(
             Settings(linear=prepared.linear.settings, tone=prepared.tone.settings,
                      space=prepared.space), prepared.space)
-        if image.get(PARAMETER_SIGNATURE) != preparation_signature:
-            previous = np.empty(len(image.pixels), dtype=np.float32)
-            image.pixels.foreach_get(previous)
-            previous_signature = image.get(PARAMETER_SIGNATURE)
-            try:
-                _write_grade_parameters(image, parameters.pixels)
-                image[PARAMETER_SIGNATURE] = preparation_signature
-            except Exception:
-                try:
-                    _write_grade_parameters(image, previous)
-                    if previous_signature is None:
-                        if PARAMETER_SIGNATURE in image:
-                            del image[PARAMETER_SIGNATURE]
-                    else:
-                        image[PARAMETER_SIGNATURE] = previous_signature
-                finally:
-                    # Every user of this writable atlas must lose authority on
-                    # failure, including users whose individual receipt lagged.
-                    raise
+        metadata = [(image, PARAMETER_SIGNATURE, preparation_signature)]
         for tree_type, kernel in resource.trees.items():
-            kernel[_KERNEL_SIGNATURE] = _signature(
+            signature = _signature(
                 tree_type, _snapshot_values(Settings(
                     linear=prepared.linear.settings, tone=prepared.tone.settings,
                     space=prepared.space)), prepared.space)
-            kernel[PARAMETER_SIGNATURE] = preparation_signature
-    except Exception as error:
+            metadata.extend(((kernel, _KERNEL_SIGNATURE, signature),
+                             (kernel, PARAMETER_SIGNATURE, preparation_signature)))
+        context.update(resource=resource, image=image, parameters=parameters,
+                       signature=preparation_signature, metadata=tuple(metadata))
+
+    def snapshot(_errors):
+        image = context["image"]
+        context["snapshot"] = ImageSnapshot.capture(image, context["metadata"])
+        return {"matching": image.get(PARAMETER_SIGNATURE) == context["signature"],
+                "clean": image.packed_file is not None and not image.is_dirty}
+
+    def upload(_errors):
+        _write_grade_parameters(context["image"], context["parameters"].pixels)
+
+    def pack(_errors):
+        image = context["image"]
+        _pack_grade_parameters(image)
+        return {"clean": image.packed_file is not None and not image.is_dirty}
+
+    def commit(_errors):
+        write_metadata(context["metadata"])
+
+    def restore_upload(_errors):
+        _write_grade_parameters(context["image"], context["snapshot"].pixels)
+
+    def restore_metadata(_errors):
+        write_metadata(context["snapshot"].metadata)
+
+    def fail(errors):
+        error = errors[0]
+        for secondary in errors[1:]:
+            error.add_note(f"Additional Grade publication failure: {secondary}")
         affected = tuple(record for record in _node_stores.values()
                          if record.get("source") is source)
-        failures = _fail_installation(affected or users, None, error)
-        _retire_kernels(created)
-        return failures
+        for record in affected or users:
+            try:
+                pointer = record["node"].as_pointer()
+                if not pointer or _node_stores.get(pointer) is not record:
+                    continue
+                failures.extend(((record["node"],), failure)
+                                for failure in _fail_installation((record,), None, error))
+            except ReferenceError as failure:
+                # Removed RNA cannot receive presentation, but its failure is
+                # still reported without putting a dead handle in diagnostics.
+                failures.append(((), failure))
+            except Exception as failure:
+                # A dead native consumer must not prevent the same authorized
+                # failure effect from reaching its surviving shared users.
+                failures.append(((record["node"],), failure))
+                print("Perceptual Grade failure presentation failed:", failure)
 
-    failures = []
-    for record in users:
-        node = record["node"]
-        signature = _publication_signature(record, prepared)
+    def deliver(_errors):
+        resource = context["resource"]
+        for record in users:
+            node = record["node"]
+            signature = _publication_signature(record, prepared)
+            try:
+                kernel = resource.trees[node.id_data.bl_idname]
+                if node.node_tree != kernel:
+                    previous = _replace_node_kernel(node, kernel)
+                    if previous != kernel:
+                        failures.extend(((node,), error)
+                                        for error in _retire_kernels((previous,)))
+                failures.extend(((node,), failure) for failure in _dispatch(
+                    node, node_policy.Event("installation_result", signature)))
+            except Exception as error:
+                failures.extend(((node,), failure) for failure in _dispatch(
+                    node, node_policy.Event("installation_result", signature, str(error))))
+
+    def retire(_errors):
+        errors = _retire_kernels(created)
+        if errors:
+            raise ExceptionGroup("Grade resource retirement failed", list(errors))
+
+    transaction_errors = run_image_publication({
+        "prepare": prepare, "snapshot": snapshot, "upload": upload, "pack": pack,
+        "commit": commit, "restore_upload": restore_upload, "restore_pack": pack,
+        "restore_metadata": restore_metadata, "deliver": deliver, "fail": fail,
+        "retire": retire,
+    })
+    diagnostic_nodes = []
+    for record in tuple(_node_stores.values()):
+        if record.get("source") is not source:
+            continue
         try:
-            kernel = resource.trees[node.id_data.bl_idname]
-            if node.node_tree != kernel:
-                previous = _replace_node_kernel(node, kernel)
-                if previous != kernel:
-                    _retire_kernels((previous,))
-            failures.extend(_dispatch(node, node_policy.Event(
-                "installation_result", signature)))
-        except Exception as error:
-            failures.extend(_dispatch(node, node_policy.Event(
-                "installation_result", signature, str(error))))
-    _retire_kernels(created)
+            if record["node"].as_pointer():
+                diagnostic_nodes.append(record["node"])
+        except ReferenceError:
+            continue
+    for error in transaction_errors:
+        failures.append((tuple(diagnostic_nodes), error))
+        print("Perceptual Grade image publication failed:", error)
     return tuple(failures)
 
 
@@ -1148,29 +1226,60 @@ def _preparation_tick():
     return 0.0
 
 
+def _resource_retirement_operations(resource, *, image=False):
+    def observe():
+        try:
+            if resource is None or resource.as_pointer() == 0:
+                return {"live": False}
+            owned = (bool(resource.get("_perceptual_grade_stack_image")
+                          or resource.get("_perceptual_grade_image")) if image
+                     else resource.get(_KERNEL_KIND) is not None)
+            return {"live": True, "owned": owned, "users": resource.users,
+                    "protected": resource.use_fake_user}
+        except ReferenceError:
+            return {"live": False}
+
+    def evict():
+        if _grade_resources is not None:
+            if image:
+                _grade_resources.retire_image(resource)
+            else:
+                _grade_resources.retire(resource)
+
+    def remove():
+        collection = bpy.data.images if image else bpy.data.node_groups
+        collection.remove(resource, do_unlink=False)
+
+    return {"observe": observe, "evict": evict, "recheck": observe, "remove": remove}
+
+
 def _retire_kernels(kernels):
+    failures = []
     seen = set()
     for kernel in kernels:
-        try:
-            pointer = kernel.as_pointer() if kernel is not None else 0
-            if not pointer or pointer in seen:
-                continue
-            seen.add(pointer)
-            if (kernel is not None and kernel.get(_KERNEL_KIND) is not None
-                    and kernel.users == 0 and not kernel.use_fake_user):
-                if _grade_resources is not None:
-                    _grade_resources.retire(kernel)
-                bpy.data.node_groups.remove(kernel)
-        except (AttributeError, ReferenceError, RuntimeError):
+        if kernel is None:
             continue
-    _retire_images()
+        # Object identity remains usable after Blender invalidates its RNA wrapper.
+        identity = id(kernel)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        errors = run_resource_lifecycle(_resource_retirement_operations(kernel))
+        failures.extend(errors)
+        for error in errors:
+            print("Perceptual Grade kernel retirement failed:", error)
+    failures.extend(_retire_images())
+    return tuple(failures)
 
 
 def _retire_images():
+    failures = []
     for image in tuple(bpy.data.images):
-        if ((image.get("_perceptual_grade_stack_image")
-             or image.get("_perceptual_grade_image")) and image.users == 0):
-            bpy.data.images.remove(image)
+        errors = run_resource_lifecycle(_resource_retirement_operations(image, image=True))
+        failures.extend(errors)
+        for error in errors:
+            print("Perceptual Grade image retirement failed:", error)
+    return tuple(failures)
 
 
 def _refresh_nodes(nodes, working_space=None):
@@ -1215,6 +1324,41 @@ def _forget_node(node):
         return
     if record is not None:
         _release_source(record.get("source"))
+
+
+def _apply_node_disposal(node):
+    """Consume disposal once, retiring cache entries before Blender data."""
+    pointer = node.as_pointer()
+    kernel = node.node_tree
+
+    def fence():
+        # Subscription identity is gone before cancellation/gesture callbacks run.
+        _forget_node(node)
+        _forget_gesture_node(node)
+
+    def detach():
+        _syncing.add(pointer)
+        try:
+            if _is_grade_node(node):
+                node.pg_grade = None
+            node.node_tree = None
+        finally:
+            _syncing.discard(pointer)
+
+    operations = _resource_retirement_operations(kernel)
+    operations.update(fence=fence, detach=detach)
+    failures = run_resource_lifecycle(operations, disposal=True)
+    if not failures:
+        failures += _retire_images()
+    if failures:
+        raise ExceptionGroup("Grade resource disposal failed", list(failures))
+
+
+def _dispose_node(node):
+    failures = _dispatch(node, node_policy.Event("dispose"))
+    if failures:
+        raise RuntimeError("Could not dispose Grade resources: "
+                           + "; ".join(map(str, failures))) from failures[0]
 
 
 def _reset_node_stores():
@@ -1300,7 +1444,98 @@ def _gesture_related_nodes(node):
 
 
 def _gesture_is_armed(pointer):
-    return any(pointer in pointers for pointers in _gesture_settings.values())
+    identity = _gesture_identity_for_pointer(pointer)
+    return identity is not None and gesture_policy.armed_for(_gesture_state, identity)
+
+
+def _gesture_is_active(pointer):
+    identity = _gesture_identity_for_pointer(pointer)
+    return identity is not None and gesture_policy.active_for(_gesture_state, identity)
+
+
+def _gesture_identity_for_pointer(pointer):
+    for identity, node in _gesture_nodes.items():
+        try:
+            if node.as_pointer() == pointer:
+                return identity
+        except (AttributeError, ReferenceError, RuntimeError):
+            continue
+    return None
+
+
+def _gesture_identity(node):
+    identity = _gesture_identity_for_pointer(node.as_pointer())
+    if identity is None:
+        identity = next(_gesture_node_serial)
+        _gesture_nodes[identity] = node
+    return identity
+
+
+def _gesture_node(identity):
+    node = _gesture_nodes.get(identity)
+    try:
+        return node if node is not None and node.as_pointer() and _is_output_node(node) else None
+    except (AttributeError, ReferenceError, RuntimeError):
+        return None
+
+
+def _gesture_token(window_key):
+    return gesture_policy.current_gesture(_gesture_state, window_key)
+
+
+def _gesture_phase(window_key):
+    return gesture_policy.gesture_phase(_gesture_state, window_key)
+
+
+def _gesture_observer_token(window_key):
+    return gesture_policy.current_observer(_gesture_state, window_key)
+
+
+def _gesture_observations(window_key):
+    observed = []
+    for target in gesture_policy.gesture_targets(_gesture_state, window_key):
+        node = _gesture_node(target.node_id)
+        if node is not None:
+            observed.append(gesture_policy.Target(target.node_id, _settings_signature_for(node)))
+    return tuple(observed)
+
+
+def _gesture_target_at(window, x, y):
+    """Resolve a sidebar press in the window-level modal event context."""
+    if window is None:
+        return None
+    for area in window.screen.areas:
+        if area.type != "NODE_EDITOR":
+            continue
+        space = area.spaces.active
+        if not space.show_region_ui:
+            continue
+        for region in area.regions:
+            if (region.type == "UI" and region.width > 1 and region.height > 1
+                    and region.x <= x < region.x + region.width
+                    and region.y <= y < region.y + region.height):
+                tree = space.edit_tree
+                active = getattr(getattr(tree, "nodes", None), "active", None)
+                return active if _is_output_node(active) else None
+    return None
+
+
+def _live_gesture_targets(targets):
+    live = []
+    for target in targets:
+        try:
+            if target.as_pointer() and _is_output_node(target):
+                live.append(target)
+        except (AttributeError, ReferenceError, RuntimeError):
+            continue
+    return tuple(live)
+
+
+def _forget_gesture_node(node):
+    """Consume node disposal without ending gestures on surviving users."""
+    identity = _gesture_identity_for_pointer(node.as_pointer())
+    if identity is not None:
+        _dispatch_gesture(gesture_policy.Event("node_disposed", node_id=identity))
 
 
 def _settings_signature_for(node):
@@ -1323,90 +1558,36 @@ def _settings_signature_for(node):
 
 
 def _arm_gesture(window_key, node, position):
-    previous = _gesture_targets.get(window_key)
-    if previous is not None:
-        _end_gesture(window_key, previous[0])
-    previous = _armed_gestures.get(window_key)
-    if previous is not None:
-        _release_armed_gesture(window_key, previous[0])
-    targets = _gesture_related_nodes(node)
-    _armed_gestures[window_key] = (object(), targets, position)
-    _gesture_settings[window_key] = {
-        target.as_pointer(): _settings_signature_for(target) for target in targets
-    }
+    """Explicit adapter entrypoint; native routing supplies its observer token."""
+    _dispatch_gesture(gesture_policy.Event(
+        "press", window_id=window_key, x=int(position[0]), y=int(position[1]),
+        undo_owner="adapter",
+        targets=tuple(gesture_policy.Target(_gesture_identity(target),
+                                           _settings_signature_for(target))
+                      for target in _live_gesture_targets(_gesture_related_nodes(node))),
+        observed=_gesture_observations(window_key),
+    ))
+    return _gesture_token(window_key)
 
 
 def _activate_gesture(window_key, token):
-    armed = _armed_gestures.get(window_key)
-    if armed is None or armed[0] is not token:
-        return None
-    del _armed_gestures[window_key]
-    before = _gesture_settings.pop(window_key, {})
-    pointers = []
-    for target in armed[1]:
-        pointer = target.as_pointer()
-        active = _active_gestures.setdefault(pointer, set())
-        was_active = bool(active)
-        active.add(token)
-        if not was_active:
-            failures = _dispatch(target, node_policy.Event("gesture_begin"))
-            if failures:
-                print("Perceptual Grade gesture start failed:", failures[-1])
-        pointers.append(pointer)
-    _gesture_targets[window_key] = token, tuple(pointers), before
-    _refresh_nodes(armed[1])
-    return None
-
-
-def _release_armed_gesture(window_key, token):
-    armed = _armed_gestures.get(window_key)
-    if armed is None or armed[0] is not token:
-        return None
-    del _armed_gestures[window_key]
-    before = _gesture_settings.pop(window_key, {})
-    changed = tuple(target for target in armed[1]
-                    if before.get(target.as_pointer()) != _settings_signature_for(target))
-    _refresh_nodes(changed)
-    if changed:
-        _push_gesture_undo(window_key)
+    _dispatch_gesture(gesture_policy.Event("activate", window_id=window_key,
+                                          gesture_token=token))
     return None
 
 
 def _begin_gesture(window_key, node):
-    """Compatibility helper for tests and explicit adapter callers."""
-    _arm_gesture(window_key, node, (0, 0))
-    token = _armed_gestures[window_key][0]
+    """Begin an explicit adapter-owned gesture."""
+    token = _arm_gesture(window_key, node, (0, 0))
     _activate_gesture(window_key, token)
     return token
 
 
 def _end_gesture(window_key, token):
-    target = _gesture_targets.get(window_key)
-    if target is None or target[0] is not token:
-        return None
-    del _gesture_targets[window_key]
-    changed = False
-    for pointer in target[1]:
-        active = _active_gestures.get(pointer)
-        if active is None:
-            continue
-        active.discard(token)
-        if active:
-            continue
-        del _active_gestures[pointer]
-        record = _node_stores.get(pointer)
-        if record is None:
-            continue
-        try:
-            changed = (changed or
-                       target[2].get(pointer) != _settings_signature_for(record["node"]))
-            failures = _dispatch(record["node"], node_policy.Event("gesture_release"))
-            if failures:
-                print("Perceptual Grade gesture release failed:", failures[-1])
-        except (ReferenceError, RuntimeError):
-            continue
-    if changed:
-        _push_gesture_undo(window_key)
+    """Synchronous completion for explicit adapters with already-settled settings."""
+    _dispatch_gesture(gesture_policy.Event("finish", window_id=window_key,
+                                          gesture_token=token,
+                                          observed=_gesture_observations(window_key)))
     return None
 
 
@@ -1437,64 +1618,180 @@ def _push_gesture_undo(window_key):
     return False
 
 
+def _gesture_finished(event):
+    return ((event.type == "LEFTMOUSE" and event.value == "RELEASE")
+            or (event.type in {"ESC", "RIGHTMOUSE"} and event.value in {"PRESS", "RELEASE"})
+            or event.type == "WINDOW_DEACTIVATE")
+
+
+def _observe_gesture_finish(window_key, token):
+    """Observe after the native widget has applied release/cancel restoration."""
+    _dispatch_gesture(gesture_policy.Event(
+        "finish_observed", window_id=window_key, gesture_token=token,
+        observed=_gesture_observations(window_key),
+    ))
+    return None
+
+
+def _handoff_gesture_router(window_key, router_token, gesture_token):
+    """Observe the gesture after Blender installs its native button handler."""
+    _dispatch_gesture(gesture_policy.Event(
+        "handoff_due", window_id=window_key, token=router_token,
+        gesture_token=gesture_token,
+    ))
+    return None
+
+
+def _gesture_window(window_key):
+    for manager in bpy.data.window_managers:
+        for window in manager.windows:
+            if window.as_pointer() == window_key:
+                return window
+    return None
+
+
+def _invoke_gesture_observer(action):
+    success = False
+    receipt = {"observation": None, "error": None}
+    _gesture_invocations[action.token] = receipt
+    try:
+        window = _gesture_window(action.window_id)
+        if window is not None:
+            with bpy.context.temp_override(window=window):
+                result = bpy.ops.perceptual_grade.gesture_router(
+                    "INVOKE_DEFAULT", observer_token=action.token,
+                )
+            success = result == {"RUNNING_MODAL"} and receipt["observation"] is not None
+    except Exception as error:
+        receipt["error"] = error
+    observation = receipt["observation"]
+    latest, x, y = observation if observation is not None else ("none", 0, 0)
+    try:
+        _dispatch_gesture(gesture_policy.Event(
+            "observer_install_result", window_id=action.window_id, token=action.token,
+            gesture_token=action.gesture_token, success=success, latest=latest, x=x, y=y,
+        ))
+    finally:
+        _gesture_invocations.pop(action.token, None)
+
+
+def _consume_gesture_effects(effects):
+    refresh = []
+
+    def flush_refresh():
+        if refresh:
+            _refresh_nodes(tuple(refresh))
+            refresh.clear()
+
+    for action in effects.actions:
+        if action.kind in ("refresh", "node_begin"):
+            node = _gesture_node(action.node_id)
+            if node is not None:
+                if action.kind == "node_begin":
+                    failures = _dispatch(node, node_policy.Event("gesture_begin"))
+                    if failures:
+                        print("Perceptual Grade gesture transition failed:", failures[-1])
+                refresh.append(node)
+            continue
+        flush_refresh()
+        if action.kind == "invoke_observer":
+            _invoke_gesture_observer(action)
+        elif action.kind == "schedule_handoff":
+            bpy.app.timers.register(partial(
+                _handoff_gesture_router, action.window_id, action.token,
+                action.gesture_token), first_interval=0.0)
+        elif action.kind == "schedule_finish":
+            bpy.app.timers.register(partial(
+                _observe_gesture_finish, action.window_id, action.gesture_token),
+                first_interval=0.0)
+        elif action.kind == "node_release":
+            node = _gesture_node(action.node_id)
+            if node is not None:
+                failures = _dispatch(node, node_policy.Event("gesture_release"))
+                if failures:
+                    print("Perceptual Grade gesture transition failed:", failures[-1])
+        elif action.kind == "forget_node":
+            _gesture_nodes.pop(action.node_id, None)
+        elif action.kind == "clear_registry":
+            _gesture_nodes.clear()
+            _gesture_invocations.clear()
+        elif action.kind == "report_install_failure":
+            print("Perceptual Grade could not install gesture observer for window",
+                  action.window_id, ":", _gesture_invocations.get(action.token, {}).get("error")
+                  or "Blender did not retain the modal observer")
+    flush_refresh()
+    if effects.undo_window is not None:
+        _push_gesture_undo(effects.undo_window)
+
+
+def _dispatch_gesture(event):
+    global _gesture_state
+    _gesture_state, effects = gesture_policy.step(_gesture_state, event)
+    _consume_gesture_effects(effects)
+
+
 class PG_OT_gesture_router(bpy.types.Operator):
     bl_idname = "perceptual_grade.gesture_router"
     bl_label = "Perceptual Grade Gesture Router"
-    bl_options = {"INTERNAL"}
+    bl_options = {"INTERNAL", "MODAL_PRIORITY"}
 
-    def invoke(self, context, _event):
+    observer_token: IntProperty(options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, event):
         window = context.window
         if window is None:
             return {"CANCELLED"}
         self.window_key = window.as_pointer()
-        if self.window_key in _gesture_routers:
+        self.token = self.observer_token
+        if (gesture_policy.observer_status(_gesture_state, self.window_key, self.token) != "pending"
+                or self.token not in _gesture_invocations):
             return {"CANCELLED"}
-        self.token = object()
-        _gesture_routers[self.window_key] = self.token
-        self.gesture_token = None
-        self.dragging = False
-        self.press_position = None
         context.window_manager.modal_handler_add(self)
+        # INVOKE_DEFAULT observes the window's latest event. Installation is
+        # acknowledged by the consumer before this observation affects policy.
+        receipt = _gesture_invocations.get(self.token)
+        if (receipt is None or gesture_policy.observer_status(
+                _gesture_state, self.window_key, self.token) != "pending"):
+            return {"CANCELLED"}
+        latest = "finish" if _gesture_finished(event) else "move"
+        receipt["observation"] = latest, int(event.mouse_x), int(event.mouse_y)
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
-        if _gesture_routers.get(self.window_key) is not self.token:
+        admission = gesture_policy.observer_status(_gesture_state, self.window_key, self.token)
+        if admission == "pending":
+            return {"PASS_THROUGH"}
+        if admission == "stale":
             return {"CANCELLED", "PASS_THROUGH"}
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
-            space = getattr(context, "space_data", None)
-            tree = getattr(space, "edit_tree", None)
-            active = getattr(getattr(tree, "nodes", None), "active", None)
-            if context.area is not None and context.area.type == "NODE_EDITOR" \
-                    and getattr(getattr(context, "region", None), "type", None) == "UI" \
-                    and _is_output_node(active):
-                _arm_gesture(self.window_key, active, (event.mouse_x, event.mouse_y))
-                self.gesture_token = _armed_gestures[self.window_key][0]
-                self.press_position = (event.mouse_x, event.mouse_y)
-                self.dragging = False
-        elif event.type == "MOUSEMOVE" and self.gesture_token is not None \
-                and not self.dragging:
-            if (abs(event.mouse_x - self.press_position[0]) >= 3
-                    or abs(event.mouse_y - self.press_position[1]) >= 3):
-                _activate_gesture(self.window_key, self.gesture_token)
-                self.dragging = True
-        elif event.type == "LEFTMOUSE" and event.value == "RELEASE":
-            token = self.gesture_token
-            if token is not None:
-                self.gesture_token = None
-                callback = _end_gesture if self.dragging else _release_armed_gesture
-                self.dragging = False
-                bpy.app.timers.register(
-                    partial(callback, self.window_key, token), first_interval=0.0
-                )
-        elif event.type == "WINDOW_DEACTIVATE" and self.gesture_token is not None:
-            token = self.gesture_token
-            self.gesture_token = None
-            callback = _end_gesture if self.dragging else _release_armed_gesture
-            self.dragging = False
-            bpy.app.timers.register(
-                partial(callback, self.window_key, token), first_interval=0.0
-            )
+            active = _gesture_target_at(context.window, event.mouse_x, event.mouse_y)
+            if active is not None:
+                _dispatch_gesture(gesture_policy.Event(
+                    "press", window_id=self.window_key, token=self.token,
+                    x=int(event.mouse_x), y=int(event.mouse_y), undo_owner="native",
+                    targets=tuple(gesture_policy.Target(_gesture_identity(target),
+                                                       _settings_signature_for(target))
+                                  for target in _live_gesture_targets(
+                                      _gesture_related_nodes(active))),
+                    observed=_gesture_observations(self.window_key),
+                ))
+        elif event.type == "MOUSEMOVE":
+            _dispatch_gesture(gesture_policy.Event(
+                "move", window_id=self.window_key, token=self.token,
+                gesture_token=_gesture_token(self.window_key),
+                x=int(event.mouse_x), y=int(event.mouse_y),
+            ))
+        elif _gesture_finished(event):
+            _dispatch_gesture(gesture_policy.Event(
+                "finish_requested", window_id=self.window_key, token=self.token,
+                gesture_token=_gesture_token(self.window_key),
+            ))
         return {"PASS_THROUGH"}
+
+    def cancel(self, _context):
+        if hasattr(self, "window_key") and hasattr(self, "token"):
+            _dispatch_gesture(gesture_policy.Event(
+                "observer_lost", window_id=self.window_key, token=self.token))
 
 
 def _gesture_router_tick():
@@ -1504,25 +1801,26 @@ def _gesture_router_tick():
         managers = tuple(bpy.data.window_managers)
     except (AttributeError, ReferenceError, RuntimeError):
         managers = (bpy.context.window_manager,)
+    live_windows = set()
     for manager in managers:
         for window in tuple(getattr(manager, "windows", ())):
             key = window.as_pointer()
-            if key in _gesture_routers:
-                continue
+            live_windows.add(key)
             try:
-                with bpy.context.temp_override(window=window):
-                    bpy.ops.perceptual_grade.gesture_router("INVOKE_DEFAULT")
+                _dispatch_gesture(gesture_policy.Event("window_seen", window_id=key))
             except (AttributeError, ReferenceError, RuntimeError):
                 continue
+    for observer in _gesture_state.observers:
+        if observer.window_id not in live_windows:
+            _dispatch_gesture(gesture_policy.Event(
+                "window_gone", window_id=observer.window_id,
+                observed=_gesture_observations(observer.window_id),
+            ))
     return 0.5
 
 
 def _clear_gestures():
-    _active_gestures.clear()
-    _armed_gestures.clear()
-    _gesture_settings.clear()
-    _gesture_targets.clear()
-    _gesture_routers.clear()
+    _dispatch_gesture(gesture_policy.Event("reset"))
 
 
 def _stack_active_grade(node):
@@ -1633,6 +1931,7 @@ def _startup_reconcile_tick():
 @persistent
 def _load_post(_filepath):
     try:
+        _clear_gestures()
         _reset_node_stores()
         _ensure_all_kernels()
     except Exception as error:
@@ -1744,10 +2043,8 @@ def _save_pre(_filepath):
     # Pixels are derived from authoritative settings. Save committed buffers;
     # file-load reconciliation repairs any saved preview against those settings.
     for image in bpy.data.images:
-        if image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA and image.is_dirty:
-            image.pack()
-            if image.packed_file is None or image.is_dirty:
-                raise RuntimeError("Grade parameter image could not be packed")
+        pack_image_for_save(image, generated=image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA,
+                            pack=_pack_grade_parameters)
 
 
 def _drain_preparations():
@@ -2052,7 +2349,7 @@ class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
         _draw_stack_node(self, context, layout)
 
     def free(self):
-        _forget_node(self)
+        _dispose_node(self)
 
 
 class PGCompositorGradeStack(bpy.types.CompositorNodeCustomGroup):
@@ -2072,7 +2369,7 @@ class PGCompositorGradeStack(bpy.types.CompositorNodeCustomGroup):
         _draw_stack_node(self, context, layout)
 
     def free(self):
-        _forget_node(self)
+        _dispose_node(self)
 
 
 class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
@@ -2099,18 +2396,7 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
         self.draw_buttons(context, layout)
 
     def free(self):
-        pointer = self.as_pointer()
-        _forget_node(self)
-        _syncing.add(pointer)
-        try:
-            self.pg_grade = None
-        finally:
-            _syncing.discard(pointer)
-        kernel = self.node_tree
-        if (kernel is not None and kernel.get("_perceptual_grade_grade_kernel")
-                and kernel.users <= 1):
-            bpy.data.node_groups.remove(kernel, do_unlink=True)
-        _retire_images()
+        _dispose_node(self)
 
 
 class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
@@ -2137,18 +2423,7 @@ class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
         self.draw_buttons(context, layout)
 
     def free(self):
-        pointer = self.as_pointer()
-        _forget_node(self)
-        _syncing.add(pointer)
-        try:
-            self.pg_grade = None
-        finally:
-            _syncing.discard(pointer)
-        kernel = self.node_tree
-        if (kernel is not None and kernel.get("_perceptual_grade_grade_kernel")
-                and kernel.users <= 1):
-            bpy.data.node_groups.remove(kernel, do_unlink=True)
-        _retire_images()
+        _dispose_node(self)
 
 
 class PG_OT_new_grade(bpy.types.Operator):

@@ -20,8 +20,9 @@ load("//libraries/perceptual-grade-core/requirements/coordinators:inventory.bzl"
     required_properties = inventory["properties"],
     required_witnesses = inventory["witnesses"],
     requirements = "//libraries/perceptual-grade-core:" + machine + "_coordinator_requirements",
-    runtime_source = "perceptual_grade_core/graph/coordinators/" + machine + ".py",
-    source = "//libraries/perceptual-grade-core:" + machine + "_coordinator_source",
+    runtime_source = "perceptual_grade_core/graph/coordinators/" + machine + ("_policy.py" if machine == "bake_queue" else ".py"),
+    source = "//libraries/perceptual-grade-core:" + ("bake_queue_policy_source" if machine == "bake_queue" else machine + "_coordinator_source"),
+    timeout_ms = 5000 if machine == "bake_queue" else 10000,
     visibility = ["PUBLIC"],
 ) for machine, inventory in COORDINATOR_REQUIREMENTS.items()]
 

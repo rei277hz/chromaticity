@@ -13,6 +13,12 @@
 - Preserve asynchronous safety with the smallest useful correlation data. Accept a completion only when its signature or generation still matches current demand; use a generation when equal signatures cannot make results interchangeable or request ordering is not guaranteed.
 - Treat a machine's returned effects as the sole authorization for the external side effects they represent. Route every such mutation through an effect consumer; use composition so one decision applies all required operations, without class inheritance or direct side effects in callbacks and error handlers.
 
+# Validation Scope
+
+- Do not run tests, proofs, lint, formatting checks, or other validation for `libraries/perceptual-grade-core` or `products/perceptual-grade-blender`.
+- CI checks only `products/perceptual-grade-next-blender`, including its policy proofs. Shared build and tool dependencies are permitted, but unrelated validation targets are not.
+- Keep CI target selection and formatting scoped to that product; do not use repository-wide validation selectors.
+
 # Contributing with Sapling
 
 - Keep the working copy on the local `main` bookmark. To sync it, first ensure the working copy is clean, then run `sl pull -B main`, `sl bookmark -f -r remote/main main`, and `sl goto main`. `sl pull` fetches commits; it does not switch the working copy by itself.

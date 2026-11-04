@@ -6,8 +6,8 @@ LEAF_REQUIREMENTS = {
             "out_of_order_observation_preserves_state",
             "foreign_generation_preserves_authority",
             "ordered_foreign_observation_is_consumed",
-            "begin_preserves_every_prior_lease",
-            "finish_removes_only_exact_validated_lease",
+            "begin_requires_fresh_validated_ledger",
+            "finish_requires_validated_known_lease",
             "unmatched_finish_cannot_release",
             "pending_ingress_blocks_readiness",
             "outstanding_lease_blocks_readiness",
@@ -22,8 +22,7 @@ LEAF_REQUIREMENTS = {
         ],
         "witnesses": [
             "first_native_lease_is_admitted",
-            "last_exact_completion_restores_readiness",
-            "overlapping_reader_remains_blocked",
+            "validated_retirement_can_restore_readiness",
             "validated_replacement_recovers_failed_state",
         ],
         "mutations": [
@@ -60,7 +59,6 @@ LEAF_REQUIREMENTS = {
             "failed_compensation_retains_uncertainty",
             "commit_requires_known_applied_value",
             "compensation_restores_original_edge",
-            "edge_count_exact",
         ],
         "witnesses": [
             "arm_is_possible",

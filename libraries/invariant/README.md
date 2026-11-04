@@ -10,17 +10,24 @@ actor system, or generated runtime contract layer.
 Each proof binds a Python source file to a versioned JSON `.inv` file. The source
 defines frozen state, event, and effect records, initializer functions, and a
 pure `step(state, event)` reducer. Requirements declare invariants, function
-contracts, properties, witnesses, mutation controls, and loop annotations. The
+contracts, properties, witnesses, and mutation controls. The
 verifier reads the Python AST, generates Z3 obligations, and reports whether each
 obligation has its expected result.
 
+A policy may use named transition properties without declaring state invariants.
+This avoids adding redundant state just to satisfy the proof format.
+
 `Event.kind` should use `Literal[...]` so preservation is checked separately for
 each event kind. Absence uses `Optional[T]` and `None`. The source subset supports
-immutable scalar values and records, fixed and variadic tuples, local
+immutable scalar values and records, fixed and variadic tuples (including nested
+records), scalar `Optional[str]`, `Optional[int]`, and `Optional[bool]`, local
 assignments, conditionals, constructors, `dataclasses.replace`, and acyclic pure
-helpers. Annotated loops over immutable tuples or `range(n)` are checked with
-inductive invariants and decreasing measures. Unsupported syntax and imports are
-rejected rather than approximated.
+helpers. Collection scans, filtering, slicing, indexing registries, and list
+updates belong in ordinary runtime code and are covered by tests. Policies
+receive the resulting observations and decide whether an operation is allowed.
+Collection bookkeeping is a trusted premise, outside the formal proof boundary.
+Bounded quantifier and aggregation operators and loop annotations are not
+supported. Unsupported syntax and imports are rejected rather than approximated.
 
 Properties express safety claims over symbolic inputs. Witnesses demonstrate
 that a useful behavior is reachable. Mutation controls alter a selected source
@@ -53,6 +60,10 @@ binding the source, requirements, verifier, solver, and report identities. It
 contains no generated runtime validator. Buck's `invariant_proof` target checks
 the source and requirements during the build; consumers that execute the policy
 remain responsible for runtime integration and host-boundary behavior.
+
+Conjunctive claims can be checked as separate solver cases under the same
+premises. Every case must be proved; a timeout remains a failed proof. Reports
+record the case results and retain the complete original solver obligation.
 
 Expressions in requirements are parsed as restricted Python ASTs; neither source
 verification nor requirement evaluation uses `eval`. The proof covers the

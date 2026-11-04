@@ -47,11 +47,19 @@ def scope_cycle(wanted, compatible, exact, dragging, retired=False, preview=Fals
 
 
 def scope_next(eligible, start):
-    return _channel.scope_next(tuple(eligible), start)
+    """Select a collection member; scalar eligibility is decided by the policy."""
+    values = tuple(eligible)
+    if not values:
+        return -1
+    for offset in range(len(values)):
+        index = (start + offset) % len(values)
+        if values[index]:
+            return index
+    return -1
 
 
 def final_scope_resolution(resolutions):
-    return _channel.final_scope_resolution(tuple(resolutions))
+    return all(resolution == 65 for resolution in tuple(resolutions))
 
 
 def scope_display_current(state, statistics_required=False):

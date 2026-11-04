@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Eight accepted frozen manual bake requests, two physical worker leases and strict per-destination click order. Frozen snapshots, physical retirement and terminal publication/rollback remain validated adapter receipts.",
+  "description": "Scalar decisions for one selected manual bake reservation. The trusted queue adapter computes occupancy and destination-order observations; collection scans, replacement, uniqueness, and capacity bookkeeping are tested in ordinary Python.",
   "state": "State",
   "event": "Event",
   "initializers": [
@@ -9,33 +9,27 @@
   "step": "step",
   "invariants": {
     "identity": "state.generation >= 1 and state.serial >= 0",
-    "entries": "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-    "empty": "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-    "leases": "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-    "owners": "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-    "lanes": "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-    "ordered": "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
+    "entry_identity": "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+    "empty_entry": "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+    "physical_lease": "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
   },
   "properties": [
     {
-      "name": "admission_reserves_one_free_target",
+      "name": "admission_requires_free_target",
       "variables": {
         "state": "State",
         "event": "Event"
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "after[1].action != 'freeze' or (event.kind == 'admit' and not state.closing and 0 <= event.slot < 8 and state.entries[event.slot].request == 0 and not target_busy(state,event.target) and event.request > state.serial)"
+      "assert": "after[1].action != 'freeze' or (event.kind == 'admit' and not state.closing and 0 <= event.slot < 8 and state.entry.request == 0 and not event.target_busy and event.target > 0 and event.destination > 0 and event.request > state.serial)"
     },
     {
       "name": "dispatch_requires_frozen_head_and_free_lane",
@@ -45,37 +39,31 @@
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "after[1].action != 'dispatch' or (event.kind == 'start' and event.validated and state.entries[event.slot].phase == 'queued' and event.lane in (1,2) and not lane_busy(state,event.lane) and forall_range(i,0,8,state.entries[i].request == 0 or state.entries[i].request >= event.request or state.entries[i].destination != event.destination) and not state.closing)"
+      "assert": "after[1].action != 'dispatch' or (event.kind == 'start' and event.validated and state.entry.phase == 'queued' and event.lane in (1,2) and not event.lane_busy and not event.destination_waits and not state.closing)"
     },
     {
-      "name": "destination_publication_follows_click_order",
+      "name": "publication_requires_destination_turn",
       "variables": {
         "state": "State",
         "event": "Event"
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "after[1].action != 'publish' or (event.kind == 'publish' and event.validated and state.entries[event.slot].phase == 'ready' and forall_range(i,0,8,state.entries[i].request == 0 or state.entries[i].request >= event.request or state.entries[i].destination != event.destination))"
+      "assert": "after[1].action != 'publish' or (event.kind == 'publish' and event.validated and state.entry.phase == 'ready' and not event.destination_waits)"
     },
     {
       "name": "physical_release_needs_validated_retirement",
@@ -85,17 +73,14 @@
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "forall_range(i,0,8, not state.entries[i].physical or after[0].entries[i].physical or (event.kind in ('retired','complete') and event.validated and event.slot == i))"
+      "assert": "not state.entry.physical or after[0].entry.physical or (event.kind in ('retired','complete') and event.validated and event.generation == state.generation and event.request == state.entry.request and event.target == state.entry.target and event.destination == state.entry.destination)"
     },
     {
       "name": "reservation_release_needs_terminal_receipt",
@@ -105,17 +90,14 @@
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "after[1].action != 'release' or (event.kind == 'finish' and event.validated and state.entries[event.slot].phase in ('publishing','cancelled') and not state.entries[event.slot].physical)"
+      "assert": "after[1].action != 'release' or (event.kind == 'finish' and event.validated and state.entry.phase in ('publishing','cancelled') and not state.entry.physical)"
     },
     {
       "name": "cancel_preserves_physical_lease",
@@ -125,18 +107,14 @@
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))",
-        "event.kind in ('cancel','close')"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "forall_range(i,0,8, after[0].entries[i].physical == state.entries[i].physical and after[0].entries[i].lane == state.entries[i].lane)"
+      "assert": "event.kind not in ('cancel','close') or (after[0].entry.physical == state.entry.physical and after[0].entry.lane == state.entry.lane)"
     },
     {
       "name": "foreign_generation_has_no_effect",
@@ -146,18 +124,14 @@
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))",
-        "event.generation != state.generation"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "after[0] == state and not after[1].accepted"
+      "assert": "event.generation == state.generation or after == (state, Effects())"
     },
     {
       "name": "closing_cannot_admit_dispatch_or_publish",
@@ -167,39 +141,14 @@
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))",
-        "state.closing"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "after[1].action not in ('freeze','queue','dispatch','publish')"
-    },
-    {
-      "name": "unrelated_entries_remain_unchanged",
-      "variables": {
-        "state": "State",
-        "event": "Event"
-      },
-      "assume": [
-        "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))",
-        "event.kind != 'close'"
-      ],
-      "lets": {
-        "after": "step(state,event)"
-      },
-      "assert": "forall_range(i,0,8, i == event.slot or after[0].entries[i] == state.entries[i])"
+      "assert": "not state.closing or after[1].action not in ('freeze','queue','dispatch','publish')"
     },
     {
       "name": "frozen_request_identity_survives_queueing",
@@ -209,96 +158,54 @@
       },
       "assume": [
         "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
+        "0 <= state.entry.request and state.entry.request <= state.serial and state.entry.target >= 0 and state.entry.destination >= 0 and 0 <= state.entry.lane <= 2",
+        "(state.entry.request == 0) == (state.entry.phase == 'empty') and (state.entry.target == 0) == (state.entry.request == 0) and (state.entry.destination == 0) == (state.entry.request == 0)",
+        "state.entry.physical == (state.entry.lane > 0) and (not state.entry.physical or state.entry.phase in ('running', 'cancelled'))"
       ],
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(state, event)"
       },
-      "assert": "forall_range(i,0,8,state.entries[i].request == 0 or after[0].entries[i].request == 0 or (after[0].entries[i].request == state.entries[i].request and after[0].entries[i].target == state.entries[i].target and after[0].entries[i].destination == state.entries[i].destination))"
+      "assert": "state.entry.request == 0 or after[0].entry.request == 0 or (after[0].entry.request == state.entry.request and after[0].entry.target == state.entry.target and after[0].entry.destination == state.entry.destination)"
     }
   ],
   "witnesses": [
     {
-      "name": "two_destinations_can_run",
-      "variables": {
-        "state": "State",
-        "event": "Event"
-      },
-      "assume": [
-        "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
-      ],
+      "name": "available_lane_can_dispatch",
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(State(serial=1, entry=Entry(1,2,3,'queued')), Event('start', request=1, target=2, destination=3, lane=1, validated=True))"
       },
-      "assert": "after[1].action == 'dispatch' and lane_busy(state,1) and lane_busy(after[0],2)"
+      "assert": "after[1].action == 'dispatch' and after[0].entry.physical and after[0].entry.lane == 1"
     },
     {
-      "name": "shared_destination_can_wait",
-      "variables": {
-        "state": "State",
-        "event": "Event"
-      },
-      "assume": [
-        "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))",
-        "0 <= event.slot < 8"
-      ],
+      "name": "observed_predecessor_blocks_dispatch",
       "lets": {
-        "after": "step(state,event)"
+        "before": "State(serial=1, entry=Entry(1,2,3,'queued'))",
+        "after": "step(before, Event('start', request=1, target=2, destination=3, lane=1, validated=True, destination_waits=True))"
       },
-      "assert": "event.kind == 'start' and state.entries[event.slot].phase == 'queued' and destination_waits(state,event.request,event.destination) and not after[1].accepted"
+      "assert": "after == (before, Effects())"
     },
     {
-      "name": "retired_worker_frees_lane_before_publication",
-      "variables": {
-        "state": "State",
-        "event": "Event"
-      },
-      "assume": [
-        "state.generation >= 1 and state.serial >= 0",
-        "forall_range(i,0,8, state.entries[i].request >= 0 and state.entries[i].request <= state.serial and state.entries[i].target >= 0 and state.entries[i].destination >= 0 and 0 <= state.entries[i].lane <= 2)",
-        "forall_range(i,0,8, (state.entries[i].request == 0) == (state.entries[i].phase == 'empty') and (state.entries[i].target == 0) == (state.entries[i].request == 0) and (state.entries[i].destination == 0) == (state.entries[i].request == 0))",
-        "forall_range(i,0,8, state.entries[i].physical == (state.entries[i].lane > 0) and (not state.entries[i].physical or state.entries[i].phase in ('running','cancelled')))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].request == 0 or state.entries[j].request == 0 or (state.entries[i].request != state.entries[j].request and state.entries[i].target != state.entries[j].target)))",
-        "forall_range(i,0,8, forall_range(j,0,8, i == j or state.entries[i].lane == 0 or state.entries[j].lane == 0 or state.entries[i].lane != state.entries[j].lane))",
-        "forall_range(i,0,8, state.entries[i].phase not in ('running','ready','publishing') or not destination_waits(state,state.entries[i].request,state.entries[i].destination))"
-      ],
+      "name": "selected_worker_retires_before_publication",
       "lets": {
-        "after": "step(state,event)"
+        "after": "step(State(serial=1, entry=Entry(1,2,3,'running',1,True)), Event('complete', request=1, target=2, destination=3, validated=True))"
       },
-      "assert": "after[1].action == 'stage' and not lane_busy(after[0],after[1].lane) and after[0].entries[event.slot].request == event.request"
+      "assert": "after[1].action == 'stage' and after[0].entry.phase == 'ready' and not after[0].entry.physical and after[0].entry.request == 1"
     }
   ],
   "mutations": [
     {
       "name": "duplicate_target_admitted",
       "function": "step",
-      "target": "not target_busy(state, event.target)",
+      "target": "not event.target_busy",
       "replacement": "True",
       "detects": [
-        "property.admission_reserves_one_free_target"
+        "property.admission_requires_free_target"
       ]
     },
     {
       "name": "busy_worker_reused",
       "function": "step",
-      "target": "not lane_busy(state, event.lane)",
+      "target": "not event.lane_busy",
       "replacement": "True",
       "detects": [
         "property.dispatch_requires_frozen_head_and_free_lane"
@@ -334,8 +241,8 @@
     {
       "name": "shared_destination_starts_out_of_order",
       "function": "step",
-      "target": "event.kind == 'start' and entry.phase == 'queued' and event.validated and event.lane in (1, 2) and not lane_busy(state, event.lane) and not destination_waits(state, entry.request, entry.destination)",
-      "replacement": "event.kind == 'start' and entry.phase == 'queued' and event.validated and event.lane in (1, 2) and not lane_busy(state, event.lane)",
+      "target": "event.kind == 'start' and entry.phase == 'queued' and event.validated and event.lane in (1, 2) and not event.lane_busy and not event.destination_waits",
+      "replacement": "event.kind == 'start' and entry.phase == 'queued' and event.validated and event.lane in (1, 2) and not event.lane_busy",
       "detects": [
         "property.dispatch_requires_frozen_head_and_free_lane"
       ]

@@ -19,7 +19,7 @@ MODAL_READERS = frozenset({'OBJECT_OT_lightprobe_cache_bake', 'OBJECT_OT_bake_im
 from types import SimpleNamespace
 from ..integration.components import Component
 from ...blender_runtime import PendingTransitionError
-from ...blender_runtime.policies import native_evaluation as policy
+from ...blender_runtime import native_evaluation as policy
 
 def create(_application):
     bpy = _native_bpy
@@ -184,10 +184,10 @@ def create(_application):
                 if observed is None:
                     break
                 kind, event_generation, event_revision, lease = observed
-                index = snapshot.tokens.index(lease) if lease in snapshot.tokens else -1
+                index = snapshot.tokens.index(lease) if lease in snapshot.tokens else None
                 proposed = (snapshot.tokens + (lease,) if kind == 'begin' else
                             snapshot.tokens[:index] + snapshot.tokens[index + 1:]
-                            if kind == 'finish' and index >= 0 else
+                            if kind == 'finish' and index is not None else
                             () if kind == 'replace' else snapshot.tokens)
                 event = policy.Event(kind, generation=event_generation, revision=event_revision,
                                      lease=lease, index=index, proposed_tokens=proposed,

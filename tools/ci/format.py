@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Check maintained Buck/Starlark and TOML formatting; --fix applies that scope only."""
+"""Check next-blender Buck/Starlark, TOML and .inv formatting; --fix uses the same scope."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -12,10 +13,7 @@ from install_tools import check_version
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GENERATED = {
-    "third_party/rust/BUCK",
-    "third_party/web/dependencies.bzl",
-}
+PRODUCT = Path("products/perceptual-grade-next-blender")
 EXCLUDED_DIRECTORIES = {
     ".git", ".cargo", ".state", ".venv", "__pycache__", "buck-out",
     "dist", "node_modules", "prelude", "target", "vendor",
@@ -24,10 +22,10 @@ EXCLUDED_DIRECTORIES = {
 
 def inventory():
     files = repository_files()
-    groups = {"build": [], "starlark": [], "toml": []}
+    groups = {"build": [], "starlark": [], "toml": [], "json": []}
     for name in sorted(files):
         path = Path(name)
-        if (name in GENERATED
+        if (not path.is_relative_to(PRODUCT)
                 or EXCLUDED_DIRECTORIES.intersection(path.parts)
                 or not (ROOT / path).is_file() or (ROOT / path).is_symlink()):
             continue
@@ -37,9 +35,10 @@ def inventory():
             groups["starlark"].append(name)
         elif path.suffix == ".toml":
             groups["toml"].append(name)
-    for kind, names in groups.items():
-        if not names:
-            raise ValueError(f"No maintained {kind} files found; refusing an empty formatting check")
+        elif path.suffix == ".inv":
+            groups["json"].append(name)
+    if not any(groups.values()):
+        raise ValueError(f"No formatting files found in {PRODUCT}; refusing an empty formatting check")
     return groups
 
 
@@ -104,32 +103,69 @@ def run(command):
     return subprocess.run(command, cwd=ROOT, env=env).returncode
 
 
+def canonical_json(contents):
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate key {key!r}")
+            result[key] = value
+        return result
+
+    def reject_constant(value):
+        raise ValueError(f"nonfinite number {value}")
+
+    value = json.loads(contents, object_pairs_hook=unique_object, parse_constant=reject_constant)
+    return json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+
+
+def format_json(paths, *, fix=False):
+    failed = False
+    for name in paths:
+        path = ROOT / name
+        try:
+            contents = path.read_bytes()
+            formatted = canonical_json(contents.decode("utf-8")).encode("utf-8")
+            if formatted != contents:
+                if fix:
+                    path.write_bytes(formatted)
+                else:
+                    print(f"{name}: JSON formatting differs; run tools/ci/format.py --fix", file=sys.stderr)
+                    failed = True
+        except (OSError, ValueError, UnicodeError) as error:
+            print(f"{name}: cannot format JSON: {error}", file=sys.stderr)
+            failed = True
+    return int(failed)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--fix", action="store_true", help="format the maintained Buck/Starlark and TOML files")
-    mode.add_argument("--starlark-lint", action="store_true", help="run Buck's linter on maintained .bzl/.bxl files")
+    mode.add_argument("--fix", action="store_true", help="format next-blender Buck/Starlark, TOML and .inv files")
+    mode.add_argument("--starlark-lint", action="store_true", help="run Buck's linter on next-blender .bzl/.bxl files")
     args = parser.parse_args()
     groups = inventory()
     if args.starlark_lint:
         paths = [name for name in groups["starlark"] if Path(name).suffix in {".bzl", ".bxl"}]
         if not paths:
-            raise ValueError("No maintained .bzl/.bxl files found")
+            print(f"No .bzl/.bxl files to lint in {PRODUCT}.")
+            return 0
         return run([tool("buck2"), "starlark", "lint", *paths])
 
-    buildifier = tool("buildifier")
-    taplo = tool("taplo")
     mode = "fix" if args.fix else "check"
     results = []
     for kind, file_type in [("build", "build"), ("starlark", "bzl")]:
-        results.append(run([
-            buildifier, f"-mode={mode}", "-lint=off", f"-type={file_type}", *groups[kind],
-        ]))
-    results.append(run([taplo, "fmt", *([] if args.fix else ["--check"]), *groups["toml"]]))
+        if groups[kind]:
+            results.append(run([
+                tool("buildifier"), f"-mode={mode}", "-lint=off", f"-type={file_type}", *groups[kind],
+            ]))
+    if groups["toml"]:
+        results.append(run([tool("taplo"), "fmt", *([] if args.fix else ["--check"]), *groups["toml"]]))
+    results.append(format_json(groups["json"], fix=args.fix))
     print(
-        f"Formatting {'fix' if args.fix else 'check'}: "
+        f"Formatting {'fix' if args.fix else 'check'} for {PRODUCT}: "
         f"{len(groups['build'])} Buck files, {len(groups['starlark'])} Starlark/package files, "
-        f"{len(groups['toml'])} TOML files."
+        f"{len(groups['toml'])} TOML files, {len(groups['json'])} .inv files as JSON."
     )
     return 1 if any(results) else 0
 

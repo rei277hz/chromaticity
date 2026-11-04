@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Exact ordered native-evaluation leases. Adapter callback matching, ingress sequencing, native job observations and validated replacement remain explicit native premises.",
+  "description": "Scalar authority for native leases: generation and ingress ordering, admission, validated retirement and recovery. Exact token membership and proposed ledger edits are trusted adapter observations covered by ordinary runtime tests.",
   "state": "State",
   "event": "Event",
   "initializers": [
@@ -8,25 +8,12 @@
   ],
   "step": "step",
   "invariants": {
-    "state_domain": "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))"
+    "state_domain": "state.generation >= 1 and state.revision >= 0 and state.serial >= 0"
   },
   "contracts": {
-    "new": {
-      "requires": ["len(tokens) == 0"]
-    },
-    "appended": {
-      "ensures": [
-        "result == (len(after) == len(before) + 1 and after[len(before)] == lease and forall_range(i, 0, len(before), after[i] == before[i]))"
-      ]
-    },
-    "removed": {
-      "ensures": [
-        "result == (0 <= index < len(before) and before[index] == lease and len(after) == len(before) - 1 and forall_range(i, 0, len(after), after[i] == before[i + (1 if i >= index else 0)]))"
-      ]
-    },
     "available": {
       "ensures": [
-        "result == (generation == state.generation and revision == state.revision and len(state.tokens) == 0 and not state.failed and not state.closed and not native_busy)"
+        "result == (generation == state.generation and revision == state.revision and not readers and not state.failed and not state.closed and not native_busy)"
       ]
     }
   },
@@ -38,7 +25,7 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "not (event.revision == state.revision + 1)"
       ],
       "lets": {
@@ -53,13 +40,13 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "event.generation != state.generation"
       ],
       "lets": {
         "after": "step(state, event)"
       },
-      "assert": "after[0].generation == state.generation and after[0].serial == state.serial and after[0].tokens == state.tokens and after[0].failed == state.failed and after[0].closed == state.closed and not after[1].accepted"
+      "assert": "after[0].generation == state.generation and after[0].serial == state.serial and after[0].failed == state.failed and after[0].closed == state.closed and not after[1].accepted"
     },
     {
       "name": "ordered_foreign_observation_is_consumed",
@@ -68,7 +55,7 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "event.revision == state.revision + 1",
         "event.generation != state.generation"
       ],
@@ -78,34 +65,34 @@
       "assert": "after[0].revision == event.revision and after[1].consumed and not after[1].accepted"
     },
     {
-      "name": "begin_preserves_every_prior_lease",
+      "name": "begin_requires_fresh_validated_ledger",
       "variables": {
         "state": "State",
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "event.kind == 'begin'"
       ],
       "lets": {
         "after": "step(state, event)"
       },
-      "assert": "not after[1].accepted or (event.lease > state.serial and len(after[0].tokens) == len(state.tokens) + 1 and after[0].tokens[len(state.tokens)] == event.lease and forall_range(i, 0, len(state.tokens), after[0].tokens[i] == state.tokens[i]))"
+      "assert": "not after[1].accepted or (event.lease is not None and event.lease > state.serial and event.ledger_valid and after[0].serial == event.lease)"
     },
     {
-      "name": "finish_removes_only_exact_validated_lease",
+      "name": "finish_requires_validated_known_lease",
       "variables": {
         "state": "State",
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "event.kind == 'finish'"
       ],
       "lets": {
         "after": "step(state, event)"
       },
-      "assert": "not after[1].accepted or (event.validated and 0 <= event.index < len(state.tokens) and state.tokens[event.index] == event.lease and len(after[0].tokens) == len(state.tokens) - 1 and forall_range(i, 0, len(after[0].tokens), after[0].tokens[i] == state.tokens[i + (1 if i >= event.index else 0)]))"
+      "assert": "not after[1].accepted or (event.known and event.ledger_valid and event.validated and after[0].serial == state.serial)"
     },
     {
       "name": "unmatched_finish_cannot_release",
@@ -114,13 +101,13 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
-        "event.kind == 'finish' and event.lease not in state.tokens"
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
+        "event.kind == 'finish' and not event.known"
       ],
       "lets": {
         "after": "step(state, event)"
       },
-      "assert": "after[0].tokens == state.tokens and not after[1].accepted"
+      "assert": "after[0].serial == state.serial and not after[1].accepted"
     },
     {
       "name": "pending_ingress_blocks_readiness",
@@ -128,14 +115,15 @@
         "state": "State",
         "generation": "int",
         "revision": "int",
-        "native_busy": "bool"
+        "native_busy": "bool",
+        "readers": "bool"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "revision != state.revision"
       ],
       "lets": {},
-      "assert": "not available(state, generation, revision, native_busy)"
+      "assert": "not available(state, generation, revision, readers, native_busy)"
     },
     {
       "name": "outstanding_lease_blocks_readiness",
@@ -143,27 +131,29 @@
         "state": "State",
         "generation": "int",
         "revision": "int",
-        "native_busy": "bool"
+        "native_busy": "bool",
+        "readers": "bool"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
-        "len(state.tokens) > 0"
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
+        "readers"
       ],
       "lets": {},
-      "assert": "not available(state, generation, revision, native_busy)"
+      "assert": "not available(state, generation, revision, readers, native_busy)"
     },
     {
       "name": "native_job_blocks_readiness",
       "variables": {
         "state": "State",
         "generation": "int",
-        "revision": "int"
+        "revision": "int",
+        "readers": "bool"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))"
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0"
       ],
       "lets": {},
-      "assert": "not available(state, generation, revision, True)"
+      "assert": "not available(state, generation, revision, readers, True)"
     },
     {
       "name": "failed_or_closed_blocks_readiness",
@@ -171,14 +161,15 @@
         "state": "State",
         "generation": "int",
         "revision": "int",
-        "native_busy": "bool"
+        "native_busy": "bool",
+        "readers": "bool"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "state.failed or state.closed"
       ],
       "lets": {},
-      "assert": "not available(state, generation, revision, native_busy)"
+      "assert": "not available(state, generation, revision, readers, native_busy)"
     },
     {
       "name": "readiness_requires_current_generation",
@@ -186,14 +177,15 @@
         "state": "State",
         "generation": "int",
         "revision": "int",
-        "native_busy": "bool"
+        "native_busy": "bool",
+        "readers": "bool"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "generation != state.generation"
       ],
       "lets": {},
-      "assert": "not available(state, generation, revision, native_busy)"
+      "assert": "not available(state, generation, revision, readers, native_busy)"
     },
     {
       "name": "failure_is_sticky_until_validated_replacement",
@@ -202,13 +194,13 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "state.failed"
       ],
       "lets": {
         "after": "step(state, event)"
       },
-      "assert": "after[0].failed or (event.kind == 'replace' and event.validated and event.generation == state.generation and event.revision == state.revision + 1 and not state.closed and len(event.proposed_tokens) == 0)"
+      "assert": "after[0].failed or (event.kind == 'replace' and event.validated and event.ledger_valid and event.generation == state.generation and event.revision == state.revision + 1 and not state.closed)"
     },
     {
       "name": "replacement_requires_validated_current_observation",
@@ -217,12 +209,12 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))"
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0"
       ],
       "lets": {
         "after": "step(state, event)"
       },
-      "assert": "after[0].generation == state.generation or (event.kind == 'replace' and event.validated and event.generation == state.generation and event.revision == state.revision + 1 and not state.closed and after[0].generation == state.generation + 1 and len(after[0].tokens) == 0)"
+      "assert": "after[0].generation == state.generation or (event.kind == 'replace' and event.validated and event.ledger_valid and event.generation == state.generation and event.revision == state.revision + 1 and not state.closed and after[0].generation == state.generation + 1)"
     },
     {
       "name": "closed_preserves_authority",
@@ -231,13 +223,13 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "state.closed"
       ],
       "lets": {
         "after": "step(state, event)"
       },
-      "assert": "after[0].closed and after[0].tokens == state.tokens and after[0].generation == state.generation and not after[1].accepted"
+      "assert": "after[0].closed and after[0].generation == state.generation and after[0].serial == state.serial and not after[1].accepted"
     },
     {
       "name": "rejected_current_begin_fences_readiness",
@@ -246,7 +238,7 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "event.revision == state.revision + 1",
         "event.generation == state.generation and not state.closed",
         "event.kind == 'begin'"
@@ -263,7 +255,7 @@
         "event": "Event"
       },
       "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
+        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0",
         "event.revision == state.revision + 1"
       ],
       "lets": {
@@ -275,67 +267,26 @@
   "witnesses": [
     {
       "name": "first_native_lease_is_admitted",
-      "variables": {
-        "state": "State",
-        "event": "Event"
-      },
-      "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
-        "len(state.tokens) == 0 and not state.failed",
-        "event.kind == 'begin'"
-      ],
       "lets": {
-        "after": "step(state, event)"
+        "after": "step(new(), Event('begin', revision=1, lease=1, ledger_valid=True))"
       },
-      "assert": "after[1].accepted and len(after[0].tokens) == 1"
+      "assert": "after[1].accepted and after[0].serial == 1"
     },
     {
-      "name": "last_exact_completion_restores_readiness",
-      "variables": {
-        "state": "State",
-        "event": "Event"
-      },
-      "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
-        "len(state.tokens) == 1 and not state.failed",
-        "event.kind == 'finish'"
-      ],
+      "name": "validated_retirement_can_restore_readiness",
       "lets": {
-        "after": "step(state, event)"
+        "begun": "step(new(), Event('begin', revision=1, lease=1, ledger_valid=True))",
+        "after": "step(begun[0], Event('finish', revision=2, lease=1, known=True, ledger_valid=True, validated=True))"
       },
-      "assert": "after[1].accepted and available(after[0], after[0].generation, after[0].revision, False)"
-    },
-    {
-      "name": "overlapping_reader_remains_blocked",
-      "variables": {
-        "state": "State",
-        "event": "Event"
-      },
-      "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
-        "len(state.tokens) == 2 and not state.failed",
-        "event.kind == 'finish'"
-      ],
-      "lets": {
-        "after": "step(state, event)"
-      },
-      "assert": "after[1].accepted and len(after[0].tokens) == 1 and not available(after[0], after[0].generation, after[0].revision, False)"
+      "assert": "after[1].accepted and available(after[0], 1, 2, False, False)"
     },
     {
       "name": "validated_replacement_recovers_failed_state",
-      "variables": {
-        "state": "State",
-        "event": "Event"
-      },
-      "assume": [
-        "state.generation >= 1 and state.revision >= 0 and state.serial >= 0 and forall_range(i, 0, len(state.tokens), 0 < state.tokens[i] <= state.serial and (i == 0 or state.tokens[i-1] < state.tokens[i]))",
-        "state.failed",
-        "event.kind == 'replace'"
-      ],
       "lets": {
-        "after": "step(state, event)"
+        "failed": "step(new(), Event('fail', revision=1))",
+        "after": "step(failed[0], Event('replace', revision=2, ledger_valid=True, validated=True))"
       },
-      "assert": "after[1].accepted and available(after[0], after[0].generation, after[0].revision, False)"
+      "assert": "after[1].accepted and available(after[0], 2, 2, False, False)"
     }
   ],
   "mutations": [
@@ -351,7 +302,7 @@
     {
       "name": "admission_ignores_active_lease",
       "function": "available",
-      "target": "len(state.tokens) == 0",
+      "target": "not readers",
       "replacement": "True",
       "detects": [
         "property.outstanding_lease_blocks_readiness"
@@ -378,49 +329,20 @@
     {
       "name": "finish_skips_retirement_validation",
       "function": "step",
-      "target": "event.validated and removed(state.tokens, event.proposed_tokens, event.index, event.lease)",
-      "replacement": "removed(state.tokens, event.proposed_tokens, event.index, event.lease)",
+      "target": "event.ledger_valid and event.validated",
+      "replacement": "event.ledger_valid",
       "detects": [
-        "property.finish_removes_only_exact_validated_lease"
+        "property.finish_requires_validated_known_lease"
       ]
     },
     {
       "name": "replacement_skips_validation",
       "function": "step",
-      "target": "event.validated and len(event.proposed_tokens) == 0",
-      "replacement": "len(event.proposed_tokens) == 0",
+      "target": "event.validated and event.ledger_valid",
+      "replacement": "event.ledger_valid",
       "detects": [
         "property.replacement_requires_validated_current_observation"
       ]
-    }
-  ],
-  "loops": [
-    {
-      "name": "append_prefix",
-      "function": "appended",
-      "target": "index",
-      "iter": "range(len(before))",
-      "cursor": "processed",
-      "invariants": [
-        "len(after) == len(before) + 1",
-        "after[len(before)] == lease",
-        "forall_range(i, 0, processed, after[i] == before[i])"
-      ],
-      "decreases": "len(before) - processed"
-    },
-    {
-      "name": "remove_prefix",
-      "function": "removed",
-      "target": "offset",
-      "iter": "range(len(after))",
-      "cursor": "processed",
-      "invariants": [
-        "0 <= index < len(before)",
-        "before[index] == lease",
-        "len(after) == len(before) - 1",
-        "forall_range(i, 0, processed, after[i] == before[i + (1 if i >= index else 0)])"
-      ],
-      "decreases": "len(after) - processed"
     }
   ]
 }

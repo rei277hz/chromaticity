@@ -28,8 +28,9 @@ def create_ownership_machine():
 
 
 def create_edge_effect_machine():
-    return policy_machine('edge_effect', queries=('edge_count',))
+    return policy_machine('edge_effect')
 
 
 def create_native_evaluation_machine():
-    return policy_machine('native_evaluation', queries=('available',))
+    from . import native_evaluation
+    return Machine(native_evaluation, queries=('available',))

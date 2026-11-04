@@ -1,4 +1,5 @@
 from importlib.resources import files
+import json
 import tomllib
 import unittest
 import zipfile
@@ -18,6 +19,9 @@ class PackageTests(unittest.TestCase):
                 "runtime/__init__.py",
                 "runtime/preparation.py",
                 "runtime/grade_preparation.py",
+                "runtime/resource_lifecycle.py",
+                "runtime/image_publication.py",
+                "runtime/gesture_coordinator.py",
                 "runtime/execution.py",
                 "runtime/host.py",
                 "runtime/payloads.py",
@@ -30,6 +34,9 @@ class PackageTests(unittest.TestCase):
                 "README.md",
                 "policy/__init__.py",
                 "policy/helper.py",
+                "policy/resources.py",
+                "policy/image_publication.py",
+                "policy/gesture.py",
                 "policy/preparation.py",
                 "policy/preparation_join.py",
                 "policy/node.py",
@@ -54,6 +61,17 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(manifest["license"], ["SPDX:GPL-3.0-or-later"])
             self.assertFalse(any(name.startswith("invariant/") for name in names))
             self.assertFalse(any(name.endswith("_contracts.py") for name in names))
+
+    def test_external_proof_report_covers_every_shipped_policy(self):
+        root = files("tests.perceptual_grade_blender")
+        report = json.loads((root / "package-report.json").read_text())
+        proved = {entry["runtime_source"] for entry in report["machine_proofs"].values()}
+        with zipfile.ZipFile(root / "extension.zip") as archive:
+            shipped = {name for name in archive.namelist()
+                       if name.startswith("policy/") and name.endswith(".py")
+                       and name != "policy/__init__.py"}
+        self.assertEqual(proved, shipped)
+        self.assertEqual(len(proved), 7)
 
 
 if __name__ == "__main__":

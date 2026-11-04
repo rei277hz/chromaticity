@@ -1,25 +1,27 @@
 # GitHub CI and formatting
 
-There are two workflows. [Lint](../../.github/workflows/lint.yml) runs on pushes,
-pull requests, and manual dispatch. [Build and badges](../../.github/workflows/build.yml)
-runs only from **Actions → Build and badges → Run workflow**. Both use the local
+CI checks only `products/perceptual-grade-next-blender`, including its policy
+proofs. [Lint](../../.github/workflows/lint.yml) and
+[Build and badges](../../.github/workflows/build.yml) run on pushes, pull requests,
+and manual dispatch. Both use the local
 `setup-buck2` composite action, which installs a checksum-verified standalone
 Buck2 binary and retains its bundled prelude. Release `2026-10-15` contains the
 existing `2026-10-14-9a1876786f32806f6b65fc51f4c1c3077efc38a5` binary.
 
 ## Lint and local formatting
 
-Lint checks maintained Buck/Starlark files and TOML with pinned Buildifier and
-Taplo versions, checks the Buck target graph, and checks npm and Rust dependency
-freshness. `third_party/rust/regenerate.py --check` uses the pinned Rust/Reindeer
-toolchain and locked Cargo dependencies; a cold run downloads tools/crates and
-builds Reindeer. Its maintenance caches are reused across CI runs.
+Lint checks the product's maintained Buck/Starlark files and TOML with pinned
+Buildifier and Taplo versions, formats `.inv` requirements as JSON, validates its
+Buck target graph, and enforces the
+CI target selection. It does not run repository-wide formatting or npm/Rust
+dependency freshness checks.
 
 **Formatting does not cover Rust, Python, or other program source files.** The
-maintained `BUCK`, `PACKAGE`, `.bzl`, and `.bxl` files and TOML configuration are
-included, including the central Rust catalogue, Reindeer configuration, crate
-fixups, and the handbook mdBook configuration. Generated Rust rules, generated web declarations, lockfiles, dependency
-caches and build outputs are excluded.
+maintained `BUCK`, `PACKAGE`, `.bzl`, and `.bxl` files, TOML configuration, and
+`.inv` requirements under `products/perceptual-grade-next-blender` are included.
+Requirements use two-space JSON indentation and a trailing newline; invalid JSON
+and duplicate keys are rejected. The formatter has the same fixed product scope
+when invoked locally. Files ending in `.json` are outside its scope.
 
 On Linux x86_64, run the formatting commands locally from a Git or Sapling
 working copy root.
@@ -34,46 +36,51 @@ python3 tools/ci/install_tools.py --bin-dir /tmp/chromaticity-ci-tools buck2 bui
 export PATH="/tmp/chromaticity-ci-tools:$PATH"
 python3 tools/ci/format.py
 python3 tools/ci/format.py --starlark-lint
-# Apply only the supported Buck/Starlark and TOML formatting:
+# Apply Buck/Starlark, TOML, and .inv formatting within next-blender:
 python3 tools/ci/format.py --fix
 # The same formatter through Buck2:
 buck2 run //tools/ci:format_fix
-# The checks below are separate commands; the Buck2 target only applies formatting.
+# Validate the CI selection separately:
 python3 tools/ci/check_targets.py
-python3 third_party/web/update.py --check
-python3 third_party/rust/regenerate.py --check
-python3 -m unittest discover -s tools/ci -p 'test_*.py'
 ```
 
-## Manual builds and smoke suites
+## Product builds, proofs, and tests
 
-The manual workflow builds the **web app and handbook** and runs the smoke
-suites listed in [the CI selection](targets.json), including handbook assembly,
-rendering, archive, and publisher checks. Proof targets are
-under development and excluded from CI. The Blender extensions and DCTL are also
-excluded because their build dependencies execute proofs; their normal packaging
-gates remain intact. A dependency-graph guard rejects any selected build, test, or
-Rust-maintenance toolchain that would bring proof targets back into CI.
+[The CI selection](targets.json) builds `:verify_policies` and `:extension` and
+runs 37 test suites from next-blender. These cover policy decisions, runtime
+preparation, numerical and GPU behavior, packaging and installation, and native
+Blender acceptance. The native suites include render preflight, continuous
+slider dragging, undo, image saving, and Stack preparation. Report-generation
+and experimental candidate suites are not selected.
+
+Every selected label belongs to `products/perceptual-grade-next-blender`.
+The dependency-graph guard rejects tests and proofs outside that product,
+including those in `libraries/perceptual-grade-core` and
+`products/perceptual-grade-blender`. The
+`libraries/perceptual-grade-reference/proofs` namespace is also excluded,
+including generic build rules and proof subtargets. Ordinary shared source,
+resource, and toolchain dependencies may still build as prerequisites for
+next-blender; their own validation targets are not run.
 
 CI uses the `ci` stage of [the Debian runtime](../../remote_execution/docker/Dockerfile)
 with local execution in a disposable checkout, without requiring private
-NativeLink services. This stage adds OpenSSL headers for the Reindeer bootstrap;
-the CI container allows 65,536 open files for concurrent compiler processes.
-Its helper deliberately requires `CI_DISPOSABLE_CHECKOUT=1`; it changes
-that checkout's managed `.buckconfig` block to local execution. Do not invoke it
-in an active development checkout.
+NativeLink services. The CI container allows 65,536 open files for concurrent
+processes. Its helper requires `CI_DISPOSABLE_CHECKOUT=1` and a `CI_CACHE_DIR`
+outside the checkout; it changes that checkout's managed `.buckconfig` block to
+local execution. Do not invoke it in an active development checkout.
 
 ## Reports and badges
 
-Build and test counts describe the latest published manual run on the default
-branch, not every commit or the full test suite. The badges become available
+Each workflow run retains its own build and test evidence. Public badges describe
+the latest published manual run on the default branch, not every commit or the
+full repository test suite. The badges become available
 after the first default-branch manual run publishes the `ci-status` branch.
 Their linked summary records the commit, timestamp, target results, and workflow
 run.
 
 Build counts come from Buck's target build report. Test counts come from actual
 test-result events, not from successful compilation of test executables. Each
-suite is one selected Buck test target and may contain many Python or Rust cases.
+suite is one selected Buck test target and may contain many test cases.
 Synthetic download checks are excluded; skipped, failed, missing, and incomplete
 results remain visible and cannot produce an all-passing badge. Reports and logs
 are retained as workflow artifacts for 14 days, including when commands fail.

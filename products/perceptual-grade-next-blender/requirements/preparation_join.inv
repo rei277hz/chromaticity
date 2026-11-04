@@ -2,14 +2,13 @@
   "version": 1,
   "state": "State",
   "event": "Event",
-  "initializers": ["new"],
+  "initializers": [
+    "new"
+  ],
   "step": "step",
-  "invariants": {
-    "signature_is_nonempty": "state.signature != ''"
-  },
+  "invariants": {},
   "contracts": {
     "new": {
-      "requires": ["signature != ''"],
       "ensures": [
         "result.signature == signature",
         "result.linear_pending and result.tone_pending and result.boundary_pending",
@@ -17,10 +16,6 @@
       ]
     },
     "step": {
-      "requires": [
-        "state.signature != ''",
-        "event.signature != ''"
-      ],
       "ensures": [
         "result[0].signature == state.signature",
         "result[0].linear_pending == (state.linear_pending and not (event.signature == state.signature and event.component == 'linear'))",

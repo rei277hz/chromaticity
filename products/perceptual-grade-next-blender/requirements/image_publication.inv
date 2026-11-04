@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {},
+  "contracts": {
+    "new": {
+      "ensures": [
+        "result == State('idle')"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "metadata_commit_requires_clean_image",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].action != 'commit' or (not event.failed and event.clean and (state.phase == 'pack' or (state.phase == 'snapshot' and event.matching)))"
+    },
+    {
+      "name": "failed_upload_enters_restoration",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('upload'), Event(failed=True))"
+      },
+      "assert": "transition == (State('restore_upload'), Effects('restore_upload'))"
+    },
+    {
+      "name": "failed_transaction_never_delivers",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].action != 'deliver'",
+      "assume": [
+        "state.phase in ('restore_upload', 'restore_pack', 'restore_metadata', 'fail', 'retire', 'terminal')"
+      ]
+    },
+    {
+      "name": "restored_metadata_requires_clean_packing",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].action != 'restore_metadata' or (state.phase == 'restore_pack' and (not event.failed) and event.clean)"
+    },
+    {
+      "name": "restoration_failure_still_fails_source",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('restore_pack'), Event(failed=True))"
+      },
+      "assert": "transition == (State('fail'), Effects('fail'))"
+    },
+    {
+      "name": "metadata_failure_restores_shared_image",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('commit'), Event(failed=True))"
+      },
+      "assert": "transition == (State('restore_upload'), Effects('restore_upload'))"
+    },
+    {
+      "name": "terminal_receipts_are_inert",
+      "variables": {
+        "event": "Event"
+      },
+      "assert": "step(State('terminal'), event) == (State('terminal'), Effects())"
+    },
+    {
+      "name": "save_packing_only_repairs_dirty_generated_images",
+      "variables": {
+        "generated": "bool",
+        "dirty": "bool"
+      },
+      "assert": "request_save_packing(generated, dirty) == (generated and dirty)"
+    },
+    {
+      "name": "save_packing_requires_clean_receipt",
+      "variables": {
+        "clean": "bool",
+        "error": "Optional[str]"
+      },
+      "assert": "finish_save_packing(clean, error) == (error if error is not None else None if clean else 'Grade parameter image could not be packed')"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "clean_publication_delivers",
+      "variables": {},
+      "lets": {
+        "started": "step(new(), Event())",
+        "prepared": "step(started[0], Event())",
+        "snapshot": "step(prepared[0], Event())",
+        "uploaded": "step(snapshot[0], Event())",
+        "packed": "step(uploaded[0], Event(clean=True))",
+        "committed": "step(packed[0], Event())",
+        "delivered": "step(committed[0], Event())",
+        "retired": "step(delivered[0], Event())"
+      },
+      "assert": "packed[1].action == 'commit' and committed[1].action == 'deliver' and (retired == (State('terminal'), Effects()))"
+    },
+    {
+      "name": "restored_image_still_fails_source",
+      "variables": {},
+      "lets": {
+        "failed": "step(State('upload'), Event(failed=True))",
+        "uploaded": "step(failed[0], Event())",
+        "packed": "step(uploaded[0], Event(clean=True))",
+        "restored": "step(packed[0], Event())",
+        "closed": "step(restored[0], Event())",
+        "finished": "step(closed[0], Event())"
+      },
+      "assert": "restored[1].action == 'fail' and finished == (State('terminal'), Effects())"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "matching_image_skips_clean_packing",
+      "function": "step",
+      "target": "event.matching and event.clean",
+      "replacement": "event.matching",
+      "detects": [
+        "property.metadata_commit_requires_clean_image"
+      ]
+    },
+    {
+      "name": "failed_upload_continues_publication",
+      "function": "step",
+      "target": "not event.failed",
+      "replacement": "True",
+      "detects": [
+        "property.failed_upload_enters_restoration"
+      ]
+    },
+    {
+      "name": "save_packing_includes_user_images",
+      "function": "request_save_packing",
+      "target": "generated and dirty",
+      "replacement": "dirty",
+      "detects": [
+        "property.save_packing_only_repairs_dirty_generated_images"
+      ]
+    }
+  ]
+}

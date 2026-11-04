@@ -43,6 +43,12 @@ COORDINATORS = [
     visibility = ["PUBLIC"],
 ) for machine in COORDINATORS]
 
+export_file(
+    name = "bake_queue_policy_source",
+    src = PREFIX + "graph/coordinators/bake_queue_policy.py",
+    visibility = ["PUBLIC"],
+)
+
 component_library(
     name = "machines",
     srcs = {

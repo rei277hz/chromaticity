@@ -24,7 +24,7 @@ def docstring(node):
     return isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and type(node.value.value) is str
 
 
-INTRINSICS = {'len', 'range', 'forall_range', 'exists_range', 'sum_range'}
+INTRINSICS = {'len'}
 
 
 class Source:
@@ -135,9 +135,12 @@ class Source:
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
             items = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
             if node.value.id == "Optional":
-                if "Optional" not in self.imports or len(items) != 1 or self.annotation(items[0]) != Type("str"):
-                    raise VerificationError("Only Optional[str] is supported")
-                return Type("optional", (Type("str"),))
+                if "Optional" not in self.imports or len(items) != 1:
+                    raise VerificationError("Optional requires one scalar type")
+                element = self.annotation(items[0])
+                if element.kind not in ("str", "int", "bool"):
+                    raise VerificationError("Optional supports str, int, and bool")
+                return Type("optional", (element,))
             if node.value.id == "Literal":
                 if "Literal" not in self.imports:
                     raise VerificationError("Literal must be explicitly imported")
@@ -154,7 +157,9 @@ class Source:
                 return Type("tuple", tuple(self.annotation(x) for x in items))
         raise VerificationError("Unsupported or missing type annotation: " + ast.dump(node) if node is not None else "Missing type annotation")
 
-    def validate_expression(self, node, specification=False):
+    def validate_expression(self, node):
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
+            raise VerificationError("Collection slices belong in trusted runtime code")
         allowed = (ast.Constant, ast.Name, ast.Attribute, ast.Tuple, ast.Subscript, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp, ast.Call)
         if not isinstance(node, allowed):
             raise VerificationError("Unsupported expression: " + type(node).__name__)
@@ -181,19 +186,17 @@ class Source:
         if isinstance(node, ast.Call):
             if not isinstance(node.func, ast.Name) or node.func.id not in {*self.functions, *self.records, "replace", *INTRINSICS}:
                 raise VerificationError("Only source-defined pure functions and constructors may be called")
-            if node.func.id in {'forall_range', 'exists_range', 'sum_range'} and not specification:
-                raise VerificationError('Bounded specification operators are not executable source functions')
             if node.func.id == "replace" and "replace" not in self.imports:
                 raise VerificationError("replace must be explicitly imported")
             if any(k.arg is None for k in node.keywords) or len({k.arg for k in node.keywords}) != len(node.keywords):
                 raise VerificationError("Expanded or duplicate keyword arguments are unsupported")
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.expr):
-                self.validate_expression(child, specification)
+                self.validate_expression(child)
             elif isinstance(child, ast.keyword):
-                self.validate_expression(child.value, specification)
+                self.validate_expression(child.value)
 
-    def validate_statements(self, statements, loop=False):
+    def validate_statements(self, statements):
         for index, node in enumerate(statements):
             if isinstance(node, ast.Pass) or index == 0 and docstring(node):
                 continue
@@ -213,19 +216,12 @@ class Source:
                     self.annotation(node.annotation)
             elif isinstance(node, ast.If):
                 self.validate_expression(node.test)
-                self.validate_statements(node.body, loop)
-                self.validate_statements(node.orelse, loop)
+                self.validate_statements(node.body)
+                self.validate_statements(node.orelse)
             elif isinstance(node, ast.Raise):
                 call = node.exc
                 if node.cause or not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name) or call.func.id != 'ValueError' or call.keywords or len(call.args) != 1 or not isinstance(call.args[0], ast.Constant) or type(call.args[0].value) is not str:
                     raise VerificationError('Only explicit ValueError with a literal message is supported')
-            elif isinstance(node, ast.For):
-                if loop or not isinstance(node.target, ast.Name) or node.orelse:
-                    raise VerificationError('Only unnested named for loops without else are supported')
-                if node.target.id in {*self.functions, *self.records, 'replace', 'result', *INTRINSICS}:
-                    raise VerificationError('Loop target shadows a callable')
-                self.validate_expression(node.iter)
-                self.validate_statements(node.body, True)
             else:
                 raise VerificationError("Unsupported statement: " + type(node).__name__)
 
@@ -294,7 +290,7 @@ class Source:
             node = ast.parse(text, mode="eval").body
         except SyntaxError as error:
             raise VerificationError(str(error)) from error
-        self.validate_expression(node, specification=True)
+        self.validate_expression(node)
         return node
 
     def schema(self):

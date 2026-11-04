@@ -1,18 +1,21 @@
-name: Build and badges
+name: Next Blender build and badges
 
 on:
+  push:
+    branches-ignore: [ci-status]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: false
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Linux builds and smoke suites
+    name: Next Blender build, tests, and proofs
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -50,7 +53,7 @@ jobs:
   publish:
     name: Publish latest manual-run badges
     needs: build
-    if: ${{ always() && !cancelled() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    if: ${{ always() && !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

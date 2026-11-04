@@ -1,0 +1,325 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {
+    "nonnegative_generation": "state.generation >= 0",
+    "ready_has_passed_probe": "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+    "starting_has_queued_probe": "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+    "probing_occupies_slot": "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+    "retired_work_has_no_ids": "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+    "closed_requested": "state.phase != 'closed' or state.close_requested",
+    "running_phases_have_no_error": "state.phase not in ('starting', 'probing', 'ready') or state.error is None"
+  },
+  "contracts": {
+    "new": {
+      "ensures": [
+        "result == State('stopped', 0, None, None, None)"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "ready_requires_successful_probe",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "out": "step(state, event)"
+      },
+      "assert": "out[0].phase != 'ready' or state.phase == 'ready' or (state.phase == 'probing' and event.kind == 'probe_result' and event.generation == state.generation and event.success and event.job_id == state.probe_id and event.job_id == state.active_id)",
+      "assume": [
+        "state.generation >= 0",
+        "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+        "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+        "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+        "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+        "state.phase != 'closed' or state.close_requested",
+        "state.phase not in ('starting', 'probing', 'ready') or state.error is None"
+      ]
+    },
+    {
+      "name": "cancelled_probe_withdraws_startup",
+      "variables": {},
+      "lets": {
+        "out": "step(State('probing', 1, 7, 7, None), Event('cancelled', 1, job_id=7, transport='channel'))"
+      },
+      "assert": "out[0].phase == 'stopping' and out[0].close_requested and out[0].active_id == 7"
+    },
+    {
+      "name": "cancel_before_hello_waits_for_exit",
+      "variables": {},
+      "lets": {
+        "out": "step(State('starting', 1, 7, None, None), Event('cancel', 1, job_id=7))"
+      },
+      "assert": "out[0].phase == 'terminating' and out[0].probe_id == 7 and out[0].close_requested and out[1].actions[1].kind == 'terminate'"
+    },
+    {
+      "name": "late_probe_success_cannot_revive_cancelled_helper",
+      "variables": {},
+      "lets": {
+        "cancel": "step(State('probing', 1, 7, 7, None), Event('cancel', 1, job_id=7, transport='channel'))",
+        "late": "step(cancel[0], Event('probe_result', 1, job_id=7, success=True))"
+      },
+      "assert": "late == (cancel[0], Effects())"
+    },
+    {
+      "name": "stale_generation_is_ignored",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "out": "step(state, event)"
+      },
+      "assert": "out == (state, Effects())",
+      "assume": [
+        "state.generation >= 0",
+        "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+        "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+        "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+        "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+        "state.phase != 'closed' or state.close_requested",
+        "event.kind != 'launch'",
+        "event.generation != state.generation",
+        "state.phase not in ('starting', 'probing', 'ready') or state.error is None"
+      ]
+    },
+    {
+      "name": "terminal_poll_never_touches_transport",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "out": "step(state, event)"
+      },
+      "assert": "out == (state, Effects())",
+      "assume": [
+        "state.generation >= 0",
+        "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+        "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+        "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+        "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+        "state.phase != 'closed' or state.close_requested",
+        "state.phase in ('retiring', 'failed', 'closed')",
+        "event.kind == 'poll'",
+        "state.phase not in ('starting', 'probing', 'ready') or state.error is None"
+      ]
+    },
+    {
+      "name": "shutdown_does_not_cleanup_live_process",
+      "variables": {},
+      "lets": {
+        "out": "step(State('ready', 1, None, 8, None), Event('shutdown', 1, transport='channel'))"
+      },
+      "assert": "out[0].phase == 'stopping' and out[1].actions[1].kind == 'send_shutdown'"
+    },
+    {
+      "name": "exit_publishes_failure_before_cleanup",
+      "variables": {},
+      "lets": {
+        "out": "step(State('terminating', 1, None, 8, 'original'), Event('exited', 1, error='later', exit_code=23))"
+      },
+      "assert": "out[0] == State('retiring', 1, None, None, 'original') and len(out[1].actions) == 4 and out[1].actions[1] == Action('publish_failure', 8, 'original') and out[1].actions[3].kind == 'cleanup'"
+    },
+    {
+      "name": "cleanup_failure_retains_owner_and_error",
+      "variables": {},
+      "lets": {
+        "out": "step(State('retiring', 1, None, None, 'original'), Event('cleanup_result', 1, error='cleanup'))",
+        "polled": "step(out[0], Event('poll', 1, transport='channel'))"
+      },
+      "assert": "out[0] == State('retiring', 1, None, None, 'original') and polled == (out[0], Effects())"
+    },
+    {
+      "name": "shutdown_fences_admission",
+      "variables": {
+        "state": "State"
+      },
+      "lets": {
+        "out": "step(state, Event('shutdown', state.generation, transport='channel'))"
+      },
+      "assert": "not admitting(out[0]) and out[0].close_requested",
+      "assume": [
+        "state.generation >= 0",
+        "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+        "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+        "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+        "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+        "state.phase != 'closed' or state.close_requested",
+        "state.phase not in ('starting', 'probing', 'ready') or state.error is None"
+      ]
+    },
+    {
+      "name": "cancel_request_retains_active_slot",
+      "variables": {},
+      "lets": {
+        "out": "step(State('ready', 1, None, 8, None), Event('cancel', 1, job_id=8))"
+      },
+      "assert": "out[0] == State('ready', 1, None, 8, None) and out[1] == Effects((Action('send_cancel', 8),))"
+    },
+    {
+      "name": "cancel_acknowledgement_dispatches_successor",
+      "variables": {},
+      "lets": {
+        "out": "step(State('ready', 1, None, 8, None), Event('cancelled', 1, job_id=8, next_id=9))"
+      },
+      "assert": "out[0].active_id == 9 and out[1] == Effects((Action('publish_cancelled', 8), Action('dispatch', 9)))"
+    },
+    {
+      "name": "stale_stage_timeout_has_no_effects",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "out": "step(state, event)"
+      },
+      "assert": "out == (state, Effects())",
+      "assume": [
+        "state.generation >= 0",
+        "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+        "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+        "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+        "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+        "state.phase != 'closed' or state.close_requested",
+        "event.kind == 'timeout'",
+        "event.stage != state.phase",
+        "state.phase not in ('starting', 'probing', 'ready') or state.error is None"
+      ]
+    },
+    {
+      "name": "shutdown_escalates_in_order",
+      "variables": {},
+      "lets": {
+        "stop": "step(State('ready', 1, None, 8, None), Event('shutdown', 1, transport='channel'))",
+        "terminate": "step(stop[0], Event('timeout', 1, stage='stopping'))",
+        "kill": "step(terminate[0], Event('timeout', 1, stage='terminating'))",
+        "late": "step(kill[0], Event('timeout', 1, stage='killing'))"
+      },
+      "assert": "stop[0].phase == 'stopping' and terminate[0].phase == 'terminating' and kill[0].phase == 'killing' and late[0].phase == 'unretired' and late[0].active_id == 8 and close_problem(late[0]) is not None"
+    },
+    {
+      "name": "duplicate_exit_does_not_republish",
+      "variables": {
+        "state": "State"
+      },
+      "lets": {
+        "out": "step(state, Event('exited', state.generation))"
+      },
+      "assert": "out == (state, Effects())",
+      "assume": [
+        "state.generation >= 0",
+        "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+        "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+        "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+        "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+        "state.phase != 'closed' or state.close_requested",
+        "state.phase in ('retiring', 'failed', 'closed')",
+        "state.phase not in ('starting', 'probing', 'ready') or state.error is None"
+      ]
+    },
+    {
+      "name": "repeated_shutdown_preserves_stage_deadline",
+      "variables": {
+        "state": "State"
+      },
+      "lets": {
+        "out": "step(state, Event('shutdown', state.generation))"
+      },
+      "assert": "out == (state, Effects())",
+      "assume": [
+        "state.generation >= 0",
+        "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+        "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+        "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+        "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+        "state.phase != 'closed' or state.close_requested",
+        "state.phase in ('stopping', 'terminating', 'killing', 'unretired')",
+        "state.close_requested",
+        "state.phase not in ('starting', 'probing', 'ready') or state.error is None"
+      ]
+    },
+    {
+      "name": "first_causal_error_is_preserved",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "state.generation >= 0",
+        "state.phase != 'ready' or (state.probe_id is None and not state.close_requested)",
+        "state.phase != 'starting' or (state.probe_id is not None and state.active_id is None and not state.close_requested)",
+        "state.phase != 'probing' or (state.probe_id is not None and state.active_id == state.probe_id and not state.close_requested)",
+        "state.phase not in ('stopped', 'retiring', 'failed', 'closed') or (state.probe_id is None and state.active_id is None)",
+        "state.phase != 'closed' or state.close_requested",
+        "state.phase not in ('starting', 'probing', 'ready') or state.error is None",
+        "state.error is not None",
+        "event.kind != 'launch'"
+      ],
+      "lets": {
+        "out": "step(state, event)"
+      },
+      "assert": "out[0].error == state.error"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "successful_probe_admits_work",
+      "variables": {},
+      "lets": {
+        "launched": "step(new(), Event('launch', 1, job_id=1))",
+        "connected": "step(launched[0], Event('hello', 1))",
+        "probed": "step(connected[0], Event('probe_result', 1, job_id=1, success=True))",
+        "working": "step(probed[0], Event('submit', 1, job_id=2))"
+      },
+      "assert": "admitting(working[0]) and working[0].active_id == 2"
+    },
+    {
+      "name": "cancelled_startup_completes_retirement",
+      "variables": {},
+      "lets": {
+        "launched": "step(new(), Event('launch', 1, job_id=1))",
+        "cancelled": "step(launched[0], Event('cancel', 1, job_id=1))",
+        "exited": "step(cancelled[0], Event('exited', 1, exit_code=-15, error='signal'))",
+        "cleaned": "step(exited[0], Event('cleanup_result', 1, success=True))"
+      },
+      "assert": "cleaned[0].phase == 'closed' and cleaned[0].error is None and exited[1].actions[1] == Action('publish_cancelled', 1)"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "cancelled_probe_becomes_ready",
+      "function": "_cancelled",
+      "target": "_shutdown(state, event.transport)",
+      "replacement": "(State('ready', state.generation, None, None, None), Effects())",
+      "detects": [
+        "property.cancelled_probe_withdraws_startup"
+      ]
+    },
+    {
+      "name": "poll_after_terminal_cleanup",
+      "function": "step",
+      "target": "state.phase in ('stopped', 'retiring', 'failed', 'closed')",
+      "replacement": "False",
+      "detects": [
+        "property.terminal_poll_never_touches_transport"
+      ]
+    },
+    {
+      "name": "cleanup_before_physical_exit",
+      "function": "_shutdown",
+      "target": "Action('send_shutdown')",
+      "replacement": "Action('cleanup')",
+      "detects": [
+        "property.shutdown_does_not_cleanup_live_process"
+      ]
+    }
+  ]
+}

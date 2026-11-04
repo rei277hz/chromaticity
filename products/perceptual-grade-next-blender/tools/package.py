@@ -1,51 +1,46 @@
 """Build the verified Perceptual Grade Blender extension ZIP."""
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
+from verification.invariant_report import InvariantProofs
 from verification.packaging import package, sources
 
 
-def _verify_proof(proof, tree, requirements, source, label):
-    proof = Path(proof)
-    report_bytes = (proof / "report.json").read_bytes()
-    receipt = json.loads((proof / "receipt.json").read_text())
-    report = json.loads(report_bytes)
-    source_bytes = sources(tree)[source]
-    requirement_bytes = Path(requirements).read_bytes()
-    if report.get("ok") is not True:
-        raise ValueError(label + " proof did not pass")
-    if receipt.get("source_sha256") != hashlib.sha256(source_bytes).hexdigest():
-        raise ValueError(label + " proof does not match the packaged policy source")
-    if receipt.get("requirements_sha256") != hashlib.sha256(requirement_bytes).hexdigest():
-        raise ValueError(label + " proof does not match its requirements")
-    if receipt.get("report_sha256") != hashlib.sha256(report_bytes).hexdigest():
-        raise ValueError(label + " proof report does not match its receipt")
+def verify_policy_coverage(entries, manifest):
+    """Every shipped policy module must have source-bound build evidence."""
+    expected = {name for name in entries
+                if name.startswith("policy/") and name.endswith(".py")
+                and Path(name).name != "__init__.py"}
+    if (not isinstance(manifest, dict) or manifest.get("version") != 2
+            or not isinstance(manifest.get("machines"), dict)):
+        raise ValueError("Invalid policy proof inventory")
+    actual = {item["runtime_source"] for item in manifest["machines"].values()}
+    if not expected or actual != expected:
+        raise ValueError("Policy proof coverage differs from shipped modules: "
+                         f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}")
+
+
+def build(tree, output_dir, inventory, proofs):
+    output_dir = Path(output_dir)
+    try:
+        manifest = json.loads((Path(proofs) / "manifest.json").read_text())
+        verify_policy_coverage(sources(tree), manifest)
+        package(tree, output_dir / "perceptual_grade.zip", inventory_path=inventory,
+                proof_requirement=InvariantProofs(Path(proofs)))
+    except Exception:
+        for name in ("perceptual_grade.zip", ".perceptual_grade.zip.candidate", "package-report.json"):
+            (output_dir / name).unlink(missing_ok=True)
+        raise
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("tree", "output-dir", "inventory"):
+    for name in ("tree", "output-dir", "inventory", "proofs"):
         parser.add_argument("--" + name, type=Path, required=True)
-    for name in ("node", "preparation", "preparation_join"):
-        flag = name.replace("_", "-")
-        parser.add_argument("--proof-" + flag, dest="proof_" + name,
-                            type=Path, required=True)
-        parser.add_argument("--requirements-" + flag,
-                            dest="requirements_" + name, type=Path, required=True)
     args = parser.parse_args()
-    for name, source in (
-        ("node", "policy/node.py"),
-        ("preparation", "policy/preparation.py"),
-        ("preparation_join", "policy/preparation_join.py"),
-    ):
-        _verify_proof(getattr(args, "proof_" + name), args.tree,
-                      getattr(args, "requirements_" + name), source,
-                      name.replace("_", " ").title())
-    package(args.tree, args.output_dir / "perceptual_grade.zip",
-            inventory_path=args.inventory)
+    build(args.tree, args.output_dir, args.inventory, args.proofs)
 
 
 if __name__ == "__main__":

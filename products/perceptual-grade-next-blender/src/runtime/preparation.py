@@ -716,7 +716,7 @@ class PreparationRuntime:
                             lane.host_owner.close()
                         except Exception as error:
                             failures.append(error)
-                        finally:
+                        else:
                             lane.host_owner = None
                     if lane.executor is not None:
                         try:
@@ -752,7 +752,7 @@ class PreparationRuntime:
                             lane.host_owner.close()
                         except Exception as error:
                             failures.append(error)
-                        finally:
+                        else:
                             lane.host_owner = None
                 try:
                     self.loop.call_soon_threadsafe(self._stop.set)
