@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from functools import partial
 import hashlib
 import json
+import threading
 from uuid import uuid4
 
 import bpy
+import numpy as np
 from bpy.app.handlers import persistent
 from bpy.props import (
     BoolProperty,
@@ -27,7 +29,8 @@ from .kernel import (
     project_source_white_component,
 )
 from .kernel.graph import Graph
-from .kernel.stage2_graph import build_stage2_group
+from .kernel.stage2_graph import build_stage2_group, PARAMETER_IMAGE, PARAMETER_BINDING
+from .kernel.stage2_parameters import PARAMETER_SCHEMA, prepare_parameters
 from .kernel.lut import (
     append_lut_lookup,
 )
@@ -42,6 +45,11 @@ from .policy import node as node_policy
 from .policy import preparation as preparation_policy
 from .runtime.preparation import PreparationRuntime
 from .runtime.grade_preparation import GradePreparer
+from .runtime.grade_resources import (
+    GradeResources, SIGNATURE as PARAMETER_SIGNATURE, OWNER as PARAMETER_OWNER,
+    OWNER_NODE as PARAMETER_OWNER_NODE,
+)
+from .runtime.publication import PublicationDeferred
 
 
 SHADER_TREE = "ShaderNodeTree"
@@ -68,13 +76,14 @@ _last_working_space = None
 _node_stores = {}
 _preparation_runtime = None
 _grade_preparer = None
+_grade_resources = None
 _preparation_sources = {}
 _gesture_routers = {}
 _gesture_targets = {}
 _armed_gestures = {}
 _active_gestures = {}
 _gesture_settings = {}
-_KERNEL_SCHEMA = 2
+_KERNEL_SCHEMA = 3
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
 _KERNEL_QUALITY = "_perceptual_grade_quality"
@@ -269,8 +278,8 @@ def _preparation_signature(settings, working_space):
     return _signature("grade-preparation", _snapshot_values(settings), working_space)
 
 
-def _kernel(tree_type, prepared, working_space, signature):
-    built = build_stage2_group(prepared, tree_type)
+def _kernel(tree_type, prepared, working_space, signature, parameter_image=None):
+    built = build_stage2_group(prepared, tree_type, parameter_image=parameter_image)
     tree = built.tree
     try:
         tree[_KERNEL_KIND] = _KERNEL_SCHEMA
@@ -466,6 +475,12 @@ def _kernel_is_current(kernel, tree_type, signature, quality="full", stack=None)
             return False
         if stack is not None and bool(kernel.get("_perceptual_grade_stack_kernel")) != stack:
             return False
+        if not kernel.get("_perceptual_grade_stack_kernel"):
+            image = kernel.get(PARAMETER_BINDING)
+            if (image is None or image.get(PARAMETER_IMAGE) != PARAMETER_SCHEMA
+                    or kernel.get(PARAMETER_SIGNATURE) is None
+                    or kernel.get(PARAMETER_SIGNATURE) != image.get(PARAMETER_SIGNATURE)):
+                return False
         return True
     except (AttributeError, ReferenceError, RuntimeError):
         return False
@@ -476,21 +491,27 @@ def _kernel_error_text(node):
 
 
 def _apply_output_presentation(node, mode, error):
-    for key in (_NODE_ERROR, _NODE_PENDING):
-        if key in node:
-            del node[key]
-    node.use_custom_color = mode != "current"
-    if mode == "current":
-        return
+    values = {}
     if mode == "error":
-        node[_NODE_ERROR] = str(error)[:240]
-        node.color = (0.65, 0.04, 0.04)
-    else:
-        node[_NODE_PENDING] = (
+        values[_NODE_ERROR] = str(error)[:240]
+    elif mode != "current":
+        values[_NODE_PENDING] = (
             "Updating - showing last-good result" if mode == "preview"
             else "Preparing Grade - showing identity preview"
         )
-        node.color = (0.65, 0.32, 0.04)
+    for key in (_NODE_ERROR, _NODE_PENDING):
+        if key in values:
+            if node.get(key) != values[key]:
+                node[key] = values[key]
+        elif key in node:
+            del node[key]
+    custom = mode != "current"
+    if node.use_custom_color != custom:
+        node.use_custom_color = custom
+    if custom:
+        color = (0.65, 0.04, 0.04) if mode == "error" else (0.65, 0.32, 0.04)
+        if any(abs(a-b) > 1e-6 for a, b in zip(node.color, color)):
+            node.color = color
 
 
 def _socket_default_value(socket):
@@ -687,6 +708,18 @@ def _release_source(source):
             del _preparation_sources[key]
     if _preparation_runtime is not None:
         _preparation_runtime.forget(source)
+    if _grade_resources is not None:
+        _grade_resources.forget(source)
+
+
+def _kernel_belongs_to_node(node, kernel):
+    if _is_stack_node(node):
+        return True
+    if kernel is None:
+        return False
+    owner, owner_node = GradeResources.owner(node)
+    return (kernel.get(PARAMETER_OWNER) == owner
+            and kernel.get(PARAMETER_OWNER_NODE) == owner_node)
 
 
 def _record_for(node, desired_signature=None, source=None):
@@ -708,12 +741,13 @@ def _record_for(node, desired_signature=None, source=None):
     if previous_state is not None \
             and previous_state.error is None \
             and previous_state.applied_signature is not None \
+            and _kernel_belongs_to_node(node, kernel) \
             and _kernel_is_current(
                 kernel, node.id_data.bl_idname, previous_state.applied_signature,
                 previous_state.applied_quality or "full", stack=_is_stack_node(node)):
         applied_signature = previous_state.applied_signature
         applied_quality = previous_state.applied_quality or "full"
-    elif (desired_signature is not None and _kernel_is_current(
+    elif (desired_signature is not None and _kernel_belongs_to_node(node, kernel) and _kernel_is_current(
             kernel, node.id_data.bl_idname, desired_signature,
             kernel_quality, stack=_is_stack_node(node))):
         applied_signature = desired_signature
@@ -732,9 +766,10 @@ def _record_for(node, desired_signature=None, source=None):
 
 
 def _ensure_timer():
-    if (_preparation_runtime is not None and _preparation_runtime.pending
+    if (_preparation_runtime is not None
+            and (_preparation_runtime.pending or (_grade_resources is not None and _grade_resources.pending))
             and not bpy.app.timers.is_registered(_preparation_tick)):
-        bpy.app.timers.register(_preparation_tick, first_interval=0.02)
+        bpy.app.timers.register(_preparation_tick, first_interval=0.0)
 
 
 def _consume_effects(node, effects, preparation=None, record=None, defer_build=False):
@@ -895,12 +930,108 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
                 authorized_builds.setdefault(
                     (effects.build_signature, build_quality), []
                 ).append(record)
+        grade_records = []
         for (signature, build_quality), records in authorized_builds.items():
-            failures.extend(_build_and_install(
-                signature, tuple(records), prepared, build_quality
-            ))
+            if records[0]["stack"]:
+                failures.extend(_build_and_install(
+                    signature, tuple(records), prepared, build_quality
+                ))
+            else:
+                grade_records.extend(records)
+        if grade_records:
+            failures.extend(_publish_grade_parameters(source, tuple(grade_records), prepared))
     finally:
         _reconciling = previous_reconciling
+    return tuple(failures)
+
+
+def _write_grade_parameters(image, pixels):
+    """The only ordinary Grade numerical mutation: update one bound image."""
+    image.pixels.foreach_set(pixels.ravel())
+    image.update()
+
+
+def _publish_grade_parameters(source, authorized_records, prepared):
+    """Consume publication effects once for all users of an authoritative Grade."""
+    users = tuple(record for record in authorized_records
+                  if record.get("source") is source
+                  and _node_stores.get(record["node"].as_pointer()) is record)
+    if not users:
+        return ()
+    created = []
+    try:
+        parameters = prepared.parameters or prepare_parameters(prepared)
+        resource = _grade_resources.resource(users[0]["node"], prepared.space)
+        for record in users:
+            tree_type = record["node"].id_data.bl_idname
+            kernel = resource.trees.get(tree_type)
+            if kernel is not None:
+                # Native undo may have replaced a cached host identity.
+                try:
+                    valid = (kernel.get(_KERNEL_KIND) == _KERNEL_SCHEMA
+                             and kernel.get("_perceptual_grade_stage2_complete"))
+                except ReferenceError:
+                    valid = False
+                if valid:
+                    continue
+            kernel = _kernel(
+                tree_type, prepared, prepared.space,
+                _publication_signature(record, prepared), resource.image,
+            )
+            created.append(kernel)
+            resource = _grade_resources.remember(record["node"], prepared.space, kernel)
+        image = resource.image
+        preparation_signature = _preparation_signature(
+            Settings(linear=prepared.linear.settings, tone=prepared.tone.settings,
+                     space=prepared.space), prepared.space)
+        if image.get(PARAMETER_SIGNATURE) != preparation_signature:
+            previous = np.empty(len(image.pixels), dtype=np.float32)
+            image.pixels.foreach_get(previous)
+            previous_signature = image.get(PARAMETER_SIGNATURE)
+            try:
+                _write_grade_parameters(image, parameters.pixels)
+                image[PARAMETER_SIGNATURE] = preparation_signature
+            except Exception:
+                try:
+                    _write_grade_parameters(image, previous)
+                    if previous_signature is None:
+                        if PARAMETER_SIGNATURE in image:
+                            del image[PARAMETER_SIGNATURE]
+                    else:
+                        image[PARAMETER_SIGNATURE] = previous_signature
+                finally:
+                    # Every user of this writable atlas must lose authority on
+                    # failure, including users whose individual receipt lagged.
+                    raise
+        for tree_type, kernel in resource.trees.items():
+            kernel[_KERNEL_SIGNATURE] = _signature(
+                tree_type, _snapshot_values(Settings(
+                    linear=prepared.linear.settings, tone=prepared.tone.settings,
+                    space=prepared.space)), prepared.space)
+            kernel[PARAMETER_SIGNATURE] = preparation_signature
+    except Exception as error:
+        affected = tuple(record for record in _node_stores.values()
+                         if record.get("source") is source)
+        failures = _fail_installation(affected or users, None, error)
+        _retire_kernels(created)
+        return failures
+
+    failures = []
+    for record in users:
+        node = record["node"]
+        signature = _publication_signature(record, prepared)
+        try:
+            kernel = resource.trees[node.id_data.bl_idname]
+            if node.node_tree != kernel:
+                previous = _replace_node_kernel(node, kernel)
+                if previous != kernel:
+                    _retire_kernels((previous,))
+            failures.extend(_dispatch(node, node_policy.Event(
+                "installation_result", signature)))
+        except Exception as error:
+            failures.extend(_dispatch(node, node_policy.Event(
+                "installation_result", signature, str(error))))
+    _retire_kernels(created)
     return tuple(failures)
 
 
@@ -959,18 +1090,45 @@ def _fail_installation(users, signature, error, quality="full"):
     return tuple(failures)
 
 
-def _handle_preparation_completions(completions):
-    failures = []
+def _queue_preparation_completions(completions):
     for publication in completions:
-        if hasattr(publication, "quality"):
-            failures.extend(_handle_preparation_result(
-                publication.source, publication.signature, publication.prepared,
-                publication.error, publication.quality, publication.lane,
-            ))
-        else:
-            source, signature, prepared, error = publication
-            failures.extend(_handle_preparation_result(source, signature, prepared, error))
+        if _grade_resources is not None:
+            source = publication.source if hasattr(publication, "source") else publication[0]
+            lane = getattr(publication, "lane", "grade")
+            _grade_resources.pending[(source, lane)] = publication
+
+
+def _publish_pending_preparations(*, drain=False):
+    """Consume mailboxes only inside an admitted publication/preflight scope."""
+    failures = []
+    # One complete source per foreground turn. This bounds the amount of host
+    # work without imposing a preview frequency or a settling delay.
+    keys = tuple(_grade_resources.pending) if drain else tuple(_grade_resources.pending)[:1]
+    for key in keys:
+        publication = _grade_resources.pending.pop(key)
+        failures.extend(_consume_preparation_publication(publication))
     return tuple(failures)
+
+
+def _handle_preparation_completions(completions):
+    _queue_preparation_completions(completions)
+    if _grade_resources is None:
+        return ()
+    try:
+        with _grade_resources.gate.commit():
+            return _publish_pending_preparations()
+    except PublicationDeferred:
+        return ()
+
+
+def _consume_preparation_publication(publication):
+    if hasattr(publication, "quality"):
+        return _handle_preparation_result(
+            publication.source, publication.signature, publication.prepared,
+            publication.error, publication.quality, publication.lane,
+        )
+    source, signature, prepared, error = publication
+    return _handle_preparation_result(source, signature, prepared, error)
 
 
 def _preparation_tick():
@@ -982,7 +1140,12 @@ def _preparation_tick():
     except Exception as error:
         _block_nodes(tuple(_all_grade_nodes()), error)
         print("Perceptual Grade asynchronous preparation failed:", error)
-    return 0.02 if _preparation_runtime.pending else None
+    pending = _preparation_runtime.pending or bool(_grade_resources and _grade_resources.pending)
+    if not pending:
+        return None
+    if _grade_resources is not None and _grade_resources.gate.blocked():
+        return 0.02
+    return 0.0
 
 
 def _retire_kernels(kernels):
@@ -995,6 +1158,8 @@ def _retire_kernels(kernels):
             seen.add(pointer)
             if (kernel is not None and kernel.get(_KERNEL_KIND) is not None
                     and kernel.users == 0 and not kernel.use_fake_user):
+                if _grade_resources is not None:
+                    _grade_resources.retire(kernel)
                 bpy.data.node_groups.remove(kernel)
         except (AttributeError, ReferenceError, RuntimeError):
             continue
@@ -1056,6 +1221,8 @@ def _reset_node_stores():
     sources = tuple(_preparation_sources.values())
     _node_stores.clear()
     _preparation_sources.clear()
+    if _grade_resources is not None:
+        _grade_resources.clear()
     if _preparation_runtime is not None:
         for source in sources:
             _preparation_runtime.forget(source)
@@ -1496,12 +1663,102 @@ def _undo_redo_reconcile_tick():
 
 
 @persistent
-def _render_pre(_scene):
-    _ensure_all_kernels()
-    _drain_preparations()
+def _render_pre(scene):
+    if _grade_resources is None:
+        return
+    gate = _grade_resources.gate
+    with gate.callback():
+        ticket = gate.request_render_preflight(0)
+    if threading.current_thread() is threading.main_thread():
+        try:
+            _service_render_preflight(defer=False)
+        except PublicationDeferred as error:
+            # A synchronous host call cannot wait for its own foreground
+            # timer. Revoke output before evaluation without writing images.
+            _block_nodes(tuple(_all_grade_nodes()), error)
+    else:
+        # Blender invokes this callback from its render worker. Release the GIL
+        # while its pre-evaluation boundary waits for a foreground timer turn.
+        ticket.wait()
+
+
+def _service_render_preflight(*, defer=True):
+    if _grade_resources is None:
+        return
+    gate = _grade_resources.gate
+    ticket = gate.take_render_preflight()
+    if ticket is not None:
+        try:
+            with gate.render_preflight(ticket, defer=defer):
+                try:
+                    _ensure_all_kernels()
+                    _drain_preparations_in_scope()
+                except Exception as error:
+                    _block_nodes(tuple(_all_grade_nodes()), error)
+                    raise
+        except PublicationDeferred:
+            if not defer:
+                raise
+
+
+def _render_preflight_tick():
+    if _grade_resources is None:
+        return None
+    try:
+        _service_render_preflight()
+    except Exception as error:
+        print("Perceptual Grade render preparation failed:", error)
+    return 0.02 if _grade_resources.gate.has_render_preflight else 0.1
+
+
+@persistent
+def _render_init(scene, *_args):
+    if _grade_resources is not None:
+        with _grade_resources.gate.callback():
+            _grade_resources.gate.evaluation_started("render", 0)
+
+
+@persistent
+def _render_finished(scene, *_args):
+    if _grade_resources is not None:
+        with _grade_resources.gate.callback():
+            _grade_resources.gate.evaluation_finished("render", 0)
+
+
+@persistent
+def _compositor_pre(scene, *_args):
+    if _grade_resources is not None:
+        with _grade_resources.gate.callback():
+            _grade_resources.gate.evaluation_started("compositor", 0)
+
+
+@persistent
+def _compositor_finished(scene, *_args):
+    if _grade_resources is not None:
+        with _grade_resources.gate.callback():
+            _grade_resources.gate.evaluation_finished("compositor", 0)
+
+
+@persistent
+def _save_pre(_filepath):
+    # Pixels are derived from authoritative settings. Save committed buffers;
+    # file-load reconciliation repairs any saved preview against those settings.
+    for image in bpy.data.images:
+        if image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA and image.is_dirty:
+            image.pack()
+            if image.packed_file is None or image.is_dirty:
+                raise RuntimeError("Grade parameter image could not be packed")
 
 
 def _drain_preparations():
+    """Explicit synchronous bridge for quiescent, main-thread callers."""
+    if _grade_resources is None:
+        return ()
+    with _grade_resources.gate.commit():
+        return _drain_preparations_in_scope()
+
+
+def _drain_preparations_in_scope():
     if _preparation_runtime is None:
         return ()
     failures = []
@@ -1509,7 +1766,8 @@ def _drain_preparations():
                      if record.get("source") is not None})
     # The async barrier waits only for preparation, never for Blender mutation.
     try:
-        failures.extend(_handle_preparation_completions(_preparation_runtime.wait(sources)))
+        _queue_preparation_completions(_preparation_runtime.wait(sources))
+        failures.extend(_publish_pending_preparations(drain=True))
     except Exception as error:
         # Blender need not abort a render when a handler raises. Revoke output
         # through the machine before returning to the host.
@@ -2239,6 +2497,13 @@ def _register_handlers():
         (bpy.app.handlers.undo_post, _undo_redo_post),
         (bpy.app.handlers.redo_post, _undo_redo_post),
         (bpy.app.handlers.render_pre, _render_pre),
+        (bpy.app.handlers.render_init, _render_init),
+        (bpy.app.handlers.render_complete, _render_finished),
+        (bpy.app.handlers.render_cancel, _render_finished),
+        (bpy.app.handlers.composite_pre, _compositor_pre),
+        (bpy.app.handlers.composite_post, _compositor_finished),
+        (bpy.app.handlers.composite_cancel, _compositor_finished),
+        (bpy.app.handlers.save_pre, _save_pre),
         (bpy.app.handlers.depsgraph_update_post, _depsgraph_update_post),
     ):
         if callback not in collection:
@@ -2264,7 +2529,7 @@ def _unregister_handlers():
 
 
 def register():
-    global _preparation_runtime, _grade_preparer
+    global _preparation_runtime, _grade_preparer, _grade_resources
     classes = (
         PGLinearSettings,
         PGToneSettings,
@@ -2289,6 +2554,7 @@ def register():
     )
     try:
         if _preparation_runtime is None:
+            _grade_resources = GradeResources(bpy)
             _grade_preparer = GradePreparer(workers=3)
             _preparation_runtime = PreparationRuntime(default_lane="grade")
             _preparation_runtime.register_async_lane("grade", _grade_preparer.prepare)
@@ -2313,6 +2579,9 @@ def register():
         if (not bpy.app.background
                 and not bpy.app.timers.is_registered(_gesture_router_tick)):
             bpy.app.timers.register(_gesture_router_tick, first_interval=0.1)
+        if not bpy.app.timers.is_registered(_render_preflight_tick):
+            bpy.app.timers.register(_render_preflight_tick, first_interval=0.02,
+                                    persistent=True)
     except Exception as registration_error:
         try:
             unregister()
@@ -2325,9 +2594,14 @@ def register():
 
 
 def unregister():
-    global _preparation_runtime, _grade_preparer
+    global _preparation_runtime, _grade_preparer, _grade_resources
     errors = []
     _clear_gestures()
+    try:
+        if bpy.app.timers.is_registered(_render_preflight_tick):
+            bpy.app.timers.unregister(_render_preflight_tick)
+    except Exception as exc:
+        errors.append(exc)
     try:
         if bpy.app.timers.is_registered(_startup_reconcile_tick):
             bpy.app.timers.unregister(_startup_reconcile_tick)
@@ -2366,6 +2640,7 @@ def unregister():
             errors.append(exc)
         _grade_preparer = None
     _reset_node_stores()
+    _grade_resources = None
 
     for menu_type, callback in reversed(tuple(_registered_menus)):
         try:

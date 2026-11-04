@@ -89,15 +89,15 @@ class ColorGraph:
     @property
     def _color_source_squares_safe(self):
         # C0 <= H0²/66 and |E0| <= H0² in every post-Tone source state.
-        return self._color_source_height < math.sqrt(66.)*2.**29
+        return self.parameters is None and self._color_source_height < math.sqrt(66.)*2.**29
 
     @property
     def _color_safe(self):
-        return all(math.isfinite(self._color_bounds[key]) and self._color_bounds[key] < 2.**58
+        return self.parameters is None and all(math.isfinite(self._color_bounds[key]) and self._color_bounds[key] < 2.**58
                    for key in ('H', 'C', 'energy', 'response', 'parameter'))
 
     def _color_bounded(self, *names, limit=2.**120):
-        return all(math.isfinite(self._color_bounds[name]) and self._color_bounds[name] < limit
+        return self.parameters is None and all(math.isfinite(self._color_bounds[name]) and self._color_bounds[name] < limit
                    for name in names)
 
     def _color_norm(self, a, b):

@@ -156,6 +156,9 @@ class Graph(ColorGraph):
         self.cache = {}
         self.images = []
         self.helper_groups = []
+        # Composed by the product's fixed Stage 2 builder. Generic immutable
+        # graphs retain their existing constants and numerical optimizations.
+        self.parameters = None
 
     def connect(self, value, target):
         if _socket(value):
@@ -471,6 +474,8 @@ class Graph(ColorGraph):
         return self.encode_cones(self.matrix(rgb, self.prepared.to_cones))
 
     def _table_image(self):
+        if self.parameters is not None:
+            return self.parameters.image
         return self._packed_image(self.prepared.table.pixels, key=('tone', id(self.prepared.table)),
                                   label='Perceptual Grade tone coefficients')
 
@@ -662,14 +667,15 @@ class Graph(ColorGraph):
         return self.add(self.dot(self._sample(cell), left), self.dot(self._sample(self.add(cell, 1)), right))
 
     def remap(self, magnitude, *, force=False):
-        tone = self.prepared.tone
+        tone = self.prepared.tone if self.parameters is None else self.parameters.tone
         if not tone.active and not force:
             return magnitude
         t = self.maximum(0, self.div(self.sub(self.mul(.01, magnitude), tone.black), tone.span))
         # A uniform source-position grid keeps the accepted Fit range within
         # the scalar error gate. Beyond the prepared domain, lookup clamps to
         # the analytic residual asymptote while the linear tail keeps growing.
-        z = self.div(t, self.prepared.table.domain)
+        domain = self.prepared.table.domain if self.parameters is None else self.parameters.domain
+        z = self.div(t, domain)
         value = self.madd(tone.slope, t, self.lookup(z))
         value = self.select(self.op("COMPARE", t, 1, 0), tone.high, value)
         return self.mul(100, value)

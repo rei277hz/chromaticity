@@ -35,7 +35,7 @@ class InstalledExtensionTests(unittest.TestCase):
                 [str(blender), "--background", "--factory-startup", "--disable-autoexec",
                  "--python-exit-code", "1", "--python", str(runner), "--",
                  str(repository), str(report)],
-                # This exercises repeated complete guarded Grade graph rebuilds,
+                # Exercise fixed-graph parameter updates, resource ownership,
                 # save/load recovery, and failures in one Blender lifecycle.
                 cwd=root, env=env, capture_output=True, text=True, timeout=600,
             )

@@ -58,7 +58,7 @@ class ArchitectureTests(unittest.TestCase):
                     continue
                 for name in modules:
                     self.assertFalse(FORBIDDEN.intersection(name.split('.')),(filename,name))
-                    if filename.name not in {'graph.py', 'persistent.py'}:
+                    if filename.name not in {'graph.py', 'persistent.py', 'stage2_graph.py'}:
                         self.assertNotIn(name.split('.')[0],NATIVE,filename)
                     self.assertFalse(name.startswith('color_tools.'),(filename,name))
 

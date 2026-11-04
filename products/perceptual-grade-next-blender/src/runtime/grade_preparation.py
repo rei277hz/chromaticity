@@ -2,7 +2,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import hashlib
 import json
 import threading
@@ -18,6 +18,7 @@ from ..kernel.prepare import (
     viewing,
 )
 from ..kernel.settings import ColorSettings, Settings
+from ..kernel.stage2_parameters import prepare_parameters
 from ..policy import preparation_join
 
 
@@ -160,9 +161,8 @@ class GradePreparer:
         # Only a terminal join effect authorizes the aggregate to be assembled.
         if completion.completion_signature != signature:
             raise RuntimeError("Preparation join did not authorize an aggregate")
-        finished = time.perf_counter()
-        self._trace(signature, "join", started, finished)
         if completion.error is not None:
+            self._trace(signature, "join", started, time.perf_counter())
             if first_error is None:
                 raise RuntimeError("Preparation join recorded an error without a cause")
             raise first_error
@@ -176,7 +176,17 @@ class GradePreparer:
         if (boundary.fl, boundary.aw, boundary.gamma) != (tone.fl, tone.aw, tone.gamma):
             raise ValueError("Boundary geometry belongs to a different appearance context")
         prepared = PreparedGrade(linear, tone, settings.space, color, boundary, False)
-        return prepared
+        # The small atlas assembly belongs to the complete snapshot's timing.
+        # Shield its worker just as the parallel children: cancellation must
+        # not release a scheduler slot before physical preparation retires.
+        packing = loop.run_in_executor(self._executor, prepare_parameters, prepared)
+        try:
+            parameters = await asyncio.shield(packing)
+        except asyncio.CancelledError:
+            await asyncio.shield(packing)
+            raise
+        self._trace(signature, "join", started, time.perf_counter())
+        return replace(prepared, parameters=parameters)
 
     def close(self):
         """Fence new work and retire all pool writers before releasing caches."""

@@ -165,6 +165,42 @@ python_binary(
     deps = [":grade_preparation_timing_sources"],
 )
 
+python_library(
+    name = "grade_update_timing_report_sources",
+    srcs = {"grade_update_timing_report.py": TOOL_PREFIX + "grade_update_timing_report.py"},
+    base_module = "tools.perceptual_grade.reports",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "grade_update_timing_sources",
+    srcs = {"grade_update_timing.py": TOOL_PREFIX + "grade_update_timing.py"},
+    base_module = "tools.perceptual_grade.reports",
+    resources = {
+        "grade_update_timing_runner.py": TOOL_PREFIX + "grade_update_timing_runner.py",
+    },
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    visibility = ["PUBLIC"],
+    deps = [
+        ":grade_update_timing_report_sources",
+        ":stack_lut_timing_sources",
+    ],
+)
+
+python_binary(
+    name = "grade_update_timing",
+    main_module = "tools.perceptual_grade.reports.grade_update_timing",
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    visibility = ["PUBLIC"],
+    deps = [":grade_update_timing_sources"],
+)
+
 python_binary(
     name = "audit_fields",
     main_module = "tools.perceptual_grade.reports.audit_fields",

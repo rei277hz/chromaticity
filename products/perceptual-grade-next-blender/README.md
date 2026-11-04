@@ -18,6 +18,27 @@ policy state.
 The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
+A Grade builds its complete Linear/Tone graph once per working space and tree
+type. Ordinary adjustments replace the pixels of one persistent 512 × 1 RGBA32F
+parameter image (8 KiB), shared by all nodes using that Grade, including Shader
+and Compositor nodes. Equal-valued independent Grades own separate writable
+images. Slots 0–256 contain the Tone endpoint value, slope, and curvature; slots
+257–259 contain the Linear matrix's red/blue columns and neutral row sums; slots
+260–261 contain the Tone scalars and domain. Fixed texture samples read these
+values instead of baking them into socket defaults. The boundary texture,
+viewing constants, links, and output adapter remain fixed within a working space.
+Updates therefore require no graph replacement, image allocation, or repacking.
+Dirty parameter images are packed when saving; file-load reconciliation checks
+the installed signature before accepting restored data.
+
+Foreground publications coalesce to the newest complete result per source and
+process one source per timer turn, with no preview frequency cap. They defer for
+observed render/compositor/bake activity and interface locks. Blender's public
+job notifications provide admission checks, not a universal lock against native
+image readers. A render worker waits at its pre-evaluation callback while a
+foreground timer performs exact reconciliation; synchronous main-thread renders
+use the same scoped preflight directly.
+
 Stack LUT preparation runs in a private Blender GPU helper. Each helper job
 dispatches its 33³ preview and 65³ refinement back-to-back, with a private output
 texture per quality. A continuous pointer drag can install the matching preview
@@ -39,6 +60,26 @@ Measure Grade preparation, texture upload, and node-tree construction with:
 
 ```sh
 buck2 run //products/perceptual-grade-next-blender/tools/reports:grade_preparation_timing -- --output-dir /tmp/perceptual-grade-preparation
+```
+
+Measure installed Grade publications during continuous changes in a Shading
+workspace with a sidebar and rendered viewport:
+
+```sh
+buck2 run --remote-only //products/perceptual-grade-next-blender/tools/reports:grade_update_timing -- --output-dir /tmp/perceptual-grade-updates --stage both
+```
+
+This report records preparation, publication, UI heartbeat, and viewport draw
+rates, plus resource identity checks and final settling. It has no performance
+gate. Uploads exceeding 60/s do not by themselves establish visible 60 fps; the
+report distinguishes these measurements. The bundled Linux display fixture
+uses Mesa llvmpipe, so its GPU work executes on CPU cores.
+Use `--viewport solid` to isolate publication and UI work from the rendered
+viewport, and `--verify-render-preflight` to additionally invoke a native GUI
+render with a pending adjustment. The latter is also a regression test:
+
+```sh
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:grade_render_preflight
 ```
 
 Measure continuous Stack Tone LUT publication with:
