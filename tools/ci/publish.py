@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only generated manual-run badges on the dedicated ci-status branch."""
+"""Publish generated default-branch push badges on the dedicated ci-status branch."""
 
 import argparse
 import base64
@@ -32,8 +32,8 @@ def validate(directory, env):
     branch = env.get("DEFAULT_BRANCH", "")
     if not branch or env.get("GITHUB_REF") != f"refs/heads/{branch}":
         raise ValueError("Badges may only be published from the default branch")
-    if env.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
-        raise ValueError("Badges may only be published by a manual workflow")
+    if env.get("GITHUB_EVENT_NAME") != "push":
+        raise ValueError("Badges may only be published by a push workflow")
     repository = env.get("GITHUB_REPOSITORY", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("Invalid GitHub repository")
@@ -116,7 +116,7 @@ def publish_to_git(directory, summary, remote, env):
                 raise ValueError("Existing status branch is missing its run-order record")
             current = json.loads(current_path.read_text())
             if not newer(summary, current):
-                print("Status already contains this run or a newer manual run; publication skipped.")
+                print("Status already contains this run or a newer run; publication skipped.")
                 return False
             git("rm", "--quiet", "-r", "--ignore-unmatch", ".")
         else:
@@ -127,7 +127,7 @@ def publish_to_git(directory, summary, remote, env):
         metadata = summary["metadata"]
         git("commit", "--quiet", "-m", f'Update Linux status for run {metadata["run_number"]}.{metadata["run_attempt"]}')
         git("push", "--quiet", "origin", f"HEAD:refs/heads/{BRANCH}")
-    print(f"Published manual build/test badges to {BRANCH}.")
+    print(f"Published default-branch build/test badges to {BRANCH}.")
     return True
 
 

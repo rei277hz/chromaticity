@@ -2,8 +2,8 @@
 
 CI checks only `products/perceptual-grade-next-blender`, including its policy
 proofs. [Lint](../../.github/workflows/lint.yml) and
-[Build and badges](../../.github/workflows/build.yml) run on pushes, pull requests,
-and manual dispatch. Both use the local
+[Build and badges](../../.github/workflows/build.yml) run automatically on pushes
+and pull requests. Both use the local
 `setup-buck2` composite action, which installs a checksum-verified standalone
 Buck2 binary and retains its bundled prelude. Release `2026-10-15` contains the
 existing `2026-10-14-9a1876786f32806f6b65fc51f4c1c3077efc38a5` binary.
@@ -47,7 +47,7 @@ python3 tools/ci/check_targets.py
 ## Product builds, proofs, and tests
 
 [The CI selection](targets.json) builds `:verify_policies` and `:extension` and
-runs 37 test suites from next-blender. These cover policy decisions, runtime
+runs the selected test suites from next-blender. These cover policy decisions, runtime
 preparation, numerical and GPU behavior, packaging and installation, and native
 Blender acceptance. The native suites include render preflight, continuous
 slider dragging, undo, image saving, and Stack preparation. Report-generation
@@ -71,10 +71,10 @@ local execution. Do not invoke it in an active development checkout.
 
 ## Reports and badges
 
-Each workflow run retains its own build and test evidence. Public badges describe
-the latest published manual run on the default branch, not every commit or the
-full repository test suite. The badges become available
-after the first default-branch manual run publishes the `ci-status` branch.
+Each workflow run retains its own build and test evidence. Public badges update
+automatically from the latest published default-branch push run and describe the
+selected product targets. The badges become available
+after the first default-branch push run publishes the `ci-status` branch.
 Their linked summary records the commit, timestamp, target results, and workflow
 run.
 
@@ -85,7 +85,7 @@ Synthetic download checks are excluded; skipped, failed, missing, and incomplete
 results remain visible and cannot produce an all-passing badge. Reports and logs
 are retained as workflow artifacts for 14 days, including when commands fail.
 
-Only a default-branch manual run can update the public `ci-status` branch. The
+Only a default-branch push run can update the public `ci-status` branch. The
 final publishing job alone has repository write permission; it publishes two SVG
 badges and their JSON/Markdown summary without committing to the source branch.
 Older runs cannot overwrite newer published results. Cancelled runs retain the

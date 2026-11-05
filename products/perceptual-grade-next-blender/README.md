@@ -83,6 +83,7 @@ rates, plus resource identity checks and final settling. It has no performance
 gate. Uploads exceeding 60/s do not by themselves establish visible 60 fps; the
 report distinguishes these measurements. The bundled Linux display fixture
 uses Mesa llvmpipe, so its GPU work executes on CPU cores.
+
 Use `--viewport solid` to isolate publication and UI work from the rendered
 viewport, and `--verify-render-preflight` to additionally invoke a native GUI
 render with a pending adjustment. The latter is also a regression test:
@@ -90,6 +91,30 @@ render with a pending adjustment. The latter is also a regression test:
 ```sh
 buck2 test --remote-only //products/perceptual-grade-next-blender/tests:grade_render_preflight
 ```
+
+Measure actual Shader slider updates against captured viewport pixels with:
+
+```sh
+buck2 run //products/perceptual-grade-next-blender/tools/reports:shader_display_timing -- --output-dir /tmp/pg-shader-display --baseline products/perceptual-grade-next-blender/docs/performance/shader-display-baseline.json
+```
+
+This on-demand benchmark drives the Exposure and Tone Fit sidebar widgets and
+matches graded swatches in an external X11 capture. It records five fresh Blender
+sessions, 100 isolated updates per control per session, and continuous drags.
+The [measurement contract](docs/performance/shader-display.md) explains timing
+uncertainty, required environment compatibility, and how to update the baseline.
+Rerun it before changes that can affect Shader updates. Timing regressions warn;
+incorrect or incomplete pixel observations fail the measurement.
+
+Measure comparable Compositor dragging against the live Viewer display with:
+
+```sh
+buck2 run //products/perceptual-grade-next-blender/tools/reports:compositor_display_timing -- --output-dir /tmp/pg-compositor-display --baseline products/perceptual-grade-next-blender/docs/performance/compositor-display-baseline.json
+```
+
+This drag-only baseline uses a 438 × 841 image, GPU/AUTO Compositor, and the
+same controls and timing definitions. Its [measurement contract](docs/performance/compositor-display.md)
+describes the workload and the separate Compositor baseline.
 
 Check interactive compositor pixels and automatic refresh on the installed
 extension with:

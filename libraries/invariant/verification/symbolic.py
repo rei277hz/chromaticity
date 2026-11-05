@@ -452,11 +452,40 @@ class Interpreter:
         self.stack = []
         self.assumptions = []
         self.memo = {}
+        self._reachability_cache = {}
+        self._reachability_simplifier = z3.Then('simplify', 'ctx-simplify', 'simplify')
         self.nonnegative = set()
         self.input_integers = set()
         self.residues = {}
         self.known_types = set()
         self.expression_roots = {}
+
+    def is_unreachable(self, original_guard):
+        """Prune only a guard whose complete simplification is false.
+
+        This is an optimization, not an assumption or a replacement for the
+        original path condition. Inconclusive or interrupted simplification
+        leaves the path available to the ordinary proof obligations.
+        """
+        guard = boolean(original_guard)
+        identity = guard.get_id()
+        cached = self._reachability_cache.get(identity)
+        if cached is not None:
+            return cached[1]
+        unreachable = False
+        try:
+            simplified = z3.simplify(guard)
+            if z3.is_false(simplified):
+                unreachable = True
+            elif not z3.is_true(simplified):
+                result = self._reachability_simplifier(simplified)
+                unreachable = z3.is_false(result.as_expr())
+        except z3.Z3Exception:
+            pass
+        # Keep the AST alive so Z3 cannot reuse its identity for another guard.
+        self._reachability_cache[identity] = (guard, unreachable)
+        return unreachable
+
     def sort(self, typ):
         if typ.kind == 'literal':
             if type(typ.args[0]) is str:
@@ -855,7 +884,10 @@ class Interpreter:
             result = self.scalar(self.expr(node.values[0], env, guard), 'bool', guard)
             for item in node.values[1:]:
                 active = result if isinstance(node.op, ast.And) else z3.Not(result)
-                value = self.scalar(self.expr(item, env, z3.And(guard, active)), 'bool', z3.And(guard, active))
+                active_guard = z3.And(guard, active)
+                if self.is_unreachable(active_guard):
+                    break
+                value = self.scalar(self.expr(item, env, active_guard), 'bool', active_guard)
                 result = z3.And(result, value) if isinstance(node.op, ast.And) else z3.Or(result, value)
             return result
         if isinstance(node, ast.Compare):
@@ -885,7 +917,12 @@ class Interpreter:
             return result
         if isinstance(node, ast.IfExp):
             cond = self.scalar(self.expr(node.test, env, guard), 'bool', guard)
-            return choose(cond, self.expr(node.body, env, z3.And(guard, cond)), self.expr(node.orelse, env, z3.And(guard, z3.Not(cond))), self)
+            yes_guard, no_guard = z3.And(guard, cond), z3.And(guard, z3.Not(cond))
+            if self.is_unreachable(yes_guard):
+                return self.expr(node.orelse, env, no_guard)
+            if self.is_unreachable(no_guard):
+                return self.expr(node.body, env, yes_guard)
+            return choose(cond, self.expr(node.body, env, yes_guard), self.expr(node.orelse, env, no_guard), self)
         if isinstance(node, ast.Call):
             name = node.func.id
             args = [self.expr(x, env, guard) for x in node.args]
@@ -941,11 +978,11 @@ class Interpreter:
         return (type(value), value)
 
     def call(self, name, args, kwargs, guard=True, check_preconditions=True):
-        if z3.is_false(z3.simplify(boolean(guard))):
+        guard = boolean(guard)
+        if self.is_unreachable(guard):
             return self.symbol(str(z3.FreshInt('unreachable.' + name)), self.source.signatures[name][1])
         if self.assumptions:
             return self._call(name, args, kwargs, guard, check_preconditions)
-        guard = z3.simplify(boolean(guard))
         key = (name, self.value_key(tuple(args)), tuple((k, self.value_key(v)) for k, v in kwargs.items()), guard, check_preconditions)
         if key in self.memo:
             result, safety, domains = self.memo[key]
@@ -979,9 +1016,12 @@ class Interpreter:
             active, paths = self.execute(fn.body, [(boolean(guard), env)])
             for path, _ in active:
                 self.require(False, path, name + ' return coverage')
-            if not paths:
-                raise VerificationError("Function has no return: " + name)
             self.require(z3.Or(*(path for path, _ in paths)), guard, name + " return coverage")
+            if not paths:
+                # A premise can select only a raising or falling-through path.
+                # Keep its failed coverage obligation and a typed placeholder
+                # so the checker can report the actual counterexample.
+                return self.symbol(str(z3.FreshInt('no_return.' + name)), returns)
             for path, result in paths:
                 self.require(self.typed(result, returns), path, name + " return type")
             result = paths[-1][1]
@@ -996,8 +1036,7 @@ class Interpreter:
         for node in statements:
             next_active = []
             for guard, original in active:
-                guard = z3.simplify(guard)
-                if z3.is_false(guard):
+                if self.is_unreachable(guard):
                     continue
                 env = dict(original)
                 if isinstance(node, ast.Return):
@@ -1026,9 +1065,10 @@ class Interpreter:
                 elif isinstance(node, ast.If):
                     cond = z3.simplify(self.scalar(self.expr(node.test, env, guard), 'bool', guard))
                     for branch, selected in ((node.body, cond), (node.orelse, z3.Not(cond))):
-                        if z3.is_false(z3.simplify(selected)):
+                        selected_guard = z3.And(guard, selected)
+                        if self.is_unreachable(selected_guard):
                             continue
-                        ongoing, exits = self.execute(branch, [(z3.And(guard, selected), env)])
+                        ongoing, exits = self.execute(branch, [(selected_guard, env)])
                         next_active.extend(ongoing)
                         returned.extend(exits)
                 else:

@@ -77,13 +77,19 @@ Build and test through remote execution:
 
 ```sh
 buck2 build //products/perceptual-grade-next-blender:verify_policies --remote-only
+buck2 test //products/perceptual-grade-next-blender/tests:policy_verification --remote-only
 buck2 test //products/perceptual-grade-next-blender/tests:policy_preparation --remote-only
 buck2 test //products/perceptual-grade-next-blender/tests:policy_node --remote-only
 buck2 test //products/perceptual-grade-next-blender/tests:policy_helper //products/perceptual-grade-next-blender/tests:policy_resources //products/perceptual-grade-next-blender/tests:policy_image_publication //products/perceptual-grade-next-blender/tests:policy_gesture --remote-only
 ```
 
-CI checks this product on pushes, pull requests, and manual runs. Its selection
+CI checks this product automatically on pushes and pull requests. Its selection
 includes policy proofs, the extension package, and unit, runtime, numerical, GPU,
 installed-Blender, and native UI acceptance tests. Tests and proofs from
 `libraries/perceptual-grade-core` and `products/perceptual-grade-blender` are
 excluded; shared source dependencies may still build as prerequisites.
+
+The product's verifier regressions exercise assumption-guided expansion using
+the helper policy and focused safety cases. They check that unreachable branches
+are pruned while reachable errors, contradictory premises, and unsafe
+assumptions still fail. Structural checks avoid machine-dependent timing limits.
