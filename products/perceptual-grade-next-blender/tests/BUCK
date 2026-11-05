@@ -355,6 +355,58 @@ python_test(
 )
 
 python_test(
+    name = "shader_display_timing_report",
+    srcs = ["tools/test_shader_display_timing_report.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:shader_display_timing_report_sources"],
+)
+
+python_test(
+    name = "compositor_display_timing_report",
+    srcs = ["tools/test_compositor_display_timing_report.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:compositor_display_timing_report_sources"],
+)
+
+python_test(
+    name = "shader_display_capture",
+    srcs = ["tools/test_shader_display_capture.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:shader_display_timing_sources"],
+)
+
+python_test(
+    name = "shader_display_match",
+    srcs = ["tools/test_shader_display_match.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:shader_display_timing_sources"],
+)
+
+python_test(
+    name = "shader_display_native",
+    srcs = ["tools/test_shader_display_native.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["gpu"],
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:shader_display_timing_sources"],
+)
+
+python_test(
+    name = "compositor_display_native",
+    srcs = ["tools/test_compositor_display_native.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["gpu"],
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    deps = ["//products/perceptual-grade-next-blender/tools/reports:compositor_display_timing_sources"],
+)
+
+python_test(
     name = "gate_policy",
     srcs = ["tools/test_gate_policy.py"],
     base_module = "tests.perceptual_grade_blender",
@@ -589,6 +641,34 @@ python_test(
             "blender": "//third_party:blender_native",
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
             "compositor_runner.py": "installed/compositor_runner.py",
+        },
+    }),
+)
+
+python_test(
+    name = "render_layers_schedule_gui",
+    srcs = [
+        "installed/gui_support.py",
+        "installed/test_render_layers_schedule_gui.py",
+    ],
+    base_module = "tests.perceptual_grade_blender",
+    labels = [
+        "installed",
+        "gui",
+        "gpu",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "render_layers_schedule_runner.py": "installed/render_layers_schedule_runner.py",
+            "xvfb": "//third_party:xvfb_software_linux",
+        },
+        "prelude//os:macos": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "render_layers_schedule_runner.py": "installed/render_layers_schedule_runner.py",
         },
     }),
 )

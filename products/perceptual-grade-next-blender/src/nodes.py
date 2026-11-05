@@ -976,6 +976,78 @@ def _pack_grade_parameters(image):
     image.pack()
 
 
+def _tag_compositor_outputs(records):
+    """Invalidate compositor graphs that consume successfully published Grades."""
+    owners = {}
+    kernels = {}
+    for record in records:
+        try:
+            node = record["node"]
+            tree = node.id_data
+            if tree.bl_idname != COMPOSITOR_TREE:
+                continue
+            tree_pointer = tree.as_pointer()
+            if tree_pointer:
+                owners[tree_pointer] = tree
+            kernel = node.node_tree
+            if kernel is not None:
+                kernel_pointer = kernel.as_pointer()
+                if kernel_pointer:
+                    kernels[kernel_pointer] = kernel
+        except (AttributeError, ReferenceError, RuntimeError):
+            continue
+    if not owners:
+        return
+
+    tagged_trees = set()
+
+    def tag_tree(tree):
+        pointer = tree.as_pointer()
+        if pointer and pointer not in tagged_trees:
+            tree.update_tag()
+            tagged_trees.add(pointer)
+
+    for tree in owners.values():
+        tag_tree(tree)
+    for kernel in kernels.values():
+        tag_tree(kernel)
+
+    scenes = {}
+    roots = {}
+    for scene in tuple(bpy.data.scenes):
+        try:
+            root = scene.compositing_node_group
+            if root is None:
+                continue
+            if any(root == tree or root.contains_tree(tree)
+                   for tree in owners.values()):
+                scenes[scene.as_pointer()] = scene
+                roots[root.as_pointer()] = root
+        except (AttributeError, ReferenceError, RuntimeError):
+            continue
+    for root in roots.values():
+        tag_tree(root)
+    for scene in scenes.values():
+        scene.update_tag()
+
+    tagged_areas = set()
+    for screen in tuple(bpy.data.screens):
+        try:
+            areas = tuple(screen.areas)
+        except (AttributeError, ReferenceError, RuntimeError):
+            continue
+        for area in areas:
+            try:
+                if area.type not in {"NODE_EDITOR", "IMAGE_EDITOR"}:
+                    continue
+                pointer = area.as_pointer()
+                if pointer and pointer not in tagged_areas:
+                    area.tag_redraw()
+                    tagged_areas.add(pointer)
+            except (AttributeError, ReferenceError, RuntimeError):
+                continue
+
+
 def _publish_grade_parameters(source, authorized_records, prepared):
     """Consume publication effects once for all users of an authoritative Grade."""
     users = tuple(record for record in authorized_records
@@ -1071,6 +1143,7 @@ def _publish_grade_parameters(source, authorized_records, prepared):
 
     def deliver(_errors):
         resource = context["resource"]
+        delivery_failed = False
         # Pixel writes update the buffer, but the compositor caches nested
         # image results until the ID is tagged. Invalidate before acknowledging
         # installation so a failed notification fails every shared user.
@@ -1083,13 +1156,19 @@ def _publish_grade_parameters(source, authorized_records, prepared):
                 if node.node_tree != kernel:
                     previous = _replace_node_kernel(node, kernel)
                     if previous != kernel:
-                        failures.extend(((node,), error)
-                                        for error in _retire_kernels((previous,)))
-                failures.extend(((node,), failure) for failure in _dispatch(
-                    node, node_policy.Event("installation_result", signature)))
+                        retirement_failures = _retire_kernels((previous,))
+                        failures.extend(((node,), failure) for failure in retirement_failures)
+                delivery_failures = _dispatch(
+                    node, node_policy.Event("installation_result", signature))
+                failures.extend(((node,), failure) for failure in delivery_failures)
+                delivery_failed |= bool(delivery_failures)
             except Exception as error:
-                failures.extend(((node,), failure) for failure in _dispatch(
-                    node, node_policy.Event("installation_result", signature, str(error))))
+                delivery_failures = _dispatch(
+                    node, node_policy.Event("installation_result", signature, str(error)))
+                failures.extend(((node,), failure) for failure in delivery_failures)
+                delivery_failed = True
+        if not delivery_failed:
+            _tag_compositor_outputs(users)
 
     def retire(_errors):
         errors = _retire_kernels(created)
