@@ -568,6 +568,28 @@ assert all(parameter_banks(node) == shared_parameter_banks
 for tree in (shared_shader_nodes[0].node_tree, shared_compositor_node.node_tree):
     assert tree.get(nodes.PARAMETER_OWNER) == shared_grade
     assert tree.get(nodes.PARAMETER_OWNER_NODE, "") == ""
+
+# Cached slider requests use stored receipts for both tree types. A Compositor
+# request with no runtime receipt is an adoption boundary and keeps its full
+# audit, so model the ordinary receipt-backed cache here.
+original_parameter_kernel_valid = nodes._parameter_kernel_valid
+original_compositor_known = nodes._compositor_receipts.known
+try:
+    def reject_deep_request_audit(_kernel):
+        raise AssertionError("cached Grade request performed a deep kernel audit")
+
+    nodes._parameter_kernel_valid = reject_deep_request_audit
+    nodes._compositor_receipts.known = lambda _pointer: True
+    for cached_node in (shared_shader_nodes[0], shared_compositor_node):
+        cached_record = nodes._node_stores[cached_node.as_pointer()]
+        applied_signature = cached_record["state"].applied_signature
+        assert applied_signature is not None
+        assert not nodes._request_node(cached_node, nodes._working_space())
+        assert cached_record["state"].applied_signature == applied_signature
+finally:
+    nodes._parameter_kernel_valid = original_parameter_kernel_valid
+    nodes._compositor_receipts.known = original_compositor_known
+
 # Removing one user must retain the kernel and image still used by its peers.
 shared_kernel = shader_node.node_tree
 removed_node_name = shared_shader_nodes[0].name
@@ -759,7 +781,25 @@ for corruption in ("unmarked", "misbound", "misbound_tracked"):
         # Recreate the record to exercise saved-kernel adoption. The final case
         # keeps its record so render preflight must reject a corrupt live cache.
         nodes._node_stores.pop(independent_node.as_pointer())
-    reconcile_for_render(bpy.context.scene)
+    if corruption == "misbound_tracked":
+        original_valid = nodes._parameter_kernel_valid
+        audited_kernels = []
+        corrupt_kernel_pointer = corrupt_kernel.as_pointer()
+
+        def track_deep_audit(kernel):
+            audited_kernels.append(
+                kernel.as_pointer() if kernel is not None else None
+            )
+            return original_valid(kernel)
+
+        nodes._parameter_kernel_valid = track_deep_audit
+        try:
+            reconcile_for_render(bpy.context.scene)
+            assert corrupt_kernel_pointer in audited_kernels
+        finally:
+            nodes._parameter_kernel_valid = original_valid
+    else:
+        reconcile_for_render(bpy.context.scene)
     assert_grade_current(independent_node)
     assert independent_node.node_tree != corrupt_kernel
     corrupt_kernel.use_fake_user = False

@@ -154,6 +154,26 @@ class Capture:
         self.emit(event, **self.node_fields(node, record), **fields)
 
     @observational
+    def request_kernel_validation(self, node, record, started_ns, finished_ns,
+                                  current, full_validation):
+        self.emit(
+            "request_kernel_validation", **self.node_fields(node, record),
+            started_ns=started_ns, finished_ns=finished_ns,
+            duration_ns=max(0, finished_ns - started_ns),
+            current=current, full_validation=full_validation,
+        )
+
+    @observational
+    def grade_changed(self, grade, started_ns, finished_ns, matched_nodes,
+                      refreshed_nodes):
+        self.emit(
+            "grade_changed_timing", grade_id=grade.as_pointer(),
+            started_ns=started_ns, finished_ns=finished_ns,
+            duration_ns=max(0, finished_ns - started_ns),
+            matched_nodes=matched_nodes, refreshed_nodes=refreshed_nodes,
+        )
+
+    @observational
     def transition(self, node, record, event, before, after, effects):
         self.node_event("node_transition", node, record, event_kind=event.kind,
                         event_signature=event.signature,

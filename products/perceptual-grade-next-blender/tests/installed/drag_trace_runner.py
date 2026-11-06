@@ -337,7 +337,19 @@ def run():
     rows = read_trace(first)
     kinds = {row["event"] for row in rows}
     assert "diagnostic_error" not in kinds, [row for row in rows if row["event"] == "diagnostic_error"]
-    assert {"ui_event", "property_callback", "node_transition", "heartbeat"} <= kinds, kinds
+    assert {"ui_event", "property_callback", "node_transition", "heartbeat",
+            "request_kernel_validation", "grade_changed_timing"} <= kinds, kinds
+    request_checks = [row["fields"] for row in rows
+                      if row["event"] == "request_kernel_validation"]
+    assert all(isinstance(fields.get("duration_ns"), int)
+               and isinstance(fields.get("full_validation"), bool)
+               for fields in request_checks), request_checks[:2]
+    grade_scans = [row["fields"] for row in rows
+                   if row["event"] == "grade_changed_timing"]
+    assert all(isinstance(fields.get("duration_ns"), int)
+               and fields.get("matched_nodes", -1) >= 0
+               and fields.get("refreshed_nodes", -1) >= 0
+               for fields in grade_scans), grade_scans[:2]
     assert any("preparation" in kind for kind in kinds), kinds
     assert any("publication" in kind for kind in kinds), kinds
     assert {"compositor_pre", "compositor_post", "compositor_snapshot",

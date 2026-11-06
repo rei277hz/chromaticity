@@ -22,7 +22,7 @@
 | `graph/tone.py`, `graph/color.py`, `graph/curve_tables.py` | 原生图等价实现与系数表求值 |
 | `Perceptual-Grade.dctl` | `pg_model`, `pg_linear`, `pg_stage2_appearance`, `pg_drivers_ja`, `pg_attributes`, `pg_hue_concentration`, `pg_stage3_ja`, `pg_hk_energy`, `pg_project_energy`, `pg_decode_reference`, `pg_core`, `pg_nonlinear_eval` |
 
-各分量的方程描述的是当前的 p=2 分类器与分级模型。第 18 节给出已实现的半解析逆变换与 Stack 组合。第 19 节区分了保持不变的规范分级坐标与原生 ACEScg/ACES 白点下的 LUT 采样坐标。[采样章节](../theory/lut.md) 说明了为什么选择这一网格；[测试](testing.md#lut-sampling-and-aces-20-display-error) 记录了该实验及其适用范围。
+各分量的方程描述的是当前的 p=2 分类器与分级模型。第 18 节给出已实现的半解析逆变换与 Stack 组合。第 19 节区分了保持不变的规范分级坐标与原生 ACEScg/ACES 白点下的 LUT 采样坐标。[采样章节](../theory/lut.md) 说明了为什么选择这一网格；[测试](testing.md#lut-采样与-aces-20-显示误差) 记录了该实验及其适用范围。
 
 在实现逆变换时，先选定要反转的前向求值器：
 
@@ -1697,7 +1697,7 @@ $$
 
 cube 的策略标识符是 `analytic-f32-relative3e-6-audited-v1`。诊断记录 GPU 采样/搜索/标记计数、被修复的 CPU 顶点以及修复时间。CPU 近似/残差字段只描述被修复的顶点；它们并不为未标记的 GPU 网格确立 CPU 的 \(2\times10^{-8}\) 诊断容差。LUT 插值与外插仍是独立的误差。
 
-输入/输出 AP1 坐标转换与最终存储是主机操作；每次 GPU 派发上传一份数值参数快照，并读回一个有界的顶点批次。33³/65³ 这一对仍然精确求值 274,625 个顶点，并逐位复用共同的 float32 值。若某个已发布的匹配 GPU 预览必须在 CPU 上完成，细化会保留这些共同值，只计算其余的顶点。由 CPU 完成的 cube 会在 `gpu_preview_*` 字段下保留这些预览审核结果；其 CPU 残差计数只覆盖 CPU 求值的工作。参见[运行时调度](architecture.md#gpu-context-scheduling-and-recovery)与[验证](testing.md#installed-gpu-baking-1230)。
+输入/输出 AP1 坐标转换与最终存储是主机操作；每次 GPU 派发上传一份数值参数快照，并读回一个有界的顶点批次。33³/65³ 这一对仍然精确求值 274,625 个顶点，并逐位复用共同的 float32 值。若某个已发布的匹配 GPU 预览必须在 CPU 上完成，细化会保留这些共同值，只计算其余的顶点。由 CPU 完成的 cube 会在 `gpu_preview_*` 字段下保留这些预览审核结果；其 CPU 残差计数只覆盖 CPU 求值的工作。参见[运行时调度](architecture.md#gpu-上下文调度与恢复)与[验证](testing.md#已安装-gpu-烘焙1230)。
 
 ### 18.2 普通 Grade 的方向与矩阵位置
 
