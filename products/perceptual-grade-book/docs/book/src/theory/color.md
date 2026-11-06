@@ -1,6 +1,6 @@
 # Tone-shaped color operators
 
-Color computes adjustment coefficients from perceptual lightness and applies them to fixed incoming color attributes. Lightness, chroma, adaptance and hue have distinct receivers and share the same smooth tonal curve family.
+Color computes adjustment coefficients from perceptual lightness and applies them to fixed incoming color attributes. Lightness and chroma each receive a driver-weighted coefficient; hue and chroma geometry are then shaped by a tonal web, and a selective cone adaptation moves neutral destinations. All three receivers share the same smooth tonal curve family.
 
 ## Compute the tonal coefficients
 
@@ -14,6 +14,8 @@ $$
 
 Here \(F_0\) belongs to Black→Shadows, \(F_1\) to Shadows→Midtones, and so on. A coefficient is the dot product of these weights with its four control heights. The Adaptance family replaces the first weight by \(F_0-F_1\), giving its black taper. The smoothstep pins first and second derivatives at Black and Highlights. Above Highlights, coefficients hold the Highlights height.
 
+The web uses its own index rather than these weights: it interpolates the four anchor rows by \(\mathrm{smoother}((H-H_i)/(H_{i+1}-H_i))\), which is the same quintic applied to the anchor spacing, with constant tails outside the endpoint anchors. The two schemes agree in shape but not in parameter, so a web row and a coefficient height at the same nominal tone do not have equal influence at intermediate lightness.
+
 ![Tone weights and Midtones coefficient](../assets/figures/color-tone-weights.png)
 
 <p class="figure-caption">Left: overlapping tone weights. Right: Midtones \(C_{\ell}\) → J = +6 across lightness at several Fit values. The height controls an adjustment, while the curve controls its tonal reach.</p>
@@ -23,10 +25,12 @@ Here \(F_0\) belongs to Black→Shadows, \(F_1\) to Shadows→Midtones, and so o
 Use modCAM16 saturation \(s=75C/J_A\), with a fixed midpoint \(s_0=35\) and neutral fade scale \(C_n=2\). For \(p=2\), evaluate the classifier without dividing by \(J_A\):
 
 $$
-q_s=\frac{C^2}{C^2+(35/75)^2J_A^2},\qquad V=\frac{C^2}{C^2+4},\qquad
+q_s=\frac{C^2}{C^2+r_s^2\lvert J_A\rvert^2},\qquad r_s=\frac{35}{75}=\frac{s_0}{75},\qquad V=\frac{C^2}{C^2+4},\qquad
 \mathbf d=\left[V(1-q_s),\ Vq_s,\
 \frac{a}{\sqrt{C^2+4}},\ \frac{b}{\sqrt{C^2+4}}\right]^{\mathsf T}.
 $$
+
+The absolute value in \(r_s\lvert J_A\rvert\) is deliberate. Written as a ratio, the classifier splits on \(\lvert s\rvert\) rather than on \(s\), so a signed color below the achromatic axis keeps the same low/high classification as its positive counterpart; the two halves of the H–K pair are treated symmetrically. The 1.23.2 DCTL and shared production kernels instead use \(\max(J_A,0)\), which sends every negative achromatic color to the high-chroma driver. This part describes the symmetric form. A comparison across implementations must state which convention it used, because the two disagree for negative \(J_A\) at every chroma.
 
 At black, all drivers are zero. Carry \(J_A\) from the appearance encoder through Tone's common scaling, rather than recovering it by subtracting \(66C\) from \(H^2\). Scale the ratio terms before squaring to avoid overflow.
 
@@ -36,53 +40,138 @@ At black, all drivers are zero. Carry \(J_A\) from the appearance encoder throug
 
 <p class="figure-caption">At a fixed \(H\), \(C_{\ell}\) favors lower-chroma color and \(C_h\) favors higher chroma. \(a\) and \(b\) drivers respond with opposite signs across the hue wheel.</p>
 
-## Mix into the receivers
+## Mix the lightness and chroma receivers
 
-For a fixed \(H\), a small matrix produces additive lightness, logarithmic chroma gain and chroma-driven hue rotation:
-
-$$
-\begin{bmatrix}\Delta H\\\Delta\log_2 C\\\Delta h_C\end{bmatrix}
-=
-\begin{bmatrix}
-L_{\ell}(H)&L_h(H)&L_a(H)&L_b(H)\\
-R_{\ell}(H)&R_h(H)&R_a(H)&R_b(H)\\
-\theta_{\ell}&\theta_h&0&0
-\end{bmatrix}\mathbf d.
-$$
-
-Add Global \(C\) Gain to the second row and Tone Hue to the third. The first two rows use four tone-controlled coefficient curves each. The last row has two global chroma coefficients; tone-dependent Hue Concentration is its separate operator. Every driver and coefficient is evaluated once from the same Stage-2 input, so the final settings determine the result independently of editing order.
-
-## Adaptance and hue concentration
-
-Adaptance uses a lightness envelope and smooth chroma protection:
+Two driver-weighted coefficient rows act directly on the appearance coordinates:
 
 $$
-r(C)=0.25+\frac{0.75}{1+(C/30)^2},\qquad
-f(H,C;\alpha)=\frac{H}{100}\frac{\alpha r(C)}{1-\alpha+\alpha r(C)}.
+\Delta H=\sum_j L_j(H)\,d_j,\qquad
+g=2^{\,g_0+\sum_j R_j(H)\,d_j},
 $$
 
-It multiplies the two tonal Adaptance curves. At \(\alpha=1\) every chroma receives the same lightness-scaled endpoint. At \(\alpha=0\) the shift is zero. These are engineering correction weights rather than a per-pixel physiological CAT16 law.
-
-Hue Concentration bounds a two-component control \(v\) inside a disk of radius 0.6 and fades it near \(C=0\). It acts as an orientation-preserving circle map:
+where \(j\) runs over the four drivers, \(g_0\) is Global \(C\) Gain in stops, and \(L_j\) and \(R_j\) are the lightness and chroma coefficient curves. The result is
 
 $$
-w=\frac{\tanh(\lVert v\rVert/0.6)}{\lVert v\rVert/0.6}
-(v_a+i v_b)\frac{C^2}{C^2+4},
-\qquad z_f=\frac{z+w}{1+\overline w z},\quad z=e^{ih}.
+H\leftarrow H_1+\Delta H,\qquad (a,b)\leftarrow g\,(a,b).
 $$
 
-Positive control values gather hues toward the selected direction. The zero control uses its finite identity limit. Concentration preserves \(H\) and \(C\); its angular derivative stays positive at fixed \(H/C\).
+Both rows are evaluated once from the fixed Stage-2 input, so the final settings determine the result independently of slider editing order. The additive lightness term uses no toe or H–K projection here: a signed color may cross achromatic zero, and the crossing is continuous rather than clipped. Repair belongs to the later guard.
+
+The two coefficient rows are the only place the reference still uses a driver-weighted stage-3 matrix. Hue rotation, chroma geometry and neutral adaptation are no longer expressed as coefficient curves over the drivers.
+
+## Shape hue and chroma with the tonal web
+
+The web is a four-row, six-handle field. Each of the six handles is an actual Rec.709 primary ray — red, yellow, green, cyan, blue and magenta — scaled to the row's tonal height. The four rows are the tonal anchors Shadows, Midtones, White and Highlights. Between rows, handle angles interpolate directly and radii interpolate in log space.
+
+Each row stores three relative controls per handle:
+
+| Field | Meaning |
+| --- | --- |
+| `log_chroma` | \(\log_2\) of target radius over source radius, before adaptation and scale |
+| `hue_degrees` | Unwrapped target hue displacement in degrees |
+| `log_scale` | \(\log_2\) of the final positive chroma scale at that handle |
+
+All three arrays are zero at reset, which is the identity. The web is therefore additive in intent but multiplicative in effect, and no single scalar reports its strength.
+
+### Radial law
+
+For a source radius \(R\), target radius \(T\) and a hue-dependent toe width \(\tau\), the first radial field calibrates \(R\to T\):
+
+$$
+A(C)=\left(1+(C/\tau)^4\right)^{-1/4},\qquad
+g_{\mathrm c}=\frac{T/R-A(R)}{1-A(R)},\qquad
+F(C)=C\left[g_{\mathrm c}+(1-g_{\mathrm c})A(C)\right].
+$$
+
+Because \(A\to1\) as \(C\to0\), the map keeps its near-neutral toe bounded: \(F(C)=C+O(C^5)\) and no chroma is created from black. Its derivative
+
+$$
+F'(C)=g_{\mathrm c}+(1-g_{\mathrm c})\left(1+(C/\tau)^4\right)^{-5/4}>0
+$$
+
+is positive for every positive \(g_{\mathrm c}\), so each radial field is monotone in \(C\). A second field with the same form maps the target radius onward to the scaled radius, and the ratio of the two fields is the final scale \(\lambda\). The implementation evaluates the complement \(1-A\) in factored form so that a large gain does not cancel against a fourth-order term.
+
+The toe width is a soft minimum over the six radii, taking \(2\) and \(0.1\) times each of them through a power-mean of order \(-8\), and that value is \(\tau\) in these formulas. Coefficients interpolate logarithmically between destination hues, which keeps ratios well behaved where a hue sector narrows.
+
+### Angular law
+
+For a source hue sector of width \(w\), destination endpoints \(\varphi_0,\varphi_1\) and slope \(m=(\varphi_1-\varphi_0)/w\), the shared vertex derivative is
+
+$$
+d=\left(\tfrac12\left(m_{\mathrm{left}}^{-4}+m_{\mathrm{right}}^{-4}\right)\right)^{-1/4},
+$$
+
+and a quintic Bézier spans the sector with control points
+
+$$
+[\varphi_0,\ \varphi_0+w d_0/5,\ \varphi_0+2w d_0/5,\ \varphi_1-2w d_1/5,\ \varphi_1-w d_1/5,\ \varphi_1].
+$$
+
+Periodic sectors keep a positive hue derivative, with shared first derivatives and zero second derivatives at each vertex, so the total angular map is a smooth increasing function of source hue. It is applied with a chroma fade,
+
+$$
+h_{\mathrm{out}}=h+S_5\!\left(\min(C/\tau_\theta,1)\right)\left(\mathrm{warp}(h)-h\right),
+$$
+
+where \(S_5(t)=6t^5-15t^4+10t^3\) and the angular toe uses the default radii. The fade keeps hue unchanged at neutral, where an angle has no meaning, and lets the warp reach full strength once chroma is well above the toe.
+
+A web edit that would cross or collapse two handle angles is rejected and leaves the previous settings in place. Order preservation is checked on the target angles directly, not inferred from the control values.
+
+## Adaptance: neutral destinations
+
+Adaptance stores four direct neutral destinations, one a/b pair per tonal row, plus a half-influence saturation. It is not a control strength over an interpolated offset.
+
+For each positive neutral anchor \(H_i\), let \(A_0=A_w(H_i/100)^{1/\gamma}\) and \(r_0=A_0/3.05\). Decode the requested neutral destination at that anchor through the eccentricity and inverse opponent matrix, obtaining three target responses \(r_i^\ast\), each required to lie strictly between \(0\) and \(400\). The positive response gain and its linear cone gain are then
+
+$$
+m_i=\frac{r_i^\ast(400-r_0)}{r_0(400-r_i^\ast)},\qquad g_i=m_i^{\,1/0.42}.
+$$
+
+\(g_i\) is local and cone-derived. It is not a change of viewing white: CAT16 supplies the cone basis, while the masking and normalization below are creative choices layered on it.
+
+Between anchors, the gains interpolate as \(\log m\) through the same quintic cardinal weights with constant tails. Per pixel, the frozen selector from the end of Tone decides how far the tint reaches. With \(R=C_0/\lvert J_A\rvert\) at half influence and \(E_0=J_A\lvert J_A\rvert\),
+
+$$
+v=\frac{R^4E_0^2}{R^4E_0^2+C_0^4},
+$$
+
+so neutrals have \(v=1\), an achromatic color with \(E_0=0\) and nonzero chroma has \(v=0\), and exact black is untouched. At \(C_0/\lvert J_A\rvert=R\) the weight is one half. Raising or lowering the control therefore changes how far the tint extends into saturated color without moving any of the four calibrated neutral destinations.
+
+The gain applied to each cone channel is \(m_i^{v}\), which the group property of \(T_m\) makes well defined for fractional \(v\): \(T_m\) composed with itself \(v\) times is \(T_{m^v}\), and the code evaluates \(T\) once at the fractional gain rather than iterating. A common normalization \(k^{v}\) multiplies the result, where \(k\) is computed from a hypothetical neutral with the same frozen tonal height. That normalization is what preserves the original neutral's \(J_A\) at every tone, including between anchors and on the signed neutral branch. The neutral may acquire chroma, so its \(J_{\mathrm{HK}}\) may change; only its achromatic energy is held.
+
+For \(\lvert r\rvert\le400\) the response operation is the exact compression-conjugated gain,
+
+$$
+T_m(r)=\frac{m\,r}{1+(m-1)\lvert r\rvert/400},
+$$
+
+and beyond the physical response range an algebraic exterior continuation keeps the family total, strictly increasing, and reciprocal under \(m\mapsto1/m\). It joins with matching value, slope and curvature at \(\pm400\), but is generally only \(C^1\) at zero; the complete grade is not claimed globally \(C^2\).
+
+Adaptance has an explicit inverse when the original selectors are supplied: divide the responses by \(k^v\), then apply the reciprocal gains. Recovering unknown selectors belongs to the full grade's joint solve.
+
+## Compose the operators
+
+The evaluation order is fixed:
+
+1. The lightness and chroma coefficient rows above.
+2. The web's hue warp and radial chroma edit, at fixed signed \(J_{\mathrm{HK}}\), carrying the achromatic energy.
+3. Selective cone Adaptance, changing \(a/b\) and the signed achromatic energy.
+4. The web's final positive scale \(\lambda\), selected from the pre-Adaptance web state: multiply \(a/b\) by \(\lambda\) and the energy by \(\lambda^2\).
+
+The final scale comes last and is chosen before adaptation is applied, so moving a neutral destination cannot change the scale that a corner drag stored. Scale alone preserves raw \(C/\lvert J_A\rvert\); adaptation does not, because it deliberately moves the neutral.
+
+An additive hue displacement from the web can change final hue ordering. The ordering property belongs to the angular map itself, not to the composed grade. The [H–K guard](hk-guard.md) then supplies a real inverse for the resulting request, and the export guard projects to the RGB cube.
+
+## Legacy controls
+
+Earlier releases exposed three controls that this part does not describe, because the reference does not implement them:
+
+- **Hue Concentration**, an orientation-preserving circle map that gathers hues toward a chosen direction with no change to \(H\) or \(C\).
+- **Adaptance Strength and Adaptance Fit**, a scalar strength inside a chroma-protection envelope \(\alpha r(C)/(1-\alpha+\alpha r(C))\) with \(r(C)=.25+.75/(1+(C/30)^2)\).
+- **Global low-chroma and high-chroma Hue**, two rotation coefficients weighted by the \(C_{\ell}\) and \(C_h\) drivers.
+
+The 1.23.2 DCTL and Blender release implement all three, and their saved Grades use them. The reference replaced them with the web and the neutral destinations above, which is why saved settings from one are not reinterpreted as the other. Their full equations remain in the archived release documentation and in the retained DCTL oracle.
 
 ![Hue concentration and angular spacing](../assets/figures/color-hue-concentration.png)
 
-<p class="figure-caption">Positive \(a\) concentration gathers nearby hues and expands the opposite side. The local spacing ratio stays positive, preserving the concentration operator's hue order.</p>
-
-The defined composition applies concentration, radial gain and rotation, then adds Adaptance:
-
-$$
-H_3=H_2+\Delta H,\qquad
-\mathbf u_3=f\mathbf A(H_2)+
-2^{g+\Delta\log_2 C}R_{\theta(H_2)+\Delta h_C}\mathbf u_f.
-$$
-
-The operators have this specified order even though slider editing order is irrelevant. The [H–K guard](hk-guard.md) then supplies a real inverse. An additive Adaptance displacement can change final hue ordering; the concentration map's ordering property describes that operator itself.
+<p class="figure-caption">The 1.23.2 Concentration operator. Positive \(a\) concentration gathers nearby hues and expands the opposite side; the local spacing ratio stays positive, preserving its hue order. The reference replaces this operator with the web's angular map.</p>

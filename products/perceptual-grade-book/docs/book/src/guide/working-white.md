@@ -51,7 +51,7 @@ The DCTL keeps its own Destination White behavior. It does not automatically con
 
 ## Which white does a baked LUT use?
 
-Every production LUT uses **fixed native linear ACEScg / ACES-white input and output coordinates**, even in a Rec.709 or Rec.2020 scene. This sampling white is separate from each Grade's chosen white, which still defaults to D65. The 65³ grid covers 0…128 with 64 positive intervals and plain log1p κ = 0.01; 33³ previews use 32 intervals on the same axis. Original signed inputs and outputs are retained, with physical-cell extrapolation outside the grid.
+Every production LUT uses **fixed native linear ACEScg / ACES-white input and output coordinates**, even in a Rec.709 or Rec.2020 scene. This sampling white is separate from each Grade's chosen white, which still defaults to D65. The 65³ grid covers 0…1024 with 64 positive intervals and plain log1p κ = 0.01; 33³ previews use 32 intervals on the same axis. Original signed inputs and outputs are retained. Inputs outside the grid hold the nearest edge cell's value rather than extrapolating, because the interpolation fraction is clamped; [Direct and sampled evaluation](../theory/lut.md) gives the details and notes where the legacy generator differs.
 
 Let \(A\) convert the current scene RGB to this fixed AP1/ACES-white basis, including gamut conversion and Bradford adaptation. Its inverse returns to scene coordinates. These matrices are combined where possible; they are not additional LUTs.
 
