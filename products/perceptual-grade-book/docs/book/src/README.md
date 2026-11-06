@@ -1,7 +1,9 @@
 # Introduction
 
-> **Legacy handbook:** this documents Perceptual Grade 1.23.2 and has not been
-> updated for Perceptual Grade Next.
+> **Version scope:** the guide, the downloads and the recorded measurements
+> document Perceptual Grade 1.23.2. [Understanding the model](theory/structure.md)
+> follows the analytic reference model in `libraries/perceptual-grade-reference`,
+> which has moved past 1.23.2. Each chapter states which of the two it describes.
 
 [rei277hz/perceptual-grade](https://github.com/rei277hz/perceptual-grade) is the
 downstream code snapshot, currently containing the preserved Perceptual Grade
@@ -29,11 +31,14 @@ Perceptual Grade connects white balance, a custom tone curve, and selective colo
 
 The download is a Perceptual Grade 1.23.2 development build dated 2026-11-01.
 It packages the preserved Perceptual Grade implementation, not Perceptual Grade
-Next, and replaces the original extension download. This legacy handbook has
-not been updated to describe the development build.
+Next, and replaces the original extension download. Installation and the
+everyday workflow below describe that build and have not been updated for the
+development build.
 
 Start with [installation](guide/install.md), then [grade in three stages](guide/workflow.md). Choose your white and color directions in **Linear**, place important scene tones in **Tone**, and refine lightness, chroma, adaptance and hue in **Color**.
 
 The handbook explains everyday use first. [Understanding the model](theory/structure.md) then follows the calculations and their numerical illustrations. Developers can start with [architecture](development/architecture.md), [building and testing](development/building.md), or [contributing](development/contributing.md).
+
+The model part and the guide describe different stages, and the difference is not cosmetic. The 1.23.2 controls include Hue Concentration, Adaptance Strength and Fit, and the global low-chroma and high-chroma Hue coefficients. The analytic reference replaces them with a tonal web of six hue handles across four tonal rows, a selective cone Adaptance driven by direct neutral destinations, and a final chroma scale. Saved settings are not reinterpreted from one to the other. The [Color chapter](theory/color.md) describes the reference stage and keeps the 1.23.2 controls in a separately labelled section, so you can tell which one a sentence belongs to.
 
 The supplied downloads are packaged with this book through Buck2. See the [credits](reference/credits.md) for the appearance-model papers and implementation references, and the [license](reference/license.md) for licensing.

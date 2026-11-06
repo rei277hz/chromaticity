@@ -27,7 +27,7 @@ The component equations describe the current p=2 classifier and grading model. S
 When implementing an inverse, select the forward evaluator to invert:
 
 1. **Analytic reference:** evaluate the kernels and coefficient curves below directly in float64.
-2. **Deployed Quintic 2048:** use the actual stored coefficient tables, endpoint jets, and evaluation rules in section 14.
+2. **Deployed scalar tables:** use the actual stored coefficient tables, endpoint jets, and evaluation rules in section 14.
 3. **Deployed DCTL/native kernel:** preserve its parameter preprocessing, arithmetic precision, validity tests, FMA usage, and bypass decisions when validating candidates.
 
 These profiles share the mathematical design. They are not bitwise interchangeable. In particular, the Python reference is a validation model, not evidence of a completed Resolve/Blender render test. Invert the selected profile and finally validate against the actual renderer if matching that renderer is required.
@@ -163,15 +163,21 @@ If all directional controls are zero, the source uses an exact identity directio
 
 ### 4.1 Viewing constants
 
-The Python reference derives
+The analytic reference derives both effective values through a smooth bounded map rather than integer rounding. For lower bound \(\ell\), upper bound \(u\) and the quintic ease \(e(x)=x^3(6-8x+3x^2)\),
 
 $$
-R_w=\max(48,\min(1000,\lfloor R_{\mathrm{input}}+.5\rfloor)),
+\operatorname{floor}_{\ell}(v)=\begin{cases}\ell,&v\le\ell\\ \ell+e(v-\ell),&\ell<v<\ell+1\\ v,&v\ge\ell+1\end{cases}
+\qquad
+\operatorname{cap}_{u}(v)=\begin{cases}v,&v\le u-1\\ u-e(u-v),&u-1<v<u\\ u,&v\ge u\end{cases}
 $$
 
 $$
-P_w=\max(2R_w,\min(10000,\lfloor P_{\mathrm{input}}+.5\rfloor)).
+R_w=\operatorname{cap}_{1000}\!\left(\operatorname{floor}_{48}(R_{\mathrm{input}})\right),
+\qquad
+P_w=\operatorname{cap}_{10000}\!\left(\operatorname{floor}_{2R_w}(P_{\mathrm{input}})\right).
 $$
+
+Both maps are exactly the identity more than one unit inside the bound and exactly the bound outside it, with matching first and second derivatives at the joins. The 1.23.2 DCTL rounds to the nearest nit instead; that produces a step of one nit at every half-nit and is the reason a fractional Reference Nits input can behave differently between the two implementations. Use the smooth form for the reference.
 
 The DCTL peak menu first chooses from 500, 1000, 2000, 4000 nits, promoting an insufficient selection to its supported value satisfying the reference constraint. Treat **effective** \(R_w,P_w\) as configuration shared by forward and inverse; do not reinterpret menu indices as nits.
 
@@ -282,10 +288,11 @@ Define the tone black offset \(\beta_T=j_0\), span \(s_T=j_4-j_0>0\) and \(u_i=(
 
 $$
 (y_0,y_1,y_2,y_3,y_4)
-=\left(0,\nu(.037153526983R_w),\nu(.18R_w),1,\nu(P_w)\right).
+=\left(0,\nu(\Lambda_{\mathrm{low}}R_w),\nu(.18R_w),1,\nu(P_w)\right),
+\qquad \Lambda_{\mathrm{low}}=0.015507796089266005.
 $$
 
-Set \(y_0=0,y_3=1\) exactly, as the source does.
+Set \(y_0=0,y_3=1\) exactly, as the source does. The analytic reference uses \(\Lambda_{\mathrm{low}}=0.015507796089266005\), placing Shadows at \(3.148\) nits at the default reference. The 1.23.2 DCTL and the bundled legacy model use \(0.037153526983\), or \(7.542\) nits. Only this landmark differs; scale or compare tone curves only between records produced with the same constant.
 
 ### 5.2 Kernel and tone function
 
@@ -402,11 +409,11 @@ The classifier uses the fixed saturation midpoint below. It has no tonal curve, 
 For the fixed exponent \(p_d=2\), define
 
 $$
-\boxed{\omega(J,C)=\frac{C^2}{C^2+r_s^2J^2},\qquad
+\boxed{\omega(J,C)=\frac{C^2}{C^2+r_s^2\lvert J\rvert^2},\qquad
 v_n(C)=\frac{C^2}{C^2+C_n^2},\qquad r_s=\frac{35}{75},\ C_n=2.}
 $$
 
-For \(J>0\), \(\omega=s^2/(s^2+s_0^2)\) with \(s=75C/J\). Use the rational expression above at \(J=0\) and never form the possibly infinite saturation ratio in the renderer. The complete drivers are
+For \(J\neq0\), \(\omega=\lvert s\rvert^2/(\lvert s\rvert^2+s_0^2)\) with \(s=75C/J\). Use the rational expression at \(J=0\) and never form the possibly infinite saturation ratio. The absolute value in \(r_s\lvert J\rvert\) is the analytic reference's signed-symmetric form: the classifier splits on \(\lvert s\rvert\), so a color below the achromatic axis keeps the same low/high membership as its positive counterpart. The 1.23.2 DCTL uses \(\max(J,0)\) instead, sending every negative achromatic color to \(d_h\). State the convention before comparing driver values across implementations. The complete drivers are
 
 $$
 \boxed{d_\ell=v_n(1-\omega),\qquad d_h=v_n\omega,\qquad
@@ -454,7 +461,9 @@ Thus \(H_3=H+\Delta H\) and \(g=e^\sigma>0\). The literal implementation evaluat
 
 **Hue-angle calculation belongs to the contribution math; application of hue rotation is a separate operation.** There are no \(d_a,d_b\) terms in the Hue row. Consequently \(\theta\) depends on \(H,C\) but not independently on incoming hue. This is the property used to eliminate hue from the inverse.
 
-### 6.3 Concentration
+### 6.3 Concentration (1.23.2 DCTL control)
+
+Sections 6.3 and 6.4 describe the 1.23.2 production stage, which the DCTL and the Blender release implement. The analytic reference replaced both with the tonal web and the neutral-destination Adaptance in section 6.5, so the inverse constructions in sections 10–18 apply to the 1.23.2 control set. Read the two schemes as separate stages sharing the driver and coefficient machinery above them, never as one stage with alternative parameters.
 
 Let the two Concentration curves form \(v(H)=v_a(H)+iv_b(H)\), and let
 
@@ -492,6 +501,59 @@ $$
 $$
 
 Equivalently, the actual Hue operation is \(R_\theta\) on \((a_f,b_f)\), multiplied by scalar \(g\) and followed by the Adaptance offset. The source returns the input unchanged at \(H=0\), and when stage 3 is inactive.
+
+### 6.5 The reference stage: tonal web, selective Adaptance, final scale
+
+The analytic reference keeps the coefficient curves and drivers of sections 6.1 and 6.2 and replaces sections 6.3 and 6.4 with the following. Freeze the post-Tone selectors \(C_0\), \(E_0=J_A\lvert J_A\rvert\) and \(h=\sqrt{\lvert E_0\rvert+66C_0}\); every step below reads those frozen values, never the running result.
+
+**Direct rows.** Let \(L_j\) and \(R_j\) be the lightness and chroma coefficient rows, \(g_0\) Global \(C\) Gain and \(\mathbf d\) the drivers of section 6.2:
+
+$$
+H_1=H+\mathbf L\cdot\mathbf d,\qquad (a_1,b_1)=2^{\,g_0+\mathbf R\cdot\mathbf d}(a,b).
+$$
+
+**Web radial field.** For source radius \(R\), target \(T\), and a hue-dependent toe \(\tau\),
+
+$$
+A(C)=\left(1+(C/\tau)^4\right)^{-1/4},\quad
+g_{\mathrm c}=\frac{T/R-A(R)}{1-A(R)},\quad
+F(C)=C\left[g_{\mathrm c}+(1-g_{\mathrm c})A(C)\right],
+$$
+
+with \(F'(C)=g_{\mathrm c}+(1-g_{\mathrm c})(1+(C/\tau)^4)^{-5/4}>0\). Evaluate \(1-A\) in factored form; the direct difference loses the fourth-order toe before a large gain. A second field of the same form maps \(T\to\lambda T\), and the two toe widths are soft minima, of order \(-8\), over \(\max(2,0.1r_i)\) across the six radii.
+
+**Web angular field.** For source sector width \(w\), endpoints \(\varphi_0,\varphi_1\), slope \(m=(\varphi_1-\varphi_0)/w\) and shared vertex derivative \(d=\left(\tfrac12(m_{\mathrm{left}}^{-4}+m_{\mathrm{right}}^{-4})\right)^{-1/4}\),
+
+$$
+[\varphi_0,\ \varphi_0+wd_0/5,\ \varphi_0+2wd_0/5,\ \varphi_1-2wd_1/5,\ \varphi_1-wd_1/5,\ \varphi_1],
+$$
+
+applied as \(h+S_5(\min(C/\tau_\theta,1))(\mathrm{warp}(h)-h)\). Coefficients interpolate logarithmically between destination hues and rows interpolate with \(\mathrm{smoother}\) on the anchor spacing, with constant tails. Reject any target ordering that crosses or collapses.
+
+**Selective Adaptance.** Four neutral a/b destinations and one half-influence saturation. For anchor \(H_i\), with \(A_0=A_w(H_i/100)^{1/\gamma}\), \(r_0=A_0/3.05\) and target responses \(r_i^\ast\in(0,400)\),
+
+$$
+m_i=\frac{r_i^\ast(400-r_0)}{r_0(400-r_i^\ast)},\qquad g_i=m_i^{1/0.42},
+$$
+
+interpolated as \(\log m\) through the same cardinal weights. The frozen mask is
+
+$$
+R=\frac{C_0}{\lvert J_A\rvert},\qquad
+v=\frac{R^4E_0^2}{R^4E_0^2+C_0^4},
+$$
+
+so \(v=1\) on neutrals, \(v=0\) at \(E_0=0\) with nonzero chroma, and \(v=1/2\) at \(C_0/\lvert J_A\rvert=R\). Responses are transformed as \(r_i'=k^{v}\,T_{m_i^{v}}(r_i)\), with
+
+$$
+T_m(r)=\frac{m\,r}{1+(m-1)\lvert r\rvert/400}\quad(\lvert r\rvert\le400),
+$$
+
+and an algebraic exterior continuation beyond the physical response range. Reconstruct responses from the carried energy and opponent coordinates rather than by subtracting \(66C\) from \(H^2\). The common \(k\) normalizes against a hypothetical neutral at the same frozen height, preserving the original neutral's \(J_A\) at every tone.
+
+**Final scale.** The scale \(\lambda\) is selected from the pre-Adaptance web state; then \(a/b\mapsto\lambda\,a/b\) and \(E\mapsto\lambda^2E\), preserving raw \(C/\lvert J_A\rvert\) where defined.
+
+The whole order is: direct rows, web hue warp and radial chroma at fixed signed \(H\), selective Adaptance, final scale. The reference stage has an explicit inverse only for Adaptance with supplied selectors; the complete stack is inverted by the joint solve of sections 10–13, evaluated against the reference forward function rather than the 1.23.2 one.
 
 ## 7. H–K guard: complete forward math
 
@@ -1119,7 +1181,7 @@ The derivative of \(C'\) is negative near the classifier midpoint. At \(H=100\),
 
 Because the guard reference varies with the input, a fixed-reference bijection alone does not establish injectivity of the full grade. The inactive-guard p=2 collision suffices to disprove a universal unique inverse for all allowed grades.
 
-## 14. Quintic 2048 and scalar inverse tables
+## 14. Forward tables and the scalar inverse table
 
 ### 14.1 Analytic derivative ingredients
 
@@ -1158,7 +1220,17 @@ Take the same weight differences and height dot products to obtain curve derivat
 
 ### 14.2 Existing forward tables
 
-The current source uses 2048 intervals and **2049 shared endpoint jets**. For stage 3, the normalized table coordinate is \(x=\operatorname{clamp}(H/H_\star,0,1)\).
+No shipping implementation builds a Stage-3 coefficient table. The shipped 1.23.2 package contains `tone_table.py` and no basis-table module; Stage-3 coefficients are evaluated analytically in every profile, from the same sigmoid-window kernel as Tone. The 2048-interval, 2049-jet, 14-curve, \(512\times70\) texture described in earlier revisions of this chapter belongs to `generators/legacy/model/curves.py`, where `BasisTable` is constructible but nothing constructs it: the module's `model`, `table` and `basis_for` entry points have no callers, and `pipeline.py` imports the module only for the name `Prepared`. Do not implement against that description.
+
+What is tabulated in practice:
+
+| Profile | Stage 2 | Stage 3 |
+| --- | --- | --- |
+| Analytic reference, DCTL | closed form | closed form |
+| Shipped 1.23.2 inverse bake | adaptive scalar inverse-tone table, cap 2048 cells | analytic |
+| Next native runtime | fixed 256 cells | four fixed fields (8192 / 4096 / 1536 / 3072) |
+
+The Stage-2 inverse-tone table is the adaptive one: cells are added by bisection until each cell's five-fraction probe error is within half the tolerance (default `2e-5`) and a Bernstein monotonicity test passes, bounded by `MAX_CELLS=2048`, `MAX_ROUNDS=32`, `MAX_ROOT_EVALUATIONS=80` and a 64 KiB budget. 2048 is an abort condition; a representative grade needs a few dozen cells and defaults need four. The next runtime instead fixes 256 cells and fails a build that misses its scalar accuracy gate rather than falling back.
 
 Tone retains its linear tail analytically. It tables only
 
@@ -1195,7 +1267,7 @@ $$
 
 Evaluate \(\sum_{j=0}^5a_ju^j\) by Horner's rule. Adjacent intervals use the same stored values, slopes, and curvatures.
 
-The deployed basis table stores all four Adaptance weights but only the first three weights of each ordinary family; its fourth ordinary weight is reconstructed as one minus the first three. Together with the Tone residual, this is 14 scalar curves: \(1+4+3+3+3\). The packed texture is \(512\times70\) with 2049 endpoint jets per curve. The obsolete \(\log C_s\) row is removed. The p=2 classifier is evaluated analytically from the carried \(J_2\) and current \(C_2\) in every profile; it is not approximated by Quintic interpolation. Height dot products remain live. Consequently, invert the actual basis-table evaluator when targeting this profile.
+The hermite construction above is what the Stage-2 inverse-tone table uses, at whatever cell count its refinement produced. It is *not* the deployment recipe for Stage 3, because no Stage-3 table is deployed: the four-curve-family description and the \(512\times70\) atlas belong to the unreachable legacy generator noted in 14.2. The p=2 classifier is evaluated analytically from the carried \(J_2\) and current \(C_2\) in every profile; it is not approximated by Quintic interpolation. Height dot products remain live.
 
 The source applies a sufficient monotonicity check to the Tone residual before float32 storage. For derivative power coefficients \(b_j=(j+1)a_{j+1}\), the degree-4 Bernstein coefficients are
 
@@ -1703,7 +1775,7 @@ $$
 
 Every \(T_i\), including its matrix, runs in float64 on each CPU sample or through the analytic float32 GPU profile above, with flagged whole-Stack CPU recovery. No intermediate 3D LUT or Quintic approximation is sampled. No additional clamp is placed between entries. Empty and bypassed rows are skipped; a sequence with no enabled Grades is identity. Runtime evaluates one physical-linear-ACEScg tetrahedral interpolation of \(V\); alpha bypasses the transform.
 
-The grid is \(65^3\) over \([0,128]^3\), with zero at address 0 and 64 positive cells per component. Its plain log1p constant is \(k=0.01\). [Direct and sampled evaluation](../theory/lut.md) defines the address curve and its inverse. Negative inputs extrapolate the first physical cell; values above 128 extrapolate the last. Stored output values remain signed linear ACEScg/ACES white. The CPU/Shader interpolant uses the equivalent vertex-difference form. Compositor storage encodes one base plane and three forward-axis difference planes independently with RGBE; it reads one base and three ordered edges and accumulates the physical fractions with fused multiply-adds. This is one LUT representation, not four chained transforms. Reducing the number of interpolations does not establish a universal precision improvement: the composed function may have sharper curvature or selected-inverse discontinuities.
+The grid is \(65^3\) over \([0,1024]^3\), with zero at address 0 and 64 positive cells per component. Its plain log1p constant is \(k=0.01\). [Direct and sampled evaluation](../theory/lut.md) defines the address curve and its inverse. Both the address and the interpolation fraction are bounded, so inputs outside the grid hold the nearest edge cell instead of extrapolating. Stored output values remain signed linear ACEScg/ACES white. The CPU/Shader interpolant uses the equivalent vertex-difference form. Compositor storage encodes one base plane and three forward-axis difference planes independently with RGBE; it reads one base and three ordered edges and accumulates the physical fractions with fused multiply-adds. This is one LUT representation, not four chained transforms. Reducing the number of interpolations does not establish a universal precision improvement: the composed function may have sharper curvature or selected-inverse discontinuities.
 
 Stack signatures include the sampling basis, grid bounds, shape constants, solver policy/version and the ordered enabled entries with their directions, Grade whites and all three stages’ settings. Skipped entries do not contribute. Blender scene space affects only the outer matrices. Names and editor focus are excluded. Stack diagnostics validate complete inverse entries, including their matrices, and count singular matrices separately.
 
@@ -1930,10 +2002,119 @@ D65 is the chosen internal grading default. These scene-linear nodes remain befo
 
 ### 19.6 Sampling choice and implementation evidence
 
-The production grid uses native ACEScg/ACES white, bounds \([0,128]\), 64 positive cells and plain log1p \(k=0.01\). There is no negative sample branch, but original negative inputs and signed outputs are retained. Physical-cell extrapolation and a numerically stable vertex-difference interpolant are defined in [Direct and sampled evaluation](../theory/lut.md). This candidate wins the display-linear/peak-nits objective among the fully validated +128 finalists; the encoded-RGB objective selects a different curve. The [domain study](lut-domain-study.md) records both objectives, experimental inputs and measured limitations.
+The production grid uses native ACEScg/ACES white, bounds \([0,1024]\), 64 positive cells and plain log1p \(k=0.01\). There is no negative sample branch, but original negative inputs and signed outputs are retained. Both the address and the interpolation fraction are bounded, so out-of-grid inputs hold the nearest edge cell; a numerically stable vertex-difference interpolant is defined in [Direct and sampled evaluation](../theory/lut.md). The shaper and the sampling space were chosen by the domain study among its \(+128\) finalists; the bound was raised afterwards, so the study's error figures describe its own domain rather than this one. The encoded-RGB objective selects a different curve. The [domain study](lut-domain-study.md) records both objectives, experimental inputs and measured limitations.
 
 The production validation uses `test_lut_study.py`, `test_cube_math.py`, `test_cube_native.py`, `test_lut_grid_regression.py`, `test_working_white.py` and native render fixtures. `evaluate_lut_sampling.py --production` measures the actual Baker/Cube path through all four requested ACES 2.0 outputs on every stored IMG_* pixel. Solver residuals, basis covariance, native graph transport and off-grid interpolation errors remain distinct measurements.
 
 ### 19.7 Stack inspection and editing
 
 For Stack input \(x_s\), evaluate the installed cube and its actual native matrices to obtain \(y_s\). Let \(\Phi_g(r)\) be the selected Grade’s appearance measurement, including its white and reference settings but applying no creative grading. The Tone scopes measure \(J_{\mathrm{in}}=[\Phi_g(A_sx_s)]_J/100\) and \(J_{\mathrm{out}}=[\Phi_g(A_sy_s)]_J/100\). The displayed tone curve and editable handles belong to Grade \(g\). Stage 3 image statistics analyze Stack output in that same selected context. A pending bake does not run an analytic sampled image preview. Scopes refresh when the matching installed cube changes. These diagnostics do not change the rendered transform.
+
+## 20. The reference inverse
+
+Sections 10–18 invert the 1.23.2 production stage: a two-unknown reconstruction with analytic hue elimination, a safeguarded scalar guard inverse, and a pooled damped Broyden refinement. The analytic reference takes a different approach. It has no per-component inversion of Stage 3 at all. It searches for preimages of the complete forward function and validates every candidate by running that forward function.
+
+This section describes `libraries/perceptual-grade-reference/src/inverse.py` and the independent Stack oracle in `src/stack.py`. Read it instead of sections 10–18 when the question is about the reference; read those when the question is about the shipped DCTL or Blender inverse.
+
+### 20.1 Contract
+
+The entry point is `solve(model, xyz, forward=None)`, returning `InverseResult(value, residual, status)` with three per-row arrays. `value` is canonical grading RGB, `residual` is the scaled maximum residual, and `status` is one of:
+
+| Status | Meaning |
+| --- | --- |
+| `root` | A candidate reproduced its target to `2e-10` in the scaled infinity norm |
+| `approximate` | No candidate met that tolerance; the best validated candidate is returned with its actual residual |
+| `invalid` | The input row was non-finite and no candidate was attempted |
+
+"Canonical" means nearest-linear **among the roots this search found**. The module docstring is explicit that the fixed search profile does not enumerate all roots and proves no reachability property. A returned `root` is a verified preimage; a `root` set is not claimed to be complete.
+
+### 20.2 Search coordinates and bound
+
+The search runs in `arcsinh` canonical RGB, which makes the step scale roughly logarithmic away from zero and keeps near-black behavior well conditioned. Everything is clipped to the box `|x| <= 2^20` before evaluation. The finite-difference step is
+
+$$
+h_i = \sqrt[3]{\varepsilon}\,(1+\lvert z_i\rvert),
+$$
+
+with \(\varepsilon\) the binary64 machine epsilon, so the step follows the magnitude of the coordinate rather than a fixed absolute value. `eps` is used directly rather than `sqrt(eps)` because the residual is a difference of two forward evaluations, which loses about one digit of precision; the larger cube-root step keeps the difference above the noise floor.
+
+### 20.3 Seeds
+
+Each row starts from a set that is merged and de-duplicated:
+
+1. The **linear prior** — the least-squares solution through the Stage-1 matrix, which is exact when nothing nonlinear is active.
+2. The **target** itself and the **zero vector**.
+3. **Scaled priors** at \(1/4, 1/2, 2, 4\) times the prior, which bracket a wrong exposure.
+4. A **\(3^3\) offset stencil** at \(prior \pm \mathrm{scale}\), where the scale is \(\max(1, \lVert prior\rVert_\infty, \lVert target\rVert_\infty)\). This is what recovers a preimage whose linear prior lands in the wrong basin.
+5. An **analytic neutral preimage**. The negative achromatic axis has a square-root chroma cusp that a smooth search can stall near, so the neutral case is solved directly: decode the target's achromatic response, invert the tone curve for the magnitude, and reconstruct the neutral RGB. It is still passed through the same forward validation as every other seed, so it is a better starting point, not a trusted answer.
+
+When Stage 1 is an exact scalar gain and everything else is inactive, the neutral seed collapses to an exact three-channel preimage.
+
+### 20.4 Iteration
+
+Candidates advance in parallel with independent damping factors — a Levenberg–Marquardt step expressed as an augmented least-squares problem rather than a normal-equations solve:
+
+$$
+\Delta = \operatorname{lstsq}\!\left(\begin{bmatrix}J\\ \sqrt{\lambda}I\end{bmatrix},\begin{bmatrix}r\\ \mathbf 0\end{bmatrix}\right),
+\qquad z \leftarrow \operatorname{clip}(z-\Delta,\ \pm\arcsinh 2^{20}),
+$$
+
+with \(J\) the central finite-difference Jacobian of the scaled residual. Damping starts at \(10^{-3}\), is multiplied by \(1/3\) on an accepted step and by \(10\) on a rejected one, and is clipped to \([10^{-12},10^{12}]\). A candidate stops when its scaled residual falls below `TOLERANCE/10`, when its damping reaches the upper bound, when its step falls below \(2\times10^{-13}\), or after 128 iterations. The iteration cap is a safety bound, not an expected cost: the residual test normally terminates first.
+
+The accept test requires a strict decrease in the summed squared residual. A step that does not decrease it is rejected and its damping increases, so a stalled candidate backs off rather than wandering.
+
+### 20.5 Acceptance and ranking
+
+A candidate becomes a `root` when
+
+$$
+\max_i\bigl|r_i\bigr| \le \texttt{TOLERANCE} = 2\times10^{-10}
+\quad\text{on}\quad
+r = \frac{\text{forward}(x)-\text{target}}{1+\lVert\text{target}\rVert_\infty}.
+$$
+
+The relative scaling is what makes the tolerance meaningful for both very dark and very bright targets; an absolute tolerance would be unreachable in one and trivial in the other.
+
+Ranking differs by outcome, and the distinction matters:
+
+- **When any root exists**, roots rank by \(\arcsinh\) distance to the prior, so the nearest-linear root wins and the result stays close to the least-squares preview.
+- **When no root exists**, candidates rank by residual first and prior distance second, so the reported approximation is the best reproduction available rather than the nearest one.
+
+Lexicographic RGB breaks remaining ties. This matters because several seeds can converge to the same root with bitwise-different coordinates; without the tie-break the selected value would depend on seed order and batch composition, and the same input could return slightly different output in different batch shapes.
+
+### 20.6 No nested guard inverse
+
+Every candidate's residual evaluates the **complete forward export**, including the H–K repair at that candidate's own post-tone reference energy. The search therefore never calls a separate guard inverse, never builds a guard lookup table, and never assumes the repair is invertible in isolation.
+
+This is deliberate. The post-tone reference energy is not known before the input is known, so a fixed-reference guard inverse has no meaning until a candidate proposes one. Inverting per component would require guessing the reference, and a wrong guess produces a candidate that fails validation anyway.
+
+The cube projection is a separate matter: it is many-to-one and is not inverted at all. Multiple appearance requests can export to the same RGB, and the inverse returns whichever preimage the search found and ranked first. The optional `hk_guard.inverse` helper in the shared kernels is a standalone fixed-reference mathematical probe with a bounded scalar bisection; it is not part of this path.
+
+### 20.7 The independent Stack oracle
+
+`src/stack.py` implements a second, deliberately separate inverse for mixed forward/inverse Stacks. It shares only the immutable D65 context — not the solver, not the seeds, not the reduced coordinate system.
+
+Differences worth knowing:
+
+| | `inverse.py` | `stack.py` |
+| --- | --- | --- |
+| Search coordinate | `arcsinh` RGB, bound \(\lVert x\rVert \le 2^{20}\) | `arcsinh(x/0.01)` RGB, clipped to `[0, 1024]` |
+| Seeds | prior, target, zero, \(1/4\ldots4\times\), \(3^3\) stencil, neutral preimage | prior, zero, the \(Y\)-projected prior, \(1/4\ldots4\times\), \(3^3\) stencil |
+| Bound handling | symmetric, signed | nonnegative AP1 cube |
+| Damping | `1e-3`, `×1/3` / `×10`, `[1e-12, 1e12]` | same |
+| Tolerance and cap | `2e-10`, 128 | `2e-10`, 128 |
+
+Two solvers with the same acceptance tolerance but independent seeding is a deliberate redundancy: agreement between them is evidence about the forward model, whereas agreement between a solver and itself is not. The Stack oracle also supports an `appearance=True` mode that inverts to raw appearance coordinates rather than RGB, so a Stack can hand raw coordinates between stages without an RGB round trip.
+
+In a mixed Stack, adjacent forward and inverse entries with equal Tone and Color settings pass raw appearance straight through without re-encoding, and the final forward applies the export repair once. Each RGB export therefore gets its own guard, including one produced inside a Stack that is otherwise operating on raw coordinates.
+
+### 20.8 Limits
+
+The search is deterministic for a given input and model, and its result does not depend on batch shape. It is not a proof of anything. Specifically:
+
+- A `root` status means one preimage was found and verified at that residual; it does not mean the preimage is the one a user intended, nor that no closer one exists.
+- Folds in Stage 3, the signed extension, and the many-to-one cube projection can all produce several valid preimages. The ranking policy chooses among them; it does not resolve the ambiguity.
+- No global convergence is claimed. The seed set is a fixed engineering choice, and a preimage reachable only from a seed outside it will be reported as `approximate` or missed.
+- The 128-iteration cap and the damping bounds are safety limits; a candidate that terminates on either is reported with its actual residual rather than promoted to a root.
+
+Any accuracy statement about this inverse is therefore a statement about a specific forward profile, a specific seed set and a measured residual distribution — not about the grade as a mathematical object.

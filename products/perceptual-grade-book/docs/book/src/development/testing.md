@@ -483,7 +483,7 @@ The ACEScg nonnegative [0,64]³ corner calculation agrees with the proposed nega
 
 ## Native AP1 production LUT (1.21.0)
 
-Production now uses `AP1_ACES_neg0_pos128_n0_log1p0.01`: native ACEScg/ACES white, [0,128], 64 positive intervals, plain log1p κ = 0.01. [The domain study](lut-domain-study.md#adopted-production-choice) records why this display-linear/peak-nits choice differs from the encoded-RGB winner. Historical comparisons above retain their original parameters.
+Production now uses **native ACEScg/ACES white, bound 1024, 64 positive intervals, plain log1p κ = 0.01**. The shaper and sampling space were selected by the domain study among its +128 finalists; the bound was raised afterwards, so the selection evidence covers the shaper rather than the 1024 domain. [The domain study](lut-domain-study.md#adopted-production-choice) records why this display-linear/peak-nits choice differs from the encoded-RGB winner. Historical comparisons above retain their original parameters.
 
 ```sh
 buck2 test //:numerical_test_cube_math //:numerical_test_cube_native \

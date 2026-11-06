@@ -8,5 +8,5 @@
 [rei277hz/chromaticity](https://github.com/rei277hz/chromaticity) 进行；所有 PR 请提交到
 [chromaticity 的 Pull Requests](https://github.com/rei277hz/chromaticity/pulls)，包括手册修改。
 
-本手册描述历史版本 Perceptual Grade 1.23.2，尚未针对 Perceptual Grade Next 更新。
-当前构建与贡献方式请以 `chromaticity` 中相关产品的 README 为准。
+本部分的工程说明描述历史版本 1.23.2 的源码布局，尚未针对 Perceptual Grade Next 更新。
+模型本身现在有两个归属：[理解模型](../theory/structure.md) 遵循 `libraries/perceptual-grade-reference` 中的解析参考，而本部分与使用指南描述 1.23.2 的产品。当前构建与贡献方式请以 `chromaticity` 中相关产品的 README 为准。
