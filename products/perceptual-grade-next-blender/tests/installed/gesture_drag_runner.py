@@ -238,7 +238,9 @@ def run():
             if (observed.applied_signature not in (None, initial_signature)
                     and observed.applied_signature != observed.desired_signature):
                 assert nodes.node_policy.output_mode(observed) == "preview"
-                image = current_node().node_tree[nodes.PARAMETER_BINDING]
+                kernel = current_node().node_tree
+                active = kernel[nodes.PARAMETER_ACTIVE_BANK]
+                image = kernel[nodes.PARAMETER_BANK_BINDINGS[active]]
                 pixels = array("f", image.pixels[:]).tobytes()
                 publications[observed.applied_signature] = hashlib.sha256(pixels).hexdigest()
         report["lagging_publications"] = len(publications)

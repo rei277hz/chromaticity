@@ -11,6 +11,13 @@ from policy.node import (
 
 
 class KernelReadinessTests(unittest.TestCase):
+    def test_presentation_refresh_preserves_logical_readiness_and_requests_no_work(self):
+        for state in (new(), new("grade-a"), new("grade-a", "grade-a"),
+                      new("grade-b", "grade-a"), new("grade-a", error="failed")):
+            updated, effects = step(state, Event("presentation"))
+            self.assertEqual(updated, state)
+            self.assertEqual(effects, Effects(output_mode=output_mode(state), error=state.error))
+
     def transition(self, state, kind, signature=None, error=None, quality="full",
                    preparation_signature=None):
         if kind == "preparation_result" and error is not None \
@@ -172,6 +179,23 @@ class KernelReadinessTests(unittest.TestCase):
         retried, effects = self.transition(failed, "request", "grade-b")
         self.assertIsNone(retried.error)
         self.assertEqual(effects.prepare_signature, "grade-b")
+
+    def test_only_current_full_recovery_receipt_clears_a_failed_output(self):
+        failed, _ = self.transition(
+            self.installed("grade-a"), "installation_result", None,
+            "bank repair failed",
+        )
+        stale, effects = self.transition(failed, "recovery_result", "grade-b")
+        self.assertEqual(stale, failed)
+        self.assertEqual(effects.output_mode, "error")
+        preview, effects = self.transition(
+            failed, "recovery_result", "grade-a", quality="preview"
+        )
+        self.assertEqual(preview, failed)
+        self.assertEqual(effects.output_mode, "error")
+        recovered, effects = self.transition(failed, "recovery_result", "grade-a")
+        self.assertTrue(output_allowed(recovered))
+        self.assertEqual(effects.output_mode, "current")
 
     def test_new_demand_outside_gesture_retains_last_good_result(self):
         state, effects = self.transition(self.installed(), "request", "grade-b")

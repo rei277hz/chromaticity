@@ -10,7 +10,10 @@ import numpy as np
 
 from color_tools.kernel import ColorSettings, LinearSettings, Settings, ToneSettings, prepare, prepare_tone
 from color_tools.kernel.boundary import prepare_boundary
-from color_tools.kernel.stage2_graph import PARAMETER_BINDING, PARAMETER_IMAGE, build_stage2_group
+from color_tools.kernel.stage2_graph import (
+    PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_IMAGE,
+    build_stage2_group,
+)
 from color_tools.kernel.stage2_parameters import prepare_parameters
 from tools.perceptual_grade.reports import cases, oracle
 from tools.perceptual_grade.reports.native import NativeFixture
@@ -81,12 +84,21 @@ class Stage2UpdateTests(unittest.TestCase):
                 )
                 try:
                     built = fixture.built
-                    parameter_image, = tuple(
+                    marked_images = tuple(
                         image for image in built.images if image.get(PARAMETER_IMAGE)
                     )
-                    self.assertEqual(built.tree[PARAMETER_BINDING], parameter_image)
+                    parameter_images = tuple(
+                        built.tree[key] for key in PARAMETER_BANK_BINDINGS
+                    )
+                    self.assertEqual(len(parameter_images), 2)
+                    self.assertEqual(
+                        {image.as_pointer() for image in marked_images},
+                        {image.as_pointer() for image in parameter_images},
+                    )
+                    active_bank = built.tree[PARAMETER_ACTIVE_BANK]
+                    parameter_image = parameter_images[active_bank]
                     tree_pointer = built.tree.as_pointer()
-                    image_pointer = parameter_image.as_pointer()
+                    image_pointers = tuple(image.as_pointer() for image in parameter_images)
                     inventory = native_inventory(built.tree)
                     image_ids = tuple(image.as_pointer() for image in built.images)
                     group_ids = tuple(group.as_pointer() for group in bpy.data.node_groups)
@@ -111,8 +123,15 @@ class Stage2UpdateTests(unittest.TestCase):
                             np.testing.assert_array_equal(actual["embedded_alpha"], values[:, 3])
 
                         self.assertEqual(built.tree.as_pointer(), tree_pointer)
-                        self.assertEqual(parameter_image.as_pointer(), image_pointer)
-                        self.assertEqual(built.tree[PARAMETER_BINDING], parameter_image)
+                        self.assertEqual(
+                            tuple(image.as_pointer() for image in parameter_images),
+                            image_pointers,
+                        )
+                        self.assertEqual(built.tree[PARAMETER_ACTIVE_BANK], active_bank)
+                        self.assertEqual(
+                            tuple(built.tree[key] for key in PARAMETER_BANK_BINDINGS),
+                            parameter_images,
+                        )
                         self.assertEqual(tuple(image.as_pointer() for image in built.images), image_ids)
                         self.assertEqual(tuple(group.as_pointer() for group in bpy.data.node_groups),
                                          group_ids)
@@ -136,14 +155,18 @@ class Stage2UpdateTests(unittest.TestCase):
             builder=partial(build_stage2_group, diagnostics=True),
         )
         try:
-            parameter_image, = tuple(
+            parameter_images = tuple(
                 image for image in fixture.built.images if image.get(PARAMETER_IMAGE)
             )
+            self.assertEqual(len(parameter_images), 2)
+            active_bank = fixture.built.tree[PARAMETER_ACTIVE_BANK]
+            parameter_image = parameter_images[active_bank]
             parameter_image.pixels.foreach_set(parameters.pixels.ravel())
             parameter_image.update()
             parameter_image.pack()
             before = fixture.render()
             image_name = parameter_image.name
+            bank_names = tuple(image.name for image in parameter_images)
             tree_name = fixture.built.tree.name
             fixture.input_image.pack()
             filename = Path(fixture.directory.name) / "stage2-updated.blend"
@@ -152,7 +175,10 @@ class Stage2UpdateTests(unittest.TestCase):
 
             restored = bpy.data.images[image_name]
             self.assertIsNotNone(restored.packed_file)
-            self.assertEqual(bpy.data.node_groups[tree_name][PARAMETER_BINDING], restored)
+            restored_tree = bpy.data.node_groups[tree_name]
+            restored_banks = tuple(restored_tree[key] for key in PARAMETER_BANK_BINDINGS)
+            self.assertEqual(tuple(image.name for image in restored_banks), bank_names)
+            self.assertEqual(restored_banks[active_bank], restored)
             pixels = np.empty(parameters.pixels.size, dtype=np.float32)
             restored.pixels.foreach_get(pixels)
             np.testing.assert_array_equal(pixels, parameters.pixels.ravel())
