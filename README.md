@@ -1,8 +1,8 @@
 # Linux build and test results
 
-- Commit: `9547c52328f479a5fca4fa126c1c1e551a44a7dc`
-- Recorded at: 2026-11-06T21:06:56+00:00
-- Run: https://github.com/rei277hz/chromaticity/actions/runs/42292636662
+- Commit: `aaef8d09a6f15a5cf65336ab29ff0b81c2ca5819`
+- Recorded at: 2026-11-06T21:36:30+00:00
+- Run: https://github.com/rei277hz/chromaticity/actions/runs/42295386637
 
 Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.
 
@@ -15,9 +15,9 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender:verify_policies` | passed |
 | `//products/perceptual-grade-next-blender:extension` | passed |
 
-## Linux smoke suites: 39/39 passed
+## Linux smoke suites: 36/39 passed
 
-Run outcome: **passed**. Command exit: `0`.
+Run outcome: **failed**. Command exit: `32`.
 
 | Target | Result |
 | --- | --- |
@@ -47,15 +47,15 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender/tests:guards` | passed |
 | `//products/perceptual-grade-next-blender/tests:saturation` | passed |
 | `//products/perceptual-grade-next-blender/tests:full` | passed |
-| `//products/perceptual-grade-next-blender/tests:grade_render_preflight` | passed |
+| `//products/perceptual-grade-next-blender/tests:grade_render_preflight` | failed |
 | `//products/perceptual-grade-next-blender/tests:gate_policy` | passed |
 | `//products/perceptual-grade-next-blender/tests:hdr_metrics` | passed |
 | `//products/perceptual-grade-next-blender/tests:architecture` | passed |
 | `//products/perceptual-grade-next-blender/tests:policy_coverage` | passed |
-| `//products/perceptual-grade-next-blender/tests:package` | passed |
+| `//products/perceptual-grade-next-blender/tests:package` | failed |
 | `//products/perceptual-grade-next-blender/tests:install_workspace` | passed |
 | `//products/perceptual-grade-next-blender/tests:installed` | passed |
-| `//products/perceptual-grade-next-blender/tests:compositor_gui` | passed |
+| `//products/perceptual-grade-next-blender/tests:compositor_gui` | failed |
 | `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:gesture_drag_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:image_save_gui` | passed |
