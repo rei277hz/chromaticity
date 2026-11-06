@@ -1,4 +1,4 @@
-"""Exercise publication diagnostics through real Blender F3 search."""
+"""Exercise publication diagnostics through F3 and the actual Exposure slider."""
 
 import addon_utils
 import importlib
@@ -157,7 +157,8 @@ def drag_exposure_slider(tree, position):
     yield .1
     after = float(tree.pg_publication.exposure)
     assert after != before, (before, after, position)
-    return after
+    return {"tree_id": int(tree.as_pointer()), "initial_exposure": before,
+            "exposure": after}
 
 
 def run():
@@ -181,7 +182,8 @@ def run():
             assert kernel is not None
             old_bank = nodes._active_bank(kernel)
             slider = yield from find_exposure_slider()
-            exposure = yield from drag_exposure_slider(kernel, slider)
+            drag = yield from drag_exposure_slider(kernel, slider)
+            exposure = drag["exposure"]
             assert abs(float(nodes._helper_image(kernel).pixels[0]) - exposure) < 1e-6
             assert not kernel.get("_pg_publication_error"), (
                 tree_type, variant, kernel.get("_pg_publication_error"),
@@ -190,7 +192,7 @@ def run():
                 assert nodes._active_bank(kernel) != old_bank
             report["publications"].append({"tree_type": tree_type,
                                            "variant": variant,
-                                           "exposure": exposure})
+                                           **drag})
 
     yield .2
     yield from search_operator(False)
@@ -215,14 +217,28 @@ def run():
                 for variant, _node_ids in strategies}
     observed_callbacks = {(item["tree_type"], item["variant"])
                          for item in callbacks
-                         if any(item.get("exposure") == publication["exposure"]
-                                and item.get("tree_type") == publication["tree_type"]
-                                and item.get("variant") == publication["variant"]
+                         if any(item.get("tree_id") == publication["tree_id"]
                                 for publication in report["publications"])}
     observed_stages = {(item["tree_type"], item["variant"])
                        for item in stages if item.get("error") is None}
     assert expected <= observed_callbacks, (expected, observed_callbacks, callbacks)
     assert expected <= observed_stages, (expected, observed_stages, stages)
+    drag_values = {}
+    for publication in report["publications"]:
+        tree_callbacks = [item for item in callbacks
+                          if item.get("tree_id") == publication["tree_id"]]
+        values = sorted({float(item["exposure"]) for item in tree_callbacks
+                         if item.get("phase") in ("started", "finished")})
+        final = float(publication["exposure"])
+        initial = float(publication["initial_exposure"])
+        assert any(abs(value - final) <= 1e-6 for value in values), (
+            publication, values,
+        )
+        intermediates = [value for value in values
+                         if abs(value - final) > 1e-6
+                         and abs(value - initial) > 1e-6]
+        assert intermediates, (publication, values)
+        drag_values[publication["tree_type"] + ":" + publication["variant"]] = values
     assert any(row["event"] == "publication_reconciled" for row in rows), rows[-20:]
     assert not any(row["event"] == "publication_error" for row in rows), [
         row for row in rows if row["event"] == "publication_error"
@@ -230,7 +246,8 @@ def run():
     report["trace"] = {"path": str(trace_path), "events": len(rows),
                        "dropped": footer["dropped"],
                        "callback_pairs": sorted([list(pair) for pair in observed_callbacks]),
-                       "stage_pairs": sorted([list(pair) for pair in observed_stages])}
+                       "stage_pairs": sorted([list(pair) for pair in observed_stages]),
+                       "drag_values": drag_values}
 
     menu_draws = bpy.types.TOPBAR_MT_help.draw._draw_funcs
     assert menu_draws.count(nodes._draw_trace_menu) == 1, menu_draws
@@ -252,12 +269,11 @@ def tick():
     except BaseException:
         report["failure"] = traceback.format_exc()
         print(report["failure"], flush=True)
-    finally:
-        if report.get("passed") or report.get("failure"):
-            nodes.Capture = original_capture
-            report_path.write_text(json.dumps(report, indent=2))
-            bpy.ops.wm.quit_blender("EXEC_DEFAULT")
-            return None
+    if report.get("passed") or report.get("failure"):
+        nodes.Capture = original_capture
+        report_path.write_text(json.dumps(report, indent=2))
+        bpy.ops.wm.quit_blender("EXEC_DEFAULT")
+        return None
     return .02
 
 

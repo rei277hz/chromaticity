@@ -37,9 +37,13 @@ class Stage2Tests(unittest.TestCase):
                     self.assertEqual(inputs, expected)
                     self.assertEqual(outputs, expected)
                     self.assertTrue(built.tree["_perceptual_grade_stage2_complete"])
-                    self.assertEqual(len(built.images), 2)
+                    self.assertEqual(len(built.images), 3)
                     self.assertTrue(all(image.packed_file for image in built.images))
-                    self.assertTrue(any("tone" in image.name.lower() for image in built.images))
+                    parameter_images = tuple(
+                        image for image in built.images
+                        if image.get("_perceptual_grade_parameter_schema")
+                    )
+                    self.assertEqual(len(parameter_images), 2)
                     self.assertTrue(any(node.label == "AP1 boundary root seed"
                                         for node in built.tree.nodes))
                 finally:

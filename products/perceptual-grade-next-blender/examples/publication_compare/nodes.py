@@ -756,6 +756,12 @@ def _banked_transaction(tree, exposure):
         raise RuntimeError("Banked helper image layout is invalid")
     if len({image.as_pointer() for image in images}) != 2:
         raise RuntimeError("Banked helper images must be distinct")
+    active_image = images[active]
+    active_signature = float(active_image.get(_SIGNATURE, math.nan))
+    active_valid = (
+        _image_matches(active_image, active_signature)
+        and abs(float(active_image.pixels[3]) - 1.0) <= 1e-6
+    )
     context = {}
 
     def stage(bank, _errors):
@@ -784,6 +790,7 @@ def _banked_transaction(tree, exposure):
         write_metadata(_metadata(tree, image, exposure))
         image.update_tag()
         _set_error(tree, None)
+        return {"delivered": True}
 
     def restore_selector(bank, _errors):
         failures = []
@@ -808,6 +815,7 @@ def _banked_transaction(tree, exposure):
     def fail_closed(_bank, errors):
         _set_error(tree, errors[0] if errors else
                    "Banked helper image publication failed")
+        return {"closed": True}
 
     operations = _trace_operations(tree, {
         "stage": stage,
@@ -816,7 +824,15 @@ def _banked_transaction(tree, exposure):
         "restore_selector": restore_selector,
         "fail_closed": fail_closed,
     })
-    return run_bank_publication(active, candidate, operations)
+    result = run_bank_publication(active, candidate, operations,
+                                  admitted=True, active_valid=active_valid)
+    if result.outcome == "committed":
+        return ()
+    if result.errors:
+        return result.errors
+    if result.outcome == "failed_closed":
+        return (RuntimeError("Banked publication failed closed"),)
+    return (RuntimeError("Banked publication delivery is indeterminate"),)
 
 
 def _enqueue(tree):

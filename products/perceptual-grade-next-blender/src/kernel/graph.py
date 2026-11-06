@@ -494,6 +494,7 @@ class Graph(ColorGraph):
         image.colorspace_settings.name = "Non-Color"
         image.alpha_mode = "CHANNEL_PACKED"
         image.use_half_precision = False
+        image.file_format = "OPEN_EXR"
         image.pixels.foreach_set(pixels.ravel())
         image.update()
         image.pack()
@@ -628,11 +629,14 @@ class Graph(ColorGraph):
         return append_lut_lookup(self, cube, rgb)
 
     def _sample(self, index):
-        image = self._table_image()
-        width, height = image.size
+        image = None if self.parameters is not None else self._table_image()
+        width, height = (self.parameters.images[0].size if self.parameters is not None
+                         else image.size)
         row = self.op("FLOOR", self.div(index, width))
         col = self.madd(-width, row, index)
         uv = self.vector((self.madd(1./width, col, .5/width), self.madd(1./height, row, .5/height), 1.0))
+        if self.parameters is not None:
+            return self.parameters.sample_uv(uv, label="Tone endpoint jet")[0]
         if self.tree.bl_idname == "ShaderNodeTree":
             node = self.node("ShaderNodeTexImage", "Tone endpoint jet")
             node.image = image

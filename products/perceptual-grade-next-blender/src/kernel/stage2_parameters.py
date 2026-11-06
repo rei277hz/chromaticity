@@ -6,6 +6,7 @@ permission to publish it to a native reader.
 """
 
 from dataclasses import dataclass
+import hashlib
 import math
 
 import numpy as np
@@ -17,6 +18,7 @@ from .tables import TEXTURE_WIDTH
 
 PARAMETER_SCHEMA = 1
 PARAMETER_SHAPE = (1, TEXTURE_WIDTH, 4)
+PARAMETER_CONTENT_SIGNATURE = "_perceptual_grade_parameter_content_signature"
 TONE_JET_COUNT = TONE_CELLS + 1
 MATRIX_RED_SLOT = TONE_JET_COUNT
 MATRIX_BLUE_SLOT = MATRIX_RED_SLOT + 1
@@ -56,6 +58,31 @@ class PreparedParameters:
         # when it owns its allocation. Immutable bytes also isolate the caller.
         owned = np.frombuffer(data.tobytes(), dtype=np.float32).reshape(PARAMETER_SHAPE)
         object.__setattr__(self, "pixels", owned)
+
+
+def parameter_content_signature(pixels) -> str:
+    """Identify the exact RGBA32F bytes stored in a parameter bank."""
+    data = np.ascontiguousarray(pixels, dtype=np.float32)
+    if data.shape != PARAMETER_SHAPE:
+        raise ValueError("Stage 2 content signatures require a 1 by 512 RGBA32F image")
+    return hashlib.sha256(data.tobytes()).hexdigest()
+
+
+def parameter_image_matches(image, content_signature=None) -> bool:
+    """Check a packed helper against its exact stored RGBA32F content receipt."""
+    try:
+        if (image.as_pointer() == 0 or image.is_dirty or image.packed_file is None
+                or (content_signature is None
+                    and image.get(PARAMETER_CONTENT_SIGNATURE) is None)):
+            return False
+        pixels = np.empty(PARAMETER_SHAPE, dtype=np.float32)
+        image.pixels.foreach_get(pixels.ravel())
+        actual = parameter_content_signature(pixels)
+        expected = (image.get(PARAMETER_CONTENT_SIGNATURE)
+                    if content_signature is None else content_signature)
+        return actual == expected
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return False
 
 
 def prepare_parameters(prepared: PreparedGrade) -> PreparedParameters:

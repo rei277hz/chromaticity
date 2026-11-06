@@ -97,16 +97,17 @@ python_test(
 python_test(
     name = "preparation_runtime",
     srcs = [
+        "runtime/test_bank_publication.py",
         "runtime/test_compositor_receipts.py",
-        "runtime/test_drag_trace.py",
         "runtime/test_drag_diagnostics.py",
+        "runtime/test_drag_trace.py",
         "runtime/test_grade_preparation.py",
         "runtime/test_grade_transactions.py",
         "runtime/test_helper_runtime.py",
         "runtime/test_lut_helper.py",
+        "runtime/test_parameter_publication.py",
         "runtime/test_preparation_runtime.py",
         "runtime/test_publication.py",
-        "runtime/test_parameter_publication.py",
     ],
     base_module = "tests.perceptual_grade_blender",
     resources = {
@@ -528,7 +529,12 @@ python_test(
         "installed/test_publication_compare_installed.py",
     ],
     base_module = "tests.perceptual_grade_blender",
-    labels = ["installed", "blender", "gui", "acceptance"],
+    labels = [
+        "installed",
+        "blender",
+        "gui",
+        "acceptance",
+    ],
     resources = select({
         "prelude//os:linux": {
             "blender": "//third_party:blender_native",
@@ -551,7 +557,12 @@ python_test(
         "installed/test_publication_compare_trace_installed.py",
     ],
     base_module = "tests.perceptual_grade_blender",
-    labels = ["installed", "blender", "gui", "acceptance"],
+    labels = [
+        "installed",
+        "blender",
+        "gui",
+        "acceptance",
+    ],
     resources = select({
         "prelude//os:linux": {
             "blender": "//third_party:blender_native",
@@ -624,41 +635,22 @@ python_test(
         "installed/test_drag_trace_gui.py",
     ],
     base_module = "tests.perceptual_grade_blender",
-    labels = ["installed", "gui", "acceptance"],
-    resources = select({
-        "prelude//os:linux": {
-            "blender": "//third_party:blender_native",
-            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "drag_trace_runner.py": "installed/drag_trace_runner.py",
-            "xvfb": "//third_party:xvfb_software_linux",
-        },
-        "prelude//os:macos": {
-            "blender": "//third_party:blender_native",
-            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "drag_trace_runner.py": "installed/drag_trace_runner.py",
-        },
-    }),
-)
-
-python_test(
-    name = "versioned_publication_gui",
-    srcs = [
-        "installed/gui_support.py",
-        "installed/test_versioned_publication_gui.py",
+    labels = [
+        "installed",
+        "gui",
+        "acceptance",
     ],
-    base_module = "tests.perceptual_grade_blender",
-    labels = ["installed", "gui", "acceptance"],
     resources = select({
         "prelude//os:linux": {
             "blender": "//third_party:blender_native",
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "versioned_publication_runner.py": "installed/versioned_publication_runner.py",
+            "drag_trace_runner.py": "installed/drag_trace_runner.py",
             "xvfb": "//third_party:xvfb_software_linux",
         },
         "prelude//os:macos": {
             "blender": "//third_party:blender_native",
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-            "versioned_publication_runner.py": "installed/versioned_publication_runner.py",
+            "drag_trace_runner.py": "installed/drag_trace_runner.py",
         },
     }),
 )

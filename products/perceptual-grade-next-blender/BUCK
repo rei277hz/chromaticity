@@ -150,6 +150,7 @@ invariant_proof(
     name = "proof_node",
     required_mutations = [
         "replacement_ignores_order",
+        "recovery_ignores_current_signature",
     ],
     required_properties = [
         "full_quality_is_required_for_current_output",
@@ -160,6 +161,7 @@ invariant_proof(
         "stale_full_result_updates_drag_preview",
         "late_lower_quality_never_replaces_full_quality",
         "current_failure_clears_applied_output",
+        "recovery_requires_current_full_installation",
         "return_to_applied_settings_updates_preparation_demand",
         "replacement_rebuild_tracks_order_and_multiplicity",
         "grade_edit_rebuilds_only_when_referenced",
@@ -173,6 +175,7 @@ invariant_proof(
     ],
     required_witnesses = [
         "preview_remains_visible_until_full_installation",
+        "repaired_current_kernel_restores_output",
         "duplicate_grade_occurrences_are_preserved",
     ],
     requirements = ":node_requirements",
@@ -437,12 +440,18 @@ invariant_proof(
     name = "proof_bank_publication",
     required_mutations = [
         "active_bank_can_be_staged",
+        "unauthorized_bank_can_be_staged",
+        "damaged_active_bank_can_be_staged",
+        "repair_can_start_before_close_receipt",
         "dirty_candidate_can_be_selected",
         "selector_readback_is_ignored",
         "failed_delivery_is_accepted",
     ],
     required_properties = [
         "staging_uses_a_valid_inactive_bank",
+        "staging_requires_authorized_admission",
+        "staging_requires_valid_active_receipt",
+        "repair_requires_successful_closed_receipt",
         "selector_change_requires_clean_staging_receipt",
         "delivery_requires_selector_readback",
         "failed_staging_fails_closed_without_changing_selector",
@@ -457,6 +466,8 @@ invariant_proof(
     required_witnesses = [
         "inactive_bank_is_staged_then_selected",
         "dirty_stage_fails_without_selector_change",
+        "unauthorized_begin_fails_without_staging",
+        "damaged_active_bank_is_closed_before_repair",
     ],
     requirements = "requirements/bank_publication.inv",
     runtime_source = "policy/bank_publication.py",
@@ -551,7 +562,6 @@ invariant_bundle(
 
 extension_tree(
     name = "publication_compare_tree",
-    deps = [],
     entrypoints = {
         "__init__.py": "examples/publication_compare/__init__.py",
         "nodes.py": "examples/publication_compare/nodes.py",
@@ -573,6 +583,7 @@ extension_tree(
         "runtime/publication.py": RUNTIME_PREFIX + "publication.py",
     },
     visibility = ["PUBLIC"],
+    deps = [],
 )
 
 python_library(

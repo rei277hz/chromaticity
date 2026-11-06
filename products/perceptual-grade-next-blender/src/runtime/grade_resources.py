@@ -1,11 +1,17 @@
-"""Lifecycle-owned bounded parameter versions, never keyed by settings hash."""
+"""Lifecycle-owned fixed parameter-image banks for each Grade owner."""
 
 from dataclasses import dataclass, field
 from typing import Optional
-from ..kernel.stage2_graph import PARAMETER_BINDING, PARAMETER_IMAGE
-from ..kernel.stage2_parameters import PARAMETER_SCHEMA
+
+from ..kernel.stage2_graph import (
+    PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_GENERATION,
+    PARAMETER_IMAGE, PARAMETER_READER, PARAMETER_READER_BANK,
+    PARAMETER_SELECTOR,
+)
+from ..kernel.stage2_parameters import (
+    PARAMETER_SCHEMA, PARAMETER_SHAPE,
+)
 from ..policy import resources as resource_policy
-from ..policy import parameter_publication as parameter_policy
 from .publication import PublicationDeferred, PublicationGate
 
 
@@ -15,39 +21,31 @@ SIGNATURE = "_perceptual_grade_parameter_signature"
 
 
 @dataclass(eq=False)
-class ParameterVersion:
-    generation: int
-    image: object
-    # A failed partial binding is already an exposure, even before activation.
-    exposed: bool = False
-
-
-@dataclass(eq=False)
 class GradeResource:
-    current: Optional[ParameterVersion] = None
-    candidate: Optional[ParameterVersion] = None
-    retained: list[ParameterVersion] = field(default_factory=list)
+    banks: Optional[tuple[object, object]] = None
+    active_bank: Optional[int] = None
+    generation: Optional[int] = None
     trees: dict = field(default_factory=dict)
 
     @property
+    def images(self):
+        return () if self.banks is None else self.banks
+
+    @property
     def image(self):
-        return None if self.current is None else self.current.image
+        if self.banks is None or self.active_bank not in (0, 1):
+            return None
+        return self.banks[self.active_bank]
 
     @property
-    def generation(self):
-        return None if self.current is None else self.current.generation
-
-    @property
-    def versions(self):
-        versions = list(self.retained)
-        for version in (self.current, self.candidate):
-            if version is not None and version not in versions:
-                versions.append(version)
-        return tuple(versions)
+    def candidate_bank(self):
+        if self.banks is None or self.active_bank not in (0, 1):
+            return None
+        return 1 - self.active_bank
 
 
 class GradeResources:
-    """Cache only live host identities; reset after load and native undo."""
+    """Adopt persistent image identities at load/undo and own their retirement."""
 
     def __init__(self, bpy):
         self.bpy = bpy
@@ -56,10 +54,6 @@ class GradeResources:
         self.gate = PublicationGate(bpy)
         self._serial = 0
 
-    def _version(self, image, *, exposed=False):
-        self._serial += 1
-        return ParameterVersion(self._serial, image, exposed)
-
     @staticmethod
     def _same_image(first, second):
         try:
@@ -67,29 +61,20 @@ class GradeResources:
         except (ReferenceError, AttributeError):
             return first is second
 
-    def _adopt_current(self, resource, image):
-        if image is None:
-            if resource.current is not None:
-                if resource.current not in resource.retained:
-                    resource.retained.append(resource.current)
-                resource.current = None
-            return
-        if resource.current is not None and self._same_image(resource.image, image):
-            return
-        version = next((version for version in resource.versions
-                        if self._same_image(version.image, image)), None)
-        if version is None:
-            if len(resource.versions) >= 3:
-                raise RuntimeError("Grade parameter binding escaped its bounded version pool")
-            version = self._version(image, exposed=True)
-        if resource.current is not None and resource.current not in resource.retained:
-            resource.retained.append(resource.current)
-        if version in resource.retained:
-            resource.retained.remove(version)
-        if resource.candidate is version:
-            resource.candidate = None
-        version.exposed = True
-        resource.current = version
+    @staticmethod
+    def _same_banks(first, second):
+        return (first is not None and second is not None and len(first) == 2
+                and len(second) == 2
+                and all(GradeResources._same_image(a, b)
+                        for a, b in zip(first, second)))
+
+    @staticmethod
+    def _valid_bank_index(bank):
+        return type(bank) is int and bank in (0, 1)
+
+    def next_generation(self, resource):
+        self._serial = max(self._serial, resource.generation or 0) + 1
+        return self._serial
 
     def owner(self, node):
         if node.pg_grade is not None:
@@ -97,9 +82,7 @@ class GradeResources:
         tree = node.id_data
         if not tree.is_embedded_data:
             return tree, node.name
-        # Embedded node trees cannot be stored in ID-valued custom properties.
-        # Persist their containing datablock instead; the node name identifies
-        # the local Grade within that owner's tree across save/load and undo.
+        # Embedded trees cannot store their owner as an ID-valued property.
         for collection in ("materials", "worlds", "lights", "scenes", "linestyles"):
             for owner in getattr(self.bpy.data, collection, ()):
                 if getattr(owner, "node_tree", None) == tree:
@@ -115,44 +98,143 @@ class GradeResources:
         resource = self._resources.get(key)
         if resource is None:
             resource = GradeResource()
-            # Adopt persisted bindings only at an ownership/lifecycle boundary.
-            # Ordinary lookups validate the cached trees without a scene scan.
+            # Scan persisted node groups only at an ownership/lifecycle boundary.
             trees = self.bpy.data.node_groups
         else:
             trees = tuple(resource.trees.values())
-        selected_image = None
+
+        selected_banks = None
+        selected_active = None
+        selected_generation = None
         selected_trees = {}
+        invalid_cached_tree = False
         for tree in trees:
-            image = self._owned_image(tree, owner, owner_node, space, selected_image)
-            if image is None:
+            observed = self._owned_banks(
+                tree, owner, owner_node, space, selected_banks,
+                selected_active, selected_generation,
+            )
+            if observed is None:
+                if resource is not None and any(
+                        tree == tracked for tracked in resource.trees.values()):
+                    invalid_cached_tree = True
+                independent = self._owned_banks(tree, owner, owner_node, space)
+                if independent is not None and selected_banks is not None:
+                    banks, active, generation = independent
+                    if (not self._same_banks(selected_banks, banks)
+                            or selected_active != active
+                            or selected_generation != generation):
+                        raise RuntimeError(
+                            "Grade parameter banks, selectors, or generations disagree "
+                            "across kernels"
+                        )
                 continue
-            selected_image = image
+            banks, active, generation = observed
+            selected_banks = banks
+            selected_active = active
+            selected_generation = generation
             selected_trees[tree.bl_idname] = tree
-        self._adopt_current(resource, selected_image)
+
+        if selected_banks is None and invalid_cached_tree:
+            resource.banks = None
+            resource.active_bank = None
+            resource.generation = None
+        if selected_banks is not None:
+            if resource.banks is not None and not self._same_banks(resource.banks, selected_banks):
+                raise RuntimeError("Grade parameter bank identities changed unexpectedly")
+            if (resource.active_bank is not None
+                    and resource.active_bank != selected_active):
+                raise RuntimeError("Grade parameter selectors disagree across kernels")
+            if (resource.generation is not None
+                    and resource.generation != selected_generation):
+                raise RuntimeError("Grade parameter generations disagree across kernels")
+            resource.banks = selected_banks
+            resource.active_bank = selected_active
+            resource.generation = selected_generation
+            self._serial = max(self._serial, selected_generation)
         resource.trees = selected_trees
         self._resources[key] = resource
         return resource
 
-    @staticmethod
-    def _owned_image(tree, owner, owner_node, space, selected_image=None):
+    @classmethod
+    def _owned_banks(cls, tree, owner, owner_node, space,
+                     selected_banks=None, selected_active=None,
+                     selected_generation=None):
         try:
-            image = tree.get(PARAMETER_BINDING)
+            banks = tuple(tree.get(key) for key in PARAMETER_BANK_BINDINGS)
+            active = tree.get(PARAMETER_ACTIVE_BANK)
+            generation = tree.get(PARAMETER_GENERATION)
+            valid_banks = (
+                len(banks) == 2 and banks[0] is not None and banks[1] is not None
+                and not cls._same_image(banks[0], banks[1])
+                and all(cls._valid_image(image) for image in banks)
+            )
             observation = resource_policy.Adoption(
                 owner_matches=tree.get(OWNER) == owner,
                 node_matches=tree.get(OWNER_NODE) == owner_node,
                 space_matches=tree.get("_perceptual_grade_working_space") == space,
                 complete=bool(tree.get("_perceptual_grade_stage2_complete")),
-                image_valid=(image is not None
-                             and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA),
-                image_agrees=selected_image is None or selected_image == image,
+                image_valid=(valid_banks and cls._valid_bank_index(active)
+                             and type(generation) is int and generation >= 0
+                             and cls._selector_matches(tree, banks, active)),
+                image_agrees=(
+                    (selected_banks is None or cls._same_banks(selected_banks, banks))
+                    and (selected_active is None or selected_active == active)
+                    and (selected_generation is None
+                         or selected_generation == generation)
+                ),
             )
             if resource_policy.may_adopt(observation):
-                return image
-        except (AttributeError, ReferenceError):
-            # A native deletion can invalidate wrappers without clearing this
-            # Python cache. Rebuild derived data instead of reusing dead IDs.
+                return banks, active, generation
+        except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+            # A deleted ID may leave a stale wrapper in the Python cache.
             pass
         return None
+
+    @staticmethod
+    def _valid_image(image):
+        try:
+            return (image.as_pointer() != 0
+                    and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
+                    and tuple(image.size) == (PARAMETER_SHAPE[1], PARAMETER_SHAPE[0]))
+        except (AttributeError, ReferenceError, RuntimeError, TypeError):
+            return False
+
+    @staticmethod
+    def _selector_matches(tree, banks, active):
+        try:
+            selectors = tuple(node for node in tree.nodes
+                              if node.get(PARAMETER_SELECTOR))
+            if len(selectors) != 1:
+                return False
+            selector = selectors[0]
+            if tree.bl_idname == "ShaderNodeTree":
+                value = float(selector.outputs["Value"].default_value)
+                if value not in (0., 1.) or int(value) != active:
+                    return False
+            elif tree.bl_idname == "CompositorNodeTree":
+                value = float(selector.inputs[0].default_value)
+                if (selector.bl_idname != "ShaderNodeMath"
+                        or selector.operation != "ADD"
+                        or selector.inputs[0].is_linked
+                        or selector.inputs[1].is_linked
+                        or float(selector.inputs[1].default_value) != 0.0
+                        or value not in (0., 1.) or int(value) != active):
+                    return False
+            else:
+                return False
+            readers = tuple(node for node in tree.nodes
+                            if node.get(PARAMETER_READER))
+            observed = set()
+            for reader in readers:
+                bank = reader.get(PARAMETER_READER_BANK)
+                if (bank not in (0, 1)
+                        or not GradeResources._same_image(
+                            getattr(reader, "image", None), banks[bank])):
+                    return False
+                observed.add(bank)
+            return observed == {0, 1}
+        except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
+            return False
 
     def remember(self, node, space, tree):
         resource = self.resource(node, space)
@@ -160,105 +242,110 @@ class GradeResources:
         tree[OWNER] = owner
         if owner_node is not None:
             tree[OWNER_NODE] = owner_node
-        if self._owned_image(tree, owner, owner_node, space, resource.image) is None:
-            raise RuntimeError("Cannot adopt invalid Grade resources")
+        observed = self._owned_banks(
+            tree, owner, owner_node, space, resource.banks,
+            resource.active_bank, resource.generation,
+        )
+        if observed is None:
+            raise RuntimeError("Cannot adopt invalid Grade parameter banks")
+        banks, active, generation = observed
+        if resource.banks is None:
+            self.set_banks(resource, banks, active, generation)
         resource.trees[tree.bl_idname] = tree
-        self._adopt_current(resource, tree[PARAMETER_BINDING])
         return resource
 
-    def acquire_candidate(self, resource, create_image):
-        """Consume the pool grant; an exposed candidate must first be aborted."""
-        effects = parameter_policy.candidate_effect(
-            len(resource.versions), resource.candidate is not None,
-            resource.candidate.exposed if resource.candidate is not None else False,
-        )
-        if effects.action == "reuse":
-            return resource.candidate
-        if effects.action == "allocate":
-            image = create_image()
-            resource.candidate = self._version(image)
-            return resource.candidate
-        raise PublicationDeferred("Grade parameter version pool is full or awaiting rollback")
+    def set_banks(self, resource, banks, active_bank, generation):
+        banks = tuple(banks)
+        if (len(banks) != 2 or self._same_image(banks[0], banks[1])
+                or not all(self._valid_image(image) for image in banks)
+                or not self._valid_bank_index(active_bank)
+                or type(generation) is not int or generation < 0):
+            raise ValueError("Grade resources require two valid banks and a selector")
+        if resource.banks is not None and not self._same_banks(resource.banks, banks):
+            raise RuntimeError("Grade parameter banks have fixed identities and cannot be replaced")
+        resource.banks = banks
+        resource.active_bank = active_bank
+        resource.generation = generation
+        self._serial = max(self._serial, generation)
+
+    def publish(self, resource, bank, generation):
+        if resource.banks is None or bank != resource.candidate_bank:
+            raise RuntimeError("Grade publication must select the inactive fixed bank")
+        if type(generation) is not int or generation <= (resource.generation or 0):
+            raise RuntimeError("Grade publication generation must increase")
+        resource.active_bank = bank
+        resource.generation = generation
+        self._serial = max(self._serial, generation)
 
     @staticmethod
-    def expose(resource, version):
-        if resource.candidate is not version or version.exposed:
-            raise RuntimeError("Grade parameter candidate is not unpublished")
-        version.exposed = True
-
-    @staticmethod
-    def publish(resource, version):
-        if resource.candidate is not version or not version.exposed:
-            raise RuntimeError("Grade parameter candidate has not been bound")
-        if resource.current is not None:
-            resource.retained.append(resource.current)
-        resource.current = version
-        resource.candidate = None
-
-    @staticmethod
-    def abort(resource, version):
-        if version is not None and resource.candidate is version and version.exposed:
-            resource.candidate = None
-            resource.retained.append(version)
-
-    @staticmethod
-    def restore_current(resource, previous):
-        """Restore bookkeeping after binding rollback, retaining exposed images."""
-        if resource.current is previous:
-            return
-        if previous is not None and previous not in resource.retained:
-            raise RuntimeError("Previous Grade parameter version is no longer retained")
-        if resource.current is not None:
-            resource.retained.append(resource.current)
-        resource.current = previous
-        if previous is not None:
-            resource.retained.remove(previous)
+    def restore(resource, active_bank, generation):
+        """Restore bookkeeping after the caller has restored native selectors."""
+        if resource.banks is None or not GradeResources._valid_bank_index(active_bank):
+            raise RuntimeError("Cannot restore a Grade resource without its fixed banks")
+        if type(generation) is not int or generation < 0:
+            raise RuntimeError("Cannot restore an invalid Grade parameter generation")
+        resource.active_bank = active_bank
+        resource.generation = generation
 
     def protected(self, image):
-        return any(self._same_image(version.image, image)
+        return any(self._same_image(bank, image)
                    for resource in self._resources.values()
-                   for version in resource.versions)
+                   for bank in resource.images)
 
     def generations(self):
-        """Plain immutable receipt suitable for worker-side evaluation capture."""
-        return tuple(resource.generation for resource in self._resources.values()
-                     if resource.generation is not None)
+        """Plain immutable evaluation receipt data for compositor workers."""
+        return tuple(sorted({resource.generation for resource in self._resources.values()
+                             if resource.generation is not None}))
 
     @staticmethod
-    def _retirement_observation(resource, version, quiescent):
-        image = version.image
+    def _removable(image, retirement_allowed):
         try:
-            live = bool(image.as_pointer())
-            users = image.users if live else 0
-            protected = image.use_fake_user if live else False
-        except (ReferenceError, AttributeError):
-            live, users, protected = False, 0, False
-        return parameter_policy.retirement_effect(
-            live, quiescent, version is resource.current,
-            version is resource.candidate, users, protected,
-        )
+            if not image.as_pointer():
+                return True
+            if not retirement_allowed():
+                return False
+            if image.users != 0 or image.use_fake_user:
+                return False
+            # Re-observe gate and native references immediately before removal.
+            return (retirement_allowed() and image.as_pointer() != 0
+                    and image.users == 0 and not image.use_fake_user)
+        except (AttributeError, ReferenceError, RuntimeError):
+            return False
 
     def reclaim(self, resource, remove_image):
-        """Retire only when readers are quiescent or parked before evaluation."""
+        """Delete a pair only after every tracked reader tree has been retired."""
+        if resource.banks is None or resource.trees:
+            return ()
         failures = []
-        for version in tuple(resource.retained):
-            effects = self._retirement_observation(resource, version, self.gate.retirement_allowed())
-            if effects.action == "evict":
-                resource.retained.remove(version)
-            elif effects.action == "remove":
-                # Fresh observation immediately precedes the native mutation.
-                effects = self._retirement_observation(resource, version, self.gate.retirement_allowed())
-                if effects.action != "remove":
-                    continue
-                try:
-                    remove_image(version.image)
-                except Exception as error:
-                    failures.append(error)
-                    if version not in resource.versions:
-                        resource.retained.append(version)
-                else:
-                    if version in resource.retained:
-                        resource.retained.remove(version)
+        removed = set()
+        for image in tuple(resource.banks):
+            try:
+                pointer = image.as_pointer()
+            except (AttributeError, ReferenceError, RuntimeError):
+                removed.add(id(image))
+                continue
+            if pointer == 0:
+                removed.add(id(image))
+                continue
+            if not self._removable(image, self.gate.retirement_allowed):
+                continue
+            try:
+                remove_image(image)
+            except Exception as error:
+                failures.append(error)
+                continue
+            try:
+                still_live = image.as_pointer() != 0
+            except (AttributeError, ReferenceError, RuntimeError):
+                still_live = False
+            if still_live:
+                failures.append(RuntimeError("Grade parameter bank removal was not confirmed"))
+            else:
+                removed.add(id(image))
+        if not failures and len(removed) == len(resource.banks):
+            resource.banks = None
+            resource.active_bank = None
+            resource.generation = None
         return tuple(failures)
 
     def reclaim_all(self, remove_image):
@@ -269,7 +356,9 @@ class GradeResources:
 
     def clear(self):
         if not self.gate.quiescent():
-            raise PublicationDeferred("Cannot release Grade parameter versions while native readers are active")
+            raise PublicationDeferred(
+                "Cannot release Grade parameter banks while native readers are active"
+            )
         self.pending.clear()
         self._resources.clear()
 
@@ -278,20 +367,15 @@ class GradeResources:
             for kind, existing in tuple(resource.trees.items()):
                 if existing == tree:
                     del resource.trees[kind]
-            if not resource.trees:
-                self._adopt_current(resource, None)
 
     def retire_image(self, image):
-        """Evict every dependent lookup before the image's native deletion."""
+        """Evict every cache reference before a helper image is deleted."""
         for resource in self._resources.values():
-            if self._same_image(resource.image, image):
-                resource.current = None
+            if any(self._same_image(bank, image) for bank in resource.images):
+                resource.banks = None
+                resource.active_bank = None
+                resource.generation = None
                 resource.trees.clear()
-            if (resource.candidate is not None
-                    and self._same_image(resource.candidate.image, image)):
-                resource.candidate = None
-            resource.retained[:] = [version for version in resource.retained
-                                    if not self._same_image(version.image, image)]
 
     def forget(self, source):
         for key in tuple(self.pending):

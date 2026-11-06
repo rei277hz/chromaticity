@@ -35,23 +35,48 @@ def reconcile():
         nodes._render_finished(bpy.context.scene)
 
 
+def parameter_banks(node):
+    tree = node.node_tree
+    missing = tuple(key for key in nodes.PARAMETER_BANK_BINDINGS if key not in tree)
+    assert not missing, (node.name, tree.name, missing,
+                         nodes._node_stores.get(node.as_pointer()),
+                         node.get(nodes._NODE_ERROR))
+    banks = tuple(tree[key] for key in nodes.PARAMETER_BANK_BINDINGS)
+    active = tree[nodes.PARAMETER_ACTIVE_BANK]
+    assert len(banks) == 2 and banks[0] != banks[1]
+    assert active in (0, 1)
+    selectors = [item for item in tree.nodes if item.get(nodes.PARAMETER_SELECTOR)]
+    assert len(selectors) == 1, (node.name, selectors)
+    selector = selectors[0]
+    if tree.bl_idname == nodes.SHADER_TREE:
+        selected = int(round(float(selector.outputs["Value"].default_value)))
+    else:
+        selected = int(round(float(selector.inputs[0].default_value)))
+    assert selected == active, (node.name, active, selected)
+    assert all(image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
+               for image in banks)
+    readers = [item for item in tree.nodes if item.get(nodes.PARAMETER_READER)]
+    observed = {item.get(nodes.PARAMETER_READER_BANK): item.image for item in readers}
+    assert set(observed) == {0, 1}, (node.name, observed)
+    assert all(observed[bank] == banks[bank] for bank in (0, 1)), node.name
+    return banks
+
+
 def parameter_image(node):
-    image = node.node_tree[nodes.PARAMETER_BINDING]
-    assert image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
-    return image
+    return parameter_banks(node)[node.node_tree[nodes.PARAMETER_ACTIVE_BANK]]
 
 
 def assert_clean_shared_image(users):
-    images = tuple(parameter_image(node) for node in users)
-    assert all(image == images[0] for image in images)
+    banks = tuple(parameter_banks(node) for node in users)
+    assert all(pair == banks[0] for pair in banks)
     for node in users:
         state = nodes._node_stores[node.as_pointer()]["state"]
         assert nodes.node_policy.output_allowed(state), (node.name, state)
         assert not node.get(nodes._NODE_ERROR)
-    image = images[0]
-    assert image.packed_file is not None
-    assert not image.is_dirty, "Grade publication left an unsaved parameter image"
-    return image
+    for image in banks[0]:
+        assert image.packed_file is not None
+        assert not image.is_dirty, "Grade publication left an unsaved parameter image"
+    return parameter_image(users[0])
 
 
 material = bpy.data.materials.new("Grade Save Material")
@@ -67,15 +92,70 @@ compositor.pg_grade = grade
 users = (shader, compositor)
 reconcile()
 image = assert_clean_shared_image(users)
-original_image_pointer = image.as_pointer()
+authoritative_pixels = np.asarray(image.pixels[:], dtype=np.float32)
+original_banks = parameter_banks(shader)
+original_active = shader.node_tree[nodes.PARAMETER_ACTIVE_BANK]
+
+# A dirty active bank is not a valid last-good result. Reconciliation restores
+# the exact authoritative parameter snapshot and keeps selector metadata aligned.
+damaged = parameter_image(shader)
+nodes._write_grade_parameters(damaged, authoritative_pixels + 0.25)
+assert damaged.is_dirty
+reconcile()
+repaired = assert_clean_shared_image(users)
+np.testing.assert_array_equal(repaired.pixels[:], authoritative_pixels)
+assert len({node.node_tree[nodes.PARAMETER_ACTIVE_BANK] for node in users}) == 1
+assert all(nodes.node_policy.output_allowed(nodes._node_stores[node.as_pointer()]["state"])
+           for node in users)
+assert all(node.node_tree.get(nodes.PARAMETER_SIGNATURE)
+           == nodes._preparation_signature(
+               nodes._grade_settings(grade, nodes._working_space()),
+               nodes._working_space(),
+           ) for node in users)
+
+# Failed integrity repair must fail closed; a later clean retry restores output.
+damaged = parameter_image(shader)
+nodes._write_grade_parameters(damaged, authoritative_pixels + 0.5)
+original_writer = nodes._write_grade_parameters
+repair_attempts = []
+
+
+def fail_integrity_repair(target, pixels):
+    repair_attempts.append(target.as_pointer())
+    raise RuntimeError("simulated dirty Grade bank repair failure")
+
+
+nodes._write_grade_parameters = fail_integrity_repair
+try:
+    reconcile()
+finally:
+    nodes._write_grade_parameters = original_writer
+assert repair_attempts, "Dirty active bank did not request a repair"
+for node in users:
+    state = nodes._node_stores[node.as_pointer()]["state"]
+    assert not nodes.node_policy.output_allowed(state)
+    assert node.get(nodes._NODE_ERROR)
+    assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+reconcile()
+repaired = assert_clean_shared_image(users)
+np.testing.assert_array_equal(repaired.pixels[:], authoritative_pixels)
+for node in users:
+    state = nodes._node_stores[node.as_pointer()]["state"]
+    assert nodes.node_policy.output_allowed(state)
+    assert not node.get(nodes._NODE_ERROR)
+original_banks = parameter_banks(shader)
+original_bank_pointers = tuple(image.as_pointer() for image in original_banks)
+original_active = shader.node_tree[nodes.PARAMETER_ACTIVE_BANK]
 original_kernels = tuple(node.node_tree.as_pointer() for node in users)
 
 for exposure in (0.25, 0.5, 0.75):
     grade.pg_linear.exposure = exposure
     reconcile()
     image = assert_clean_shared_image(users)
-    assert image.as_pointer() != original_image_pointer
-    original_image_pointer = image.as_pointer()
+    assert tuple(item.as_pointer() for item in parameter_banks(shader)) == original_bank_pointers
+    active = shader.node_tree[nodes.PARAMETER_ACTIVE_BANK]
+    assert active == 1 - original_active
+    original_active = active
     assert tuple(node.node_tree.as_pointer() for node in users) == original_kernels
     assert not bpy.ops.image.save_all_modified.poll()
 
@@ -87,7 +167,10 @@ grade.pg_linear.exposure = 0.8125
 reconcile()
 image = assert_clean_shared_image(users)
 saved_pixels = np.asarray(image.pixels[:], dtype=np.float32)
-image_name = image.name
+saved_banks = parameter_banks(shader)
+saved_bank_names = tuple(bank.name for bank in saved_banks)
+saved_bank_pixels = tuple(np.asarray(bank.pixels[:], dtype=np.float32) for bank in saved_banks)
+saved_active_bank = shader.node_tree[nodes.PARAMETER_ACTIVE_BANK]
 grade_name = grade.name
 material_name = material.name
 shader_name = shader.name
@@ -102,18 +185,21 @@ save_result = bpy.ops.wm.save_mainfile(
 assert save_result == {"FINISHED"}, save_result
 del image, grade, material, shader, compositor_tree, compositor, users
 bpy.ops.wm.open_mainfile(filepath=str(filename))
-restored = bpy.data.images[image_name]
-assert not restored.is_dirty and restored.packed_file is not None
-np.testing.assert_array_equal(restored.pixels[:], saved_pixels)
 grade = bpy.data.node_groups[grade_name]
 shader = bpy.data.materials[material_name].node_tree.nodes[shader_name]
 compositor = bpy.data.node_groups[compositor_tree_name].nodes[compositor_name]
 users = (shader, compositor)
-assert parameter_image(shader) == restored == parameter_image(compositor)
+restored_banks = parameter_banks(shader)
+assert tuple(bank.name for bank in restored_banks) == saved_bank_names
+assert all(not bank.is_dirty and bank.packed_file is not None for bank in restored_banks)
+for bank, pixels in zip(restored_banks, saved_bank_pixels):
+    np.testing.assert_array_equal(bank.pixels[:], pixels)
+assert shader.node_tree[nodes.PARAMETER_ACTIVE_BANK] == saved_active_bank
+assert parameter_image(shader) == parameter_image(compositor)
+np.testing.assert_array_equal(parameter_image(shader).pixels[:], saved_pixels)
 assert grade.pg_linear.exposure == 0.8125
 reconcile()
 assert_clean_shared_image(users)
-del restored
 
 
 original_invalidation = nodes._invalidate_grade_parameters
@@ -122,6 +208,10 @@ original_publication = nodes._publish_grade_parameters
 for fail_invalidation in (False, True):
     image = assert_clean_shared_image(users)
     image.use_fake_user = True
+    previous_banks = parameter_banks(shader)
+    previous_bank_pointers = tuple(
+        bank.as_pointer() for bank in previous_banks
+    )
     previous_signature = image.get(nodes.PARAMETER_SIGNATURE)
     previous_pixels = np.asarray(image.pixels[:], dtype=np.float32)
     previous_kernels = tuple(node.node_tree.as_pointer() for node in users)
@@ -130,10 +220,12 @@ for fail_invalidation in (False, True):
     def observing_invalidation(candidate):
         signature = candidate.get(nodes.PARAMETER_SIGNATURE)
         assert candidate.as_pointer() != image.as_pointer()
+        assert candidate in previous_banks
         assert signature != previous_signature
         assert all(node.node_tree.get(nodes.PARAMETER_SIGNATURE) == signature
                    for node in users)
         assert all(parameter_image(node) == candidate for node in users)
+        assert all(parameter_banks(node) == previous_banks for node in users)
         assert candidate.packed_file is not None and not candidate.is_dirty
         assert not installation_receipts, installation_receipts
         tag_attempts.append(candidate.as_pointer())
@@ -176,7 +268,6 @@ for fail_invalidation in (False, True):
             assert node.get(nodes._NODE_ERROR)
             assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
         image.use_fake_user = False
-        bpy.data.images.remove(image)
         del image
         reconcile()
         assert_clean_shared_image(users)
@@ -215,6 +306,9 @@ packing_results = []
 for fail_count, silent in ((1, False), (1, True)):
     image = assert_clean_shared_image(users)
     image.use_fake_user = True
+    previous_bank_pointers = tuple(
+        bank.as_pointer() for bank in parameter_banks(shader)
+    )
     previous_pixels = np.asarray(image.pixels[:], dtype=np.float32)
     previous_signature = image.get(nodes.PARAMETER_SIGNATURE)
     attempts = []
@@ -230,6 +324,7 @@ for fail_count, silent in ((1, False), (1, True)):
         nodes._pack_grade_parameters = original_packer
     assert len(attempts) == 1, attempts
     assert attempts[0] != image.as_pointer()
+    assert attempts[0] in previous_bank_pointers
     assert image.get(nodes.PARAMETER_SIGNATURE) == previous_signature
     np.testing.assert_array_equal(image.pixels[:], previous_pixels)
     assert not image.is_dirty, "Failed candidate packing dirtied the published image"
@@ -242,7 +337,6 @@ for fail_count, silent in ((1, False), (1, True)):
         "failures": fail_count, "silent": silent, "rollback_clean": not image.is_dirty,
     })
     image.use_fake_user = False
-    bpy.data.images.remove(image)
     del image
     reconcile()
     assert_clean_shared_image(users)
@@ -366,7 +460,9 @@ finally:
     nodes._write_grade_parameters = original_writer
     nodes._fail_installation = original_presenter
     nodes._publish_grade_parameters = original_publication
-assert sorted({str(error) for error in returned_failures}) == [
+returned_diagnostics = sorted({message for error in returned_failures
+                               for message in diagnostic_messages(error)})
+assert returned_diagnostics == [
     "returned presenter failure", "returned-path upload failed"], returned_failures
 assert set(returned_presented) == {node.as_pointer() for node in users}
 for node in users:

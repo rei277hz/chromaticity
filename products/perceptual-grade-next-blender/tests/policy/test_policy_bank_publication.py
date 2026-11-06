@@ -4,18 +4,30 @@ from policy.bank_publication import Effects, Event, State, new, step
 
 
 class BankPublicationPolicyTests(unittest.TestCase):
+    def test_begin_requires_authorized_admission(self):
+        denied = Event("begin", active_bank=0, candidate_bank=1,
+                       admitted=False)
+        self.assertEqual(step(new(), denied),
+                         (State("fail"), Effects("fail_closed")))
+        admitted = Event("begin", active_bank=0, candidate_bank=1,
+                         admitted=True, active_valid=True)
+        self.assertEqual(step(new(), admitted),
+                         (State("stage", 0, 1), Effects("stage", 1)))
+
     def test_begin_only_authorizes_the_valid_inactive_bank(self):
         for active in (0, 1):
             inactive = 1 - active
             self.assertEqual(
                 step(new(), Event("begin", active_bank=active,
-                                  candidate_bank=inactive)),
+                                  candidate_bank=inactive, admitted=True,
+                                  active_valid=True)),
                 (State("stage", active, inactive), Effects("stage", inactive)),
             )
         for active, candidate in ((0, 0), (1, 1), (0, 2), (-1, 1), (None, 1)):
             with self.subTest(active=active, candidate=candidate):
                 state, effects = step(new(), Event(
                     "begin", active_bank=active, candidate_bank=candidate,
+                    admitted=True, active_valid=True,
                 ))
                 self.assertEqual(state.phase, "fail")
                 self.assertEqual(effects.action, "fail_closed")
@@ -57,7 +69,8 @@ class BankPublicationPolicyTests(unittest.TestCase):
     def test_clean_candidate_commits_before_delivery(self):
         state = new()
         sequence = (
-            (Event("begin", active_bank=0, candidate_bank=1), "stage", 1),
+            (Event("begin", active_bank=0, candidate_bank=1, admitted=True,
+                   active_valid=True), "stage", 1),
             (Event("staged", clean=True), "select", 1),
             (Event("selected", selected_bank=1), "deliver", 1),
             (Event("delivered"), None, None),
@@ -67,8 +80,27 @@ class BankPublicationPolicyTests(unittest.TestCase):
             self.assertEqual(effects, Effects(action, bank))
         self.assertEqual(state, State("terminal"))
 
+    def test_damaged_active_bank_closes_before_repair(self):
+        state, effects = step(new(), Event(
+            "begin", active_bank=0, candidate_bank=1,
+            admitted=True, active_valid=False,
+        ))
+        self.assertEqual((state, effects),
+                         (State("repair_gate", 0, 1), Effects("fail_closed", 0)))
+
+        self.assertEqual(step(state, Event("closed", failed=True)),
+                         (state, Effects("fail_closed", 0)))
+        state, effects = step(state, Event("closed"))
+        self.assertEqual((state, effects),
+                         (State("repair_stage", 0, 1), Effects("repair", 1)))
+
+        state, effects = step(state, Event("staged", clean=False))
+        self.assertEqual((state, effects),
+                         (State("fail", 0, 1), Effects("fail_closed", 0)))
+
     def test_terminal_receipts_are_inert(self):
-        for event in (Event("begin", active_bank=0, candidate_bank=1),
+        for event in (Event("begin", active_bank=0, candidate_bank=1,
+                            admitted=True, active_valid=True),
                       Event("staged", clean=True), Event("selected", selected_bank=1),
                       Event("delivered", failed=True), Event("closed")):
             self.assertEqual(step(State("terminal"), event),

@@ -28,11 +28,40 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_compositor.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
+parameter_layout = importlib.import_module(extension.__name__ + ".kernel.stage2_parameters")
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append
 ) is extension
 assert not errors and not bpy.app.background, errors
+
+_publish_grade_parameters = nodes._publish_grade_parameters
+
+
+def trace_grade_publication(*args, **kwargs):
+    try:
+        result = _publish_grade_parameters(*args, **kwargs)
+    except BaseException:
+        traceback.print_exc()
+        raise
+    if result:
+        print("GRADE BANK PUBLICATION ERRORS", [repr(error) for error in result], flush=True)
+    return result
+
+
+nodes._publish_grade_parameters = trace_grade_publication
+_run_bank_publication = nodes.run_bank_publication
+
+
+def trace_bank_publication(*args, **kwargs):
+    result = _run_bank_publication(*args, **kwargs)
+    if result.outcome != "committed":
+        print("GRADE BANK PUBLICATION RESULT", result.outcome,
+              [repr(error) for error in result.errors], flush=True)
+    return result
+
+
+nodes.run_bank_publication = trace_bank_publication
 
 # A spatially varying image is essential: constant results use float32 even in
 # AUTO and would conceal the half-precision intermediate overflow regression.
@@ -75,9 +104,29 @@ def grade_settings():
     ))
 
 
+def parameter_image(node):
+    tree = node.node_tree
+    banks = tuple(tree[key] for key in nodes.PARAMETER_BANK_BINDINGS)
+    active = tree[nodes.PARAMETER_ACTIVE_BANK]
+    selectors = [item for item in tree.nodes if item.get(nodes.PARAMETER_SELECTOR)]
+    assert len(banks) == 2 and active in (0, 1)
+    assert len(selectors) == 1
+    selector = selectors[0]
+    if tree.bl_idname == nodes.SHADER_TREE:
+        selected = int(round(float(selector.outputs["Value"].default_value)))
+    else:
+        selected = int(round(float(selector.inputs[0].default_value)))
+    assert selected == active
+    readers = [item for item in tree.nodes if item.get(nodes.PARAMETER_READER)]
+    observed = {item.get(nodes.PARAMETER_READER_BANK): item.image for item in readers}
+    assert set(observed) == {0, 1}
+    assert all(observed[bank] == banks[bank] for bank in (0, 1))
+    return banks[active]
+
+
 def identity():
     users = consumers()
-    parameters = [node.node_tree[nodes.PARAMETER_BINDING] for node in users]
+    parameters = [parameter_image(node) for node in users]
     assert all(image == parameters[0] for image in parameters), "Shared parameter image split"
     trees = (bpy.data.node_groups[SCENE_TREE], bpy.data.node_groups[NESTED_TREE],
              bpy.data.materials[MATERIAL].node_tree)
@@ -248,7 +297,17 @@ def check_truth(pixels, name, device, precision):
     expected[:, :3] *= 2.**(.5 if name == "exposure" else 0.)
     error = pixel_error(pixels[3:9], expected)
     limit = .01 if (device, precision) == ("GPU", "AUTO") else 1e-4
-    assert error <= limit, ("neutral exposure", name, device, precision, error)
+    users = consumers()
+    bank_state = tuple((
+        int(node.node_tree[nodes.PARAMETER_ACTIVE_BANK]),
+        tuple(tuple(float(value) for value in np.asarray(
+            node.node_tree[key].pixels[parameter_layout.TONE_SCALARS_SLOT * 4:
+                                       (parameter_layout.TONE_SCALARS_SLOT + 1) * 4],
+            dtype=np.float32,
+        )) for key in nodes.PARAMETER_BANK_BINDINGS),
+    ) for node in users)
+    assert error <= limit, ("neutral exposure", name, device, precision, error,
+                            pixels[3:9, :3].tolist(), expected[:, :3].tolist(), bank_state)
 
 
 def finish(error=None):
@@ -277,7 +336,7 @@ def complete():
         assert bpy.ops.wm.save_as_mainfile(filepath=str(BLEND)) == {"FINISHED"}
     else:
         result["repaired_schema"] = [node.node_tree[nodes._KERNEL_KIND] for node in consumers()]
-        assert result["repaired_schema"] == [5, 5, 5]
+        assert result["repaired_schema"] == [nodes._KERNEL_SCHEMA] * 3
     finish()
 
 
@@ -332,7 +391,7 @@ def tick():
             automatic_updates += 1
         rows.append({"config": name, "device": device, "precision": precision,
                      "pixels": pixels.tolist(), "events": len(events), "identity": current_identity,
-                     "parameter": users[0].node_tree[nodes.PARAMETER_BINDING].as_pointer()})
+                     "parameter": parameter_image(users[0]).as_pointer()})
         print("COMPOSITOR", name, device, precision, "completed", len(events), flush=True)
         previous_pixels = pixels
         index += 1

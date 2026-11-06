@@ -204,6 +204,31 @@
       "assert": "failed[0].applied_signature is None and failed[0].error == 'failed' and failed[1].output_mode == 'error'"
     },
     {
+      "name": "recovery_requires_current_full_installation",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assume": [
+        "state.desired_signature is None or state.desired_signature != ''",
+        "state.applied_signature is None or state.applied_signature != ''",
+        "(state.applied_signature is None) == (state.applied_quality is None)",
+        "state.applied_quality is None or state.applied_quality in ('preview', 'full')",
+        "state.error is None or state.applied_signature is None",
+        "state.desired_signature is not None or state.applied_signature is None",
+        "state.desired_preparation_signature is None or state.desired_preparation_signature != ''",
+        "state.desired_signature is not None or state.desired_preparation_signature is None",
+        "event.signature is None or event.signature != ''",
+        "event.preparation_signature is None or event.preparation_signature != ''",
+        "event.kind != 'request' or event.signature is not None or event.preparation_signature is None",
+        "event.quality in ('preview', 'full')"
+      ],
+      "assert": "(transition[1].output_mode != 'current' or output_allowed(state) or (event.kind == 'request' and state.error is None and event.signature == state.applied_signature and state.applied_quality == 'full') or (event.kind == 'installation_result' and state.error is None and event.signature == state.desired_signature and event.quality == 'full' and transition[0].applied_signature == event.signature) or (state.error is not None and event.kind == 'recovery_result' and event.signature == state.desired_signature and event.quality == 'full' and transition[0].applied_signature == event.signature)) and (event.kind != 'recovery_result' or transition[0] == state or (event.error is not None and (event.signature is None or event.signature == state.desired_signature) and transition[0].error == event.error and transition[0].applied_signature is None) or (state.error is not None and event.signature == state.desired_signature and event.quality == 'full' and transition[0].applied_signature == event.signature))"
+    },
+    {
       "name": "return_to_applied_settings_updates_preparation_demand",
       "variables": {},
       "lets": {
@@ -314,6 +339,19 @@
       "assert": "preview[1].output_mode == 'preview' and released[1].output_mode == 'preview' and full[1].output_mode == 'current' and full[0].applied_quality == 'full'"
     },
     {
+      "name": "repaired_current_kernel_restores_output",
+      "variables": {},
+      "lets": {
+        "requested": "step(new(), Event('request', 'a'))",
+        "prepared": "step(requested[0], Event('preparation_result', 'a'))",
+        "installed": "step(prepared[0], Event('installation_result', 'a'))",
+        "failed": "step(installed[0], Event('installation_result', None, 'damaged active bank'))",
+        "stale": "step(failed[0], Event('recovery_result', 'b'))",
+        "recovered": "step(failed[0], Event('recovery_result', 'a'))"
+      },
+      "assert": "failed[1].output_mode == 'error' and stale[0] == failed[0] and stale[1].output_mode == 'error' and recovered[0].applied_signature == 'a' and recovered[0].error is None and recovered[1].output_mode == 'current'"
+    },
+    {
       "name": "duplicate_grade_occurrences_are_preserved",
       "variables": {},
       "lets": {
@@ -323,6 +361,15 @@
     }
   ],
   "mutations": [
+    {
+      "name": "recovery_ignores_current_signature",
+      "function": "_transition",
+      "target": "not recovery_signature_current",
+      "replacement": "False",
+      "detects": [
+        "property.recovery_requires_current_full_installation"
+      ]
+    },
     {
       "name": "replacement_ignores_order",
       "function": "_transition",

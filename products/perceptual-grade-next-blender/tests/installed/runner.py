@@ -146,14 +146,32 @@ def assert_grade_graph(graph):
             assert abs(actual - expected) < 1e-6, (name, actual, expected)
 
 
-def parameter_image(node):
-    image = node.node_tree.get(nodes.PARAMETER_BINDING)
-    assert image is not None
-    assert image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
+def parameter_banks(node):
+    tree = node.node_tree
+    images = tuple(tree.get(key) for key in nodes.PARAMETER_BANK_BINDINGS)
+    active = tree.get(nodes.PARAMETER_ACTIVE_BANK)
+    assert len(images) == 2 and all(image is not None for image in images)
+    assert active in (0, 1)
+    assert all(image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
+               for image in images)
+    selectors = [item for item in tree.nodes if item.get(nodes.PARAMETER_SELECTOR)]
+    assert len(selectors) == 1, (node.name, selectors)
+    selector = selectors[0]
+    if tree.bl_idname == nodes.SHADER_TREE:
+        selected = int(round(float(selector.outputs["Value"].default_value)))
+    else:
+        selected = int(round(float(selector.inputs[0].default_value)))
+    assert selected == active, (node.name, active, selected)
     readers = [item for item in node.node_tree.nodes if item.get(nodes.PARAMETER_READER)]
-    assert readers, node.name
-    assert all(item.image == image for item in readers), node.name
-    return image
+    observed = {item.get(nodes.PARAMETER_READER_BANK): item.image for item in readers}
+    assert set(observed) == {0, 1}, (node.name, observed)
+    assert all(observed[bank] == images[bank] for bank in (0, 1)), node.name
+    return images
+
+
+def parameter_image(node):
+    banks = parameter_banks(node)
+    return banks[node.node_tree[nodes.PARAMETER_ACTIVE_BANK]]
 
 
 def assert_grade_current(node):
@@ -171,7 +189,8 @@ def assert_grade_current(node):
     assert nodes._kernel_is_current(
         node.node_tree, node.id_data.bl_idname, signature, stack=False
     ), details
-    parameter_image(node)
+    banks = parameter_banks(node)
+    assert all(image.packed_file is not None and not image.is_dirty for image in banks), details
     if node.id_data.bl_idname == nodes.SHADER_TREE:
         group_input = node.node_tree.nodes.get("Group Input")
         group_output = node.node_tree.nodes.get("Group Output")
@@ -192,9 +211,9 @@ def assert_local_grade_resources(identities):
         assert kernel.get(nodes.PARAMETER_OWNER) == owner
         assert not kernel[nodes.PARAMETER_OWNER].is_embedded_data
         assert kernel.get(nodes.PARAMETER_OWNER_NODE) == node_name
-        resources.append((kernel.name, parameter_image(node).name))
+        resources.append((kernel.name, tuple(image.name for image in parameter_banks(node))))
     assert len({kernel for kernel, _image in resources}) == len(identities)
-    assert len({image for _kernel, image in resources}) == len(identities)
+    assert len({images for _kernel, images in resources}) == len(identities)
     return tuple(resources)
 
 
@@ -213,8 +232,7 @@ def grade_resource_inventory(node):
             inventory.append(("node", item.as_pointer(), item.bl_idname))
             image = getattr(item, "image", None)
             if image is not None:
-                inventory.append(("image", item.as_pointer(),
-                                  None if item.get(nodes.PARAMETER_READER) else image.as_pointer(),
+                inventory.append(("image", item.as_pointer(), image.as_pointer(),
                                   tuple(image.size), image.colorspace_settings.name,
                                   image.alpha_mode))
             child = getattr(item, "node_tree", None)
@@ -422,12 +440,12 @@ first_node_name = first_node.name
 # Deleting and recreating the same local Grade must not reuse removed image
 # wrappers from the previous node's resources. Keep the runtime cache intact.
 removed_kernel_name = first_node.node_tree.name
-removed_image_name = parameter_image(first_node).name
+removed_image_names = tuple(image.name for image in parameter_banks(first_node))
 first_material.node_tree.nodes.remove(first_node)
 del first_node
 assert first_node_name not in first_material.node_tree.nodes
 assert removed_kernel_name not in bpy.data.node_groups
-assert removed_image_name not in bpy.data.images
+assert all(name not in bpy.data.images for name in removed_image_names)
 assert nodes.PG_OT_add_grade.execute(None, first_context) == {"FINISHED"}
 first_node = first_material.node_tree.nodes.active
 assert first_node.name == first_node_name
@@ -498,11 +516,11 @@ compositor_node = compositor_tree.nodes.active
 assert_grade_current(compositor_node)
 removed_node_name = compositor_node.name
 removed_kernel_name = compositor_node.node_tree.name
-removed_image_name = parameter_image(compositor_node).name
+removed_image_names = tuple(image.name for image in parameter_banks(compositor_node))
 compositor_tree.nodes.remove(compositor_node)
 del compositor_node
 assert removed_kernel_name not in bpy.data.node_groups
-assert removed_image_name not in bpy.data.images
+assert all(name not in bpy.data.images for name in removed_image_names)
 assert nodes.PG_OT_add_grade.execute(None, compositor_context) == {"FINISHED"}
 compositor_node = compositor_tree.nodes.active
 assert compositor_node.name == removed_node_name
@@ -544,7 +562,8 @@ shared_compositor_node.pg_grade = shared_grade
 reconcile_for_render(bpy.context.scene)
 assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
 shared_parameter_image = parameter_image(shader_node)
-assert all(parameter_image(node) == shared_parameter_image
+shared_parameter_banks = parameter_banks(shader_node)
+assert all(parameter_banks(node) == shared_parameter_banks
            for node in (*shared_shader_nodes, compositor_node, shared_compositor_node))
 for tree in (shared_shader_nodes[0].node_tree, shared_compositor_node.node_tree):
     assert tree.get(nodes.PARAMETER_OWNER) == shared_grade
@@ -556,7 +575,7 @@ shader_tree.nodes.remove(shared_shader_nodes[0])
 assert_grade_current(shader_node)
 assert_grade_current(compositor_node)
 assert shader_node.node_tree == shared_kernel
-assert parameter_image(shader_node) == shared_parameter_image
+assert parameter_banks(shader_node) == shared_parameter_banks
 shared_shader_nodes[0] = nodes.create_node(shader_tree)
 assert shared_shader_nodes[0].name == removed_node_name
 shared_shader_nodes[0].pg_grade = shared_grade
@@ -564,9 +583,10 @@ reconcile_for_render(bpy.context.scene)
 assert_grade_current(shared_shader_nodes[0])
 assert shared_shader_nodes[0].node_tree == shared_kernel
 shared_parameter_image = parameter_image(shared_shader_nodes[0])
-assert all(parameter_image(node) == shared_parameter_image
+shared_parameter_banks = parameter_banks(shared_shader_nodes[0])
+assert all(parameter_banks(node) == shared_parameter_banks
            for node in (*shared_shader_nodes, shader_node, compositor_node, shared_compositor_node))
-initial_parameter_pointer = shared_parameter_image.as_pointer()
+initial_active_bank = shader_node.node_tree[nodes.PARAMETER_ACTIVE_BANK]
 shared_inventories = tuple(grade_resource_inventory(node)
                           for node in (shader_node, compositor_node))
 shader_graph = connect_grade_graph(shader_tree, shader_node)
@@ -626,7 +646,8 @@ assert len(preparation_threads) == 1, preparation_threads
 assert all(thread != main_thread for thread, _exposure in preparation_threads)
 assert not kernel_build_threads, kernel_build_threads
 shared_parameter_image = parameter_image(shader_node)
-assert shared_parameter_image.as_pointer() != initial_parameter_pointer
+assert parameter_banks(shader_node) == shared_parameter_banks
+assert shader_node.node_tree[nodes.PARAMETER_ACTIVE_BANK] == 1 - initial_active_bank
 assert parameter_write_threads == [(main_thread, shared_parameter_image.as_pointer())]
 assert all(parameter_image(node) == shared_parameter_image
            for node in (*shared_shader_nodes, compositor_node, shared_compositor_node))
@@ -712,11 +733,11 @@ assert independent_node.node_tree.get(nodes._KERNEL_SIGNATURE) == (
 # relinking that same Grade must build fresh resources from its saved settings.
 removed_node_name = independent_node.name
 removed_kernel_name = independent_node.node_tree.name
-removed_image_name = independent_image.name
+removed_image_names = tuple(image.name for image in parameter_banks(independent_node))
 shader_tree.nodes.remove(independent_node)
 del independent_node, independent_image
 assert removed_kernel_name not in bpy.data.node_groups
-assert removed_image_name not in bpy.data.images
+assert all(name not in bpy.data.images for name in removed_image_names)
 independent_node = nodes.create_node(shader_tree)
 assert independent_node.name == removed_node_name
 independent_node.pg_grade = independent_grade
@@ -744,21 +765,73 @@ for corruption in ("unmarked", "misbound", "misbound_tracked"):
     corrupt_kernel.use_fake_user = False
     assert not nodes._retire_kernels((corrupt_kernel,))
 
+# Readiness must prove that each published selector actually chooses the two
+# parameter branches, rather than trusting reader metadata alone.
+shader_kernel = independent_node.node_tree
+shader_selector = next(item for item in shader_kernel.nodes
+                       if item.get(nodes.PARAMETER_SAMPLE_SELECTOR)
+                       and item.get(nodes.PARAMETER_SAMPLE_KIND) == "vector")
+shader_factor = shader_selector.inputs[0]
+shader_factor_link = shader_factor.links[0]
+shader_factor_source, shader_factor_target = (
+    shader_factor_link.from_socket, shader_factor_link.to_socket,
+)
+shader_kernel.links.remove(shader_factor_link)
+assert not nodes._parameter_kernel_valid(shader_kernel)
+shader_kernel.links.new(shader_factor_source, shader_factor_target)
+assert nodes._parameter_kernel_valid(shader_kernel)
+
+compositor_kernel = shared_compositor_node.node_tree
+sample_id = next(item[nodes.PARAMETER_SAMPLE_ID]
+                 for item in compositor_kernel.nodes
+                 if item.get(nodes.PARAMETER_SAMPLE_SELECTOR))
+map_uv = next(item for item in compositor_kernel.nodes
+              if item.bl_idname == "CompositorNodeMapUV"
+              and item.get(nodes.PARAMETER_SAMPLE_ID) == sample_id
+              and item.get(nodes.PARAMETER_SAMPLE_BANK) == 0)
+separate = next(item for item in compositor_kernel.nodes
+                if item.bl_idname == "CompositorNodeSeparateColor"
+                and item.get(nodes.PARAMETER_SAMPLE_ID) == sample_id
+                and item.get(nodes.PARAMETER_SAMPLE_BANK) == 0)
+compositor_link = separate.inputs["Image"].links[0]
+compositor_source, compositor_target = (
+    compositor_link.from_socket, compositor_link.to_socket,
+)
+compositor_kernel.links.remove(compositor_link)
+assert not nodes._parameter_kernel_valid(compositor_kernel)
+compositor_kernel.links.new(compositor_source, compositor_target)
+assert nodes._parameter_kernel_valid(compositor_kernel)
+other_map_uv = next(item for item in compositor_kernel.nodes
+                    if item.bl_idname == "CompositorNodeMapUV"
+                    and item.get(nodes.PARAMETER_SAMPLE_ID) != sample_id)
+wrong_uv_link = other_map_uv.inputs["UV"].links[0]
+wrong_uv = (wrong_uv_link.from_socket, wrong_uv_link.to_socket)
+original_uv_link = map_uv.inputs["UV"].links[0]
+original_uv = (original_uv_link.from_socket, original_uv_link.to_socket)
+compositor_kernel.links.remove(original_uv_link)
+compositor_kernel.links.new(wrong_uv[0], map_uv.inputs["UV"])
+assert not nodes._parameter_kernel_valid(compositor_kernel)
+compositor_kernel.links.remove(map_uv.inputs["UV"].links[0])
+compositor_kernel.links.new(original_uv[0], original_uv[1])
+assert nodes._parameter_kernel_valid(compositor_kernel)
+
 # Native removal can invalidate an image without going through node teardown.
 # A fresh reconciliation must reject the cached wrapper and repair the Grade.
-removed_image = parameter_image(independent_node)
-bpy.data.images.remove(removed_image, do_unlink=True)
-del removed_image
+removed_images = parameter_banks(independent_node)
+for removed_image in removed_images:
+    bpy.data.images.remove(removed_image, do_unlink=True)
+del removed_image, removed_images
 reconcile_for_render(bpy.context.scene)
 assert_grade_current(independent_node)
 
 # Recover an already-poisoned cache even when no installed kernel remains for
 # ordinary replacement retirement to invalidate the removed resource wrappers.
 removed_kernel = independent_node.node_tree
-removed_image = parameter_image(independent_node)
+removed_images = parameter_banks(independent_node)
 bpy.data.node_groups.remove(removed_kernel, do_unlink=True)
-bpy.data.images.remove(removed_image)
-del removed_kernel, removed_image
+for removed_image in removed_images:
+    bpy.data.images.remove(removed_image)
+del removed_kernel, removed_image, removed_images
 assert independent_node.node_tree is None
 reconcile_for_render(bpy.context.scene)
 assert_grade_current(independent_node)
@@ -872,8 +945,8 @@ assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
 assert all(node.node_tree.get(nodes._KERNEL_SIGNATURE) == new_signature
            for node in shared_shader_nodes)
 assert shared_shader_nodes[0].node_tree.name == saved_shared_kernel_name
-# Repairing the partially saved shared group may publish a new image version;
-# its authoritative signature and exact numerical content must survive.
+# Repairing the partially saved shared group may rewrite its inactive bank;
+# the active bank's signature and numerical content must survive.
 assert shared_compositor_node.node_tree.name == saved_compositor_kernel_name
 assert parameter_image(shared_compositor_node) == parameter_image(shared_shader_nodes[0])
 assert parameter_image(shared_shader_nodes[0]).get(nodes.PARAMETER_SIGNATURE) == (
@@ -884,8 +957,9 @@ assert np.array_equal(parameter_image(shared_shader_nodes[0]).pixels[:],
 before_repeat = shared_shader_nodes[0].node_tree
 before_repeat_resources = grade_resource_inventory(shared_shader_nodes[0])
 before_repeat_local_pointers = tuple(
-    (bpy.data.node_groups[kernel].as_pointer(), bpy.data.images[image].as_pointer())
-    for kernel, image in saved_local_resources
+    (bpy.data.node_groups[kernel].as_pointer(),
+     tuple(bpy.data.images[image].as_pointer() for image in images))
+    for kernel, images in saved_local_resources
 )
 nodes._load_post("")
 nodes._drain_preparations()
@@ -893,8 +967,9 @@ assert all(node.node_tree == before_repeat for node in shared_shader_nodes)
 assert grade_resource_inventory(shared_shader_nodes[0]) == before_repeat_resources
 assert assert_local_grade_resources(local_grade_identities) == saved_local_resources
 assert tuple(
-    (bpy.data.node_groups[kernel].as_pointer(), bpy.data.images[image].as_pointer())
-    for kernel, image in saved_local_resources
+    (bpy.data.node_groups[kernel].as_pointer(),
+     tuple(bpy.data.images[image].as_pointer() for image in images))
+    for kernel, images in saved_local_resources
 ) == before_repeat_local_pointers
 
 active_space = nodes._working_space()

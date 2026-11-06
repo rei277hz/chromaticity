@@ -19,23 +19,25 @@ The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
 A Grade builds its complete Linear/Tone graph once per working space and tree
-type. Ordinary adjustments publish a complete 512 × 1 RGBA32F parameter image
-(8 KiB), shared by every Shader and Compositor node using that Grade. Published
-images remain immutable while native readers may use them. Each Grade and working
-space owns at most three versions: its current image, retained published images,
-and an unpublished candidate. When the pool is full, preparation keeps only the
-newest CPU result until a version can retire safely. Equal-valued independent
-Grades have separate pools.
+type. Ordinary adjustments publish complete 512 × 1 RGBA32F parameter data
+(8 KiB) through two fixed helper images shared by every Shader and Compositor
+node using that Grade. The inactive bank is packed and checked inside an admitted
+publication scope; only then does the selector switch to it. Bank identities
+stay fixed across edits, so publication does not allocate a version pool or rebind
+image readers. Equal-valued independent Grades own separate bank pairs.
 
 Slots 0–256 contain the Tone endpoint value, slope, and curvature; slots 257–259
 contain the Linear matrix's red/blue columns and neutral row sums; slots 260–261
 contain the Tone scalars and domain. Fixed texture samples read these values
 instead of baking them into socket defaults. The boundary texture, viewing
 constants, links, and output adapter remain fixed within a working space.
-Publication packs a complete candidate before rebinding every marked parameter
-reader. A failed transaction restores bindings and metadata without rewriting the
-previous image. File-load reconciliation checks the installed signature, reader
-markers, and kernel schema before accepting restored data.
+Publication packs a complete inactive bank before changing the marked selector.
+A failed transaction restores the previous selector and metadata; any failure to
+restore or deliver closes the Grade output visibly. File-load reconciliation
+checks both bank bindings, reader markers, selector agreement, and kernel schema
+before accepting restored data. If the active bank fails its content receipt,
+recovery first revokes the Grade output and proceeds to rewrite both banks only
+after the fail-closed receipt succeeds.
 
 Compositor Grade graphs support both GPU Auto and Full precision without changing
 the scene setting. The output guard carries signed achromatic lightness and a
@@ -46,14 +48,12 @@ rounding.
 
 Foreground publications coalesce to the newest complete result per source and
 process one source per timer turn, with no preview frequency cap or settle delay.
-Render, bake, and interface locks defer ordinary publication. During one observed
-compositor evaluation, a complete new image can be bound while the evaluated tree
-retains the previous image. After that supersession, another live swap waits for a
-successful newer evaluation of the same scene. Cancellation or completion of a
-different scene cannot release this protection. Quiescent publication remains
-available while a successor is pending. Old versions retire when native user
-counts permit removal and readers are quiescent, including inside an exclusive
-render preflight whose worker is parked before evaluation.
+Render, bake, interface locks, and active compositor evaluation defer ordinary
+bank writes. Publication is admitted when native evaluation is quiescent or
+inside an exclusive render preflight with its worker parked before evaluation.
+The newest prepared result can then replace the inactive bank and switch the
+selector. The bank policy requires this admission receipt before it authorizes
+staging, and stable image bindings remain intact throughout publication.
 
 Blender's public job notifications provide admission checks, not a universal lock
 against native image readers. A render worker waits at its pre-evaluation callback
@@ -97,22 +97,22 @@ image pixels, so draw callbacks indicate redraw activity rather than proof of
 changed display pixels. Stop removes the diagnostic observers and closes the
 file; disabling the extension also closes an active capture.
 
-The native regression pauses a real compositor worker, publishes while the old
-snapshot remains leased, verifies the old parameter bytes stay unchanged, and
-requires a protected successor to complete. The drag regression exercises
-Exposure, CR Balance, and Tone Fit at a requested 277 Hz in both editors, using
-bounded motion that avoids slider endpoints:
+The native regression pauses a real compositor worker, verifies that both banks
+and the selector stay unchanged during the lease, then checks that publication
+uses the same two image identities after the reader exits. It also verifies
+intermediate Viewer output and final-value convergence during a CPU Compositor
+slider drag. The drag regression exercises Exposure, CR Balance, and Tone Fit at
+a requested 277 Hz in both editors, using bounded motion that avoids slider
+endpoints:
 
 ```sh
-buck2 test --remote-only //products/perceptual-grade-next-blender/tests:versioned_publication_gui //products/perceptual-grade-next-blender/tests:drag_trace_gui
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:banked_publication_gui //products/perceptual-grade-next-blender/tests:drag_trace_gui
 ```
 
-For an opt-in 2000 × 1500 fixture, pass `-- --env PG_VERSIONED_PUBLICATION_LARGE=1`
-or `-- --env PG_DRAG_TRACE_LARGE=1` to the respective test command. The default native
-fixtures are 128 × 96. The large drag fixture uses GPU Full precision and ten-second Compositor holds. Viewer pixels are read only after evaluation completes in
-the versioned regression; drag traces record completions without pixel readback.
-Linux software-GPU results do not establish behavior on macOS Metal; repeat the
-continuous-drag acceptance run in the user's Blender environment.
+The default native fixtures are 128 × 96. Drag traces record compositor
+completions without pixel readback. Linux software-GPU results do not establish
+behavior on macOS Metal; repeat the continuous-drag acceptance run in the user's
+Blender environment.
 
 The file-load regression reopens a saved file before real sidebar drags in
 Material Preview, EEVEE Rendered, and Compositor. It checks that gesture observers

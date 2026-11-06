@@ -65,6 +65,11 @@ class PublicationCompareTraceInstalledTests(unittest.TestCase):
                               for item in data["publications"]}, expected, details)
             self.assertEqual(set(map(tuple, data["trace"]["callback_pairs"])), expected, details)
             self.assertEqual(set(map(tuple, data["trace"]["stage_pairs"])), expected, details)
+            self.assertEqual(set(data["trace"]["drag_values"]),
+                             {tree_type + ":" + variant
+                              for tree_type, variant in expected}, details)
+            for values in data["trace"]["drag_values"].values():
+                self.assertGreaterEqual(len(values), 3, details)
             self.assertEqual(data["trace"]["dropped"], 0, details)
             self.assertTrue(data["cleanup"], details)
 

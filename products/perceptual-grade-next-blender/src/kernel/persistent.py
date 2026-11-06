@@ -222,6 +222,7 @@ class _PersistentGraph(Graph):
             image.colorspace_settings.name = 'Non-Color'
             image.alpha_mode = 'CHANNEL_PACKED'
             image.use_half_precision = False
+            image.file_format = 'OPEN_EXR'
             image.pixels.foreach_set(pixels.ravel())
             image.update()
             image.pack()

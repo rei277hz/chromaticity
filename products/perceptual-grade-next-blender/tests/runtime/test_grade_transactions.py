@@ -146,20 +146,22 @@ class GradeTransactionTests(unittest.TestCase):
 
     def test_image_eviction_removes_every_dependent_cache_entry(self):
         cache = self.cache.GradeResources(None)
-        image, other = object(), object()
+        image, other, spare = object(), object(), object()
         first = self.cache.GradeResource(
-            current=self.cache.ParameterVersion(1, image, exposed=True),
+            banks=(image, other), active_bank=0, generation=1,
             trees={"shader": object()})
         second = self.cache.GradeResource(
-            current=self.cache.ParameterVersion(2, image, exposed=True),
+            banks=(spare, image), active_bank=1, generation=2,
             trees={"compositor": object()})
         survivor = self.cache.GradeResource(
-            current=self.cache.ParameterVersion(3, other, exposed=True),
+            banks=(other, spare), active_bank=0, generation=3,
             trees={"shader": object()})
         cache._resources = {1: first, 2: second, 3: survivor}
         cache.retire_image(image)
         self.assertIsNone(first.image)
         self.assertIsNone(second.image)
+        self.assertIsNone(first.banks)
+        self.assertIsNone(second.banks)
         self.assertFalse(first.trees)
         self.assertFalse(second.trees)
         self.assertIs(survivor.image, other)

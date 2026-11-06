@@ -21,6 +21,7 @@ class Event:
         "request",
         "preparation_result",
         "installation_result",
+        "recovery_result",
         "gesture_begin",
         "gesture_release",
         "stack_replace",
@@ -216,6 +217,22 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
             )
             return next_state, _effects(next_state)
         return state, _effects(state)
+
+    if event.kind == "recovery_result":
+        recovery_signature_current = event.signature == state.desired_signature
+        if (state.error is None or event.signature is None
+                or not recovery_signature_current
+                or event.quality != "full"):
+            return state, _effects(state)
+        next_state = State(
+            state.desired_signature,
+            event.signature,
+            event.quality,
+            state.gesture_active,
+            grade_ids=state.grade_ids,
+            desired_preparation_signature=state.desired_preparation_signature,
+        )
+        return next_state, _effects(next_state)
 
     if (event.signature is None or state.desired_signature is None
             or state.error is not None):

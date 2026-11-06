@@ -6,8 +6,8 @@ from typing import Literal, Optional
 
 @dataclass(frozen=True)
 class State:
-    phase: Literal["idle", "stage", "select", "deliver", "restore_selector",
-                   "fail", "terminal"]
+    phase: Literal["idle", "repair_gate", "repair_stage", "stage", "select",
+                   "deliver", "restore_selector", "fail", "terminal"]
     active_bank: Optional[int] = None
     candidate_bank: Optional[int] = None
 
@@ -20,6 +20,8 @@ class Event:
     selected_bank: Optional[int] = None
     clean: bool = False
     failed: bool = False
+    admitted: bool = False
+    active_valid: bool = False
 
 
 @dataclass(frozen=True)
@@ -41,14 +43,26 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
     if state.phase == "idle":
         if event.kind != "begin":
             return state, Effects()
-        if (event.failed or not _valid_bank(event.active_bank)
+        if (event.failed or not event.admitted
+                or not _valid_bank(event.active_bank)
                 or not _valid_bank(event.candidate_bank)
                 or event.active_bank == event.candidate_bank):
             return State("fail"), Effects("fail_closed")
+        if not event.active_valid:
+            return (State("repair_gate", event.active_bank, event.candidate_bank),
+                    Effects("fail_closed", event.active_bank))
         return (State("stage", event.active_bank, event.candidate_bank),
                 Effects("stage", event.candidate_bank))
 
-    if state.phase == "stage":
+    if state.phase == "repair_gate":
+        if event.kind != "closed":
+            return state, Effects()
+        if event.failed:
+            return state, Effects("fail_closed", state.active_bank)
+        return (State("repair_stage", state.active_bank, state.candidate_bank),
+                Effects("repair", state.candidate_bank))
+
+    if state.phase in ("repair_stage", "stage"):
         if event.kind != "staged":
             return state, Effects()
         if event.failed or not event.clean:
