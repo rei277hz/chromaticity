@@ -19,19 +19,25 @@ The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
 A Grade builds its complete Linear/Tone graph once per working space and tree
-type. Ordinary adjustments replace the pixels of one persistent 512 × 1 RGBA32F
-parameter image (8 KiB), shared by all nodes using that Grade, including Shader
-and Compositor nodes. Equal-valued independent Grades own separate writable
-images. Slots 0–256 contain the Tone endpoint value, slope, and curvature; slots
-257–259 contain the Linear matrix's red/blue columns and neutral row sums; slots
-260–261 contain the Tone scalars and domain. Fixed texture samples read these
-values instead of baking them into socket defaults. The boundary texture,
-viewing constants, links, and output adapter remain fixed within a working space.
-Updates require no graph replacement or image allocation. Publication packs the
-parameter image and invalidates its cached native result before reporting a
-successful installation, so compositor previews refresh automatically. File-load
-reconciliation checks the installed signature and kernel schema before accepting
-restored data.
+type. Ordinary adjustments publish complete 512 × 1 RGBA32F parameter data
+(8 KiB) through two fixed helper images shared by every Shader and Compositor
+node using that Grade. The inactive bank is packed and checked inside an admitted
+publication scope; only then does the selector switch to it. Bank identities
+stay fixed across edits, so publication does not allocate a version pool or rebind
+image readers. Equal-valued independent Grades own separate bank pairs.
+
+Slots 0–256 contain the Tone endpoint value, slope, and curvature; slots 257–259
+contain the Linear matrix's red/blue columns and neutral row sums; slots 260–261
+contain the Tone scalars and domain. Fixed texture samples read these values
+instead of baking them into socket defaults. The boundary texture, viewing
+constants, links, and output adapter remain fixed within a working space.
+Publication packs a complete inactive bank before changing the marked selector.
+A failed transaction restores the previous selector and metadata; any failure to
+restore or deliver closes the Grade output visibly. File-load reconciliation
+checks both bank bindings, reader markers, selector agreement, and kernel schema
+before accepting restored data. If the active bank fails its content receipt,
+recovery first revokes the Grade output and proceeds to rewrite both banks only
+after the fail-closed receipt succeeds.
 
 Compositor Grade graphs support both GPU Auto and Full precision without changing
 the scene setting. The output guard carries signed achromatic lightness and a
@@ -41,12 +47,20 @@ the existing full-precision accuracy gates; Auto previews allow half-precision
 rounding.
 
 Foreground publications coalesce to the newest complete result per source and
-process one source per timer turn, with no preview frequency cap. They defer for
-observed render/compositor/bake activity and interface locks. Blender's public
-job notifications provide admission checks, not a universal lock against native
-image readers. A render worker waits at its pre-evaluation callback while a
-foreground timer performs exact reconciliation; synchronous main-thread renders
-use the same scoped preflight directly.
+process one source per timer turn, with no preview frequency cap or settle delay.
+Render, bake, interface locks, and active compositor evaluation defer ordinary
+bank writes. Publication is admitted when native evaluation is quiescent or
+inside an exclusive render preflight with its worker parked before evaluation.
+The newest prepared result can then replace the inactive bank and switch the
+selector. The bank policy requires this admission receipt before it authorizes
+staging, and stable image bindings remain intact throughout publication.
+
+Blender's public job notifications provide admission checks, not a universal lock
+against native image readers. A render worker waits at its pre-evaluation callback
+while a foreground timer performs exact reconciliation; synchronous main-thread
+renders use the same scoped preflight directly. Kernel readiness and Viewer
+completion are separate: a newly bound kernel can be current while the display
+still carries an updating indication until its evaluation completes.
 
 Stack LUT preparation runs in a private Blender GPU helper. Each helper job
 dispatches its 33³ preview and 65³ refinement back-to-back, with a private output
@@ -64,6 +78,52 @@ preparation never waits for graph installation. Current failures produce a visib
 error and magenta output with alpha preserved. File load, working-space changes,
 and Grade reassignment fence obsolete source subscriptions and reconcile kernels.
 Shutdown withdraws pending demand and waits for active physical work to retire.
+
+To diagnose slider dragging, use **F3 → Perceptual Grade: Start Drag Trace**.
+Shift-drag a Grade slider in Shading, release and let it settle, then repeat in
+Compositing with Viewer Node visible in an Image Editor. Use
+**F3 → Perceptual Grade: Stop Drag Trace** after the second drag settles.
+Both commands are also available in the **Help** menu and report the absolute
+log path. Files are saved under
+`~/perceptual-grade-drag-logs/`. Send the resulting `.jsonl` file for analysis.
+
+Tracing is off by default. One capture records both workspaces, native gesture
+receipts, authoritative property callbacks (including suppressed callbacks),
+preparation and publication decisions, compositor completion/cancellation, and
+main-thread heartbeat and draw activity. The header identifies the installed
+sources and Blender/GPU environment. A background writer flushes every 250 ms;
+the footer reports dropped events or recording errors. Logging does not read
+image pixels, so draw callbacks indicate redraw activity rather than proof of
+changed display pixels. Stop removes the diagnostic observers and closes the
+file; disabling the extension also closes an active capture.
+
+The native regression pauses a real compositor worker, verifies that both banks
+and the selector stay unchanged during the lease, then checks that publication
+uses the same two image identities after the reader exits. It also verifies
+intermediate Viewer output and final-value convergence during a CPU Compositor
+slider drag. The drag regression exercises Exposure, CR Balance, and Tone Fit at
+a requested 277 Hz in both editors, using bounded motion that avoids slider
+endpoints:
+
+```sh
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:banked_publication_gui //products/perceptual-grade-next-blender/tests:drag_trace_gui
+```
+
+The default native fixtures are 128 × 96. Drag traces record compositor
+completions without pixel readback. Linux software-GPU results do not establish
+behavior on macOS Metal; repeat the continuous-drag acceptance run in the user's
+Blender environment.
+
+The file-load regression reopens a saved file before real sidebar drags in
+Material Preview, EEVEE Rendered, and Compositor. It checks that gesture observers
+recover, complete lagging preparations publish during dragging, and release
+converges to the final settings. It also covers deferred load recovery and
+extension disable/re-enable. These checks validate gesture tracking and parameter
+publication; they do not measure when changed pixels reach the display.
+
+```sh
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:gesture_reload_gui
+```
 
 Measure Grade preparation, texture upload, and node-tree construction with:
 

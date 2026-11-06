@@ -132,7 +132,15 @@ def main():
         report["engine"] = scene.render.engine
 
         def inventory():
-            trees, images, seen = [], {}, set()
+            trees, images, parameter_images, seen = [], {}, set(), set()
+
+            def binding(item):
+                image = item.image
+                if (item.get(nodes.PARAMETER_READER)
+                        and image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA):
+                    parameter_images.add(int(image.as_pointer()))
+                    return int(item.as_pointer()), "versioned-parameter"
+                return int(item.as_pointer()), int(image.as_pointer())
 
             def visit(value):
                 pointer = int(value.as_pointer())
@@ -144,8 +152,8 @@ def main():
                     "nodes": sorted(int(item.as_pointer()) for item in value.nodes),
                     "links": sorted((int(link.from_socket.as_pointer()), int(link.to_socket.as_pointer()))
                                     for link in value.links),
-                    "image_bindings": sorted((int(item.as_pointer()), int(item.image.as_pointer()))
-                                             for item in value.nodes if getattr(item, "image", None) is not None),
+                    "image_bindings": sorted(binding(item) for item in value.nodes
+                                             if getattr(item, "image", None) is not None),
                 })
                 for item in value.nodes:
                     image = getattr(item, "image", None)
@@ -162,7 +170,11 @@ def main():
 
             visit(tree)
             return {"trees": sorted(trees, key=lambda item: item["pointer"]),
-                    "images": sorted(images.values(), key=lambda item: item["pointer"])}
+                    "images": sorted((image for pointer, image in images.items()
+                                      if pointer not in parameter_images), key=lambda item: item["pointer"]),
+                    "parameter_images": sorted(
+                        ({key: value for key, value in images[pointer].items() if key != "pointer"}
+                         for pointer in parameter_images), key=lambda item: json.dumps(item, sort_keys=True))}
 
         original_write = nodes._write_grade_parameters
 
@@ -181,9 +193,10 @@ def main():
         original_receive = nodes._handle_preparation_result
 
         def timed_receive(source, preparation_signature, prepared, error,
-                          quality="full", lane="grade"):
+                          quality="full", lane="grade", **kwargs):
             before = time.perf_counter()
-            result = original_receive(source, preparation_signature, prepared, error, quality, lane)
+            result = original_receive(source, preparation_signature, prepared, error,
+                                      quality, lane, **kwargs)
             if lane == "grade":
                 report["received_results"].append({
                     "at_seconds": stamp(), "duration_seconds": time.perf_counter() - before,
@@ -259,7 +272,7 @@ def main():
                 report["final_inventory"] = inventory()
                 report["resource_inventory_preserved"] = report["final_inventory"] == initial_inventory
             if error is None and not report.get("resource_inventory_preserved"):
-                error = RuntimeError("Grade update changed node/link/group/image identities")
+                error = RuntimeError("Grade update changed topology or non-parameter image identities")
             if error is None and not report["final_current"]:
                 error = RuntimeError("Final Grade signature did not become current")
             if error is not None:

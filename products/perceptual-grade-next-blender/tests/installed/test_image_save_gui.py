@@ -71,7 +71,6 @@ class ImageSaveGuiTests(unittest.TestCase):
                 self.assertEqual(data.get("packing_failures"), [
                     {"failures": 1, "silent": False, "rollback_clean": True},
                     {"failures": 1, "silent": True, "rollback_clean": True},
-                    {"failures": 2, "silent": False, "rollback_clean": False},
                 ], details)
 
 

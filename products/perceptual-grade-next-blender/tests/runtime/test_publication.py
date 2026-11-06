@@ -122,6 +122,182 @@ class PublicationGateTests(unittest.TestCase):
         self.assertEqual(len(reasons), 1)
         self.assertIn("main thread", reasons[0])
 
+    def test_receipts_capture_plain_generations_and_monotonic_epochs(self):
+        gate, _running, _manager = self.gate()
+        snapshot = {27: 4, 28: 6}
+        first = gate.evaluation_started("compositor", 11, snapshot=snapshot)
+        snapshot[27] = 5
+        self.assertEqual(gate.current_compositor(), (11, first))
+        self.assertIsNone(gate.evaluation_finished("compositor", 12))
+        receipt = gate.evaluation_finished("compositor", 11, successful=False)
+        self.assertEqual((receipt.kind, receipt.identity, receipt.epoch),
+                         ("compositor", 11, first))
+        self.assertEqual(receipt.snapshot, ((27, 4), (28, 6)))
+        self.assertFalse(receipt.successful)
+        gate.reset()
+        second = gate.evaluation_started("compositor", 11)
+        self.assertGreater(second, first)
+        with self.assertRaises(TypeError):
+            gate.evaluation_started("compositor", 12, snapshot={27: object()})
+        self.assertEqual(gate.current_compositor(), (11, second))
+
+    def test_live_admission_requires_real_job_and_exactly_one_matching_snapshot(self):
+        gate, running, _manager = self.gate(jobs=("COMPOSITE",))
+        with self.assertRaisesRegex(self.module.PublicationDeferred, "observed snapshot"):
+            with gate.snapshot_commit(11):
+                self.fail("compositor startup gap was admitted")
+        epoch = gate.evaluation_started("compositor", 11)
+        with self.assertRaises(self.module.PublicationDeferred):
+            with gate.snapshot_commit(12):
+                self.fail("another scene's snapshot was admitted")
+        running.clear()
+        with self.assertRaisesRegex(self.module.PublicationDeferred, "COMPOSITE"):
+            with gate.snapshot_commit(11):
+                self.fail("an unpaired callback without a native job was admitted")
+        running.add("COMPOSITE")
+        with gate.snapshot_commit(11) as observed:
+            self.assertEqual(observed, epoch)
+            self.assertFalse(gate.quiescent())
+            with self.assertRaises(self.module.PublicationDeferred):
+                with gate.commit():
+                    self.fail("live snapshot admitted mutable image publication")
+            with self.assertRaises(self.module.PublicationDeferred):
+                with gate.snapshot_commit(11):
+                    self.fail("nested live publication admitted")
+        self.assertIsNone(gate.progress_state.epoch)
+        for kind, identity in (("compositor", 11), ("compositor", 12), ("render", 11)):
+            with self.subTest(kind=kind, identity=identity):
+                gate.evaluation_started(kind, identity)
+                self.assertIsNone(gate.current_compositor())
+                with self.assertRaises(self.module.PublicationDeferred):
+                    with gate.snapshot_commit(11):
+                        self.fail("overlapping evaluations were admitted")
+                gate.evaluation_finished(kind, identity)
+
+    def test_live_admission_preserves_every_unrelated_host_exclusion(self):
+        for job in self.module.JOBS:
+            if job == "COMPOSITE":
+                continue
+            with self.subTest(job=job):
+                gate, _running, _manager = self.gate(jobs=("COMPOSITE", job))
+                gate.evaluation_started("compositor", 11)
+                with self.assertRaisesRegex(self.module.PublicationDeferred, job):
+                    with gate.snapshot_commit(11):
+                        self.fail("unrelated host reader was exempted")
+        for options in ({"locked": True}, {"modal": ("OBJECT_OT_bake_image",)}):
+            gate, _running, _manager = self.gate(jobs=("COMPOSITE",), **options)
+            gate.evaluation_started("compositor", 11)
+            with self.assertRaises(self.module.PublicationDeferred):
+                with gate.snapshot_commit(11):
+                    self.fail("interface or bake lock was exempted")
+        gate, _running, _manager = self.gate(jobs=("COMPOSITE",))
+        gate.evaluation_started("compositor", 11)
+        with gate.callback(), self.assertRaises(self.module.PublicationDeferred):
+            with gate.snapshot_commit(11):
+                self.fail("publication inside callback admitted")
+
+    def test_supersession_requires_admitted_scope_and_exact_epoch(self):
+        gate, _running, _manager = self.gate(jobs=("COMPOSITE",))
+        epoch = gate.evaluation_started("compositor", 11)
+        with self.assertRaises(self.module.PublicationDeferred):
+            gate.superseded(11, epoch)
+        with gate.snapshot_commit(11):
+            for scene, stale_epoch in ((12, epoch), (11, epoch + 1)):
+                with self.assertRaises(self.module.PublicationDeferred):
+                    gate.superseded(scene, stale_epoch)
+            gate.superseded(11, epoch)
+        self.assertEqual((gate.progress_state.scene_id, gate.progress_state.epoch), (11, epoch))
+        with self.assertRaisesRegex(self.module.PublicationDeferred, "protected"):
+            with gate.snapshot_commit(11):
+                self.fail("second live swap was admitted")
+
+    def test_protection_survives_cancellation_and_unrelated_completion(self):
+        gate, running, _manager = self.gate(jobs=("COMPOSITE",))
+        first = gate.evaluation_started("compositor", 11)
+        with gate.snapshot_commit(11):
+            gate.superseded(11, first)
+        gate.evaluation_finished("compositor", 11, successful=True)
+        self.assertEqual(gate.progress_state.epoch, first)
+        running.clear()
+        with gate.commit():
+            self.assertTrue(gate.quiescent())
+        self.assertEqual(gate.progress_state.epoch, first)
+        running.add("COMPOSITE")
+        for scene, successful in ((11, False), (12, True)):
+            gate.evaluation_started("compositor", scene)
+            with self.assertRaisesRegex(self.module.PublicationDeferred, "protected"):
+                with gate.snapshot_commit(scene):
+                    self.fail("protected successor was superseded")
+            gate.evaluation_finished("compositor", scene, successful=successful)
+            self.assertEqual(gate.progress_state.epoch, first)
+        successor = gate.evaluation_started("compositor", 11)
+        gate.evaluation_finished("compositor", 11, successful=True)
+        self.assertIsNone(gate.progress_state.epoch)
+        next_epoch = gate.evaluation_started("compositor", 11)
+        self.assertGreater(next_epoch, successor)
+        with gate.snapshot_commit(11) as observed:
+            self.assertEqual(observed, next_epoch)
+
+    def test_reset_cannot_release_protection_while_host_is_busy(self):
+        gate, running, _manager = self.gate(jobs=("COMPOSITE",))
+        epoch = gate.evaluation_started("compositor", 11)
+        with gate.snapshot_commit(11):
+            gate.superseded(11, epoch)
+        with self.assertRaises(self.module.PublicationDeferred):
+            gate.reset()
+        self.assertEqual(gate.progress_state.epoch, epoch)
+        running.clear()
+        gate.reset()
+        self.assertIsNone(gate.progress_state.epoch)
+        self.assertIsNone(gate.current_compositor())
+
+    def test_live_admission_rechecks_host_and_leases_before_yield(self):
+        for race in ("job_ended", "render_started", "callback_started"):
+            with self.subTest(race=race):
+                bpy, running, _manager = self.host(jobs=("COMPOSITE",))
+                gate = self.module.PublicationGate(bpy)
+                gate.evaluation_started("compositor", 11)
+                observations = []
+
+                def is_running(name):
+                    if name == "COMPOSITE":
+                        observations.append(name)
+                        if len(observations) == 2:
+                            if race == "job_ended":
+                                running.clear()
+                            elif race == "render_started":
+                                gate.evaluation_started("render", 19)
+                            else:
+                                gate._callbacks += 1
+                    return name in running
+
+                bpy.app.is_job_running = is_running
+                with self.assertRaises(self.module.PublicationDeferred):
+                    with gate.snapshot_commit(11):
+                        self.fail("reader changed after initial admission")
+                self.assertFalse(gate._committing)
+                self.assertIsNone(gate._snapshot_active)
+                self.assertIsNone(gate.progress_state.epoch)
+
+    def test_worker_cannot_inspect_or_enter_live_publication(self):
+        gate = self.module.PublicationGate(SimpleNamespace())
+        errors = []
+
+        def publish():
+            self.assertFalse(gate.quiescent())
+            try:
+                with gate.snapshot_commit(11):
+                    self.fail("worker publication admitted")
+            except self.module.PublicationDeferred as error:
+                errors.append(str(error))
+
+        worker = threading.Thread(target=publish)
+        worker.start()
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIn("main thread", errors[0])
+
     def test_worker_render_waits_for_exact_main_thread_preflight(self):
         gate, running, _manager = self.gate(jobs=("RENDER",))
         gate.evaluation_started("render", 17)
@@ -145,6 +321,8 @@ class PublicationGateTests(unittest.TestCase):
         with gate.render_preflight(ticket):
             self.assertTrue(gate._committing)
             self.assertFalse(ticket._finished.is_set())
+            self.assertFalse(gate.quiescent())
+            self.assertTrue(gate.retirement_allowed())
         worker.join(5)
 
         self.assertFalse(worker.is_alive())
@@ -153,6 +331,31 @@ class PublicationGateTests(unittest.TestCase):
         self.assertFalse(gate._committing)
         gate.evaluation_finished("render", 17)
         running.clear()
+
+    def test_retirement_needs_entered_preflight_and_retains_reader_exclusions(self):
+        gate, running, manager = self.gate(jobs=("RENDER",), locked=True)
+        gate.evaluation_started("render", 17)
+        ticket = gate.request_render_preflight(17)
+        self.assertFalse(gate.retirement_allowed())
+        self.assertIs(gate.take_render_preflight(), ticket)
+        self.assertFalse(gate.retirement_allowed())
+        with gate.render_preflight(ticket):
+            self.assertTrue(gate.retirement_allowed())
+            with gate.callback():
+                self.assertFalse(gate.retirement_allowed())
+            running.add("SHADER_COMPILATION")
+            self.assertFalse(gate.retirement_allowed())
+            running.remove("SHADER_COMPILATION")
+            gate.evaluation_started("compositor", 11)
+            self.assertFalse(gate.retirement_allowed())
+            gate.evaluation_finished("compositor", 11)
+            self.assertTrue(gate.retirement_allowed())
+        self.assertFalse(gate.retirement_allowed())
+        gate.evaluation_finished("render", 17)
+        running.clear()
+        manager.is_interface_locked = False
+        with gate.commit():
+            self.assertTrue(gate.retirement_allowed())
 
     @staticmethod
     def _wait(ticket, results):
