@@ -43,10 +43,37 @@ J_{A,2}=\sqrt{H_2^2+(33k)^2}-33k,
 \qquad C_2=kJ_{A,2},\qquad h_2=h_1.
 $$
 
-The implementation evaluates a rationalized, scaled version to avoid cancellation and division by tiny \(J_A\). A neutral naturally keeps \(C=0\). Black uses the zero output limit. This makes the mapped pair valid by construction.
+The implementation evaluates a rationalized, scaled version to avoid cancellation and division by tiny \(J_A\). Its equivalent form scales the pair by a single gain rather than recomputing \(J_A\):
+
+$$
+g=\frac{2H_2^2}{\operatorname{hypot}(66C_1,\ 2J_{A,1}H_2)+66C_1},
+\qquad J_{A,2}=gJ_{A,1},\qquad C_2=gC_1.
+$$
+
+Both expressions select the same root; the second keeps \(C/J_A\) exact by construction and stays finite as \(J_{A,1}\to0\). A neutral naturally keeps \(C=0\). Black uses the zero output limit. This makes the mapped pair valid by construction.
 
 ![Saturation-preserving and squared-H policies](../assets/figures/tone-saturation.png)
 
 <p class="figure-caption">For \(H=100,\ C=20\), preserving \(C/J_A\) holds saturation constant. Squared-H chroma coupling instead changes saturation in proportion to mapped \(H\).</p>
 
 Reference Nits defaults to 203 and sets White’s neutral lightness. Highlights uses the selected effective peak, at least twice Reference Nits. The diagrams extend to the neutral lightness of 4000 nits, independently of that peak choice. After this remap, Color’s tone-dependent coefficients use the resulting \(H_2\).
+
+## Targets and the effective configuration
+
+Four of the five targets are fixed by the reference and the peak: Black at zero, Midtones at 18% of Reference Nits, White at exactly normalized lightness 1, and Highlights at the effective peak. Shadows is a fraction of Reference Nits chosen so the lower landmarks stay perceptually even. The analytic reference uses
+
+$$
+y_1=\nu(0.015507796089266005\,R_w)\approx\nu(3.148\ \mathrm{nits}).
+$$
+
+The 1.23.2 DCTL and the bundled legacy model use \(0.037153526983R_w\), or 7.542 nits, for the same landmark. Every other target is identical between the two, so a curve comparison isolates that one anchor. Report which constant a measurement used before comparing tone curves across releases.
+
+The effective reference and peak are not the raw inputs. The reference passes each through a smooth bounded map, so fractional and out-of-range requests move continuously:
+
+$$
+R_w=\operatorname{cap}_{1000}\!\left(\operatorname{floor}_{48}(R_{\mathrm{input}})\right),
+\qquad
+P_w=\operatorname{cap}_{10000}\!\left(\operatorname{floor}_{2R_w}(P_{\mathrm{input}})\right),
+$$
+
+where \(\operatorname{floor}_\ell\) and \(\operatorname{cap}_u\) are the quintic ease-in and ease-out \(e(x)=x^3(6-8x+3x^2)\) applied to the distance from the interval edge, exactly \(x\) more than one unit inside and exactly the bound outside, with matching first and second derivatives at both joins. The earlier handbook described integer rounding to the nearest nit; that is the 1.23.2 behaviour and it produces a step at every half-nit. Use the smooth form for the reference, and treat the effective \(R_w,P_w\) as configuration shared by forward and inverse evaluation rather than as a menu index.

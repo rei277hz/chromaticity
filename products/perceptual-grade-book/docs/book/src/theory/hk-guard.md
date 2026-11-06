@@ -55,7 +55,21 @@ The decoder receives \(E\) directly. Reconstructing it from rounded \(H_{\mathrm
 
 This guard addresses the model’s real-energy boundary. Output gamut and tone rendering remain downstream. A LUT samples the complete guarded transform; interpolated RGB has its own finite-grid error. The [fixture comparisons](#rebuilt-fixture-comparisons) illustrate both issues separately.
 
-Implementation sources are `src/dctl/hk_guard.dctlh`, `src/blender/model/color.py` and `src/blender/graph/color.py`. Tests cover independent high-precision calculations, float DCTL parity, native expressions, signed inputs and the sampled EXR/PQ fixtures through [Buck2](../development/building.md#run-tests).
+Implementation sources are `libraries/perceptual-grade-reference/src/responses.py` for the signed H–K map and carried energy, `libraries/perceptual-grade-core/src/perceptual_grade_core/model/hk_guard.py` for the guard itself, and the product graphs at `products/perceptual-grade-blender/src/graph/` and `products/perceptual-grade-dctl/src/core.dctlh`. Tests cover independent high-precision calculations, float DCTL parity, native expressions, signed inputs and the sampled EXR/PQ fixtures through [Buck2](../development/building.md#run-tests).
+
+## Project into the export cube
+
+H–K repair leaves a valid appearance pair, not displayable RGB. The reference applies a second, separate guard at export, and the two must not be conflated:
+
+1. H–K repair, with the post-Tone reference energy, produces \((H_g,a_g,b_g)\) and carries \(E\).
+2. The decoder runs on that pair. Any point whose cone response approaches the \(\lvert r\rvert=400\) pole is rejected rather than clamped.
+3. A cube guard searches for the largest chroma at the repaired \(J_A\) and hue that decodes inside the native AP1 cube. It brackets the radius from the eight cube vertices in cone coordinates, seeds the search with the fitted capacity at that lightness and hue, and then bisects, validating every trial through the actual decoder. The capacity seed is only a starting guess; it never decides the result. Accepted RGB is saved only when it is finite and inside \([0,1024]^3\).
+
+The cube guard therefore holds \(J_A\) and hue fixed while reducing chroma, which is a different policy from the H–K guard's bounded lightness lift. It is a projection, not an inverse: two different appearance requests can export to the same RGB, and the projection is lossy by construction. Only the H–K guard participates in the fixed-reference invertibility argument above; the cube guard's output does not inherit it.
+
+The graded intermediate is never forced through the cube guard before export. Grading operates on raw signed appearance coordinates and the guard runs at the boundary, so a Stack can carry one appearance value through several stages and project once at the end. Export-only repair also means an inverse cannot assume the forward path already projected.
+
+The earlier 1.23.2 release applies an equivalent export guard over its own cube domain. Comparisons across releases must state the bound: this part describes the reference's \([0,1024]\) AP1 domain, while the 1.23.2 sampling grid is documented in the archived LUT study.
 
 ## Historical evaluation
 

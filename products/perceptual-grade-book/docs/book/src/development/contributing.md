@@ -13,8 +13,7 @@ Development takes place in
 code, documentation, and translation changes. Work from that repository's
 current source and build instructions.
 
-The technical guidance below describes the historical 1.23.2 source layout and
-has not been updated for Perceptual Grade Next.
+The technical guidance in this part describes the historical 1.23.2 source layout and has not been updated for Perceptual Grade Next. The model itself now has two homes: [Understanding the model](../theory/structure.md) follows the analytic reference in `libraries/perceptual-grade-reference`, while this part and the guide describe the 1.23.2 products.
 
 You can improve Perceptual Grade through its grading model, host integration, translations, teaching material or reproducible measurements. Start with the part you want to change and read the corresponding section below. You do not need to work on every layer to make a useful contribution.
 

@@ -281,6 +281,6 @@ buck2 build '//:lut_shaper_evaluation[selection]' \
 
 ## 原生 AP1 生产 LUT（1.21.0）
 
-当前方案为 `AP1_ACES_neg0_pos128_n0_log1p0.01`：原生 ACEScg／ACES 白点、[0,128]、64 个正侧单元、普通 log1p κ = 0.01。[实验章节](lut-domain-study.md)记录其显示线性 RGB／峰值 nits 选择依据。历史表格保持原始参数。
+当前方案为原生 ACEScg／ACES 白点、上界 1024、64 个正侧单元、普通 log1p κ = 0.01。地址函数与采样空间由实验章节在其 +128 候选之间选定，上界是之后提高的，因此该选择证据覆盖的是地址函数而非 1024 域。[实验章节](lut-domain-study.md)记录其显示线性 RGB／峰值 nits 选择依据。历史表格保持原始参数。
 
 独立 AP1 参考分别构建原色矩阵、Bradford 适应、采样轴和物理插值，解析夹具保持冻结。测试包含负值／HDR 外推、八个 Grade 白点、三个场景空间、Shader／Compositor 渲染、Alpha、当前格式保存／重载／撤销、共享 Grade、33³／65³ 顶点逐位复用，以及 Compositor 基础值／边差分图像的半精度缓冲。英文[测试命令](../../en/development/testing.html#native-ap1-production-lut-1210)给出 Buck2 门禁；原生 CPU 与缓冲模拟器不代表 GPU／Metal 验证。
