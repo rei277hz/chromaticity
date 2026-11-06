@@ -8,6 +8,7 @@ import hashlib
 import json
 import sys
 import threading
+import time
 from uuid import uuid4
 
 import bpy
@@ -562,7 +563,8 @@ def _settings_for_node(node, working_space=None):
                     tone=_tone_settings(node.pg_tone), space=working_space)
 
 
-def _kernel_is_current(kernel, tree_type, signature, quality="full", stack=None):
+def _kernel_is_current(kernel, tree_type, signature, quality="full", stack=None,
+                       *, validate_graph=True):
     try:
         if kernel is None or kernel.get(_KERNEL_KIND) != _KERNEL_SCHEMA:
             return False
@@ -573,7 +575,11 @@ def _kernel_is_current(kernel, tree_type, signature, quality="full", stack=None)
         if stack is not None and bool(kernel.get("_perceptual_grade_stack_kernel")) != stack:
             return False
         if not kernel.get("_perceptual_grade_stack_kernel"):
-            if not _parameter_kernel_valid(kernel):
+            if validate_graph:
+                valid = _parameter_kernel_valid(kernel)
+            else:
+                valid = _parameter_kernel_receipt_current(kernel)
+            if not valid:
                 return False
             active = kernel.get(PARAMETER_ACTIVE_BANK)
             image = kernel.get(PARAMETER_BANK_BINDINGS[active])
@@ -1093,11 +1099,21 @@ def _request_node(node, working_space, snapshots=None):
     record = _record_for(node, signature, source)
     state = record["state"]
     failures = []
-    if (not record["stack"] and node.id_data.bl_idname == COMPOSITOR_TREE
-            and state.applied_signature is not None
-            and not _compositor_receipts.known(node.as_pointer())
-            and _kernel_is_current(node.node_tree, COMPOSITOR_TREE,
-                                   state.applied_signature, state.applied_quality or "full")):
+    needs_compositor_adoption = (
+        not record["stack"] and node.id_data.bl_idname == COMPOSITOR_TREE
+        and state.applied_signature is not None
+        and not _compositor_receipts.known(node.as_pointer())
+    )
+    current = True
+    capture = _drag_trace
+    started_ns = time.perf_counter_ns() if capture is not None else None
+    if state.applied_signature is not None:
+        current = _kernel_is_current(
+            node.node_tree, node.id_data.bl_idname, state.applied_signature,
+            state.applied_quality or "full", stack=_is_stack_node(node),
+            validate_graph=needs_compositor_adoption,
+        )
+    if needs_compositor_adoption and current:
         resource = _grade_resources.resource(node, working_space)
         if (resource.generation is not None
                 and tuple(node.node_tree.get(key) for key in PARAMETER_BANK_BINDINGS)
@@ -1107,9 +1123,12 @@ def _request_node(node, working_space, snapshots=None):
             # publication entirely. Seed their plain evaluation facts before
             # the request's presentation effect claims the result is current.
             _record_compositor_bindings((record,), resource.generation)
-    if (state.applied_signature is not None and not _kernel_is_current(
-            node.node_tree, node.id_data.bl_idname, state.applied_signature,
-            state.applied_quality or "full", stack=_is_stack_node(node))):
+    if capture is not None and started_ns is not None:
+        capture.request_kernel_validation(
+            node, record, started_ns, time.perf_counter_ns(), current,
+            needs_compositor_adoption,
+        )
+    if not current:
         failures.extend(_dispatch(node, node_policy.Event(
             "installation_result", None, "Installed Grade kernel is missing or stale")))
     failures.extend(_dispatch(
@@ -1427,8 +1446,6 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
                                       preparation_signature)):
                 return {"clean": False}
         else:
-            if not _parameter_image_content_matches(banks[old_active]):
-                return {"clean": False}
             if not pack_image(banks[candidate_bank], parameters.pixels,
                               preparation_signature):
                 return {"clean": False}
@@ -1439,7 +1456,8 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         tree_types = set(kernels) | {record["node"].id_data.bl_idname for record in users}
         for tree_type in tree_types:
             kernel = kernels.get(tree_type)
-            if not _parameter_kernel_valid(kernel):
+            structure_valid = _parameter_kernel_structure_valid(kernel)
+            if not structure_valid:
                 kernel = _kernel(
                     tree_type, prepared, prepared.space,
                     _signature(tree_type, _snapshot_values(settings), prepared.space),
@@ -1450,6 +1468,9 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
                 if owner_node is not None:
                     kernel[PARAMETER_OWNER_NODE] = owner_node
                 kernels[tree_type] = kernel
+                structure_valid = _parameter_kernel_structure_valid(kernel)
+            if not structure_valid:
+                return {"clean": False}
             # Kernel generations describe the selected bank, which is still
             # the previous bank until the selector operation succeeds.
             kernel[PARAMETER_ACTIVE_BANK] = old_active
@@ -1462,10 +1483,11 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
             for key in (PARAMETER_ACTIVE_BANK, PARAMETER_GENERATION,
                         PARAMETER_SIGNATURE, _KERNEL_SIGNATURE)
         )
+        verified_banks = (banks if fresh or repair else (banks[candidate_bank],))
         return {"clean": all(
             not image.is_dirty and image.packed_file is not None
             and _parameter_image_content_matches(image)
-            for image in banks
+            for image in verified_banks
         )}
 
     def select(bank, _errors):
@@ -1486,7 +1508,12 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         selected = {_read_parameter_selector(kernel) for kernel in kernels.values()}
         if selected != {bank} or any(
                 kernel.get(PARAMETER_ACTIVE_BANK) != bank
-                or not _parameter_kernel_valid(kernel)
+                or kernel.get(PARAMETER_GENERATION) != generation
+                or kernel.get(PARAMETER_SIGNATURE) != preparation_signature
+                or kernel.get(PARAMETER_SIGNATURE)
+                != kernel.get(PARAMETER_BANK_BINDINGS[bank]).get(PARAMETER_SIGNATURE)
+                or kernel.get(_KERNEL_SIGNATURE) != _signature(
+                    kernel.bl_idname, _snapshot_values(settings), prepared.space)
                 for kernel in kernels.values()):
             raise RuntimeError("Grade parameter selector readback did not match the staged bank")
         return {"selected_bank": selected.pop()}
@@ -1823,14 +1850,43 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
     return True
 
 
-def _parameter_kernel_valid(kernel):
+def _parameter_kernel_receipt_current(kernel):
+    """Check cached publication receipts without traversing a graph or image buffer."""
+    try:
+        active = kernel.get(PARAMETER_ACTIVE_BANK)
+        generation = kernel.get(PARAMETER_GENERATION)
+        if (kernel.get("_perceptual_grade_stage2_complete") is not True
+                or type(active) is not int or active not in (0, 1)
+                or type(generation) is not int or generation < 0):
+            return False
+        images = tuple(kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
+        if (len(images) != 2 or images[0] is None or images[1] is None
+                or images[0] == images[1]):
+            return False
+        if any(
+                image.get(PARAMETER_IMAGE) != PARAMETER_SCHEMA
+                or tuple(image.size) != (PARAMETER_SHAPE[1], PARAMETER_SHAPE[0])
+                or not image.as_pointer() or image.is_dirty
+                or image.packed_file is None
+                for image in images):
+            return False
+        image = images[active]
+        return (kernel.get(PARAMETER_SIGNATURE) is not None
+                and kernel.get(PARAMETER_SIGNATURE) == image.get(PARAMETER_SIGNATURE)
+                and image.get(PARAMETER_CONTENT_SIGNATURE) is not None)
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _parameter_kernel_structure_valid(kernel):
     try:
         if (kernel is None or kernel.get(_KERNEL_KIND) != _KERNEL_SCHEMA
                 or not kernel.get("_perceptual_grade_stage2_complete")):
             return False
         active = kernel.get(PARAMETER_ACTIVE_BANK)
         generation = kernel.get(PARAMETER_GENERATION)
-        if type(active) is not int or active not in (0, 1) or type(generation) is not int or generation < 0:
+        if (type(active) is not int or active not in (0, 1)
+                or type(generation) is not int or generation < 0):
             return False
         images = tuple(kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
         if (any(image is None or image.get(PARAMETER_IMAGE) != PARAMETER_SCHEMA
@@ -1877,8 +1933,18 @@ def _parameter_kernel_valid(kernel):
             return False
         if not selector.outputs["Value"].links:
             return False
-        return (selected == active
-                and _parameter_image_content_matches(images[active]))
+        return selected == active
+    except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _parameter_kernel_valid(kernel):
+    if not _parameter_kernel_structure_valid(kernel):
+        return False
+    try:
+        active = kernel.get(PARAMETER_ACTIVE_BANK)
+        image = kernel.get(PARAMETER_BANK_BINDINGS[active])
+        return _parameter_image_content_matches(image)
     except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
         return False
 
@@ -2714,6 +2780,8 @@ def _stack_active_grade(node):
 
 
 def _grade_changed(grade):
+    capture = _drag_trace
+    started_ns = time.perf_counter_ns() if capture is not None else None
     users = []
     failures = []
     for tree in _all_node_trees():
@@ -2746,6 +2814,10 @@ def _grade_changed(grade):
     failures.extend(_refresh_nodes(tuple(refresh)))
     for failed_nodes, error in failures:
         print("Perceptual Grade kernel repair failed:", error)
+    if capture is not None and started_ns is not None:
+        capture.grade_changed(
+            grade, started_ns, time.perf_counter_ns(), len(users), len(refresh),
+        )
 
 
 def _all_node_trees():

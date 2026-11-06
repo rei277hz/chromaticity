@@ -55,7 +55,7 @@ $$
 
 该保护处理模型的实能量边界。输出色域与影调渲染仍在后续。LUT 采样的是完整受保护的变换；插值 RGB 有其自身的有限网格误差。[样例对比](#重建样例对比)分别说明这两个问题。
 
-实现来源是 `libraries/perceptual-grade-reference/src/responses.py` 中的带符号 H–K 映射与能量传递、`libraries/perceptual-grade-core/src/perceptual_grade_core/model/hk_guard.py` 中的保护本身，以及位于 `products/perceptual-grade-blender/src/graph/` 与 `products/perceptual-grade-dctl/src/core.dctlh` 的产品图。测试覆盖独立高精度计算、float DCTL 一致性、原生表达式、带符号输入以及采样的 EXR/PQ 样例，均通过 [Buck2](../development/building.md#run-tests) 运行。
+实现来源是 `libraries/perceptual-grade-reference/src/responses.py` 中的带符号 H–K 映射与能量传递、`libraries/perceptual-grade-core/src/perceptual_grade_core/model/hk_guard.py` 中的保护本身，以及位于 `products/perceptual-grade-blender/src/graph/` 与 `products/perceptual-grade-dctl/src/core.dctlh` 的产品图。测试覆盖独立高精度计算、float DCTL 一致性、原生表达式、带符号输入以及采样的 EXR/PQ 样例，均通过 [Buck2](../development/building.md) 运行。
 
 ## 投影到导出立方体
 
