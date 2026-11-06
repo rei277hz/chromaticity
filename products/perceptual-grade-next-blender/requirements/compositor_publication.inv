@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {},
+  "contracts": {
+    "new": {
+      "ensures": [
+        "result.scene_id is None and result.epoch is None"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "admission_requires_unprotected_observed_snapshot",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].publish_epoch is None or (event.kind == 'admit' and event.eligible and event.scene_id is not None and event.scene_id > 0 and event.epoch is not None and event.epoch > 0 and state.scene_id is None and state.epoch is None and transition[1].publish_epoch == event.epoch)"
+    },
+    {
+      "name": "admission_does_not_consume_progress_allowance",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "event.kind != 'admit' or transition[0] == state"
+    },
+    {
+      "name": "admitted_supersession_protects_scene_and_epoch",
+      "variables": {
+        "scene": "int",
+        "epoch": "int"
+      },
+      "lets": {
+        "transition": "step(new(), Event('superseded', scene, epoch, eligible=True))"
+      },
+      "assert": "scene <= 0 or epoch <= 0 or transition == (State(scene, epoch), Effects())"
+    },
+    {
+      "name": "protected_successor_cannot_be_superseded",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "(state.scene_id is None and state.epoch is None) or (event.kind != 'admit' and event.kind != 'superseded') or transition == (state, Effects())"
+    },
+    {
+      "name": "cancelled_or_unrelated_completion_preserves_protection",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "event.kind != 'finished' or (event.successful and state.scene_id is not None and event.scene_id == state.scene_id and state.epoch is not None and event.epoch is not None and event.epoch > state.epoch) or transition == (state, Effects())"
+    },
+    {
+      "name": "later_successful_same_scene_releases_protection",
+      "variables": {
+        "scene": "int",
+        "epoch": "int"
+      },
+      "lets": {
+        "transition": "step(State(scene, epoch), Event('finished', scene, epoch + 1, successful=True))"
+      },
+      "assert": "transition == (new(), Effects())"
+    },
+    {
+      "name": "reset_requires_quiescence",
+      "variables": {
+        "state": "State"
+      },
+      "assert": "step(state, Event('reset')) == (state, Effects()) and step(state, Event('reset', quiescent=True)) == (new(), Effects())"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "cancelled_evaluation_protects_successor_until_completion",
+      "variables": {},
+      "lets": {
+        "admitted": "step(new(), Event('admit', 7, 11, eligible=True))",
+        "superseded": "step(admitted[0], Event('superseded', 7, 11, eligible=True))",
+        "cancelled": "step(superseded[0], Event('finished', 7, 11))",
+        "successor": "step(cancelled[0], Event('admit', 7, 12, eligible=True))",
+        "finished": "step(successor[0], Event('finished', 7, 12, successful=True))",
+        "resumed": "step(finished[0], Event('admit', 7, 13, eligible=True))"
+      },
+      "assert": "admitted[1].publish_epoch == 11 and cancelled[0] == State(7, 11) and successor[1] == Effects() and resumed[1].publish_epoch == 13"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "cancel_cannot_release_protection",
+      "function": "step",
+      "target": "event.successful",
+      "replacement": "True",
+      "detects": [
+        "property.cancelled_or_unrelated_completion_preserves_protection"
+      ]
+    },
+    {
+      "name": "unrelated_scene_cannot_release_protection",
+      "function": "step",
+      "target": "event.scene_id == state.scene_id",
+      "replacement": "True",
+      "detects": [
+        "property.cancelled_or_unrelated_completion_preserves_protection"
+      ]
+    },
+    {
+      "name": "original_epoch_cannot_release_protection",
+      "function": "step",
+      "target": "event.epoch > state.epoch",
+      "replacement": "event.epoch >= state.epoch",
+      "detects": [
+        "property.cancelled_or_unrelated_completion_preserves_protection"
+      ]
+    },
+    {
+      "name": "host_eligibility_is_required",
+      "function": "step",
+      "target": "not event.eligible",
+      "replacement": "False",
+      "detects": [
+        "property.admission_requires_unprotected_observed_snapshot"
+      ]
+    }
+  ]
+}

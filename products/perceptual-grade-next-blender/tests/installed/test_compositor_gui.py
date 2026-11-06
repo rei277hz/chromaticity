@@ -65,7 +65,7 @@ class CompositorGuiTests(unittest.TestCase):
                         self.assertEqual(data["automatic_updates"], 9, details)
                     else:
                         self.assertEqual(data["loaded_schema"], [3, 3, 3], details)
-                        self.assertEqual(data["repaired_schema"], [4, 4, 4], details)
+                        self.assertEqual(data["repaired_schema"], [5, 5, 5], details)
                         self.assertTrue(data["settings_preserved"], details)
                         self.assertEqual(len(data["rows"]), 2, details)
 

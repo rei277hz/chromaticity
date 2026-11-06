@@ -11,6 +11,13 @@ from policy.node import (
 
 
 class KernelReadinessTests(unittest.TestCase):
+    def test_presentation_refresh_preserves_logical_readiness_and_requests_no_work(self):
+        for state in (new(), new("grade-a"), new("grade-a", "grade-a"),
+                      new("grade-b", "grade-a"), new("grade-a", error="failed")):
+            updated, effects = step(state, Event("presentation"))
+            self.assertEqual(updated, state)
+            self.assertEqual(effects, Effects(output_mode=output_mode(state), error=state.error))
+
     def transition(self, state, kind, signature=None, error=None, quality="full",
                    preparation_signature=None):
         if kind == "preparation_result" and error is not None \

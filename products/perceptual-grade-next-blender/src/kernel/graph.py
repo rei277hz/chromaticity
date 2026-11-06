@@ -126,6 +126,7 @@ class BuiltGrade:
     helper_groups: tuple
     prepared: object
     stats: GraphStats
+    borrowed_images: tuple = ()
 
     def dispose(self, *, unlink=False):
         """Release owned resources; reject live group users unless explicitly asked."""
@@ -137,7 +138,7 @@ class BuiltGrade:
             if tree.users == 0:
                 bpy.data.node_groups.remove(tree)
         for image in self.images:
-            if image.users == 0:
+            if image not in self.borrowed_images and image.users == 0:
                 bpy.data.images.remove(image)
 
 

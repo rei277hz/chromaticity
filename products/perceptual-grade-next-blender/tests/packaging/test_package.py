@@ -71,7 +71,7 @@ class PackageTests(unittest.TestCase):
                        if name.startswith("policy/") and name.endswith(".py")
                        and name != "policy/__init__.py"}
         self.assertEqual(proved, shipped)
-        self.assertEqual(len(proved), 7)
+        self.assertEqual(len(proved), 9)
 
 
 if __name__ == "__main__":

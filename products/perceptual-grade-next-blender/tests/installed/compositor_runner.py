@@ -83,7 +83,6 @@ def identity():
              bpy.data.materials[MATERIAL].node_tree)
     return {
         "kernels": [node.node_tree.as_pointer() for node in users],
-        "parameter": parameters[0].as_pointer(),
         "links": [[(link.from_socket.as_pointer(), link.to_socket.as_pointer())
                    for link in tree.links] for tree in trees],
         "node_counts": [len(node.node_tree.nodes) for node in users],
@@ -278,7 +277,7 @@ def complete():
         assert bpy.ops.wm.save_as_mainfile(filepath=str(BLEND)) == {"FINISHED"}
     else:
         result["repaired_schema"] = [node.node_tree[nodes._KERNEL_KIND] for node in consumers()]
-        assert result["repaired_schema"] == [4, 4, 4]
+        assert result["repaired_schema"] == [5, 5, 5]
     finish()
 
 
@@ -332,7 +331,8 @@ def tick():
         if same_backend_edit:
             automatic_updates += 1
         rows.append({"config": name, "device": device, "precision": precision,
-                     "pixels": pixels.tolist(), "events": len(events), "identity": current_identity})
+                     "pixels": pixels.tolist(), "events": len(events), "identity": current_identity,
+                     "parameter": users[0].node_tree[nodes.PARAMETER_BINDING].as_pointer()})
         print("COMPOSITOR", name, device, precision, "completed", len(events), flush=True)
         previous_pixels = pixels
         index += 1

@@ -150,6 +150,9 @@ def parameter_image(node):
     image = node.node_tree.get(nodes.PARAMETER_BINDING)
     assert image is not None
     assert image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
+    readers = [item for item in node.node_tree.nodes if item.get(nodes.PARAMETER_READER)]
+    assert readers, node.name
+    assert all(item.image == image for item in readers), node.name
     return image
 
 
@@ -196,7 +199,7 @@ def assert_local_grade_resources(identities):
 
 
 def grade_resource_inventory(node):
-    """Numerical edits must preserve topology, bindings, and image settings."""
+    """Numerical edits preserve topology and parameter image format."""
     seen = set()
     inventory = []
 
@@ -210,7 +213,8 @@ def grade_resource_inventory(node):
             inventory.append(("node", item.as_pointer(), item.bl_idname))
             image = getattr(item, "image", None)
             if image is not None:
-                inventory.append(("image", item.as_pointer(), image.as_pointer(),
+                inventory.append(("image", item.as_pointer(),
+                                  None if item.get(nodes.PARAMETER_READER) else image.as_pointer(),
                                   tuple(image.size), image.colorspace_settings.name,
                                   image.alpha_mode))
             child = getattr(item, "node_tree", None)
@@ -559,7 +563,10 @@ shared_shader_nodes[0].pg_grade = shared_grade
 reconcile_for_render(bpy.context.scene)
 assert_grade_current(shared_shader_nodes[0])
 assert shared_shader_nodes[0].node_tree == shared_kernel
-assert parameter_image(shared_shader_nodes[0]) == shared_parameter_image
+shared_parameter_image = parameter_image(shared_shader_nodes[0])
+assert all(parameter_image(node) == shared_parameter_image
+           for node in (*shared_shader_nodes, shader_node, compositor_node, shared_compositor_node))
+initial_parameter_pointer = shared_parameter_image.as_pointer()
 shared_inventories = tuple(grade_resource_inventory(node)
                           for node in (shader_node, compositor_node))
 shader_graph = connect_grade_graph(shader_tree, shader_node)
@@ -618,7 +625,11 @@ nodes._write_grade_parameters = original_parameter_writer
 assert len(preparation_threads) == 1, preparation_threads
 assert all(thread != main_thread for thread, _exposure in preparation_threads)
 assert not kernel_build_threads, kernel_build_threads
+shared_parameter_image = parameter_image(shader_node)
+assert shared_parameter_image.as_pointer() != initial_parameter_pointer
 assert parameter_write_threads == [(main_thread, shared_parameter_image.as_pointer())]
+assert all(parameter_image(node) == shared_parameter_image
+           for node in (*shared_shader_nodes, compositor_node, shared_compositor_node))
 assert shared_parameter_image.get(nodes.PARAMETER_SIGNATURE) == (
     nodes._preparation_signature(
         nodes._grade_settings(shared_grade, nodes._working_space()),
@@ -681,6 +692,7 @@ shared_grade.pg_linear.exposure = 1.5
 reconcile_for_render(bpy.context.scene)
 assert material_node.pg_linear.exposure == 0.0
 assert material_node.node_tree == material_kernel
+shared_parameter_image = parameter_image(shared_shader_nodes[0])
 assert parameter_image(material_node) == shared_parameter_image
 
 # Equal-valued independent Grades must never share writable resources. Selecting
@@ -711,6 +723,27 @@ independent_node.pg_grade = independent_grade
 reconcile_for_render(bpy.context.scene)
 assert_grade_current(independent_node)
 
+# Saved metadata alone cannot make a graph current: every parameter reader
+# must remain marked and bound to that Grade's current image.
+for corruption in ("unmarked", "misbound", "misbound_tracked"):
+    corrupt_kernel = independent_node.node_tree
+    corrupt_kernel.use_fake_user = True
+    reader = next(item for item in corrupt_kernel.nodes if item.get(nodes.PARAMETER_READER))
+    if corruption == "unmarked":
+        del reader[nodes.PARAMETER_READER]
+    else:
+        reader.image = parameter_image(shared_shader_nodes[0])
+    assert not nodes._parameter_kernel_valid(corrupt_kernel)
+    if corruption != "misbound_tracked":
+        # Recreate the record to exercise saved-kernel adoption. The final case
+        # keeps its record so render preflight must reject a corrupt live cache.
+        nodes._node_stores.pop(independent_node.as_pointer())
+    reconcile_for_render(bpy.context.scene)
+    assert_grade_current(independent_node)
+    assert independent_node.node_tree != corrupt_kernel
+    corrupt_kernel.use_fake_user = False
+    assert not nodes._retire_kernels((corrupt_kernel,))
+
 # Native removal can invalidate an image without going through node teardown.
 # A fresh reconciliation must reject the cached wrapper and repair the Grade.
 removed_image = parameter_image(independent_node)
@@ -735,6 +768,7 @@ shared_kernel = reselected_node.node_tree
 reselected_node.pg_grade = independent_grade
 reconcile_for_render(bpy.context.scene)
 assert reselected_node.node_tree == independent_node.node_tree
+independent_image = parameter_image(independent_node)
 assert parameter_image(reselected_node) == independent_image
 independent_pixels = np.asarray(independent_image.pixels[:], dtype=np.float32)
 shared_grade.pg_linear.exposure = 1.625
@@ -744,6 +778,7 @@ assert reselected_node.node_tree == independent_node.node_tree
 reselected_node.pg_grade = shared_grade
 reconcile_for_render(bpy.context.scene)
 assert reselected_node.node_tree == shared_kernel
+shared_parameter_image = parameter_image(shared_shader_nodes[0])
 assert parameter_image(reselected_node) == shared_parameter_image
 shared_grade.pg_linear.exposure = 1.5
 reconcile_for_render(bpy.context.scene)
@@ -783,7 +818,6 @@ del old_shared_kernel[nodes.PARAMETER_OWNER]
 if nodes.PARAMETER_OWNER_NODE in old_shared_kernel:
     del old_shared_kernel[nodes.PARAMETER_OWNER_NODE]
 saved_shared_kernel_name = shared_shader_nodes[0].node_tree.name
-saved_shared_image_name = parameter_image(shared_shader_nodes[0]).name
 saved_compositor_kernel_name = shared_compositor_node.node_tree.name
 shared_grade.pg_linear.exposure = 2.0
 reconcile_for_render(bpy.context.scene)
@@ -838,7 +872,8 @@ assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
 assert all(node.node_tree.get(nodes._KERNEL_SIGNATURE) == new_signature
            for node in shared_shader_nodes)
 assert shared_shader_nodes[0].node_tree.name == saved_shared_kernel_name
-assert parameter_image(shared_shader_nodes[0]).name == saved_shared_image_name
+# Repairing the partially saved shared group may publish a new image version;
+# its authoritative signature and exact numerical content must survive.
 assert shared_compositor_node.node_tree.name == saved_compositor_kernel_name
 assert parameter_image(shared_compositor_node) == parameter_image(shared_shader_nodes[0])
 assert parameter_image(shared_shader_nodes[0]).get(nodes.PARAMETER_SIGNATURE) == (
@@ -906,7 +941,9 @@ reconcile_for_render(bpy.context.scene)
 assert all(node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
            for node in shared_shader_nodes)
 assert all(node.get(nodes._NODE_ERROR) for node in shared_shader_nodes)
-assert len(upload_attempts) == 2, upload_attempts
+# Failed unpublished storage is discarded; rollback must not rewrite the old image.
+assert len(upload_attempts) == 1, upload_attempts
+assert upload_attempts[0] != failed_image.as_pointer()
 assert np.array_equal(failed_image.pixels[:], before_failed_pixels)
 assert failed_image.get(nodes.PARAMETER_SIGNATURE) == before_failed_signature
 assert all(node.use_custom_color

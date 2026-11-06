@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["new"],
+  "step": "step",
+  "invariants": {},
+  "contracts": {
+    "new": {
+      "ensures": ["result == State('idle')"]
+    }
+  },
+  "properties": [
+    {
+      "name": "allocation_keeps_three_version_bound",
+      "variables": {"count": "int", "available": "bool", "exposed": "bool"},
+      "assert": "candidate_effect(count, available, exposed).action != 'allocate' or (not available and 0 <= count and count < 3)"
+    },
+    {
+      "name": "only_unexposed_candidates_can_be_reused",
+      "variables": {"count": "int", "available": "bool", "exposed": "bool"},
+      "assert": "candidate_effect(count, available, exposed).action != 'reuse' or (available and not exposed)"
+    },
+    {
+      "name": "retirement_requires_quiescence_and_no_users",
+      "variables": {"live": "bool", "quiescent": "bool", "current": "bool", "candidate": "bool", "users": "int", "protected": "bool"},
+      "assert": "retirement_effect(live, quiescent, current, candidate, users, protected).action != 'remove' or (live and quiescent and not current and not candidate and users == 0 and not protected)"
+    },
+    {
+      "name": "current_and_candidate_versions_remain_pinned",
+      "variables": {"live": "bool", "quiescent": "bool", "current": "bool", "candidate": "bool", "users": "int", "protected": "bool"},
+      "assume": ["current or candidate"],
+      "assert": "retirement_effect(live, quiescent, current, candidate, users, protected) == Effects()"
+    },
+    {
+      "name": "snapshot_requires_completely_packed_candidate",
+      "variables": {"state": "State", "event": "Event"},
+      "lets": {"transition": "step(state, event)"},
+      "assert": "transition[1].action != 'snapshot' or (state.phase == 'stage' and not event.failed and event.clean)"
+    },
+    {
+      "name": "binding_requires_snapshot_receipt",
+      "variables": {"state": "State", "event": "Event"},
+      "lets": {"transition": "step(state, event)"},
+      "assert": "transition[1].action != 'bind' or (state.phase == 'snapshot' and not event.failed)"
+    },
+    {
+      "name": "publication_requires_committed_bindings",
+      "variables": {"state": "State", "event": "Event"},
+      "lets": {"transition": "step(state, event)"},
+      "assert": "transition[1].action != 'activate' or (state.phase == 'commit' and not event.failed)"
+    },
+    {
+      "name": "partial_transaction_failure_restores_bindings",
+      "variables": {"state": "State"},
+      "assume": ["state.phase in ('bind', 'commit', 'activate', 'deliver')"],
+      "assert": "step(state, Event(failed=True)) == (State('restore_bindings'), Effects('restore_bindings'))"
+    },
+    {
+      "name": "restoration_failures_still_attempt_every_component",
+      "variables": {"event": "Event"},
+      "assert": "step(State('restore_bindings'), event) == (State('restore_metadata'), Effects('restore_metadata')) and step(State('restore_metadata'), event) == (State('restore_resource'), Effects('restore_resource')) and step(State('restore_resource'), event) == (State('fail'), Effects('fail'))"
+    },
+    {
+      "name": "failed_transaction_never_delivers",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["state.phase in ('restore_bindings', 'restore_metadata', 'restore_resource', 'fail', 'retire', 'terminal')"],
+      "assert": "step(state, event)[1].action != 'deliver'"
+    },
+    {
+      "name": "terminal_receipts_are_inert",
+      "variables": {"event": "Event"},
+      "assert": "step(State('terminal'), event) == (State('terminal'), Effects())"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "packed_candidate_can_publish_and_deliver",
+      "variables": {},
+      "lets": {
+        "started": "step(new(), Event())",
+        "staged": "step(started[0], Event(clean=True))",
+        "snapshot": "step(staged[0], Event())",
+        "bound": "step(snapshot[0], Event())",
+        "committed": "step(bound[0], Event())",
+        "activated": "step(committed[0], Event())",
+        "delivered": "step(activated[0], Event())",
+        "retired": "step(delivered[0], Event())"
+      },
+      "assert": "snapshot[1].action == 'bind' and committed[1].action == 'activate' and activated[1].action == 'deliver' and retired == (State('terminal'), Effects())"
+    },
+    {
+      "name": "delivery_failure_restores_then_fails_closed",
+      "variables": {},
+      "lets": {
+        "failed": "step(State('deliver'), Event(failed=True))",
+        "bindings": "step(failed[0], Event(failed=True))",
+        "metadata": "step(bindings[0], Event(failed=True))",
+        "resource": "step(metadata[0], Event(failed=True))",
+        "closed": "step(resource[0], Event())",
+        "retired": "step(closed[0], Event())"
+      },
+      "assert": "resource[1].action == 'fail' and retired == (State('terminal'), Effects())"
+    },
+    {
+      "name": "quiescent_unreferenced_version_can_retire",
+      "variables": {},
+      "assert": "retirement_effect(True, True, False, False, 0, False) == Effects('remove')"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "allocation_ignores_pool_bound",
+      "function": "candidate_effect",
+      "target": "count < 3",
+      "replacement": "True",
+      "detects": ["property.allocation_keeps_three_version_bound"]
+    },
+    {
+      "name": "exposed_candidate_is_overwritten",
+      "function": "candidate_effect",
+      "target": "not exposed",
+      "replacement": "True",
+      "detects": ["property.only_unexposed_candidates_can_be_reused"]
+    },
+    {
+      "name": "active_reader_does_not_block_retirement",
+      "function": "retirement_effect",
+      "target": "quiescent and users == 0 and not protected",
+      "replacement": "users == 0 and not protected",
+      "detects": ["property.retirement_requires_quiescence_and_no_users"]
+    },
+    {
+      "name": "dirty_candidate_is_published",
+      "function": "step",
+      "target": "event.failed or not event.clean",
+      "replacement": "event.failed",
+      "detects": ["property.snapshot_requires_completely_packed_candidate"]
+    },
+    {
+      "name": "failed_delivery_skips_restoration",
+      "function": "step",
+      "target": "state.phase in ('bind', 'commit', 'activate', 'deliver')",
+      "replacement": "state.phase in ('bind', 'commit', 'activate')",
+      "detects": ["property.partial_transaction_failure_restores_bindings"]
+    }
+  ]
+}

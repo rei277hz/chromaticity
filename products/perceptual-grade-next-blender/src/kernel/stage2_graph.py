@@ -13,6 +13,7 @@ from .stage2_parameters import (
 
 PARAMETER_IMAGE = "_perceptual_grade_parameter_schema"
 PARAMETER_BINDING = "_perceptual_grade_parameter_image"
+PARAMETER_READER = "_perceptual_grade_parameter_reader"
 
 
 class ParameterBindings:
@@ -143,15 +144,19 @@ def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,
                 (decoded.saturated, "Saturated"),
             ):
                 graph.connect(value, output.inputs[socket_name])
+        for node in tree.nodes:
+            if getattr(node, "image", None) == graph.parameters.image:
+                node[PARAMETER_READER] = True
         tree["_perceptual_grade_stage2_complete"] = True
         return BuiltGrade(tree, tuple(graph.images), tuple(graph.helper_groups),
-                          prepared, count_nodes(tree, graph.images))
+                          prepared, count_nodes(tree, graph.images),
+                          () if parameter_image is None else (parameter_image,))
     except BaseException:
         bpy.data.node_groups.remove(tree, do_unlink=True)
         for helper in graph.helper_groups:
             if helper.users == 0:
                 bpy.data.node_groups.remove(helper)
         for image in graph.images:
-            if image.users == 0:
+            if image != parameter_image and image.users == 0:
                 bpy.data.images.remove(image)
         raise

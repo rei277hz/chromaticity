@@ -25,6 +25,7 @@ class Event:
         "gesture_release",
         "stack_replace",
         "grade_changed",
+        "presentation",
         "dispose",
     ]
     signature: Optional[str] = None
@@ -118,6 +119,9 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
     """Reduce node lifecycle and ordered Grade Stack events."""
     if event.kind == "dispose":
         return new(), Effects(dispose=True)
+
+    if event.kind == "presentation":
+        return state, _effects(state)
 
     if event.kind == "stack_replace":
         changed = state.grade_ids != event.grade_ids

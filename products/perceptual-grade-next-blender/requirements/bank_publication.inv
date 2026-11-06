@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["new"],
+  "step": "step",
+  "invariants": {},
+  "contracts": {
+    "new": {
+      "ensures": ["result == State('idle')"]
+    }
+  },
+  "properties": [
+    {
+      "name": "staging_uses_a_valid_inactive_bank",
+      "variables": {"event": "Event"},
+      "lets": {"transition": "step(new(), event)"},
+      "assert": "transition[1].action != 'stage' or (event.kind == 'begin' and not event.failed and event.active_bank in (0, 1) and event.candidate_bank in (0, 1) and event.candidate_bank != event.active_bank and transition[1].bank == event.candidate_bank)"
+    },
+    {
+      "name": "selector_change_requires_clean_staging_receipt",
+      "variables": {"state": "State", "event": "Event"},
+      "lets": {"transition": "step(state, event)"},
+      "assume": ["state.phase != 'stage' or (state.active_bank in (0, 1) and state.candidate_bank in (0, 1) and state.active_bank != state.candidate_bank)"],
+      "assert": "transition[1].action != 'select' or (state.phase == 'stage' and event.kind == 'staged' and not event.failed and event.clean and state.candidate_bank != state.active_bank and transition[1].bank == state.candidate_bank)"
+    },
+    {
+      "name": "delivery_requires_selector_readback",
+      "variables": {"state": "State", "event": "Event"},
+      "lets": {"transition": "step(state, event)"},
+      "assume": ["state.phase != 'select' or (state.active_bank in (0, 1) and state.candidate_bank in (0, 1) and state.active_bank != state.candidate_bank)"],
+      "assert": "transition[1].action != 'deliver' or (state.phase == 'select' and event.kind == 'selected' and not event.failed and event.selected_bank == state.candidate_bank and transition[1].bank == state.candidate_bank)"
+    },
+    {
+      "name": "failed_staging_fails_closed_without_changing_selector",
+      "variables": {"state": "State"},
+      "assume": ["state.phase == 'stage'", "state.active_bank in (0, 1)", "state.candidate_bank in (0, 1)", "state.active_bank != state.candidate_bank"],
+      "assert": "step(state, Event('staged', clean=False)) == (State('fail', state.active_bank, state.candidate_bank), Effects('fail_closed', state.active_bank))"
+    },
+    {
+      "name": "selector_failure_restores_original_bank_before_fail_closed",
+      "variables": {"state": "State"},
+      "assume": ["state.phase == 'select'", "state.active_bank in (0, 1)", "state.candidate_bank in (0, 1)", "state.active_bank != state.candidate_bank"],
+      "assert": "step(state, Event('selected', selected_bank=state.active_bank)) == (State('restore_selector', state.active_bank, state.candidate_bank), Effects('restore_selector', state.active_bank))"
+    },
+    {
+      "name": "failed_selector_receipt_restores_original_bank",
+      "variables": {"state": "State"},
+      "assume": ["state.phase == 'select'", "state.active_bank in (0, 1)", "state.candidate_bank in (0, 1)", "state.active_bank != state.candidate_bank"],
+      "assert": "step(state, Event('selected', selected_bank=state.candidate_bank, failed=True)) == (State('restore_selector', state.active_bank, state.candidate_bank), Effects('restore_selector', state.active_bank))"
+    },
+    {
+      "name": "selector_restore_always_fails_closed",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["state.phase == 'restore_selector'", "state.active_bank in (0, 1)"],
+      "assert": "step(state, Event('restored', failed=event.failed)) == (State('fail', state.active_bank, state.candidate_bank), Effects('fail_closed', state.active_bank))"
+    },
+    {
+      "name": "failed_closed_gate_retains_its_retry_effect",
+      "variables": {"state": "State"},
+      "assume": ["state.phase == 'fail'"],
+      "assert": "step(state, Event('closed', failed=True)) == (state, Effects('fail_closed', state.active_bank))"
+    },
+    {
+      "name": "failed_staging_never_selects_or_delivers",
+      "variables": {"event": "Event"},
+      "lets": {"transition": "step(State('stage', 0, 1), Event('staged', clean=event.clean, failed=True))"},
+      "assert": "transition[1].action == 'fail_closed' and transition[0].phase == 'fail'"
+    },
+    {
+      "name": "failed_delivery_restores_original_selector",
+      "variables": {"bank": "int", "candidate": "int"},
+      "assume": ["bank != candidate"],
+      "assert": "step(State('deliver', bank, candidate), Event('delivered', failed=True)) == (State('restore_selector', bank, candidate), Effects('restore_selector', bank))"
+    },
+    {
+      "name": "terminal_receipts_are_inert",
+      "variables": {"event": "Event"},
+      "assert": "step(State('terminal'), event) == (State('terminal'), Effects())"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "inactive_bank_is_staged_then_selected",
+      "variables": {},
+      "lets": {
+        "started": "step(new(), Event('begin', active_bank=0, candidate_bank=1))",
+        "staged": "step(started[0], Event('staged', clean=True))",
+        "selected": "step(staged[0], Event('selected', selected_bank=1))",
+        "delivered": "step(selected[0], Event('delivered'))"
+      },
+      "assert": "started[1] == Effects('stage', 1) and staged[1] == Effects('select', 1) and selected[1] == Effects('deliver', 1) and delivered == (State('terminal'), Effects())"
+    },
+    {
+      "name": "dirty_stage_fails_without_selector_change",
+      "variables": {},
+      "lets": {
+        "started": "step(new(), Event('begin', active_bank=0, candidate_bank=1))",
+        "failed": "step(started[0], Event('staged', clean=False))",
+        "closed": "step(failed[0], Event('closed'))"
+      },
+      "assert": "failed == (State('fail', 0, 1), Effects('fail_closed', 0)) and closed == (State('terminal'), Effects())"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "active_bank_can_be_staged",
+      "function": "step",
+      "target": "event.active_bank == event.candidate_bank",
+      "replacement": "False",
+      "detects": ["property.staging_uses_a_valid_inactive_bank"]
+    },
+    {
+      "name": "dirty_candidate_can_be_selected",
+      "function": "step",
+      "target": "event.failed or not event.clean",
+      "replacement": "event.failed",
+      "detects": ["property.selector_change_requires_clean_staging_receipt"]
+    },
+    {
+      "name": "selector_readback_is_ignored",
+      "function": "step",
+      "target": "event.failed or event.selected_bank != state.candidate_bank",
+      "replacement": "event.failed",
+      "detects": ["property.delivery_requires_selector_readback"]
+    },
+    {
+      "name": "failed_delivery_is_accepted",
+      "function": "step",
+      "target": "event.kind == 'delivered' and event.failed",
+      "replacement": "False",
+      "detects": ["property.failed_delivery_restores_original_selector"]
+    }
+  ]
+}

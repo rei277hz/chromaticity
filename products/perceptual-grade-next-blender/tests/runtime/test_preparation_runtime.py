@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 from importlib.resources import files
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -33,8 +34,8 @@ class PreparationRuntimeTests(unittest.TestCase):
                 del sys.modules[name]
         cls.directory.cleanup()
 
-    def runtime(self, prepare):
-        runtime = self.runtime_module.PreparationRuntime(prepare)
+    def runtime(self, prepare, **kwargs):
+        runtime = self.runtime_module.PreparationRuntime(prepare, **kwargs)
         self.addCleanup(runtime.close)
         return runtime
 
@@ -68,6 +69,124 @@ class PreparationRuntimeTests(unittest.TestCase):
                     return
             time.sleep(.001)
         self.fail("main-thread preparation was not queued")
+
+    def test_observer_failure_does_not_change_success_failure_or_recovery(self):
+        observed = []
+
+        def observer(event, **fields):
+            observed.append((event, fields))
+            raise RuntimeError("diagnostic writer unavailable")
+
+        def prepare(value):
+            if value == "bad":
+                raise ValueError("preparation failed")
+            return value
+
+        runtime = self.runtime(prepare, on_event=observer)
+        source = object()
+        runtime.request(source, "A", "ready")
+        self.assertEqual(self.outcomes(runtime.wait()), ((source, "A", "ready", None),))
+        runtime.request(source, "B", "bad")
+        failed = runtime.wait()
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].signature, "B")
+        self.assertIsInstance(failed[0].error, ValueError)
+        self.assertEqual(str(failed[0].error), "preparation failed")
+        self.assertIn(("preparation_execute_finish", {
+            "signature": "B", "lane": "default", "progressive": False,
+            "error": "preparation failed", "error_type": "ValueError",
+        }), observed)
+
+        runtime.on_event = None
+        count = len(observed)
+        runtime.request(source, "C", "recovered")
+        self.assertEqual(self.outcomes(runtime.wait()),
+                         ((source, "C", "recovered", None),))
+        runtime.forget(source)
+        self.assertEqual(len(observed), count)
+
+    def test_trace_correlates_latest_inputs_and_replaced_publications(self):
+        started, release = threading.Event(), threading.Event()
+        observed, calls = [], []
+        prepared = object()
+
+        def observer(event, **fields):
+            observed.append((event, fields))
+
+        def prepare(payload):
+            calls.append(payload["key"])
+            if payload["key"] == "A":
+                started.set()
+                self.assertTrue(release.wait(10))
+            return prepared
+
+        runtime = self.runtime(prepare, on_event=observer)
+        self.addCleanup(release.set)
+        source = object()
+        runtime.request(source, "A", {"key": "A", "private": object()})
+        self.wait_started(started)
+        for signature in ("B", "C"):
+            runtime.request(source, signature, {"key": signature, "private": object()})
+        release.set()
+        self.wait_settled(runtime, source)
+        runtime.request(source, "D", {"key": "D", "private": object()})
+        self.wait_settled(runtime, source)
+        self.assertEqual(self.outcomes(runtime.collect()),
+                         ((source, "D", prepared, None),))
+        runtime.forget(source)
+
+        self.assertEqual(calls, ["A", "C", "D"])
+        requests = [fields for event, fields in observed if event == "preparation_request"]
+        self.assertEqual([row["signature"] for row in requests], ["A", "B", "C", "D"])
+        self.assertEqual([row["previous_signature"] for row in requests], [None, "A", "B", "C"])
+        publications = [fields for event, fields in observed
+                        if event == "preparation_publication"]
+        self.assertEqual([(row["signature"], row["replaced_signature"])
+                          for row in publications], [("A", None), ("C", "A"), ("D", "C")])
+        collected = [fields for event, fields in observed if event == "preparation_collection"]
+        self.assertEqual([row["signature"] for row in collected], ["D"])
+        source_rows = [fields for _event, fields in observed if "source_id" in fields]
+        self.assertEqual({row["source_id"] for row in source_rows}, {id(source)})
+        self.assertEqual(len({row["subscription_id"] for row in source_rows}), 1)
+        self.assertEqual(observed[-1][0], "preparation_forget")
+        # Opaque input/result/source objects must never escape into diagnostics.
+        json.dumps(observed, allow_nan=False)
+
+    def test_trace_distinguishes_inflight_and_cached_shared_work(self):
+        started, release, joined = (threading.Event() for _ in range(3))
+        observed, calls = [], []
+
+        def observer(event, **fields):
+            observed.append((event, fields))
+            if event == "preparation_reuse" and fields["kind"] == "inflight":
+                joined.set()
+
+        def prepare(value):
+            calls.append(value)
+            started.set()
+            self.assertTrue(release.wait(10))
+            return value
+
+        runtime = self.runtime(prepare, on_event=observer)
+        self.addCleanup(release.set)
+        first, second, third = object(), object(), object()
+        runtime.request(first, "same", "prepared")
+        self.wait_started(started)
+        runtime.request(second, "same", "prepared")
+        self.wait_started(joined)
+        release.set()
+        runtime.wait()
+        runtime.request(third, "same", "prepared")
+        self.assertEqual(self.outcomes(runtime.wait()),
+                         ((third, "same", "prepared", None),))
+
+        reused = [fields for event, fields in observed if event == "preparation_reuse"]
+        self.assertEqual([(row["source_id"], row["signature"], row["kind"])
+                          for row in reused],
+                         [(id(second), "same", "inflight"), (id(third), "same", "cache")])
+        self.assertEqual(calls, ["prepared"])
+        self.assertEqual(sum(event == "preparation_execute_start" for event, _ in observed), 1)
+        self.assertEqual(sum(event == "preparation_execute_finish" for event, _ in observed), 1)
 
     def test_drag_keeps_only_latest_and_starts_successor_without_polling(self):
         started_a, started_d = threading.Event(), threading.Event()

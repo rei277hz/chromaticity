@@ -5,7 +5,6 @@ import importlib
 import json
 from pathlib import Path
 import sys
-from types import SimpleNamespace
 
 import bpy
 import numpy as np
@@ -75,7 +74,8 @@ for exposure in (0.25, 0.5, 0.75):
     grade.pg_linear.exposure = exposure
     reconcile()
     image = assert_clean_shared_image(users)
-    assert image.as_pointer() == original_image_pointer
+    assert image.as_pointer() != original_image_pointer
+    original_image_pointer = image.as_pointer()
     assert tuple(node.node_tree.as_pointer() for node in users) == original_kernels
     assert not bpy.ops.image.save_all_modified.poll()
 
@@ -116,81 +116,55 @@ assert_clean_shared_image(users)
 del restored
 
 
-class PublicationImage:
-    """Retain real image writes while observing or failing native invalidation."""
-
-    def __init__(self, image, trees, *, fail):
-        self.image = image
-        self.trees = trees
-        self.fail = fail
-
-    def __getattr__(self, name):
-        return getattr(self.image, name)
-
-    def __getitem__(self, key):
-        return self.image[key]
-
-    def __setitem__(self, key, value):
-        self.image[key] = value
-
-    def __delitem__(self, key):
-        del self.image[key]
-
-    def __contains__(self, key):
-        return key in self.image
-
-    def update_tag(self):
-        signature = self.image.get(nodes.PARAMETER_SIGNATURE)
-        assert signature != previous_signature
-        assert all(tree.get(nodes.PARAMETER_SIGNATURE) == signature
-                   for tree in self.trees.values())
-        assert self.image.packed_file is not None and not self.image.is_dirty
-        assert not installation_receipts, installation_receipts
-        tag_attempts.append(self.image.as_pointer())
-        if self.fail:
-            raise RuntimeError("simulated Grade image invalidation failure")
-        self.image.update_tag()
-
-
-original_resource = nodes._grade_resources.resource
+original_invalidation = nodes._invalidate_grade_parameters
 original_dispatch = nodes._dispatch
 original_publication = nodes._publish_grade_parameters
 for fail_invalidation in (False, True):
     image = assert_clean_shared_image(users)
     image.use_fake_user = True
     previous_signature = image.get(nodes.PARAMETER_SIGNATURE)
+    previous_pixels = np.asarray(image.pixels[:], dtype=np.float32)
     previous_kernels = tuple(node.node_tree.as_pointer() for node in users)
     tag_attempts, installation_receipts, invalidation_errors = [], [], []
 
-    def observing_resource(node, space):
-        resource = original_resource(node, space)
-        return SimpleNamespace(
-            image=PublicationImage(resource.image, resource.trees, fail=fail_invalidation),
-            trees=resource.trees,
-        )
+    def observing_invalidation(candidate):
+        signature = candidate.get(nodes.PARAMETER_SIGNATURE)
+        assert candidate.as_pointer() != image.as_pointer()
+        assert signature != previous_signature
+        assert all(node.node_tree.get(nodes.PARAMETER_SIGNATURE) == signature
+                   for node in users)
+        assert all(parameter_image(node) == candidate for node in users)
+        assert candidate.packed_file is not None and not candidate.is_dirty
+        assert not installation_receipts, installation_receipts
+        tag_attempts.append(candidate.as_pointer())
+        if fail_invalidation:
+            raise RuntimeError("simulated Grade image invalidation failure")
+        original_invalidation(candidate)
 
     def observing_dispatch(node, event, *args, **kwargs):
         if event.kind == "installation_result" and event.error is None:
-            assert tag_attempts == [image.as_pointer()], tag_attempts
+            assert len(tag_attempts) == 1, tag_attempts
             installation_receipts.append(node.as_pointer())
         return original_dispatch(node, event, *args, **kwargs)
 
-    def observing_publication(*args):
-        result = original_publication(*args)
+    def observing_publication(*args, **kwargs):
+        result = original_publication(*args, **kwargs)
         invalidation_errors.extend(error for _nodes, error in result)
         return result
 
-    nodes._grade_resources.resource = observing_resource
+    nodes._invalidate_grade_parameters = observing_invalidation
     nodes._dispatch = observing_dispatch
     nodes._publish_grade_parameters = observing_publication
     try:
         grade.pg_linear.exposure += 0.0625
         reconcile()
     finally:
-        nodes._grade_resources.resource = original_resource
+        nodes._invalidate_grade_parameters = original_invalidation
         nodes._dispatch = original_dispatch
         nodes._publish_grade_parameters = original_publication
-    assert tag_attempts == [image.as_pointer()], tag_attempts
+    assert len(tag_attempts) == 1, tag_attempts
+    assert image.get(nodes.PARAMETER_SIGNATURE) == previous_signature
+    np.testing.assert_array_equal(image.pixels[:], previous_pixels)
     assert image.packed_file is not None and not image.is_dirty
     if fail_invalidation:
         assert not installation_receipts, installation_receipts
@@ -238,7 +212,7 @@ class PackingImage:
 
 original_packer = nodes._pack_grade_parameters
 packing_results = []
-for fail_count, silent in ((1, False), (1, True), (2, False)):
+for fail_count, silent in ((1, False), (1, True)):
     image = assert_clean_shared_image(users)
     image.use_fake_user = True
     previous_pixels = np.asarray(image.pixels[:], dtype=np.float32)
@@ -254,10 +228,11 @@ for fail_count, silent in ((1, False), (1, True), (2, False)):
         reconcile()
     finally:
         nodes._pack_grade_parameters = original_packer
-    assert len(attempts) == 2, attempts
+    assert len(attempts) == 1, attempts
+    assert attempts[0] != image.as_pointer()
     assert image.get(nodes.PARAMETER_SIGNATURE) == previous_signature
     np.testing.assert_array_equal(image.pixels[:], previous_pixels)
-    assert image.is_dirty == (fail_count == 2)
+    assert not image.is_dirty, "Failed candidate packing dirtied the published image"
     for node in users:
         state = nodes._node_stores[node.as_pointer()]["state"]
         assert not nodes.node_policy.output_allowed(state)
@@ -304,14 +279,14 @@ def failing_presenter(records, signature, error, quality="full"):
 
 def failing_retirement(kernels):
     result = original_retirement(kernels)
-    if not kernels:
+    if len(presented) >= len(users) and not retirement_attempts:
         retirement_attempts.append(True)
         return result + (RuntimeError("transaction retirement failed"),)
     return result
 
 
-def record_publication(*args):
-    result = original_publication(*args)
+def record_publication(*args, **kwargs):
+    result = original_publication(*args, **kwargs)
     transaction_failures.extend(error for _nodes, error in result)
     return result
 
@@ -375,8 +350,8 @@ def returning_presenter(records, signature, error, quality="full"):
     return result
 
 
-def record_returned_publication(*args):
-    result = original_publication(*args)
+def record_returned_publication(*args, **kwargs):
+    result = original_publication(*args, **kwargs)
     returned_failures.extend(error for _nodes, error in result)
     return result
 
@@ -419,8 +394,8 @@ def failing_previous_retirement(kernels):
     return original_retirement(kernels)
 
 
-def record_replacement_publication(*args):
-    result = original_publication(*args)
+def record_replacement_publication(*args, **kwargs):
+    result = original_publication(*args, **kwargs)
     replacement_failures.extend(error for _nodes, error in result)
     return result
 
@@ -434,7 +409,8 @@ finally:
     nodes._retire_kernels = original_retirement
     nodes._publish_grade_parameters = original_publication
 assert replacement_retirements == [previous_kernel.as_pointer()], replacement_retirements
-assert [str(error) for error in replacement_failures] == ["previous kernel retirement failed"]
+assert [message for error in replacement_failures for message in diagnostic_messages(error)] == [
+    "previous kernel retirement failed"], replacement_failures
 assert previous_kernel.users == 0
 assert shader.node_tree == current_shader_kernel
 assert_clean_shared_image(users)

@@ -85,12 +85,15 @@ class PreparationRuntime:
     ``request`` and ``collect`` never wait for preparation. ``wait`` is the
     synchronous host bridge to ``wait_current``; neither waits for host-side
     installation. Source keys are opaque host-owned identities, never RNA.
+    ``on_event(name, **fields)`` is an optional diagnostic observer. It receives
+    plain values on the calling thread and cannot affect preparation outcomes.
     """
 
-    def __init__(self, prepare=None, *, workers=1, default_lane="default"):
+    def __init__(self, prepare=None, *, workers=1, default_lane="default", on_event=None):
         if not isinstance(default_lane, str) or not default_lane:
             raise ValueError("Default lane name must be nonempty")
         self.default_lane = default_lane
+        self.on_event = on_event
         self.executor = None
         self._lanes = {}
         if prepare is not None:
@@ -157,6 +160,15 @@ class PreparationRuntime:
     def _raise_failure(self):
         if self._failure is not None:
             raise RuntimeError("Preparation coordinator failed") from self._failure
+
+    def _observe(self, event, **fields):
+        observer = self.on_event
+        if observer is not None:
+            try:
+                observer(event, **fields)
+            except Exception:
+                # Diagnostics must not turn successful work into a Grade error.
+                pass
 
     def register_lane(self, name, prepare, *, workers=1, progressive=False):
         """Add an independent worker pool under the existing asyncio coordinator."""
@@ -241,6 +253,15 @@ class PreparationRuntime:
             if subscription is None:
                 subscription = _Source(source)
                 self._sources[source] = subscription
+            if self.on_event is not None:
+                previous = subscription.latest
+                self._observe(
+                    "preparation_request", source_id=id(source),
+                    subscription_id=id(subscription), signature=signature,
+                    lane=lane, progressive=bool(progressive),
+                    previous_signature=None if previous is None else previous.signature,
+                    replaced_unconsumed=subscription.dirty,
+                )
             mailbox = self._publications.get(subscription)
             if mailbox is not None:
                 mailbox.pop("error", None)
@@ -260,6 +281,13 @@ class PreparationRuntime:
             subscription = self._sources.pop(source, None)
             if subscription is None:
                 return
+            if self.on_event is not None:
+                self._observe(
+                    "preparation_forget", source_id=id(source),
+                    subscription_id=id(subscription),
+                    signature=(None if subscription.latest is None
+                               else subscription.latest.signature),
+                )
             self._publications.pop(subscription, None)
             subscription.latest = None
             subscription.dirty = True
@@ -320,6 +348,15 @@ class PreparationRuntime:
             "request", None if snapshot is None else snapshot.request_signature
         )
         record.state, effects = preparation_policy.step(record.state, event)
+        if self.on_event is not None:
+            self._observe(
+                "preparation_input_sync", source_id=id(source.key),
+                subscription_id=id(source),
+                signature=None if snapshot is None else snapshot.signature,
+                running_request_signature=record.state.running_signature,
+                desired_request_signature=record.state.desired_signature,
+                prepare_request_signature=effects.prepare_signature,
+            )
         self._consume_locked(source, record, effects, snapshot)
         self._settled_locked(source, record)
 
@@ -363,13 +400,38 @@ class PreparationRuntime:
         """Coalesce effect-authorized receipts within one subscription lifetime."""
         slots = self._publications.setdefault(source, {})
         if publication.error is not None:
+            if self.on_event is not None:
+                previous = slots.get("error")
+                self._observe(
+                    "preparation_publication", source_id=id(source.key),
+                    subscription_id=id(source), signature=publication.signature,
+                    lane=publication.lane, quality=publication.quality,
+                    progressive=publication.progressive, error=str(publication.error),
+                    replaced_signature=None if previous is None else previous.signature,
+                )
             slots["error"] = publication
             return
         previous = slots.get("success")
         if (previous is not None and previous.signature == publication.signature
                 and previous.lane == publication.lane and previous.quality == "full"
                 and publication.quality == "preview"):
+            if self.on_event is not None:
+                self._observe(
+                    "preparation_publication_skipped", source_id=id(source.key),
+                    subscription_id=id(source), signature=publication.signature,
+                    lane=publication.lane, quality=publication.quality,
+                    reason="full_result_already_queued",
+                )
             return
+        if self.on_event is not None:
+            self._observe(
+                "preparation_publication", source_id=id(source.key),
+                subscription_id=id(source), signature=publication.signature,
+                lane=publication.lane, quality=publication.quality,
+                progressive=publication.progressive, error=None,
+                replaced_signature=None if previous is None else previous.signature,
+                replaced_quality=None if previous is None else previous.quality,
+            )
         slots["success"] = publication
 
     async def _publish_preview(self, snapshot, prepared):
@@ -393,6 +455,13 @@ class PreparationRuntime:
     async def _execute(self, snapshot):
         job_key = (snapshot.lane, snapshot.signature, snapshot.progressive)
         lane = self._lanes[snapshot.lane]
+        if self.on_event is not None:
+            self._observe(
+                "preparation_execute_start", signature=snapshot.signature,
+                lane=snapshot.lane, progressive=snapshot.progressive,
+                backend=("host" if lane.host_owner is not None else
+                         "async" if lane.executor is None else "thread"),
+            )
         try:
             if lane.host_owner is not None:
                 prepared = await self._execute_on_host(snapshot, lane)
@@ -412,7 +481,20 @@ class PreparationRuntime:
                 prepared = await self.loop.run_in_executor(lane.executor, call)
             with self._lock:
                 self._prepared[job_key] = prepared
+            if self.on_event is not None:
+                self._observe(
+                    "preparation_execute_finish", signature=snapshot.signature,
+                    lane=snapshot.lane, progressive=snapshot.progressive, error=None,
+                )
             return prepared
+        except BaseException as error:
+            if self.on_event is not None:
+                self._observe(
+                    "preparation_execute_finish", signature=snapshot.signature,
+                    lane=snapshot.lane, progressive=snapshot.progressive,
+                    error=str(error), error_type=type(error).__name__,
+                )
+            raise
         finally:
             with self._lock:
                 if self._jobs.get(job_key) is asyncio.current_task():
@@ -534,6 +616,13 @@ class PreparationRuntime:
                 if not has_prepared and job is None:
                     job = self.loop.create_task(self._execute(snapshot))
                     self._jobs[job_key] = job
+                elif self.on_event is not None:
+                    self._observe(
+                        "preparation_reuse", source_id=id(source.key),
+                        subscription_id=id(source), signature=snapshot.signature,
+                        lane=snapshot.lane, progressive=snapshot.progressive,
+                        kind="cache" if has_prepared else "inflight",
+                    )
             if not has_prepared:
                 prepared = await asyncio.shield(job)
         except Exception as error:
@@ -543,6 +632,12 @@ class PreparationRuntime:
 
         with self._lock:
             if self._records.get(source) is not record:
+                if self.on_event is not None:
+                    self._observe(
+                        "preparation_result_skipped", source_id=id(source.key),
+                        subscription_id=id(source), signature=snapshot.signature,
+                        lane=snapshot.lane, reason="subscription_retired",
+                    )
                 return
             # Admit slider updates before completion chooses its successor.
             self._sync_locked(source)
@@ -552,6 +647,17 @@ class PreparationRuntime:
                 "preparation_result", snapshot.request_signature,
                 None if error is None else str(error),
             ))
+            if self.on_event is not None:
+                self._observe(
+                    "preparation_result", source_id=id(source.key),
+                    subscription_id=id(source), signature=snapshot.signature,
+                    lane=snapshot.lane, progressive=snapshot.progressive,
+                    error=None if error is None else str(error),
+                    running_request_signature=record.state.running_signature,
+                    desired_request_signature=record.state.desired_signature,
+                    result_request_signature=effects.result_signature,
+                    prepare_request_signature=effects.prepare_signature,
+                )
             self._consume_locked(source, record, effects, source.latest, outcome)
             self._settled_locked(source, record)
             self._prune_locked()
@@ -608,8 +714,23 @@ class PreparationRuntime:
                 selected = slots.get("error") or slots.get("success")
                 if (selected is not None and selected.quality == "preview"
                         and (source.latest is None or not source.latest.progressive)):
+                    if self.on_event is not None:
+                        self._observe(
+                            "preparation_collection_skipped", source_id=id(source.key),
+                            subscription_id=id(source), signature=selected.signature,
+                            lane=selected.lane, quality=selected.quality,
+                            reason="preview_no_longer_requested",
+                        )
                     continue
                 if selected is not None:
+                    if self.on_event is not None:
+                        self._observe(
+                            "preparation_collection", source_id=id(source.key),
+                            subscription_id=id(source), signature=selected.signature,
+                            lane=selected.lane, quality=selected.quality,
+                            progressive=selected.progressive,
+                            error=None if selected.error is None else str(selected.error),
+                        )
                     results.append(selected)
             self._publications.clear()
             return tuple(results)
