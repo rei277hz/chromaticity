@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="333" height="20" role="img" aria-label="Linux smoke suites: 36/39 passed (run failed)">
-  <title>Linux smoke suites: 36/39 passed (run failed)</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="333" height="20" role="img" aria-label="Linux smoke suites: 37/39 passed (run failed)">
+  <title>Linux smoke suites: 37/39 passed (run failed)</title>
   <rect width="333" height="20" rx="3" fill="#555"/>
   <path d="M142 0H330Q333 0 333 3V17Q333 20 330 20H142Z" fill="#c62828"/>
   <g fill="#fff" text-anchor="middle" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11">
     <text x="71.0" y="14">Linux smoke suites</text>
-    <text x="237.5" y="14">36/39 passed (run failed)</text>
+    <text x="237.5" y="14">37/39 passed (run failed)</text>
   </g>
 </svg>

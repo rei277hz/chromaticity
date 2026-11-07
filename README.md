@@ -1,8 +1,8 @@
 # Linux build and test results
 
-- Commit: `aaef8d09a6f15a5cf65336ab29ff0b81c2ca5819`
-- Recorded at: 2026-11-06T21:36:30+00:00
-- Run: https://github.com/rei277hz/chromaticity/actions/runs/42295386637
+- Commit: `2adee88eadfa623e665a50d9ba786b801c8f6975`
+- Recorded at: 2026-11-07T00:02:25+00:00
+- Run: https://github.com/rei277hz/chromaticity/actions/runs/42313949415
 
 Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.
 
@@ -15,7 +15,7 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender:verify_policies` | passed |
 | `//products/perceptual-grade-next-blender:extension` | passed |
 
-## Linux smoke suites: 36/39 passed
+## Linux smoke suites: 37/39 passed
 
 Run outcome: **failed**. Command exit: `32`.
 
@@ -55,7 +55,7 @@ Run outcome: **failed**. Command exit: `32`.
 | `//products/perceptual-grade-next-blender/tests:package` | failed |
 | `//products/perceptual-grade-next-blender/tests:install_workspace` | passed |
 | `//products/perceptual-grade-next-blender/tests:installed` | passed |
-| `//products/perceptual-grade-next-blender/tests:compositor_gui` | failed |
+| `//products/perceptual-grade-next-blender/tests:compositor_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:gesture_drag_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:image_save_gui` | passed |
