@@ -21,6 +21,7 @@ class PublicationComparePackageTests(unittest.TestCase):
                 "policy/parameter_publication.py",
                 "policy/bank_publication.py",
                 "runtime/compositor_receipts.py",
+                "runtime/__init__.py",
                 "runtime/drag_trace.py",
                 "runtime/image_publication.py",
                 "runtime/parameter_publication.py",

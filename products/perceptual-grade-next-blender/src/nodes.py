@@ -6,9 +6,7 @@ from functools import partial
 from itertools import count
 import hashlib
 import json
-import sys
 import threading
-import time
 from uuid import uuid4
 
 import bpy
@@ -102,7 +100,6 @@ _gesture_state = gesture_policy.new()
 _gesture_node_serial = count(1)
 _gesture_nodes = {}
 _gesture_invocations = {}
-_drag_trace = None
 _compositor_receipts = CompositorReceipts()
 _KERNEL_SCHEMA = 6
 _KERNEL_KIND = "_perceptual_grade_kernel"
@@ -136,78 +133,6 @@ _LINEAR_DEFAULTS = {
 }
 
 _TONE_FIELDS = TONE_FIELDS
-
-
-def _trace(event, **fields):
-    capture = _drag_trace
-    if capture is not None:
-        capture.emit(event, **fields)
-
-
-def _trace_evaluation(event):
-    capture = _drag_trace
-    if capture is not None:
-        capture.evaluation(event)
-
-
-def _trace_property(callback, settings, context):
-    capture = _drag_trace
-    if capture is not None:
-        capture.property_callback(callback, settings, context)
-
-
-def _trace_property_skip(callback, settings, reason):
-    capture = _drag_trace
-    if capture is not None:
-        capture.property_skip(callback, settings, reason)
-
-
-def _stop_drag_trace():
-    global _drag_trace
-    capture, _drag_trace = _drag_trace, None
-    if capture is None:
-        return None, None
-    return capture.recorder.path, capture.close()
-
-
-class PG_OT_start_drag_trace(bpy.types.Operator):
-    bl_idname = "perceptual_grade.start_drag_trace"
-    bl_label = "Perceptual Grade: Start Drag Trace"
-    bl_description = "Record Grade slider input, preparation, publication, and display activity"
-
-    directory: StringProperty(options={"HIDDEN", "SKIP_SAVE"}, subtype="DIR_PATH")
-
-    def execute(self, _context):
-        global _drag_trace
-        if _drag_trace is not None:
-            self.report({"INFO"}, "Drag trace already active: " + str(_drag_trace.recorder.path))
-            return {"CANCELLED"}
-        from .runtime.drag_diagnostics import Capture
-        try:
-            _drag_trace = Capture(sys.modules[__name__], directory=self.directory or None)
-        except Exception as error:
-            self.report({"ERROR"}, "Could not start Grade drag trace: " + str(error))
-            return {"CANCELLED"}
-        message = "Grade drag trace started: " + str(_drag_trace.recorder.path)
-        print(message)
-        self.report({"INFO"}, message)
-        return {"FINISHED"}
-
-
-class PG_OT_stop_drag_trace(bpy.types.Operator):
-    bl_idname = "perceptual_grade.stop_drag_trace"
-    bl_label = "Perceptual Grade: Stop Drag Trace"
-    bl_description = "Finish the diagnostic log and report its saved path"
-
-    def execute(self, _context):
-        path, error = _stop_drag_trace()
-        if path is None:
-            self.report({"INFO"}, "No Grade drag trace is active")
-            return {"CANCELLED"}
-        message = ("Grade drag trace failed: " + error + "; " if error else "Grade drag trace saved: ") + str(path)
-        print(message)
-        self.report({"ERROR"} if error else {"INFO"}, message)
-        return {"CANCELLED"} if error else {"FINISHED"}
 
 
 def _is_grade_node(node):
@@ -1045,10 +970,7 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
 
 
 def _dispatch_transition(node, record, event, preparation=None, defer_build=False):
-    before = record["state"]
     record["state"], effects = node_policy.step(record["state"], event)
-    if _drag_trace is not None:
-        _drag_trace.transition(node, record, event, before, record["state"], effects)
     failures = _consume_effects(node, effects, preparation, record, defer_build=defer_build)
     return effects, failures
 
@@ -1105,8 +1027,6 @@ def _request_node(node, working_space, snapshots=None):
         and not _compositor_receipts.known(node.as_pointer())
     )
     current = True
-    capture = _drag_trace
-    started_ns = time.perf_counter_ns() if capture is not None else None
     if state.applied_signature is not None:
         current = _kernel_is_current(
             node.node_tree, node.id_data.bl_idname, state.applied_signature,
@@ -1123,11 +1043,6 @@ def _request_node(node, working_space, snapshots=None):
             # publication entirely. Seed their plain evaluation facts before
             # the request's presentation effect claims the result is current.
             _record_compositor_bindings((record,), resource.generation)
-    if capture is not None and started_ns is not None:
-        capture.request_kernel_validation(
-            node, record, started_ns, time.perf_counter_ns(), current,
-            needs_compositor_adoption,
-        )
     if not current:
         failures.extend(_dispatch(node, node_policy.Event(
             "installation_result", None, "Installed Grade kernel is missing or stale")))
@@ -1164,9 +1079,6 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
     global _reconciling
     failures = []
     authorized_builds = {}
-    if _drag_trace is not None:
-        _trace("preparation_received", source_id=id(source), signature=preparation_signature,
-               quality=quality, lane=lane, error=None if error is None else str(error))
     previous_reconciling = _reconciling
     _reconciling = True
     try:
@@ -1532,12 +1444,6 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
                 event_kind, _publication_signature(record, prepared))))
         if delivery_errors:
             raise ExceptionGroup("Grade installation delivery failed", delivery_errors)
-        if _drag_trace is not None:
-            _trace("publication_committed", source_id=id(source),
-                   preparation_signature=preparation_signature,
-                   parameter_generation=generation,
-                   parameter_bank=candidate_bank,
-                   bank_images=[image.as_pointer() for image in resource.images])
         return {"delivered": True}
 
     def restore_selector(bank, _errors):
@@ -1603,8 +1509,6 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         "restore_selector": restore_selector,
         "fail_closed": fail_closed,
     }
-    if _drag_trace is not None:
-        operations = _drag_trace.wrap_publication(operations, source)
     publication = run_bank_publication(
         old_active, candidate_bank, operations,
         admitted=admitted,
@@ -2017,11 +1921,6 @@ def _queue_preparation_completions(completions):
         if _grade_resources is not None:
             source = publication.source if hasattr(publication, "source") else publication[0]
             lane = getattr(publication, "lane", "grade")
-            if _drag_trace is not None:
-                previous = _grade_resources.pending.get((source, lane))
-                _trace("publication_queued", source_id=id(source), lane=lane,
-                       signature=getattr(publication, "signature", None),
-                       replaced_signature=getattr(previous, "signature", None))
             _grade_resources.pending[(source, lane)] = publication
 
 
@@ -2079,18 +1978,11 @@ def _handle_preparation_completions(completions):
     _queue_preparation_completions(completions)
     if _grade_resources is None or not _grade_resources.pending:
         return ()
-    if _drag_trace is not None:
-        _trace("publication_attempt", pending=len(_grade_resources.pending))
     try:
         with _grade_resources.gate.commit():
             return _publish_pending_preparations()
     except PublicationDeferred as error:
         reason = str(error)
-    if _drag_trace is not None:
-        progress = _grade_resources.gate.progress_state
-        _trace("publication_deferred", reason=reason,
-               pending=len(_grade_resources.pending), compositor_scope=None,
-               protected_scene=progress.scene_id, protected_epoch=progress.epoch)
     return ()
 
 
@@ -2109,8 +2001,6 @@ def _preparation_tick():
         return None
     if _node_reset_pending:
         return 0.02
-    if _drag_trace is not None:
-        _trace("preparation_tick")
     try:
         _collect_compositor_receipts()
         _preparation_runtime.pump_main_thread()
@@ -2287,9 +2177,6 @@ def _reset_node_stores():
         # quiescence permits releasing the retained native image versions.
         _grade_resources.gate.reset()
         _grade_resources.clear()
-    capture = _drag_trace
-    if capture is not None:
-        capture.reset_identities()
     sources = tuple(_preparation_sources.values())
     _node_stores.clear()
     _preparation_sources.clear()
@@ -2654,10 +2541,7 @@ def _consume_gesture_effects(effects):
 
 def _dispatch_gesture(event):
     global _gesture_state
-    before = _gesture_state
     _gesture_state, effects = gesture_policy.step(_gesture_state, event)
-    if _drag_trace is not None:
-        _drag_trace.gesture(event, before, _gesture_state, effects)
     _consume_gesture_effects(effects)
 
 
@@ -2674,8 +2558,6 @@ class PG_OT_gesture_router(bpy.types.Operator):
             return {"CANCELLED"}
         self.window_key = window.as_pointer()
         self.token = self.observer_token
-        if _drag_trace is not None:
-            _drag_trace.ui_event(self, context, event, "invoke")
         if (gesture_policy.observer_status(_gesture_state, self.window_key, self.token) != "pending"
                 or self.token not in _gesture_invocations):
             return {"CANCELLED"}
@@ -2691,8 +2573,6 @@ class PG_OT_gesture_router(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
-        if _drag_trace is not None:
-            _drag_trace.ui_event(self, context, event, "modal")
         admission = gesture_policy.observer_status(_gesture_state, self.window_key, self.token)
         if admission == "pending":
             return {"PASS_THROUGH"}
@@ -2780,8 +2660,6 @@ def _stack_active_grade(node):
 
 
 def _grade_changed(grade):
-    capture = _drag_trace
-    started_ns = time.perf_counter_ns() if capture is not None else None
     users = []
     failures = []
     for tree in _all_node_trees():
@@ -2806,18 +2684,11 @@ def _grade_changed(grade):
     refresh = []
     for node in users:
         armed = _gesture_is_armed(node.as_pointer())
-        if _drag_trace is not None:
-            _drag_trace.node_event("grade_changed", node, armed=armed,
-                                   skipped_reason="gesture_armed" if armed else None)
         if not armed:
             refresh.append(node)
     failures.extend(_refresh_nodes(tuple(refresh)))
     for failed_nodes, error in failures:
         print("Perceptual Grade kernel repair failed:", error)
-    if capture is not None and started_ns is not None:
-        capture.grade_changed(
-            grade, started_ns, time.perf_counter_ns(), len(users), len(refresh),
-        )
 
 
 def _all_node_trees():
@@ -2951,7 +2822,6 @@ def _undo_redo_reconcile_tick():
 
 @persistent
 def _render_pre(scene):
-    _trace_evaluation("render_pre")
     if _grade_resources is None:
         return
     gate = _grade_resources.gate
@@ -3006,7 +2876,6 @@ def _render_preflight_tick():
 
 @persistent
 def _render_init(scene, *_args):
-    _trace_evaluation("render_init")
     if _grade_resources is not None:
         with _grade_resources.gate.callback():
             _grade_resources.gate.evaluation_started("render", 0)
@@ -3014,7 +2883,6 @@ def _render_init(scene, *_args):
 
 @persistent
 def _render_finished(scene, *_args):
-    _trace_evaluation("render_finished")
     if _grade_resources is not None:
         with _grade_resources.gate.callback():
             _grade_resources.gate.evaluation_finished("render", 0)
@@ -3022,15 +2890,12 @@ def _render_finished(scene, *_args):
 
 @persistent
 def _compositor_pre(scene, *_args):
-    _trace_evaluation("compositor_pre")
     if _grade_resources is not None:
         with _grade_resources.gate.callback():
             identity = scene.as_pointer()
             snapshot = _compositor_receipts.snapshot(identity)
-            epoch = _grade_resources.gate.evaluation_started(
+            _grade_resources.gate.evaluation_started(
                 "compositor", identity, snapshot=snapshot)
-            _trace("compositor_snapshot", scene_identity=identity,
-                   evaluation_epoch=epoch, generations=tuple(snapshot.items()))
 
 
 @persistent
@@ -3040,21 +2905,15 @@ def _compositor_finished(scene, *, successful):
             receipt = _grade_resources.gate.evaluation_finished(
                 "compositor", scene.as_pointer(), successful=successful)
             _compositor_receipts.completed(receipt)
-            if receipt is not None:
-                _trace("compositor_receipt", scene_identity=receipt.identity,
-                       evaluation_epoch=receipt.epoch, successful=receipt.successful,
-                       generations=receipt.snapshot)
 
 
 @persistent
 def _compositor_post(scene, *_args):
-    _trace_evaluation("compositor_post")
     _compositor_finished(scene, successful=True)
 
 
 @persistent
 def _compositor_cancel(scene, *_args):
-    _trace_evaluation("compositor_cancel")
     _compositor_finished(scene, successful=False)
 
 
@@ -3120,55 +2979,43 @@ def _depsgraph_update_post(_scene, _depsgraph=None):
 
 
 def _linear_changed(settings, _context):
-    _trace_property("linear", settings, _context)
     pointer = settings.as_pointer()
     if pointer in _syncing:
-        _trace_property_skip("linear", settings, "syncing")
         return
     holder = _holder(settings)
     if holder is None:
-        _trace_property_skip("linear", settings, "missing_holder")
         return
     if holder.bl_idname == PGGradeData.bl_idname:
         _grade_changed(holder)
         return
 
     if holder.pg_grade is None:
-        _trace_property_skip("linear", settings, "no_grade")
         # Local settings only supply the disabled controls' neutral values.
         # A Grade must be explicitly created before its settings can be edited.
         _reset_linear(settings)
 
 
 def _tone_changed(settings, _context):
-    _trace_property("tone", settings, _context)
     pointer = settings.as_pointer()
     if pointer in _syncing:
-        _trace_property_skip("tone", settings, "syncing")
         return
     holder = _holder(settings)
     if holder is None:
-        _trace_property_skip("tone", settings, "missing_holder")
         return
     if holder.bl_idname == PGGradeData.bl_idname:
         _grade_changed(holder)
         return
     if holder.pg_grade is None:
-        _trace_property_skip("tone", settings, "no_grade")
         _reset_tone(settings)
 
 
 def _tone_anchor_changed(index):
     def update(settings, context):
-        callback = "tone_anchor." + TONE_LEVEL_FIELDS[index]
-        _trace_property(callback, settings, context)
         pointer = settings.as_pointer()
         if pointer in _syncing:
-            _trace_property_skip(callback, settings, "syncing")
             return
         holder = _holder(settings)
         if holder is None:
-            _trace_property_skip(callback, settings, "missing_holder")
             return
         name = TONE_LEVEL_FIELDS[index]
         controls = _tone_settings(settings)
@@ -3182,11 +3029,8 @@ def _tone_anchor_changed(index):
 
 def _source_white_changed(axis):
     def update(settings, context):
-        callback = "source_white." + str(axis)
-        _trace_property(callback, settings, context)
         pointer = settings.as_pointer()
         if pointer in _syncing:
-            _trace_property_skip(callback, settings, "syncing")
             return
         name = "source_x" if axis == 0 else "source_y"
         value = project_source_white_component(
@@ -3803,13 +3647,6 @@ def draw_add_menu(self, context):
     self.layout.operator(PG_OT_add_stack.bl_idname, text="Grade Stack", icon="NODETREE")
 
 
-def draw_trace_menu(self, _context):
-    # Normal F3 search indexes menu entries, not every registered operator.
-    self.layout.separator()
-    self.layout.operator(PG_OT_start_drag_trace.bl_idname)
-    self.layout.operator(PG_OT_stop_drag_trace.bl_idname)
-
-
 def _register_handlers():
     for collection, callback in (
         (bpy.app.handlers.load_post, _load_post),
@@ -3869,8 +3706,6 @@ def register():
         PG_OT_add_stack,
         PG_OT_stack_action,
         PG_OT_new_stack_grade,
-        PG_OT_start_drag_trace,
-        PG_OT_stop_drag_trace,
         PG_OT_gesture_router,
         PG_PT_linear,
         PG_PT_tone,
@@ -3893,9 +3728,7 @@ def register():
                     bpy.utils.register_class(cls)
                 _registered_classes.append(cls)
 
-        menus = tuple((menu_type, draw_add_menu) for menu_type in MENU_TYPES) + (
-            (bpy.types.TOPBAR_MT_help, draw_trace_menu),
-        )
+        menus = tuple((menu_type, draw_add_menu) for menu_type in MENU_TYPES)
         for menu_type, callback in menus:
             record = (menu_type, callback)
             if record not in _registered_menus:
@@ -3927,13 +3760,6 @@ def unregister():
         # acknowledge existing readers and make a later retry safe.
         _grade_resources.gate.reset()
     errors = []
-    try:
-        path, error = _stop_drag_trace()
-        if path is not None:
-            print("Perceptual Grade drag trace closed:", path, error or "")
-    except Exception as error:
-        # Observability must not prevent the normal extension teardown.
-        print("Perceptual Grade drag trace cleanup failed:", error)
     _clear_gestures()
     try:
         if bpy.app.timers.is_registered(_render_preflight_tick):

@@ -53,6 +53,15 @@ class PackageTests(unittest.TestCase):
             self.assertNotIn("perceptual_grade_core/registration.py", names)
             self.assertFalse(any(name.startswith("perceptual_grade_core/") for name in names))
             self.assertFalse(any(name.startswith("src/") for name in names))
+            self.assertFalse(any(name in {
+                "runtime/drag_trace.py",
+                "runtime/drag_diagnostics.py",
+                "runtime/publication_compare_diagnostics.py",
+            } for name in names))
+            nodes_source = archive.read("nodes.py")
+            self.assertNotIn(b"PG_OT_start_drag_trace", nodes_source)
+            self.assertNotIn(b"PG_OT_stop_drag_trace", nodes_source)
+            self.assertNotIn(b"draw_trace_menu", nodes_source)
             self.assertIn("kernel/output_boundary.npz", names)
             manifest = tomllib.loads(archive.read("blender_manifest.toml").decode())
             self.assertEqual(manifest["id"], "perceptual_grade")
@@ -71,7 +80,7 @@ class PackageTests(unittest.TestCase):
                        if name.startswith("policy/") and name.endswith(".py")
                        and name != "policy/__init__.py"}
         self.assertEqual(proved, shipped)
-        self.assertEqual(len(proved), 9)
+        self.assertEqual(len(proved), 10)
 
 
 if __name__ == "__main__":
