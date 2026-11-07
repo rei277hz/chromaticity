@@ -52,6 +52,14 @@ enabled_extension = addon_utils.enable(
 assert enabled_extension is extension and not enable_errors, enable_errors
 assert not initial_scans
 assert bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
+localization = nodes.localization
+assert localization._registered
+assert localization.resolve_locale("zh_CN") == "zh_HANS"
+assert localization.resolve_locale("fr_FR") == "en"
+assert localization.tr("node.grade.title", locale="zh_CN") == "调色"
+assert localization.host_messages("zh_CN")[(localization.CONTEXT, "Grade")] == "调色"
+assert localization.host_messages("zh_CN")[("*", "Color")] == "颜色"
+assert localization.host_messages("zh_CN")[("*", "Alpha")] == "Alpha"
 with restricted.RestrictBlend():
     assert type(bpy.data).__name__ == "_RestrictData"
     assert nodes._startup_reconcile_tick() == 0.1
@@ -656,7 +664,7 @@ assert compositor_node.pg_linear.exposure == 0.0
 for node in (shader_node, compositor_node):
     assert node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
     assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
-    assert node.get(nodes._NODE_PENDING) == "Updating - showing last-good result"
+    assert node.get(nodes._NODE_PENDING) == "status.showing_last_good"
 assert_grade_graph(shader_graph)
 assert_grade_graph(compositor_graph)
 release_preparation.set()
@@ -1392,7 +1400,7 @@ try:
     assert local_drag_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
     assert local_drag_node.get(nodes._NODE_ERROR) is None
     assert local_drag_node.get(nodes._NODE_PENDING) == (
-        "Updating - showing last-good result"
+        "status.showing_last_good"
     )
     assert local_drag_node.use_custom_color
     assert all(abs(actual - expected) < 1e-6 for actual, expected in zip(
@@ -1411,7 +1419,7 @@ try:
     assert local_drag_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
     assert local_drag_node.get(nodes._NODE_ERROR) is None
     assert local_drag_node.get(nodes._NODE_PENDING) == (
-        "Updating - showing last-good result"
+        "status.showing_last_good"
     )
 
     release_local_first.set()
@@ -1592,7 +1600,7 @@ try:
     assert nodes.node_policy.output_mode(click_state) == "preview"
     assert click_entry_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
     assert click_entry_node.get(nodes._NODE_PENDING) == (
-        "Updating - showing last-good result"
+        "status.showing_last_good"
     )
     assert modal_runtime._sources[click_source].latest.progressive is False
     assert click_exposures == [3.25], click_exposures
@@ -1688,13 +1696,13 @@ try:
     nodes._preparation_tick()
     assert preparation_exposures == [0.4375, 0.875], preparation_exposures
     assert stale_node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
-    assert stale_node.get(nodes._NODE_PENDING) == "Updating - showing last-good result"
+    assert stale_node.get(nodes._NODE_PENDING) == "status.showing_last_good"
     state = nodes._record_for(stale_node)["state"]
     assert state.applied_signature != state.desired_signature
     assert not nodes.node_policy.output_allowed(state)
     for preview_node in (stale_node, stale_compositor_node):
         assert preview_node.get(nodes._NODE_PENDING) == (
-            "Updating - showing last-good result"
+            "status.showing_last_good"
         )
         assert preview_node.use_custom_color
         assert all(abs(actual - expected) < 1e-6
@@ -1711,7 +1719,7 @@ try:
         assert pending_node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
         assert pending_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
         assert pending_node.get(nodes._NODE_PENDING) == (
-            "Updating - showing last-good result"
+            "status.showing_last_good"
         )
     assert_grade_graph(stale_shader_graph)
     assert_grade_graph(stale_compositor_graph)
@@ -2224,6 +2232,7 @@ bpy.data.node_groups.remove(compositor_tree)
 bpy.data.materials.remove(material)
 
 addon_utils.disable(extension.__name__, default_set=False)
+assert not localization._registered
 assert not nodes.PGShaderGrade.is_registered
 assert not nodes.PGCompositorGrade.is_registered
 assert not nodes.PGGradeData.is_registered
@@ -2251,12 +2260,14 @@ enabled_extension = addon_utils.enable(
     extension.__name__, default_set=False, handle_error=enable_errors.append
 )
 assert enabled_extension is extension and not enable_errors, enable_errors
+assert localization._registered
 assert len(initial_scans) == scans_before_reenable
 assert bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
 with restricted.RestrictBlend():
     assert nodes._startup_reconcile_tick() == 0.1
 assert len(initial_scans) == scans_before_reenable
 addon_utils.disable(extension.__name__, default_set=False)
+assert not localization._registered
 assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
 nodes._ensure_all_kernels = original_ensure_all_kernels
 

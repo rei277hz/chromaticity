@@ -1,4 +1,7 @@
 {
   "schema": 1,
-  "runtime_json": []
+  "runtime_json": [
+    "localization/locales/en.json",
+    "localization/locales/zh_HANS.json"
+  ]
 }

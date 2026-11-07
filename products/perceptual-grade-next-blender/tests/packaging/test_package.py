@@ -29,6 +29,11 @@ class PackageTests(unittest.TestCase):
                 "runtime/worker.py",
                 "runtime/worker_main.py",
                 "nodes.py",
+                "localization/__init__.py",
+                "localization/locales/en.json",
+                "localization/locales/zh_HANS.json",
+                "localization/locales/en/LC_MESSAGES/perceptual_grade.mo",
+                "localization/locales/zh_HANS/LC_MESSAGES/perceptual_grade.mo",
                 "blender_manifest.toml",
                 "LICENSE",
                 "README.md",
@@ -70,6 +75,17 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(manifest["license"], ["SPDX:GPL-3.0-or-later"])
             self.assertFalse(any(name.startswith("invariant/") for name in names))
             self.assertFalse(any(name.endswith("_contracts.py") for name in names))
+            catalogs = {
+                locale: json.loads(archive.read(
+                    f"localization/locales/{locale}.json"
+                ))
+                for locale in ("en", "zh_HANS")
+            }
+            self.assertEqual(catalogs["en"].keys(), catalogs["zh_HANS"].keys())
+            self.assertEqual(
+                {name for name in names if name.endswith(".json")},
+                {"localization/locales/en.json", "localization/locales/zh_HANS.json"},
+            )
 
     def test_external_proof_report_covers_every_shipped_policy(self):
         root = files("tests.perceptual_grade_blender")
