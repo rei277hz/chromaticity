@@ -79,23 +79,10 @@ error and magenta output with alpha preserved. File load, working-space changes,
 and Grade reassignment fence obsolete source subscriptions and reconcile kernels.
 Shutdown withdraws pending demand and waits for active physical work to retire.
 
-To diagnose slider dragging, use **F3 → Perceptual Grade: Start Drag Trace**.
-Shift-drag a Grade slider in Shading, release and let it settle, then repeat in
-Compositing with Viewer Node visible in an Image Editor. Use
-**F3 → Perceptual Grade: Stop Drag Trace** after the second drag settles.
-Both commands are also available in the **Help** menu and report the absolute
-log path. Files are saved under
-`~/perceptual-grade-drag-logs/`. Send the resulting `.jsonl` file for analysis.
-
-Tracing is off by default. One capture records both workspaces, native gesture
-receipts, authoritative property callbacks (including suppressed callbacks),
-preparation and publication decisions, compositor completion/cancellation, and
-main-thread heartbeat and draw activity. The header identifies the installed
-sources and Blender/GPU environment. A background writer flushes every 250 ms;
-the footer reports dropped events or recording errors. Logging does not read
-image pixels, so draw callbacks indicate redraw activity rather than proof of
-changed display pixels. Stop removes the diagnostic observers and closes the
-file; disabling the extension also closes an active capture.
+The publication comparison example provides F3 drag recording for comparing
+helper-image publication strategies across Shader and Compositor trees. Its
+instructions and trace target are in
+`examples/publication_compare/README.md`.
 
 The native regression pauses a real compositor worker, verifies that both banks
 and the selector stay unchanged during the lease, then checks that publication
@@ -106,11 +93,10 @@ a requested 277 Hz in both editors, using bounded motion that avoids slider
 endpoints:
 
 ```sh
-buck2 test --remote-only //products/perceptual-grade-next-blender/tests:banked_publication_gui //products/perceptual-grade-next-blender/tests:drag_trace_gui
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:banked_publication_gui
 ```
 
-The default native fixtures are 128 × 96. Drag traces record compositor
-completions without pixel readback. Linux software-GPU results do not establish
+The default native fixtures are 128 × 96. Linux software-GPU results do not establish
 behavior on macOS Metal; repeat the continuous-drag acceptance run in the user's
 Blender environment.
 

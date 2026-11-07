@@ -1,13 +1,11 @@
 """Drag recording remains useful under bursts and harmless under failures."""
 
-import importlib
 from importlib.resources import files
 import json
-from pathlib import Path
-import sys
 import tempfile
 import threading
 import time
+from types import ModuleType
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -16,22 +14,12 @@ import zipfile
 class DragTraceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.directory = tempfile.TemporaryDirectory(prefix="grade-drag-trace-package-")
-        root = Path(cls.directory.name)
-        package = root / "grade_drag_trace_test"
-        package.mkdir()
-        with zipfile.ZipFile(files("tests.perceptual_grade_blender") / "extension.zip") as archive:
-            archive.extractall(package)
-        sys.path.insert(0, str(root))
-        cls.module = importlib.import_module("grade_drag_trace_test.runtime.drag_trace")
-
-    @classmethod
-    def tearDownClass(cls):
-        sys.path.remove(cls.directory.name)
-        for name in tuple(sys.modules):
-            if name == "grade_drag_trace_test" or name.startswith("grade_drag_trace_test."):
-                del sys.modules[name]
-        cls.directory.cleanup()
+        archive_path = files("tests.perceptual_grade_blender") / "publication_compare.zip"
+        with zipfile.ZipFile(archive_path) as archive:
+            source = archive.read("runtime/drag_trace.py")
+        cls.module = ModuleType("grade_publication_compare_drag_trace")
+        exec(compile(source, str(archive_path) + "!/runtime/drag_trace.py", "exec"),
+             cls.module.__dict__)
 
     def recorder(self, **kwargs):
         directory = tempfile.TemporaryDirectory(prefix="grade-drag-trace-")
