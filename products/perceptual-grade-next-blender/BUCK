@@ -1,4 +1,4 @@
-load("//build_defs:artifacts.bzl", "generate", "source_tree", "verification_group")
+load("//build_defs:artifacts.bzl", "generate", "python_tool", "source_tree", "verification_group")
 load("//build_defs:invariant.bzl", "invariant_bundle", "invariant_proof")
 load("//build_defs:python_packages.bzl", "component_library", "extension_tree")
 
@@ -501,7 +501,11 @@ invariant_bundle(
 
 extension_tree(
     name = "extension_tree",
-    entrypoints = {path[len(PREFIX):]: path for path in glob([PREFIX + "*.py"])} | {
+    entrypoints = {
+        path[len(PREFIX):]: path
+        for path in glob([PREFIX + "*.py"])
+        if path != PREFIX + "localization.py"
+    } | {
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
         "README.md": "README.md",
@@ -509,7 +513,55 @@ extension_tree(
     visibility = ["PUBLIC"],
     deps = [
         ":kernel_runtime_bundle",
+        ":localization_runtime_bundle",
     ],
+)
+
+CATALOG_PREFIX = PREFIX + "locales/"
+CATALOGS = {
+    path[len(CATALOG_PREFIX):-5]: path
+    for path in glob([CATALOG_PREFIX + "*.json"])
+}
+
+source_tree(
+    name = "catalog_sources",
+    srcs = {locale + ".json": path for locale, path in CATALOGS.items()},
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "compile_locales",
+    srcs = {"pg_nodes_tools/compile_locales.py": "tools/compile_locales.py"},
+    main_module = "pg_nodes_tools.compile_locales",
+    deps = ["//third_party:babel"],
+)
+
+generate(
+    name = "locale_catalogs",
+    args = [
+        "--catalog-dir",
+        "$(location :catalog_sources)",
+    ],
+    outputs = {
+        locale: locale + "/LC_MESSAGES/perceptual_grade.mo"
+        for locale in CATALOGS
+    },
+    tool = ":compile_locales",
+    visibility = ["PUBLIC"],
+)
+
+component_library(
+    name = "localization_runtime",
+    srcs = {"__init__.py": PREFIX + "localization.py"},
+    package = "localization",
+    resources = {
+        "locales/" + locale + ".json": path
+        for locale, path in CATALOGS.items()
+    } | {
+        "locales/" + locale + "/LC_MESSAGES/perceptual_grade.mo": ":locale_catalogs[" + locale + "]"
+        for locale in CATALOGS
+    },
+    visibility = ["PUBLIC"],
 )
 
 python_library(

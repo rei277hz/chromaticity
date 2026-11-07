@@ -67,6 +67,7 @@ from .runtime.image_publication import (
     pack_image_for_save, write_metadata,
 )
 from .runtime.bank_publication import run_bank_publication
+from . import localization
 
 
 SHADER_TREE = "ShaderNodeTree"
@@ -202,7 +203,9 @@ def _reset_tone(settings):
 
 
 def _make_grade(source=None):
-    grade = bpy.data.node_groups.new("Grade", PGGradeData.bl_idname)
+    grade = bpy.data.node_groups.new(
+        localization.tr("node.grade.title"), PGGradeData.bl_idname
+    )
     try:
         if source is not None:
             if _is_grade_node(source):
@@ -327,7 +330,9 @@ def _stack_signature(settings, working_space):
 def _stack_kernel(tree_type, prepared, signature, quality):
     if tree_type not in (SHADER_TREE, COMPOSITOR_TREE):
         raise ValueError("Grade Stack nodes require a Shader or Compositor tree")
-    tree = bpy.data.node_groups.new("Perceptual Grade Stack", tree_type)
+    tree = bpy.data.node_groups.new(
+        localization.tr("datablock.stack"), tree_type
+    )
     graph = Graph(tree, None)
     try:
         color_input = tree.interface.new_socket(
@@ -517,7 +522,34 @@ def _kernel_is_current(kernel, tree_type, signature, quality="full", stack=None,
 
 
 def _kernel_error_text(node):
-    return "Grade output is magenta" if node.get(_NODE_ERROR) else ""
+    return localization.tr("error.output_magenta") if node.get(_NODE_ERROR) else ""
+
+
+_LEGACY_PENDING_MESSAGES = {
+    "Updating - waiting for compositor result": "status.waiting_compositor",
+    "Updating - showing last-good result": "status.showing_last_good",
+    "Preparing Grade - showing identity preview": "status.preparing_identity",
+}
+
+
+def _pending_message(node):
+    pending = node.get(_NODE_PENDING)
+    if not pending:
+        return None
+    if isinstance(pending, str) and pending in localization.CATALOGS["en"]:
+        message_id = pending
+    else:
+        legacy = _LEGACY_PENDING_MESSAGES.get(pending) if isinstance(pending, str) else None
+        message_id = legacy or "status.updating"
+    return localization.tr(message_id)
+
+
+def _draw_node_status(node, layout):
+    pending = _pending_message(node)
+    if pending:
+        layout.label(text=pending, icon="TIME")
+    if node.get(_NODE_ERROR):
+        layout.label(text=_kernel_error_text(node), icon="ERROR")
 
 
 def _visible_compositor_scenes(record):
@@ -629,13 +661,14 @@ def _apply_output_presentation(node, mode, error):
     awaiting_compositor = mode == "current" and _compositor_output_pending(node)
     values = {}
     if mode == "error":
-        values[_NODE_ERROR] = str(error)[:240]
+        print("Perceptual Grade output failed:", error)
+        values[_NODE_ERROR] = True
     elif awaiting_compositor:
-        values[_NODE_PENDING] = "Updating - waiting for compositor result"
+        values[_NODE_PENDING] = "status.waiting_compositor"
     elif mode != "current":
         values[_NODE_PENDING] = (
-            "Updating - showing last-good result" if mode == "preview"
-            else "Preparing Grade - showing identity preview"
+            "status.showing_last_good" if mode == "preview"
+            else "status.preparing_identity"
         )
     for key in (_NODE_ERROR, _NODE_PENDING):
         if key in values:
@@ -2423,7 +2456,9 @@ def _push_gesture_undo(window_key):
                 if region is not None:
                     override["region"] = region
                 with bpy.context.temp_override(**override):
-                    result = bpy.ops.ed.undo_push(message="Perceptual Grade")
+                    result = bpy.ops.ed.undo_push(
+                        message=localization.tr("undo.gesture")
+                    )
                 if result != {"FINISHED"}:
                     raise RuntimeError("Blender did not record the Grade gesture")
                 return True
@@ -2547,7 +2582,8 @@ def _dispatch_gesture(event):
 
 class PG_OT_gesture_router(bpy.types.Operator):
     bl_idname = "perceptual_grade.gesture_router"
-    bl_label = "Perceptual Grade Gesture Router"
+    bl_label = localization.native("operator.gesture_router")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"INTERNAL", "MODAL_PRIORITY"}
 
     observer_token: IntProperty(options={"HIDDEN", "SKIP_SAVE"})
@@ -3089,52 +3125,118 @@ def _output_node_from_context(context):
 
 
 class PGLinearSettings(bpy.types.PropertyGroup):
-    exposure: FloatProperty(name="Exposure", default=0.0, min=-6.0, max=6.0,
+    exposure: FloatProperty(
+        name=localization.native("property.exposure"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.exposure"),
+        default=0.0, min=-6.0, max=6.0,
                              precision=2, update=_linear_changed)
-    source_x: FloatProperty(name="x", default=D65[0], min=0.0, max=0.9,
+    source_x: FloatProperty(
+        name=localization.native("property.source_x"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.source_x"),
+        default=D65[0], min=0.0, max=0.9,
                             precision=5, update=_source_white_changed(0))
-    source_y: FloatProperty(name="y", default=D65[1], min=0.0, max=0.9,
+    source_y: FloatProperty(
+        name=localization.native("property.source_y"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.source_y"),
+        default=D65[1], min=0.0, max=0.9,
                             precision=5, update=_source_white_changed(1))
-    cr_balance: FloatProperty(name="CR Balance", default=0.0, min=-2.0, max=2.0,
+    cr_balance: FloatProperty(
+        name=localization.native("property.cr_balance"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.cr_balance"),
+        default=0.0, min=-2.0, max=2.0,
                               precision=3, update=_linear_changed)
-    yb_balance: FloatProperty(name="YB Balance", default=0.0, min=-2.0, max=2.0,
+    yb_balance: FloatProperty(
+        name=localization.native("property.yb_balance"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.yb_balance"),
+        default=0.0, min=-2.0, max=2.0,
                               precision=3, update=_linear_changed)
-    cr_spread: FloatProperty(name="CR Spread", default=0.0, min=-100.0, max=150.0,
+    cr_spread: FloatProperty(
+        name=localization.native("property.cr_spread"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.cr_spread"),
+        default=0.0, min=-100.0, max=150.0,
                              precision=1, update=_linear_changed)
-    yb_spread: FloatProperty(name="YB Spread", default=0.0, min=-100.0, max=150.0,
+    yb_spread: FloatProperty(
+        name=localization.native("property.yb_spread"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.yb_spread"),
+        default=0.0, min=-100.0, max=150.0,
                              precision=1, update=_linear_changed)
-    cr_heading: FloatProperty(name="CR Heading", default=0.0, min=-180.0, max=180.0,
+    cr_heading: FloatProperty(
+        name=localization.native("property.cr_heading"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.cr_heading"),
+        default=0.0, min=-180.0, max=180.0,
                               precision=1, update=_linear_changed)
-    yb_heading: FloatProperty(name="YB Heading", default=0.0, min=-180.0, max=180.0,
+    yb_heading: FloatProperty(
+        name=localization.native("property.yb_heading"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.yb_heading"),
+        default=0.0, min=-180.0, max=180.0,
                               precision=1, update=_linear_changed)
 
 
 class PGToneSettings(bpy.types.PropertyGroup):
-    input_black: FloatProperty(name="Black", default=TONE_DEFAULTS["input_black"],
+    input_black: FloatProperty(
+        name=localization.native("property.input_black"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.input_black"),
+        default=TONE_DEFAULTS["input_black"],
         min=TONE_LIMITS[0][0], max=TONE_LIMITS[0][1], precision=3,
         update=_tone_anchor_changed(0))
-    input_shadows: FloatProperty(name="Shadows", default=TONE_DEFAULTS["input_shadows"],
+    input_shadows: FloatProperty(
+        name=localization.native("property.input_shadows"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.input_shadows"),
+        default=TONE_DEFAULTS["input_shadows"],
         min=TONE_LIMITS[1][0], max=TONE_LIMITS[1][1], precision=3,
         update=_tone_anchor_changed(1))
-    input_midtones: FloatProperty(name="Midtones", default=TONE_DEFAULTS["input_midtones"],
+    input_midtones: FloatProperty(
+        name=localization.native("property.input_midtones"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.input_midtones"),
+        default=TONE_DEFAULTS["input_midtones"],
         min=TONE_LIMITS[2][0], max=TONE_LIMITS[2][1], precision=2,
         update=_tone_anchor_changed(2))
-    input_white: FloatProperty(name="White", default=TONE_DEFAULTS["input_white"],
+    input_white: FloatProperty(
+        name=localization.native("property.input_white"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.input_white"),
+        default=TONE_DEFAULTS["input_white"],
         min=TONE_LIMITS[3][0], max=TONE_LIMITS[3][1], precision=2,
         update=_tone_anchor_changed(3))
-    input_highlights: FloatProperty(name="Highlights", default=TONE_DEFAULTS["input_highlights"],
+    input_highlights: FloatProperty(
+        name=localization.native("property.input_highlights"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.input_highlights"),
+        default=TONE_DEFAULTS["input_highlights"],
         min=TONE_LIMITS[4][0], max=TONE_LIMITS[4][1], precision=1,
         update=_tone_anchor_changed(4))
-    fit: FloatProperty(name="Fit", default=0.0, min=-2.0, max=2.0,
+    fit: FloatProperty(
+        name=localization.native("property.fit"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.fit"),
+        default=0.0, min=-2.0, max=2.0,
         precision=2, update=_tone_changed)
-    peak_nits: EnumProperty(name="Peak", default="1000",
-        items=[(str(peak), f"{peak} nits", "") for peak in TONE_PEAKS],
+    peak_nits: EnumProperty(
+        name=localization.native("property.peak"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.peak"),
+        default="1000",
+        items=[(str(peak), localization.native(f"tone.peak.{peak}"), "")
+               for peak in TONE_PEAKS],
         update=_tone_changed)
 
 
 class PGGradeData(bpy.types.NodeTree):
     bl_idname = "PGGradeData"
-    bl_label = "Grade"
+    bl_label = localization.native("node.grade.title")
+    bl_translation_context = localization.CONTEXT
     bl_icon = "COLOR"
 
     pg_linear: PointerProperty(type=PGLinearSettings)
@@ -3151,8 +3253,16 @@ def _poll_grade_data(_node, value):
 
 class PGStackEntry(bpy.types.PropertyGroup):
     key: StringProperty(options={"HIDDEN"})
-    enabled: BoolProperty(name="Enabled", default=True, update=_stack_changed)
-    grade: PointerProperty(type=PGGradeData, name="Grade", poll=_poll_grade_data,
+    enabled: BoolProperty(
+        name=localization.native("property.enabled"),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip.enabled"),
+        default=True, update=_stack_changed)
+    grade: PointerProperty(
+                           type=PGGradeData,
+                           name=localization.native("property.grade"),
+                           translation_context=localization.CONTEXT,
+                           poll=_poll_grade_data,
                            update=_stack_changed)
 
 
@@ -3175,15 +3285,12 @@ def _draw_stack_node(node, context, layout):
         op.action, op.index, op.direction = "MOVE", index, 1
         op = row.operator(PG_OT_stack_action.bl_idname, text="", icon="X")
         op.action, op.index = "REMOVE", index
-    op = layout.operator(PG_OT_stack_action.bl_idname, text="Add Grade", icon="ADD")
+    op = layout.operator(
+        PG_OT_stack_action.bl_idname,
+        text=localization.tr("action.stack_add"), icon="ADD",
+    )
     op.action = "ADD"
-    pending = node.get(_NODE_PENDING)
-    if pending:
-        layout.label(text=pending, icon="TIME")
-    error = node.get(_NODE_ERROR)
-    if error:
-        layout.label(text=_kernel_error_text(node), icon="ERROR")
-        layout.label(text=error)
+    _draw_node_status(node, layout)
 
 
 def _draw_stack_settings(node, layout):
@@ -3211,13 +3318,14 @@ def _draw_tone_settings(node, layout):
         column.prop(settings, field, slider=True)
     column.prop(settings, "fit", slider=True)
     column.prop(settings, "peak_nits")
-    column.label(text="Reference: 203 nits")
+    column.label(text=localization.tr("label.reference"))
     column.operator(PG_OT_reset_tone.bl_idname, icon="LOOP_BACK")
 
 
 class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
     bl_idname = "PGShaderGradeStack"
-    bl_label = "Grade Stack"
+    bl_label = localization.native("node.stack.title")
+    bl_translation_context = localization.CONTEXT
     bl_width_default = 320
     pg_stack_entries: CollectionProperty(type=PGStackEntry)
     pg_active_index: IntProperty(default=0, min=0, update=_stack_focus_changed)
@@ -3237,7 +3345,8 @@ class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
 
 class PGCompositorGradeStack(bpy.types.CompositorNodeCustomGroup):
     bl_idname = "PGCompositorGradeStack"
-    bl_label = "Grade Stack"
+    bl_label = localization.native("node.stack.title")
+    bl_translation_context = localization.CONTEXT
     bl_width_default = 320
     pg_stack_entries: CollectionProperty(type=PGStackEntry)
     pg_active_index: IntProperty(default=0, min=0, update=_stack_focus_changed)
@@ -3257,7 +3366,8 @@ class PGCompositorGradeStack(bpy.types.CompositorNodeCustomGroup):
 
 class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
     bl_idname = "PGShaderGrade"
-    bl_label = "Grade"
+    bl_label = localization.native("node.grade.title")
+    bl_translation_context = localization.CONTEXT
     pg_linear: PointerProperty(type=PGLinearSettings)
     pg_tone: PointerProperty(type=PGToneSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
@@ -3267,13 +3377,7 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
         layout.context_pointer_set("pg_node", self)
         layout.template_ID(self, "pg_grade", new=PG_OT_new_grade.bl_idname,
                            unlink=PG_OT_unlink_grade.bl_idname)
-        pending = self.get(_NODE_PENDING)
-        if pending:
-            layout.label(text=pending, icon="TIME")
-        error = self.get(_NODE_ERROR)
-        if error:
-            layout.label(text=_kernel_error_text(self), icon="ERROR")
-            layout.label(text=error)
+        _draw_node_status(self, layout)
 
     def draw_buttons_ext(self, context, layout):
         self.draw_buttons(context, layout)
@@ -3284,7 +3388,8 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
 
 class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
     bl_idname = "PGCompositorGrade"
-    bl_label = "Grade"
+    bl_label = localization.native("node.grade.title")
+    bl_translation_context = localization.CONTEXT
     pg_linear: PointerProperty(type=PGLinearSettings)
     pg_tone: PointerProperty(type=PGToneSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
@@ -3294,13 +3399,7 @@ class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
         layout.context_pointer_set("pg_node", self)
         layout.template_ID(self, "pg_grade", new=PG_OT_new_grade.bl_idname,
                            unlink=PG_OT_unlink_grade.bl_idname)
-        pending = self.get(_NODE_PENDING)
-        if pending:
-            layout.label(text=pending, icon="TIME")
-        error = self.get(_NODE_ERROR)
-        if error:
-            layout.label(text=_kernel_error_text(self), icon="ERROR")
-            layout.label(text=error)
+        _draw_node_status(self, layout)
 
     def draw_buttons_ext(self, context, layout):
         self.draw_buttons(context, layout)
@@ -3311,7 +3410,9 @@ class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
 
 class PG_OT_new_grade(bpy.types.Operator):
     bl_idname = "perceptual_grade.new_grade"
-    bl_label = "New Grade"
+    bl_label = localization.native("operator.new_grade")
+    bl_description = localization.native("action.new_grade_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -3335,7 +3436,9 @@ class PG_OT_new_grade(bpy.types.Operator):
 
 class PG_OT_unlink_grade(bpy.types.Operator):
     bl_idname = "perceptual_grade.unlink_grade"
-    bl_label = "Unlink Grade"
+    bl_label = localization.native("operator.unlink_grade")
+    bl_description = localization.native("action.unlink_grade_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -3353,7 +3456,9 @@ class PG_OT_unlink_grade(bpy.types.Operator):
 
 class PG_OT_match_white(bpy.types.Operator):
     bl_idname = "perceptual_grade.match_white"
-    bl_label = "Match White"
+    bl_label = localization.native("operator.match_white")
+    bl_description = localization.native("action.match_white_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -3371,7 +3476,9 @@ class PG_OT_match_white(bpy.types.Operator):
 
 class PG_OT_reset_directions(bpy.types.Operator):
     bl_idname = "perceptual_grade.reset_directions"
-    bl_label = "Reset Directions"
+    bl_label = localization.native("operator.reset_directions")
+    bl_description = localization.native("action.reset_directions_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -3389,7 +3496,9 @@ class PG_OT_reset_directions(bpy.types.Operator):
 
 class PG_OT_reset_tone(bpy.types.Operator):
     bl_idname = "perceptual_grade.reset_tone"
-    bl_label = "Reset Tone"
+    bl_label = localization.native("operator.reset_tone")
+    bl_description = localization.native("action.reset_tone_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -3414,7 +3523,9 @@ class PG_OT_reset_tone(bpy.types.Operator):
 
 class PG_OT_add_grade(bpy.types.Operator):
     bl_idname = "perceptual_grade.add_grade"
-    bl_label = "Grade"
+    bl_label = localization.native("operator.add_grade")
+    bl_description = localization.native("action.add_grade_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -3436,7 +3547,9 @@ class PG_OT_add_grade(bpy.types.Operator):
 
 class PG_OT_add_stack(bpy.types.Operator):
     bl_idname = "perceptual_grade.add_stack"
-    bl_label = "Grade Stack"
+    bl_label = localization.native("operator.add_stack")
+    bl_description = localization.native("action.add_stack_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -3458,11 +3571,19 @@ class PG_OT_add_stack(bpy.types.Operator):
 
 class PG_OT_stack_action(bpy.types.Operator):
     bl_idname = "perceptual_grade.stack_action"
-    bl_label = "Edit Grade Stack"
+    bl_label = localization.native("operator.stack_action")
+    bl_description = localization.native("action.stack_action_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
-    action: EnumProperty(items=(("ADD", "Add", ""), ("REMOVE", "Remove", ""),
-                                ("MOVE", "Move", ""), ("SELECT", "Select", "")))
+    action: EnumProperty(
+        name=localization.native("property.action"),
+        translation_context=localization.CONTEXT,
+        items=(("ADD", localization.native("enum.action.add"), ""),
+               ("REMOVE", localization.native("enum.action.remove"), ""),
+               ("MOVE", localization.native("enum.action.move"), ""),
+               ("SELECT", localization.native("enum.action.select"), "")),
+    )
     index: IntProperty(default=0, options={"SKIP_SAVE"})
     direction: IntProperty(default=0, min=-1, max=1, options={"SKIP_SAVE"})
 
@@ -3506,7 +3627,9 @@ class PG_OT_stack_action(bpy.types.Operator):
 
 class PG_OT_new_stack_grade(bpy.types.Operator):
     bl_idname = "perceptual_grade.new_stack_grade"
-    bl_label = "New Grade"
+    bl_label = localization.native("operator.new_stack_grade")
+    bl_description = localization.native("action.new_stack_grade_description")
+    bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
     index: IntProperty(default=0, min=0, options={"SKIP_SAVE"})
@@ -3532,10 +3655,11 @@ class PG_OT_new_stack_grade(bpy.types.Operator):
 
 class PG_PT_linear(bpy.types.Panel):
     bl_idname = "PG_PT_linear"
-    bl_label = "Linear"
+    bl_label = localization.native("panel.linear")
+    bl_translation_context = localization.CONTEXT
     bl_space_type = "NODE_EDITOR"
     bl_region_type = "UI"
-    bl_category = "Perceptual Grade"
+    bl_category = localization.native("panel.category")
 
     @classmethod
     def poll(cls, context):
@@ -3574,10 +3698,13 @@ class PG_PT_linear(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(settings, "source_x")
         row.prop(settings, "source_y")
-        layout.operator(PG_OT_match_white.bl_idname, text="Match White", icon="COLOR")
+        layout.operator(
+            PG_OT_match_white.bl_idname,
+            text=localization.tr("operator.match_white"), icon="COLOR",
+        )
         row = layout.row()
         row.enabled = False
-        row.label(text="Working White: D65")
+        row.label(text=localization.tr("label.working_white"))
         layout.separator()
         layout.prop(settings, "cr_balance", slider=True)
         layout.prop(settings, "yb_balance", slider=True)
@@ -3590,10 +3717,11 @@ class PG_PT_linear(bpy.types.Panel):
 
 class PG_PT_tone(bpy.types.Panel):
     bl_idname = "PG_PT_tone"
-    bl_label = "Tone"
+    bl_label = localization.native("panel.tone")
+    bl_translation_context = localization.CONTEXT
     bl_space_type = "NODE_EDITOR"
     bl_region_type = "UI"
-    bl_category = "Perceptual Grade"
+    bl_category = localization.native("panel.category")
 
     @classmethod
     def poll(cls, context):
@@ -3643,8 +3771,14 @@ def draw_add_menu(self, context):
     if tree is None or tree.bl_idname not in NODE_TYPES:
         return
     self.layout.separator()
-    self.layout.operator(PG_OT_add_grade.bl_idname, text="Grade", icon="COLOR")
-    self.layout.operator(PG_OT_add_stack.bl_idname, text="Grade Stack", icon="NODETREE")
+    self.layout.operator(
+        PG_OT_add_grade.bl_idname,
+        text=localization.tr("operator.add_grade"), icon="COLOR",
+    )
+    self.layout.operator(
+        PG_OT_add_stack.bl_idname,
+        text=localization.tr("operator.add_stack"), icon="NODETREE",
+    )
 
 
 def _register_handlers():
@@ -3711,6 +3845,7 @@ def register():
         PG_PT_tone,
     )
     try:
+        localization.register()
         if _preparation_runtime is None:
             if _grade_resources is not None:
                 # A failed prior shutdown may still own native-reader pins.
@@ -3829,6 +3964,11 @@ def unregister():
             errors.append(exc)
             continue
         _registered_classes.remove(cls)
+
+    try:
+        localization.unregister()
+    except Exception as exc:
+        errors.append(exc)
 
     if errors:
         raise ExceptionGroup("Grade node teardown failed", errors)
