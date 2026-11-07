@@ -1,8 +1,8 @@
 # Linux build and test results
 
-- Commit: `2adee88eadfa623e665a50d9ba786b801c8f6975`
-- Recorded at: 2026-11-07T00:02:25+00:00
-- Run: https://github.com/rei277hz/chromaticity/actions/runs/42313949415
+- Commit: `29bdbdad127d47193d3d0aa7dc1e2341300789f2`
+- Recorded at: 2026-11-07T03:49:26+00:00
+- Run: https://github.com/rei277hz/chromaticity/actions/runs/42334549259
 
 Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.
 
@@ -15,7 +15,7 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender:verify_policies` | passed |
 | `//products/perceptual-grade-next-blender:extension` | passed |
 
-## Linux smoke suites: 37/39 passed
+## Linux smoke suites: 38/39 passed
 
 Run outcome: **failed**. Command exit: `32`.
 
@@ -52,7 +52,7 @@ Run outcome: **failed**. Command exit: `32`.
 | `//products/perceptual-grade-next-blender/tests:hdr_metrics` | passed |
 | `//products/perceptual-grade-next-blender/tests:architecture` | passed |
 | `//products/perceptual-grade-next-blender/tests:policy_coverage` | passed |
-| `//products/perceptual-grade-next-blender/tests:package` | failed |
+| `//products/perceptual-grade-next-blender/tests:package` | passed |
 | `//products/perceptual-grade-next-blender/tests:install_workspace` | passed |
 | `//products/perceptual-grade-next-blender/tests:installed` | passed |
 | `//products/perceptual-grade-next-blender/tests:compositor_gui` | passed |
