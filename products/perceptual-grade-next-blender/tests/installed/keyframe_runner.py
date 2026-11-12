@@ -75,6 +75,10 @@ def ui_region():
     return next(region for region in current_area().regions if region.type == "UI")
 
 
+def window_region():
+    return next(region for region in current_area().regions if region.type == "WINDOW")
+
+
 def wait_for(predicate, message, timeout=20):
     deadline = time.monotonic() + timeout
     while not predicate():
@@ -253,6 +257,40 @@ def insert_key(field, position, frame, value):
     })
 
 
+def convert_from_menu(target_kind):
+    region = window_region()
+    with bpy.context.temp_override(window=current_window(), area=current_area(),
+                                   region=region):
+        assert bpy.ops.node.view_selected() == {"FINISHED"}
+    yield .2
+    node = current_node()
+    x, y = region.view2d.view_to_region(
+        node.location.x + node.width / 2, node.location.y - 12, clip=False,
+    )
+    position = region.x + x, region.y + y
+    del node, region
+    send("MOUSEMOVE", "NOTHING", position)
+    yield .1
+    send("RIGHTMOUSE", "PRESS", position)
+    send("RIGHTMOUSE", "RELEASE", position)
+    yield .2
+    # The extension appends its conversion command to the native node popup.
+    # Activate that actual item so a missing or disabled menu fails this test.
+    send("END", "PRESS", position)
+    send("END", "RELEASE", position)
+    yield .05
+    send("RET", "PRESS", position)
+    send("RET", "RELEASE", position)
+    expected_type = (nodes.PER_NODE_NODE_TYPES if target_kind == "NODE"
+                     else nodes.NODE_TYPES)[tree_type]
+    yield from wait_for(
+        lambda: current_node().bl_idname == expected_type,
+        f"Node context menu did not convert {tree_type} Grade to {target_kind}",
+    )
+    report["cases"][-1].setdefault("ownership_conversions", []).append(target_kind)
+    return position
+
+
 def setup():
     area = current_area()
     area.ui_type = tree_type
@@ -266,9 +304,14 @@ def setup():
     else:
         tree = bpy.data.node_groups.new(COMPOSITOR, tree_type)
         bpy.context.scene.compositing_node_group = tree
-    node = nodes.create_per_node_node(tree)
-    node.name = NODE
     area.spaces.active.node_tree = tree
+    with bpy.context.temp_override(window=current_window(), area=area,
+                                   region=window_region()):
+        assert bpy.ops.perceptual_grade.add_grade() == {"FINISHED"}
+    node = tree.nodes.active
+    assert node.bl_idname == nodes.NODE_TYPES[tree_type]
+    assert node.pg_grade is None
+    node.name = NODE
     for item in tree.nodes:
         item.select = item == node
     tree.nodes.active = node
@@ -286,6 +329,7 @@ def run_case():
         lambda: current_area().spaces.active.edit_tree == current_tree(),
         "Node Editor did not select the test tree",
     )
+    yield from convert_from_menu("NODE")
     positions = yield from find_buttons()
     case["copied_paths"] = {field: property_path(field) for field in FIELDS}
     case["copy_data_paths"] = {
@@ -362,6 +406,49 @@ def run_case():
     assert case["auto_key_frames"] == [1, 3, 5], case
     assert case["channel_count"] == 2, case
     assert len(curve("fit").keyframe_points) == 2
+
+    bpy.context.scene.frame_set(2, subframe=.25)
+    yield from wait_for(
+        lambda: abs(current_node().exposure - 1.25) < 1e-6
+        and abs(current_node().fit - .125) < 1e-6,
+        "Grade conversion fixture did not evaluate its current subframe",
+    )
+    with bpy.context.temp_override(window=current_window(), area=current_area(),
+                                   region=window_region()):
+        assert bpy.ops.ed.undo_push(message="Animated Grade conversion baseline") == {"FINISHED"}
+    position = yield from convert_from_menu("DATABLOCK")
+    assert not curves(), "Conversion left Grade animation curves on the static node"
+    grade = current_node().pg_grade
+    case["converted_values"] = {
+        "exposure": float(grade.pg_linear.exposure),
+        "fit": float(grade.pg_tone.fit),
+    }
+    assert abs(case["converted_values"]["exposure"] - 1.25) < 1e-6
+    assert abs(case["converted_values"]["fit"] - .125) < 1e-6
+    del grade
+
+    send("Z", "PRESS", position, ctrl=True)
+    send("Z", "RELEASE", position, ctrl=True)
+    yield from wait_for(
+        lambda: current_node().bl_idname == nodes.PER_NODE_NODE_TYPES[tree_type],
+        "Undo did not restore the animated Grade node",
+    )
+    assert len(curves()) == 2
+    assert len(curve("exposure").keyframe_points) == 3
+    assert len(curve("fit").keyframe_points) == 2
+    send("Z", "PRESS", position, ctrl=True, shift=True)
+    send("Z", "RELEASE", position, ctrl=True, shift=True)
+    yield from wait_for(
+        lambda: current_node().bl_idname == nodes.NODE_TYPES[tree_type],
+        "Redo did not restore the static Grade datablock",
+    )
+    assert not curves()
+    bpy.context.scene.frame_set(3)
+    grade = current_node().pg_grade
+    assert abs(grade.pg_linear.exposure - 1.25) < 1e-6
+    assert abs(grade.pg_tone.fit - .125) < 1e-6
+    del grade
+    case["conversion_undo_redo"] = True
 
 
 def run():

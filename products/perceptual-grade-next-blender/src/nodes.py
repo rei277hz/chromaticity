@@ -64,6 +64,7 @@ from .runtime.grade_resources import (
 from .runtime.publication import PublicationDeferred
 from .runtime.compositor_receipts import CompositorReceipts
 from .runtime.resource_lifecycle import run_resource_lifecycle
+from .runtime.node_conversion_animation import NodeAnimationConversion
 from .runtime.stack_observations import grade_is_referenced, stack_changed
 from .runtime.image_publication import (
     pack_image_for_save, write_metadata,
@@ -129,6 +130,7 @@ _NODE_ERROR = "_perceptual_grade_kernel_error"
 _NODE_ERROR_REASON = "_perceptual_grade_kernel_error_reason"
 _NODE_PENDING = "_perceptual_grade_kernel_pending"
 _NODE_ANIMATION_ERROR = "_perceptual_grade_animation_error"
+_CONVERSION_BACKUP = "_perceptual_grade_conversion_backup"
 _render_validated_scenes = set()
 _LINEAR_FIELDS = (
     "exposure",
@@ -800,6 +802,13 @@ def _kernel_snapshot(node):
 
 
 def _restore_kernel_snapshot(node, kernel, snapshot):
+    node.node_tree = kernel
+    _restore_node_connections(node, snapshot)
+    if node.node_tree != kernel:
+        raise RuntimeError("Kernel replacement did not select the requested group")
+
+
+def _restore_node_connections(node, snapshot):
     tree = node.id_data
     for link in tuple(tree.links):
         touches_node = link.from_node == node or link.to_node == node
@@ -810,7 +819,6 @@ def _restore_kernel_snapshot(node, kernel, snapshot):
         if touches_node or touches_multi_input:
             tree.links.remove(link)
 
-    node.node_tree = kernel
     for name, value in snapshot["values"]:
         socket = node.inputs.get(name)
         if socket is None:
@@ -839,8 +847,6 @@ def _restore_kernel_snapshot(node, kernel, snapshot):
             raise RuntimeError("Kernel replacement lost a connected socket")
         tree.links.new(source_socket, target_socket)
 
-    if node.node_tree != kernel:
-        raise RuntimeError("Kernel replacement did not select the requested group")
     actual_values = tuple(
         (name, _socket_default_value(node.inputs[name]))
         for name, _value in snapshot["values"]
@@ -897,6 +903,20 @@ def _replace_node_kernel(node, kernel):
             ) from replacement_error
         raise
     return previous
+
+
+def _remap_node_snapshot(snapshot, source, replacement):
+    def remap(node):
+        return replacement if node == source else node
+
+    return dict(snapshot, links=tuple(
+        (remap(origin), output, remap(target), input_)
+        for origin, output, target, input_ in snapshot["links"]
+    ), multi_input_groups=tuple(
+        (remap(target), input_, tuple((remap(origin), output)
+                                     for origin, output in sources))
+        for target, input_, sources in snapshot["multi_input_groups"]
+    ))
 
 
 def _apply_output_kernel(node, mode):
@@ -2231,13 +2251,42 @@ def _block_nodes(nodes, error):
 def _forget_node(node):
     try:
         pointer = node.as_pointer()
-        record = _node_stores.pop(pointer, None)
     except (AttributeError, ReferenceError, RuntimeError):
         return
+    _forget_node_pointer(pointer)
+
+
+def _forget_node_pointer(pointer):
+    record = _node_stores.pop(pointer, None)
     _unindex_output_node(pointer)
     _forget_compositor_node(pointer)
     if record is not None:
         _release_source(record.get("source"))
+
+
+def _finalize_conversion_source(pointer, kernel, record=None):
+    def fence():
+        failures = []
+        for operation in (
+                lambda: _forget_node_pointer(pointer),
+                lambda: _forget_gesture_pointer(pointer)):
+            try:
+                operation()
+            except Exception as error:
+                failures.append(error)
+        source = None if record is None else record.get("source")
+        if source is not None:
+            try:
+                _release_source(source)
+            except Exception as error:
+                failures.append(error)
+        if failures:
+            raise ExceptionGroup("Grade conversion disposal fence failed", failures)
+
+    try:
+        return _run_node_disposal_lifecycle(kernel, fence, lambda: None)
+    except Exception as error:
+        return (error,)
 
 
 def _apply_node_disposal(node):
@@ -2259,13 +2308,36 @@ def _apply_node_disposal(node):
         finally:
             _syncing.discard(pointer)
 
-    operations = _resource_retirement_operations(kernel)
-    operations.update(fence=fence, detach=detach)
-    failures = run_resource_lifecycle(operations, disposal=True)
-    if not failures:
-        failures += _retire_images()
+    failures = _run_node_disposal_lifecycle(kernel, fence, detach)
     if failures:
         raise ExceptionGroup("Grade resource disposal failed", list(failures))
+
+
+def _run_node_disposal_lifecycle(kernel, fence, detach):
+    operations = _resource_retirement_operations(kernel)
+    evict = operations["evict"]
+
+    def evict_if_live():
+        try:
+            if kernel is None or kernel.as_pointer() == 0:
+                return
+        except (AttributeError, ReferenceError, RuntimeError):
+            return
+        evict()
+
+    operations.update(fence=fence, detach=detach, evict=evict_if_live)
+    failures = list(run_resource_lifecycle(operations, disposal=True))
+    if failures:
+        try:
+            if kernel is not None and kernel.as_pointer() != 0:
+                failures.extend(run_resource_lifecycle(
+                    _resource_retirement_operations(kernel),
+                ))
+        except (AttributeError, ReferenceError, RuntimeError):
+            pass
+    if not failures:
+        failures.extend(_retire_images())
+    return tuple(failures)
 
 
 def _dispose_node(node):
@@ -2641,7 +2713,11 @@ def _live_gesture_targets(targets):
 
 def _forget_gesture_node(node):
     """Consume node disposal without ending gestures on surviving users."""
-    identity = _gesture_identity_for_pointer(node.as_pointer())
+    _forget_gesture_pointer(node.as_pointer())
+
+
+def _forget_gesture_pointer(pointer):
+    identity = _gesture_identity_for_pointer(pointer)
     if identity is not None:
         _dispatch_gesture(gesture_policy.Event("node_disposed", node_id=identity))
 
@@ -3164,11 +3240,23 @@ def _ensure_all_kernels(working_space=None):
     return tuple(failures)
 
 
+def _cleanup_conversion_backups():
+    for tree in tuple(bpy.data.node_groups):
+        if (tree.get(_CONVERSION_BACKUP)
+                and tree.get(_CONVERSION_BACKUP + "_safe_to_cleanup")
+                and tree.users == 0):
+            try:
+                bpy.data.node_groups.remove(tree, do_unlink=True)
+            except Exception as error:
+                print("Perceptual Grade conversion backup cleanup failed:", error)
+
+
 def _startup_reconcile_tick():
     if PGShaderGrade not in _registered_classes:
         return None
     if not hasattr(bpy.data, "node_groups"):
         return 0.1
+    _cleanup_conversion_backups()
     _rebuild_output_registry()
     _ensure_all_kernels()
     return None
@@ -3178,6 +3266,7 @@ def _startup_reconcile_tick():
 def _load_post(_filepath):
     try:
         _clear_gestures()
+        _cleanup_conversion_backups()
         _reset_node_stores()
         _rebuild_output_registry()
         _ensure_all_kernels()
@@ -3433,12 +3522,12 @@ def _save_pre(_filepath):
                             pack=_pack_grade_parameters)
 
 
-def _drain_preparations():
+def _drain_preparations(nodes=None):
     """Explicit synchronous bridge for quiescent, main-thread callers."""
     if _grade_resources is None:
         return ()
     with _grade_resources.gate.commit():
-        return _drain_preparations_in_scope()
+        return _drain_preparations_in_scope(nodes=nodes)
 
 
 def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
@@ -4106,27 +4195,45 @@ class PG_OT_add_grade(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class PG_OT_add_per_node_grade(bpy.types.Operator):
-    bl_idname = "perceptual_grade.add_per_node_grade"
-    bl_label = localization.native("operator.add_per_node_grade")
-    bl_description = localization.native("action.add_per_node_grade_description")
+class PG_OT_convert_grade(bpy.types.Operator):
+    bl_idname = "perceptual_grade.convert_grade"
+    bl_label = localization.native("operator.convert_grade")
+    bl_description = localization.native("action.convert_grade_description")
     bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
+    target_kind: EnumProperty(
+        items=(
+            ("NODE", localization.native("action.convert_to_node"), ""),
+            ("DATABLOCK", localization.native("action.convert_to_datablock"), ""),
+        ),
+        options={"HIDDEN", "SKIP_SAVE"},
+    )
 
     @classmethod
     def poll(cls, context):
+        node = _node_from_context(context)
         space = getattr(context, "space_data", None)
-        tree = getattr(space, "edit_tree", None)
-        return tree is not None and tree.bl_idname in PER_NODE_NODE_TYPES
+        return (node is not None and node.id_data.bl_idname in NODE_TYPES
+                and getattr(space, "type", None) == "NODE_EDITOR"
+                and space.edit_tree == node.id_data
+                and node.id_data.is_editable and not _node_reset_pending)
+
+    @classmethod
+    def description(cls, _context, properties):
+        message = ("action.convert_to_node_description"
+                   if properties.target_kind == "NODE"
+                   else "action.convert_to_datablock_description")
+        return localization.tr(message, locale=localization.tooltip_language())
 
     def execute(self, context):
-        space = context.space_data
-        tree = space.edit_tree
-        node = create_per_node_node(tree)
-        node.location = space.cursor_location
-        for item in tree.nodes:
-            item.select = item == node
-        tree.nodes.active = node
+        node = _node_from_context(context)
+        if node is None or not PG_OT_convert_grade.poll(context):
+            return {"CANCELLED"}
+        try:
+            convert_grade_node(node, self.target_kind)
+        except Exception as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
         return {"FINISHED"}
 
 
@@ -4402,6 +4509,215 @@ class PG_PT_tone(bpy.types.Panel):
             _draw_tone_settings(node, self.layout)
 
 
+def convert_grade_node(node, target_kind):
+    """Replace a Grade's ownership while retaining its graph and current values."""
+    if not _is_grade_node(node) or target_kind not in {"NODE", "DATABLOCK"}:
+        raise ValueError("Grade conversion requires a Grade node and an ownership kind")
+    tree = node.id_data
+    if not tree.is_editable or _node_reset_pending:
+        raise RuntimeError("The Grade node tree is not currently editable")
+    target_types = PER_NODE_NODE_TYPES if target_kind == "NODE" else NODE_TYPES
+    if node.bl_idname == target_types[tree.bl_idname]:
+        return node
+
+    owner = node.pg_grade if _is_shared_grade_node(node) else node
+    values = (_LINEAR_DEFAULTS | TONE_DEFAULTS) if owner is None else {
+        name: getattr(controls, name)
+        for controls, fields in ((_linear_controls(owner), _LINEAR_FIELDS),
+                                 (_tone_controls(owner), _TONE_FIELDS))
+        for name in fields
+    }
+    snapshot = _kernel_snapshot(node)
+    name = node.name
+    parent, location = node.parent, tuple(node.location)
+    active = tree.nodes.active
+    source_record = _node_stores.get(node.as_pointer())
+    presentation = {
+        field: getattr(node, field)
+        for field in ("label", "width", "height", "hide", "mute", "select",
+                      "show_options", "show_preview", "show_texture",
+                      "use_custom_color")
+    }
+    presentation["color"] = tuple(node.color)
+    custom = {}
+    for key, value in node.items():
+        if key.startswith("_perceptual_grade") or key in node.bl_rna.properties:
+            continue
+        if hasattr(value, "to_dict"):
+            value = value.to_dict()
+        elif hasattr(value, "to_list"):
+            value = value.to_list()
+        custom[key] = value
+
+    replacement = None
+    grade = None
+    animation = None
+    source_pointer = node.as_pointer()
+    replacement_temporary_name = None
+    source_temporary_name = "_pg_conversion_" + uuid4().hex
+    source_removed = False
+    source_disposal_finalized = False
+    try:
+        replacement = tree.nodes.new(target_types[tree.bl_idname])
+        replacement_temporary_name = replacement.name
+        replacement.parent = parent
+        replacement.location = location
+        for field, value in presentation.items():
+            setattr(replacement, field, value)
+        for key, value in custom.items():
+            replacement[key] = value
+        if target_kind == "DATABLOCK":
+            grade = _make_grade()
+            with _suspend(replacement):
+                replacement.pg_grade = grade
+        destination = grade if grade is not None else replacement
+        for controls, fields in ((_linear_controls(destination), _LINEAR_FIELDS),
+                                 (_tone_controls(destination), _TONE_FIELDS)):
+            with _suspend(controls):
+                for field in fields:
+                    setattr(controls, field, values[field])
+
+        removed = (*_LINEAR_FIELDS, *_TONE_FIELDS) if target_kind == "DATABLOCK" else ()
+        target_mapping = {}
+        if target_kind == "DATABLOCK":
+            target_mapping = {
+                **{field: (grade, "pg_linear." + field)
+                   for field in _LINEAR_FIELDS},
+                **{field: (grade, "pg_tone." + field)
+                   for field in _TONE_FIELDS},
+            }
+        else:
+            target_mapping = {
+                **{"pg_grade.pg_linear." + field:
+                   (tree, replacement.path_from_id(field))
+                   for field in _LINEAR_FIELDS},
+                **{"pg_grade.pg_tone." + field:
+                   (tree, replacement.path_from_id(field))
+                   for field in _TONE_FIELDS},
+            }
+        animation = NodeAnimationConversion(
+            tree, node, replacement, removed_properties=removed,
+            property_target_mapping=target_mapping,
+        )
+        animation.prepare()
+        tree.nodes.active = replacement if active == node else active
+
+        # Rename both nodes while the original still exists. Every operation
+        # that can fail remains reversible until the final native deletion.
+        _rename_conversion_node(node, source_temporary_name)
+        _rename_conversion_node(replacement, name)
+        animation.finish()
+
+        failures = _refresh_nodes((replacement,))
+        if failures:
+            raise RuntimeError("Could not finalize converted Grade: "
+                               + str(failures[-1][1]))
+        remapped = _remap_node_snapshot(snapshot, node, replacement)
+        for link in tuple(tree.links):
+            if link.from_node == node or link.to_node == node:
+                tree.links.remove(link)
+        _restore_node_connections(replacement, remapped)
+        failures = _refresh_nodes((replacement,))
+        if failures:
+            raise RuntimeError("Could not reconcile converted Grade graph: "
+                               + str(failures[-1][1]))
+        failures = _drain_preparations((replacement,))
+        if failures:
+            raise RuntimeError("Could not prepare converted Grade: "
+                               + str(failures[-1][1]))
+        animation.remove_grade_drivers()
+
+        # Native disposal is the final authoritative mutation. Blender can
+        # raise from a free callback after it has already removed the node.
+        try:
+            _remove_conversion_source(tree, node)
+        except Exception as error:
+            source_removed = not _conversion_source_present(tree, source_pointer)
+            if not source_removed:
+                raise
+            print("Perceptual Grade source cleanup failed after conversion:", error)
+            disposal_errors = _finalize_conversion_source(
+                source_pointer, snapshot["kernel"], source_record,
+            )
+            source_disposal_finalized = True
+            for disposal_error in disposal_errors:
+                print("Perceptual Grade source disposal failed after conversion:",
+                      disposal_error)
+        else:
+            source_removed = not _conversion_source_present(tree, source_pointer)
+            if not source_removed:
+                raise RuntimeError("Blender did not remove the converted Grade node")
+
+        for cleanup_error in animation.commit():
+            print("Perceptual Grade conversion cleanup failed:", cleanup_error)
+        return replacement
+    except Exception as error:
+        if source_removed or not _conversion_source_present(tree, source_pointer):
+            # The source is gone, so preserve the completed replacement and
+            # report failure through its normal fail-closed policy path.
+            source_removed = True
+            if not source_disposal_finalized:
+                disposal_errors = _finalize_conversion_source(
+                    source_pointer, snapshot["kernel"], source_record,
+                )
+                source_disposal_finalized = True
+                for disposal_error in disposal_errors:
+                    print("Perceptual Grade source disposal failed after conversion:",
+                          disposal_error)
+            if animation is not None:
+                try:
+                    for cleanup_error in animation.commit():
+                        print("Perceptual Grade conversion cleanup failed:", cleanup_error)
+                except Exception as cleanup_error:
+                    print("Perceptual Grade conversion cleanup failed:", cleanup_error)
+            print("Perceptual Grade conversion committed with cleanup error:", error)
+            return replacement
+        rollback_errors = []
+        if replacement is not None and replacement_temporary_name is not None:
+            try:
+                _rename_conversion_node(replacement, replacement_temporary_name)
+            except Exception as rollback_error:
+                rollback_errors.append(rollback_error)
+        try:
+            _rename_conversion_node(node, name)
+        except Exception as rollback_error:
+            rollback_errors.append(rollback_error)
+        if animation is not None:
+            try:
+                animation.rollback()
+            except Exception as rollback_error:
+                rollback_errors.append(rollback_error)
+        if replacement is not None:
+            try:
+                tree.nodes.remove(replacement)
+            except Exception as rollback_error:
+                rollback_errors.append(rollback_error)
+        try:
+            _restore_node_connections(node, snapshot)
+            tree.nodes.active = active
+        except Exception as rollback_error:
+            rollback_errors.append(rollback_error)
+            _block_nodes((node,), rollback_error)
+        if grade is not None and grade.users == 0:
+            bpy.data.node_groups.remove(grade)
+        if rollback_errors:
+            raise ExceptionGroup("Grade conversion rollback failed",
+                                 [error, *rollback_errors]) from error
+        raise
+
+
+def _rename_conversion_node(node, name):
+    node.name = name
+
+
+def _remove_conversion_source(tree, node):
+    tree.nodes.remove(node)
+
+
+def _conversion_source_present(tree, pointer):
+    return any(candidate.as_pointer() == pointer for candidate in tree.nodes)
+
+
 def create_node(tree):
     try:
         node_type = NODE_TYPES[tree.bl_idname]
@@ -4462,13 +4778,22 @@ def draw_add_menu(self, context):
         text=localization.tr("operator.add_grade"), icon="COLOR",
     )
     self.layout.operator(
-        PG_OT_add_per_node_grade.bl_idname,
-        text=localization.tr("operator.add_per_node_grade"), icon="ANIM_DATA",
-    )
-    self.layout.operator(
         PG_OT_add_stack.bl_idname,
         text=localization.tr("operator.add_stack"), icon="NODETREE",
     )
+
+
+def draw_context_menu(self, context):
+    if not PG_OT_convert_grade.poll(context):
+        return
+    node = _node_from_context(context)
+    target_kind = "NODE" if _is_shared_grade_node(node) else "DATABLOCK"
+    message = "action.convert_to_node" if target_kind == "NODE" else "action.convert_to_datablock"
+    self.layout.separator()
+    self.layout.operator(
+        PG_OT_convert_grade.bl_idname, text=localization.tr(message),
+        icon="ANIM_DATA" if target_kind == "NODE" else "NODETREE",
+    ).target_kind = target_kind
 
 
 def _register_handlers():
@@ -4531,7 +4856,7 @@ def register():
         PG_OT_reset_directions,
         PG_OT_reset_tone,
         PG_OT_add_grade,
-        PG_OT_add_per_node_grade,
+        PG_OT_convert_grade,
         PG_OT_add_stack,
         PG_OT_stack_action,
         PG_OT_new_stack_grade,
@@ -4558,7 +4883,9 @@ def register():
                     bpy.utils.register_class(cls)
                 _registered_classes.append(cls)
 
-        menus = tuple((menu_type, draw_add_menu) for menu_type in MENU_TYPES)
+        menus = tuple((menu_type, draw_add_menu) for menu_type in MENU_TYPES) + (
+            (bpy.types.NODE_MT_context_menu, draw_context_menu),
+        )
         for menu_type, callback in menus:
             record = (menu_type, callback)
             if record not in _registered_menus:

@@ -4,8 +4,9 @@ This step adds Grade and Grade Stack nodes to the Shader and Compositor Color Ad
 menus. Regular Grade nodes apply Stage 1 and Tone through the product's `kernel`
 package; Grade Stack nodes apply ordered, forward-only Stage 1 and Tone Grades through
 progressive 33³/65³ GPU LUTs. Both remain static and use shared Grade datablocks.
-Per-Node Grade nodes own their settings and support numeric keyframes in Blender's
-native animation editors. All variants use the same Grade controls and preparation
+The Add menus provide one Grade entry. Right-click a Grade node and choose
+**Convert to Node-Owned Grade** to give it independent settings and numeric keyframes
+in Blender's native animation editors. All variants use the same Grade controls and preparation
 model. Regular Grade controls remain disabled until a Grade datablock is selected.
 
 The [Perceptual Grade handbook](../perceptual-grade-book/README.md) follows the
@@ -87,6 +88,18 @@ and Grade reassignment fence obsolete source subscriptions and reconcile kernels
 Shutdown withdraws pending demand and waits for active physical work to retire.
 
 ## Animated Grades
+
+Add a regular Grade node, then right-click it and choose **Convert to Node-Owned
+Grade** in either the Shader or Compositor editor. This copies the selected Grade's
+Linear and Tone settings; an empty Grade node uses the default settings. Editing the
+converted node does not change the original Grade datablock.
+
+To return to shared settings, right-click the node and choose **Convert to
+Datablock-Owned Grade**. This creates a new Grade datablock from the current frame's
+values, including subframe evaluation. The new Grade is static, and the converted
+node's Grade keyframes and drivers are removed. Undo restores the animated node;
+converting back to node-owned later starts with the static values and no Grade
+animation. Both conversions preserve the node's connections and layout.
 
 Per-Node Grade settings animate on the scene timeline. Hover a numeric control in the
 Shader or Compositor sidebar and press `I` to insert a keyframe, or use its right-click

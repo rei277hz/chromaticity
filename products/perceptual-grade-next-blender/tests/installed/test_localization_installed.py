@@ -8,6 +8,8 @@ import zipfile
 
 from importlib.resources import files
 
+from .gui_support import configure_software_graphics
+
 
 class InstalledLocalizationTests(unittest.TestCase):
     def test_translation_registration_and_cleanup_in_blender(self):
@@ -30,6 +32,7 @@ class InstalledLocalizationTests(unittest.TestCase):
             env.update(BLENDER_USER_CONFIG=str(root / "config"),
                        BLENDER_USER_EXTENSIONS=str(root / "extensions"),
                        PYTHONDONTWRITEBYTECODE="1")
+            configure_software_graphics(resources, root, env)
             report = root / "report.json"
             result = subprocess.run(
                 [str(blender), "--background", "--factory-startup", "--disable-autoexec",

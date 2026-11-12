@@ -151,8 +151,8 @@ def assert_menu_item(tree):
                         SimpleNamespace(space_data=SimpleNamespace(edit_tree=tree)))
     assert (nodes.PG_OT_add_grade.bl_idname,
             {"text": "Grade", "icon": "COLOR"}) in layout.items
-    assert (nodes.PG_OT_add_per_node_grade.bl_idname,
-            {"text": "Per-Node Grade", "icon": "ANIM_DATA"}) in layout.items
+    assert [item[0] for item in layout.items].count(nodes.PG_OT_add_grade.bl_idname) == 1
+    assert all(item[0] != "perceptual_grade.add_per_node_grade" for item in layout.items)
     assert (nodes.PG_OT_add_stack.bl_idname,
             {"text": "Grade Stack", "icon": "NODETREE"}) in layout.items
 
@@ -558,7 +558,7 @@ assert nodes.PGStackEntry.is_registered
 assert nodes.PG_OT_stack_action.is_registered
 assert nodes.PG_OT_new_stack_grade.is_registered
 assert nodes.PG_OT_add_grade.is_registered
-assert nodes.PG_OT_add_per_node_grade.is_registered
+assert nodes.PG_OT_convert_grade.is_registered
 assert nodes.PG_OT_new_grade.is_registered
 assert nodes.PG_OT_unlink_grade.is_registered
 assert nodes.PG_OT_match_white.is_registered
@@ -567,6 +567,7 @@ assert callable(node_library.prepare_linear)
 for menu_type in nodes.MENU_TYPES:
     assert nodes.draw_add_menu in menu_type.draw._draw_funcs
     assert menu_type.draw._draw_funcs.count(nodes.draw_add_menu) == 1
+assert bpy.types.NODE_MT_context_menu.draw._draw_funcs.count(nodes.draw_context_menu) == 1
 for handler, callback in (
     (bpy.app.handlers.load_post, nodes._load_post),
     (bpy.app.handlers.undo_pre, nodes._undo_redo_pre),
@@ -734,11 +735,7 @@ assert any(link.from_socket == restore.outputs["Image"]
 # Per-Node Grade owns native node-tree F-curves and does not expose a shared
 # Grade datablock selector.
 per_node_tree = bpy.data.node_groups.new("Per-Node Grade Variant Test", "ShaderNodeTree")
-per_node_context = SimpleNamespace(space_data=SimpleNamespace(
-    edit_tree=per_node_tree, cursor_location=(15.0, 25.0)))
-assert nodes.PG_OT_add_per_node_grade.poll(per_node_context)
-assert nodes.PG_OT_add_per_node_grade.execute(None, per_node_context) == {"FINISHED"}
-per_node_shader = per_node_tree.nodes.active
+per_node_shader = nodes.create_per_node_node(per_node_tree)
 assert per_node_shader.bl_idname == "PGShaderGradePerNode"
 assert [socket.name for socket in per_node_shader.inputs] == ["Color", "Alpha"]
 assert [socket.name for socket in per_node_shader.outputs] == ["Color", "Alpha"]
@@ -781,6 +778,9 @@ per_node_compositor_tree.nodes.remove(per_node_compositor)
 per_node_tree.nodes.remove(per_node_shader)
 bpy.data.node_groups.remove(per_node_compositor_tree)
 bpy.data.node_groups.remove(per_node_tree)
+
+conversion_checks = runpy.run_path(str(Path(__file__).with_name("conversion_checks.py")))
+conversion_checks["run"](nodes, assert_grade_current)
 
 # Static shared datablock values reject keyframe insertion.
 shared_grade = bpy.data.node_groups.new(
@@ -1212,6 +1212,10 @@ failures = nodes._drain_preparations()
 assert not failures, failures
 assert shader_node.pg_grade.pg_linear.exposure == 0.5
 
+saved_conversion_fixtures = conversion_checks["prepare_persistence"](
+    nodes, (shader_tree, compositor_tree),
+)
+
 # A partially saved multi-node update is reconciled from the shared Grade's
 # authoritative settings and the signatures stored on generated kernels.
 old_shared_kernel = shared_shader_nodes[1].node_tree.copy()
@@ -1248,6 +1252,8 @@ with tempfile.TemporaryDirectory(prefix="perceptual-grade-recovery-") as temp:
     bpy.ops.wm.open_mainfile(filepath=str(saved_file))
 
 nodes._drain_preparations()
+
+conversion_checks["check_persistence"](nodes, saved_conversion_fixtures, assert_grade_current)
 
 shader_tree = bpy.data.node_groups["Grade Shader Test"]
 assert assert_local_grade_resources(local_grade_identities) == saved_local_resources
@@ -2567,11 +2573,12 @@ assert not nodes.PGCompositorGradePerNode.is_registered
 assert not nodes.PGGradeData.is_registered
 assert not nodes.PGLinearSettings.is_registered
 assert not nodes.PGToneSettings.is_registered
-assert not nodes.PG_OT_add_per_node_grade.is_registered
+assert not nodes.PG_OT_convert_grade.is_registered
 assert not nodes.PG_PT_linear.is_registered
 assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
 for menu_type in nodes.MENU_TYPES:
     assert nodes.draw_add_menu not in menu_type.draw._draw_funcs
+assert nodes.draw_context_menu not in bpy.types.NODE_MT_context_menu.draw._draw_funcs
 for handler, callback in (
     (bpy.app.handlers.load_post, nodes._load_post),
     (bpy.app.handlers.undo_pre, nodes._undo_redo_pre),

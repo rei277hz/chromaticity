@@ -622,6 +622,7 @@ python_test(
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
             "runner.py": "installed/runner.py",
             "stack_ui_checks.py": "installed/stack_ui_checks.py",
+            "conversion_checks.py": "installed/conversion_checks.py",
             "xvfb": "//third_party:xvfb_software_linux",
         },
         "prelude//os:macos": {
@@ -629,6 +630,32 @@ python_test(
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
             "runner.py": "installed/runner.py",
             "stack_ui_checks.py": "installed/stack_ui_checks.py",
+            "conversion_checks.py": "installed/conversion_checks.py",
+        },
+    }),
+)
+
+python_test(
+    name = "conversion_installed",
+    srcs = [
+        "installed/gui_support.py",
+        "installed/test_conversion_installed.py",
+    ],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["installed", "blender"],
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native",
+            "conversion_runner.py": "installed/conversion_runner.py",
+            "conversion_checks.py": "installed/conversion_checks.py",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "xvfb": "//third_party:xvfb_software_linux",
+        },
+        "prelude//os:macos": {
+            "blender": "//third_party:blender_native",
+            "conversion_runner.py": "installed/conversion_runner.py",
+            "conversion_checks.py": "installed/conversion_checks.py",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
         },
     }),
 )
@@ -671,14 +698,25 @@ python_test(
 
 python_test(
     name = "localization_installed",
-    srcs = ["installed/test_localization_installed.py"],
+    srcs = [
+        "installed/gui_support.py",
+        "installed/test_localization_installed.py",
+    ],
     base_module = "tests.perceptual_grade_blender",
     labels = ["installed", "blender"],
-    resources = {
-        "blender": "//third_party:blender_native",
-        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
-        "runner.py": "installed/localization_runner.py",
-    },
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "runner.py": "installed/localization_runner.py",
+            "xvfb": "//third_party:xvfb_software_linux",
+        },
+        "prelude//os:macos": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "runner.py": "installed/localization_runner.py",
+        },
+    }),
 )
 
 python_test(
