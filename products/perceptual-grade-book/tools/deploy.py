@@ -14,6 +14,8 @@ def main():
     entries = files(args.site)
     required = {
         'index.html', '.nojekyll', 'site-manifest.json',
+        'manual/index.html', 'manual/en/index.html', 'manual/zh-Hans/index.html',
+        'technical/en/index.html',
         'downloads/perceptual_grade-v1.23.2-20261101.zip',
     }
     if required - entries.keys():

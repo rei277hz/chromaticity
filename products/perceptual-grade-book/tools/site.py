@@ -1,4 +1,4 @@
-"""Build the handbook from declared inputs, with pinned CDN fonts and equations."""
+"""Build the manual and report together, with pinned CDN fonts and equations."""
 import argparse
 import ast
 import hashlib
@@ -6,7 +6,7 @@ import html
 from html.parser import HTMLParser
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import shutil
@@ -17,7 +17,6 @@ import tempfile
 from urllib.parse import unquote, urlsplit, urlunsplit
 from xml.etree import ElementTree
 from pg_book_build.languages import (
-    ENGLISH_ONLY_CHAPTERS,
     LANGUAGES,
     enable_chinese_search,
     landing,
@@ -152,10 +151,12 @@ def polish_pages(site, language="en", labels=None):
             text = language_chrome(text, path.relative_to(site), language, labels)
         main = re.search(r'<main>(.*?)</main>', text, re.S)
         if main:
-            words = labels[language] if labels is not None else {'footer':'Perceptual Grade handbook', 'credits':'Credits', 'license':'License'}
+            words = labels[language] if labels is not None else {'footer':'Perceptual Grade Technical Report', 'credits':'Credits', 'license':'License'}
             footer = ('<footer class="book-footer">' + html.escape(words['footer'])
                       + ' <a href="' + prefix + 'reference/credits.html">' + html.escape(words['credits'])
-                      + '</a> <a href="' + prefix + 'reference/license.html">' + html.escape(words['license']) + '</a></footer>')
+                      + '</a> <a href="' + prefix + 'reference/license.html">' + html.escape(words['license'])
+                      + '</a> <a href="' + prefix + '../../index.html">'
+                      + ('全部书籍' if language == 'zh-Hans' else 'All books') + '</a></footer>')
             text = text.replace('</main>', footer + '</main>', 1)
         path.write_text(text, encoding='utf-8')
     for pattern in ('favicon*.png', 'favicon*.svg'):
@@ -181,17 +182,14 @@ def check_chapters(book, language="en"):
 
 
 def check_language_chapters(book):
-    """Require exact translation coverage except for declared English-only chapters."""
+    """Require the manual's translated chapter paths in the same order."""
     chapters = check_chapters(book)
-    undeclared = ENGLISH_ONLY_CHAPTERS - set(chapters)
-    if undeclared:
-        raise ValueError(f'English-only chapters are missing from English: {sorted(undeclared)}')
     localized = {language: check_chapters(book, language) for language in LANGUAGES}
-    expected_chinese = [path for path in chapters if path not in ENGLISH_ONLY_CHAPTERS]
+    expected_chinese = chapters
     if localized['zh-Hans'] != expected_chinese:
         raise ValueError(
-            'Simplified Chinese chapter paths must match English except for '
-            f'declared English-only chapters: expected={expected_chinese}, '
+            'Simplified Chinese manual chapter paths must match English: '
+            f'expected={expected_chinese}, '
             f'actual={localized["zh-Hans"]}'
         )
     return chapters, localized
@@ -375,6 +373,92 @@ def restore_markdown_download_links(directory):
     return repaired
 
 
+def repair_cross_book_links(directory):
+    """Route references to chapters owned by the other book in the combined site."""
+    root = Path(directory).resolve()
+    repaired = 0
+    for page in root.rglob('*.html'):
+        route = page.relative_to(root).parts[:2]
+        if route not in (('manual', 'en'), ('manual', 'zh-Hans'), ('technical', 'en')):
+            continue
+
+        def repair(match):
+            nonlocal repaired
+            reference = html.unescape(match[2])
+            url = urlsplit(reference)
+            if url.netloc == 'rei277hz.github.io' and url.path.startswith('/perceptual-grade/'):
+                destination = root / unquote(url.path.removeprefix('/perceptual-grade/'))
+                if not destination.is_file():
+                    return match[0]
+                replacement = urlunsplit(('', '', os.path.relpath(destination, page.parent), url.query, url.fragment))
+                repaired += 1
+                return match[1] + html.escape(replacement, quote=True) + match[3]
+            if url.scheme or url.netloc or not url.path or url.path.startswith('/'):
+                return match[0]
+            candidate = (page.parent / unquote(url.path)).resolve()
+            if candidate.is_file():
+                return match[0]
+            parts = PurePosixPath(unquote(url.path)).parts
+            index = next((i for i, part in enumerate(parts)
+                          if part in ('guide', 'theory', 'development')), None)
+            if index is None:
+                return match[0]
+            section = parts[index]
+            if route[0] == 'manual' and section in ('theory', 'development'):
+                destination = root / 'technical' / 'en' / Path(*parts[index:])
+            elif route[0] == 'technical' and section == 'guide':
+                destination = root / 'manual' / 'en' / Path(*parts[index:])
+            else:
+                return match[0]
+            if not destination.is_file():
+                raise ValueError(f'Unresolved cross-book link in {page.relative_to(root)}: {reference}')
+            relative = os.path.relpath(destination, page.parent)
+            replacement = urlunsplit(('', '', relative, url.query, url.fragment))
+            repaired += 1
+            return match[1] + html.escape(replacement, quote=True) + match[3]
+
+        original = page.read_text(encoding='utf-8')
+        updated = re.sub(r'(<a\b[^>]*\bhref=")([^"]*)(")', repair, original, flags=re.I)
+        if updated != original:
+            page.write_text(updated, encoding='utf-8')
+    return repaired
+
+
+def _render_edition(book_root, language, edition, localized, executable, numbering, output, labels=None):
+    with tempfile.TemporaryDirectory(prefix='pg-book-', dir=output) as temporary:
+        book = Path(temporary) / 'book'
+        # CAS inputs may be read-only. The renderer edits a private copy.
+        shutil.copytree(book_root, book, copy_function=shutil.copyfile)
+        for directory in [book, *(path for path in book.rglob('*') if path.is_dir())]:
+            directory.chmod(directory.stat().st_mode | 0o700)
+        if language != 'en':
+            for name in [*localized[language], 'SUMMARY.md']:
+                shutil.copyfile(book_root/language/name, book/'src'/name)
+        config = (book/'book.toml').read_text(encoding='utf-8')
+        config = re.sub(r'^language = "[^"]+"', 'language = '+json.dumps(language), config, flags=re.M)
+        command = shlex.join([sys.executable, str(numbering.resolve())])
+        config += ('\n[preprocessor.part-numbers]\ncommand = ' + json.dumps(command)
+                   + '\nafter = ["links", "index"]\n')
+        (book/'book.toml').write_text(config, encoding='utf-8')
+        for name in localized[language]:
+            path = book/'src'/name
+            path.write_text(prepare_math(path.read_text(encoding='utf-8')), encoding='utf-8')
+        rendered = subprocess.run([str(executable), 'build', str(book), '--dest-dir', str(edition)],
+                                  check=True, capture_output=True, text=True)
+        messages = rendered.stdout + rendered.stderr
+        if re.search(r'^\s*ERROR\b', messages, re.MULTILINE):
+            raise ValueError('mdBook reported an error:\n' + messages)
+    error_page = edition/'404.html'
+    if error_page.exists():
+        text = error_page.read_text(encoding='utf-8')
+        text = re.sub(r'((?:href|src)=")/(?!/)', r'\1', text)
+        error_page.write_text(text, encoding='utf-8')
+    if language == 'zh-Hans':
+        enable_chinese_search(edition)
+    polish_pages(edition, language, labels)
+    share_assets(edition.parents[1], edition)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--book', type=Path, required=True)
@@ -388,8 +472,12 @@ def main(argv=None):
     version = subprocess.run([str(executable), '--version'], check=True, capture_output=True, text=True).stdout.strip()
     if version != 'mdbook v' + pins['mdbook']['version']:
         raise ValueError(f'Expected pinned mdBook, received {version}')
-    chapters, localized = check_language_chapters(args.book)
-    labels = json.loads((args.book/'locales.json').read_text(encoding='utf-8'))
+    manual = args.book / 'user-manual'
+    report = args.book / 'technical-report'
+    chapters, localized = check_language_chapters(manual)
+    report_chapters = check_chapters(report)
+    report_localized = {'en': report_chapters}
+    labels = json.loads((manual/'locales.json').read_text(encoding='utf-8'))
     if set(labels) != set(LANGUAGES):
         raise ValueError('Every supported language requires its explicit UI catalog.')
     output = args.output_dir.resolve()
@@ -402,48 +490,32 @@ def main(argv=None):
     numbering = Path(__file__).with_name('parts.py')
     if not numbering.is_file():
         raise ValueError('Missing required part-numbering preprocessor: parts.py')
+    manual_chapters = {'en': chapters, **localized}
     for language in LANGUAGES:
-        with tempfile.TemporaryDirectory(prefix='pg-book-', dir=output) as temporary:
-            book = Path(temporary) / 'book'
-            # CAS inputs may be read-only. The renderer edits this private copy;
-            # copy bytes without preserving input file permissions.
-            shutil.copytree(args.book, book, copy_function=shutil.copyfile)
-            for directory in [book, *(path for path in book.rglob('*') if path.is_dir())]:
-                directory.chmod(directory.stat().st_mode | 0o700)
-            if language != 'en':
-                for name in ENGLISH_ONLY_CHAPTERS:
-                    (book/'src'/name).unlink()
-                for name in [*localized[language], 'SUMMARY.md']:
-                    shutil.copyfile(args.book/language/name, book/'src'/name)
-            config = (book/'book.toml').read_text(encoding='utf-8')
-            config = re.sub(r'^language = "[^"]+"', 'language = '+json.dumps(language), config, flags=re.M)
-            if language != 'en':
-                config = re.sub(r'^description = ".*"', 'description = "Perceptual Grade"', config, flags=re.M)
-            command = shlex.join([sys.executable, str(numbering.resolve())])
-            config += ('\n[preprocessor.part-numbers]\ncommand = ' + json.dumps(command)
-                       + '\nafter = ["links", "index"]\n')
-            (book/'book.toml').write_text(config, encoding='utf-8')
-            for name in localized[language]:
-                path = book/'src'/name
-                path.write_text(prepare_math(path.read_text(encoding='utf-8')), encoding='utf-8')
-            edition = site/language
-            rendered = subprocess.run([str(executable), 'build', str(book), '--dest-dir', str(edition)],
-                                      check=True, capture_output=True, text=True)
-            messages = rendered.stdout + rendered.stderr
-            if re.search(r'^\s*ERROR\b', messages, re.MULTILINE):
-                raise ValueError('mdBook reported an error:\n' + messages)
-        error_page = edition/'404.html'
-        if error_page.exists():
-            text = error_page.read_text(encoding='utf-8')
-            text = re.sub(r'((?:href|src)=\")/(?!/)', r'\1', text)
-            error_page.write_text(text,encoding='utf-8')
-        if language == 'zh-Hans':enable_chinese_search(edition)
-        polish_pages(edition, language, labels)
-        share_assets(site, language)
-    landing(site, args.book/'theme/language.js', labels)
+        _render_edition(
+            manual,
+            language,
+            site/'manual'/language,
+            manual_chapters,
+            executable,
+            numbering,
+            output,
+            labels,
+        )
+    _render_edition(
+        report,
+        'en',
+        site/'technical'/'en',
+        report_localized,
+        executable,
+        numbering,
+        output,
+    )
+    landing(site, manual/'theme/language.js', labels)
     (site/'.nojekyll').write_bytes(b'')
-    copy_markdown_downloads(args.book, site)
+    copy_markdown_downloads(report, site)
     restore_markdown_download_links(site)
+    cross_links = repair_cross_book_links(site)
     checks = validate_site(site)
     manifest = {
         'schema': 1,
@@ -456,8 +528,8 @@ def main(argv=None):
         'builder_sha256': digest(Path(__file__)),
         'part_numbering_sha256': digest(Path(__file__).with_name('parts.py')),
         'input_files': inputs,
-        'chapters': chapters,
-        'languages': localized,
+        'chapters': {'user-manual': chapters, 'technical-report': report_chapters},
+        'languages': {'user-manual': localized, 'technical-report': {'en': report_chapters}},
         'language_builder_sha256': digest(Path(__file__).with_name('languages.py')),
         'validation': checks,
         'site_files': inventory(site),
@@ -465,7 +537,9 @@ def main(argv=None):
     data = json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + '\n'
     (output / 'site-manifest.json').write_text(data, encoding='utf-8')
     (site / 'site-manifest.json').write_text(data, encoding='utf-8')
-    print(f'mdBook {pins["mdbook"]["version"]}: {len(chapters)} chapters, {checks["local_references_checked"]} resource/link checks')
+    print(f'mdBook {pins["mdbook"]["version"]}: {len(chapters)} manual chapters in two languages, '
+          f'{len(report_chapters)} report chapters, {cross_links} cross-book links repaired, '
+          f'{checks["local_references_checked"]} resource/link checks')
 
 
 if __name__ == '__main__':

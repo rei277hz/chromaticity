@@ -4,7 +4,7 @@
     "choose": "Choose language",
     "credits": "Credits",
     "license": "License",
-    "footer": "Perceptual Grade handbook",
+    "footer": "Perceptual Grade User Manual",
     "ui": {}
   },
   "zh-Hans": {
@@ -12,7 +12,7 @@
     "choose": "选择语言",
     "credits": "致谢",
     "license": "许可证",
-    "footer": "Perceptual Grade 手册",
+    "footer": "Perceptual Grade 用户手册",
     "ui": {
       "Toggle Table of Contents": "切换目录",
       "Table of contents": "目录",

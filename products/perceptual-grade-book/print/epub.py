@@ -12,6 +12,10 @@ _CONTAINER = "META-INF/container.xml"
 _REQUIRED = {_CONTAINER, "mimetype"}
 _EPUB_NS = "http://www.idpf.org/2007/opf"
 _CONTAINER_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
+_CONTENT_FEATURES = {
+    "mathml": "{http://www.w3.org/1998/Math/MathML}math",
+    "svg": "{http://www.w3.org/2000/svg}svg",
+}
 
 
 def _safe_member(name):
@@ -105,6 +109,14 @@ def _validate_package(root, files):
             _safe_member(member)
             if member not in files:
                 raise ValueError(f"EPUB manifest item does not exist: {member}")
+            if item.get("media-type") == "application/xhtml+xml":
+                document = _parse_xml(files[member], "EPUB XHTML document")
+                declared = set(item.get("properties", "").split())
+                for feature, tag in _CONTENT_FEATURES.items():
+                    if next(document.iter(tag), None) is not None and feature not in declared:
+                        raise ValueError(
+                            f"EPUB XHTML requires the {feature} manifest property: {member}"
+                        )
             if "nav" in item.get("properties", "").split():
                 nav_items.append(identifier)
 

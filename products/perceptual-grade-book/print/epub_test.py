@@ -78,6 +78,26 @@ class EpubArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "navigation document"):
             write_epub(self.package, self.output)
 
+    def test_xhtml_declares_mathml_and_svg_manifest_properties(self):
+        self.write(
+            "EPUB/chapter.xhtml",
+            b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+            b'<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
+            b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>'
+            b'</body></html>',
+        )
+        with self.assertRaisesRegex(ValueError, "requires the mathml manifest property"):
+            write_epub(self.package, self.output)
+
+        self.write(
+            "EPUB/content.opf",
+            _PACKAGE.replace(
+                'href="chapter.xhtml" media-type="application/xhtml+xml"',
+                'href="chapter.xhtml" media-type="application/xhtml+xml" properties="mathml svg"',
+            ).encode(),
+        )
+        write_epub(self.package, self.output)
+
     def test_rejects_unsafe_paths_and_symlinks(self):
         (self.package / "EPUB/unsafe").symlink_to(self.package / "EPUB/chapter.xhtml")
         with self.assertRaisesRegex(ValueError, "Symlinks"):

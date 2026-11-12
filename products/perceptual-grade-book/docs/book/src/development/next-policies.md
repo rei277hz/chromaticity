@@ -496,8 +496,8 @@ repository root with the declared Buck2 targets:
 buck2 build --remote-only //products/perceptual-grade-book/diagrams:assets
 buck2 build --remote-only \
   '//products/perceptual-grade-book:site[html]' \
-  '//products/perceptual-grade-book:book[pdf]' \
-  '//products/perceptual-grade-book:book[epub]'
+  '//products/perceptual-grade-book:technical-report[pdf]' \
+  '//products/perceptual-grade-book:technical-report[epub]'
 ```
 
 The site target includes the English and Simplified Chinese editions; the policy

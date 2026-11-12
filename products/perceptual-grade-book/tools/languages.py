@@ -1,4 +1,4 @@
-"""Assemble two explicit mdBook editions with shared assets and remembered routing."""
+"""Manual language navigation and shared resources for the two-book site."""
 import hashlib
 import html
 import json
@@ -9,7 +9,6 @@ import shutil
 from urllib.parse import urlsplit, urlunsplit
 
 LANGUAGES = ('en', 'zh-Hans')
-ENGLISH_ONLY_CHAPTERS = frozenset({'development/next-policies.md'})
 SHARED = ('assets', 'downloads', 'favicon.ico', 'apple-touch-icon.png',
           'android-192.png', 'android-512.png', 'android-512-maskable.png', 'site.webmanifest')
 GLOBE = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z"/></svg>'
@@ -22,13 +21,6 @@ def language_chrome(text, page, language, labels):
     choices=[]
     alternates=[]
     for target in LANGUAGES:
-        if page.with_suffix('.md').as_posix() in ENGLISH_ONLY_CHAPTERS and target == 'zh-Hans':
-            choices.append(
-                '<span class="language-unavailable" aria-disabled="true" '
-                'title="No Simplified Chinese edition of this chapter">'
-                'Simplified Chinese (unavailable)</span>'
-            )
-            continue
         href=prefix+target+'/'+page.as_posix()
         current=' aria-current="page"' if target==language else ''
         choices.append(f'<a href="{href}" data-book-language="{target}" lang="{target}" hreflang="{target}"{current}>{html.escape(labels[target]["name"])}</a>')
@@ -44,9 +36,9 @@ def language_chrome(text, page, language, labels):
     return text
 
 
-def share_assets(site, language):
-    """Move shared output once, checking that the other edition produced the same bytes."""
-    edition=site/language
+def share_assets(site, edition):
+    """Move identical shared output to the combined site root."""
+    edition=Path(edition)
     for name in SHARED:
         source, destination=edition/name,site/name
         if not source.exists():
@@ -94,19 +86,33 @@ def enable_chinese_search(edition):
 
 def landing(site, script, labels):
     if not script.is_file():raise ValueError('Missing language-selection script.')
-    shutil.copyfile(script,site/'language.js')
+    manual = site / 'manual'
+    manual.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(script,manual/'language.js')
     search_script=script.with_name('chinese-search.js')
     if not search_script.is_file():raise ValueError('Missing Chinese search implementation.')
-    shutil.copyfile(search_script,site/'chinese-search.js')
+    shutil.copyfile(search_script,manual/'chinese-search.js')
     choices=' '.join(f'<a href="{lang}/index.html" lang="{lang}" data-book-language="{lang}">{html.escape(labels[lang]["name"])}</a>' for lang in LANGUAGES)
-    text='''<!doctype html>
+    manual_text='''<!doctype html>
 <html lang="en" data-language-entry="true"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Introduction - Perceptual Grade</title>
+<title>User Manual - Perceptual Grade</title>
+<link rel="icon" href="../favicon.ico" type="image/x-icon" sizes="16x16 32x32 48x48 64x64 256x256">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="../site.webmanifest">
+<script src="language.js"></script>
+<style>body{font:18px/1.6 system-ui,sans-serif;max-width:42rem;margin:12vh auto;padding:24px}a{color:inherit;margin-right:24px}</style>
+</head><body><h1>Perceptual Grade User Manual</h1><nav aria-label="Language">'''+choices+'</nav></body></html>\n'
+    (manual/'index.html').write_text(manual_text,encoding='utf-8')
+    landing_text='''<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Perceptual Grade books</title>
 <link rel="icon" href="favicon.ico" type="image/x-icon" sizes="16x16 32x32 48x48 64x64 256x256">
 <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
 <link rel="manifest" href="site.webmanifest">
-<script src="language.js"></script>
-<style>body{font:18px/1.6 system-ui,sans-serif;max-width:42rem;margin:12vh auto;padding:24px}a{color:inherit;margin-right:24px}</style>
-</head><body><h1>Perceptual Grade</h1><nav aria-label="Language">'''+choices+'</nav></body></html>\n'
-    (site/'index.html').write_text(text,encoding='utf-8')
+<style>body{font:18px/1.6 system-ui,sans-serif;max-width:48rem;margin:12vh auto;padding:24px}nav{display:grid;gap:12px}a{color:inherit}</style>
+</head><body><h1>Perceptual Grade</h1>
+<nav aria-label="Books"><a href="manual/index.html">User Manual</a>
+<a href="technical/en/index.html">Technical Report</a></nav></body></html>\n'''
+    (site/'index.html').write_text(landing_text,encoding='utf-8')

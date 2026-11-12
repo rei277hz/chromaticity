@@ -1,20 +1,24 @@
-# Handbook source layout
+# Book source layout
 
-This directory contains the maintained Perceptual Grade handbook, original
-recordings and artwork, and historical measurements. Its English and Simplified
-Chinese model chapters track the latest `libraries/perceptual-grade-reference`.
-The usage guide and parts of the engineering documentation still lag at 1.23.2;
-mark their version explicitly until they are updated. Historical measurements
-and downloads remain evidence for their original configuration. The current
-book build is documented in [the product README](../README.md); build instructions
-inside historical chapters describe the original 1.23.2 repository.
+This directory contains the maintained Perceptual Grade User Manual and
+Technical Report sources, original recordings and artwork, and historical
+measurements. Together the books track the latest Perceptual Grade. The manual
+is bilingual; the report is currently English-only. The report's model chapters
+follow `libraries/perceptual-grade-reference`. The usage guide and parts of the
+runtime engineering material still lag at 1.23.2; mark their version explicitly
+until they are updated. Historical measurements and downloads remain evidence
+for their original configuration. The current book build is documented in
+[the product README](../README.md); build instructions inside historical
+chapters describe the original 1.23.2 repository.
 
 | Location | Content |
 | --- | --- |
-| `book/src`, `book/zh-Hans` | English and Simplified Chinese chapters and navigation. |
-| `book/theme`, `book/book.toml` | Maintained reader integration and mdBook configuration. |
-| `book/src/assets` | Authored icons and reference illustrations. |
-| `../print/` | Derived PDF and EPUB build, page styles, and bilingual front matter. |
+| `book/src`, `book/zh-Hans` | English source chapters and Simplified Chinese manual translations. |
+| `book/src/SUMMARY.md`, `book/zh-Hans/SUMMARY.md` | Authored chapter order for the English and Simplified Chinese User Manual. |
+| `book/src/report/README.md`, `book/src/report/SUMMARY.md` | Technical Report introduction and authored English chapter order. |
+| `book/theme`, `book/book.toml` | Shared reader integration and mdBook configuration. |
+| `book/src/assets` | Authored icons and reference illustrations shared by both books. |
+| `../print/` | Derived PDF and EPUB build, page styles, and front matter for each publication and language. |
 | `data` | Figure parameters, timing records, and media specifications. |
 | `media/screenshots` | Original host captures used by screenshot composition. |
 | `media/demos`, `media/intro` | Original recordings converted to WebP during Buck2 builds. |
@@ -22,19 +26,25 @@ inside historical chapters describe the original 1.23.2 repository.
 
 Edit chapters, artwork, captures, and recording specifications here. Buck2
 regenerates derived figures, composites, WebPs, icons, and manifests, assembles
-both language editions, and packages the deployment ZIP. Generated output is
-kept under Buck2's output directory. Source edits use normal Buck2 dependency
+the English and Simplified Chinese manual and English report, and packages one
+deployment ZIP containing all three site editions. Generated output is kept
+under Buck2's output directory. Source edits use normal Buck2 dependency
 tracking.
 
-Both editions must keep matching chapter paths. Replacing an existing recording
-or PNG needs no build-rule edit; adding a new generated resource requires a
-declared producer and assembly path. Missing inputs and conflicting paths fail
-the build. Historical measurements remain recorded evidence and are not
-remeasured by documentation builds.
+The manual's English and Simplified Chinese editions must keep matching chapter
+paths and order. The manual covers its introduction, `guide/` chapters, and
+shared reference pages. The Technical Report covers its own introduction,
+`theory/`, `development/`, and reference pages in English. Assembly projects each
+authored summary and its chapters into an independent mdBook tree; shared media
+and downloads remain available to both. Replacing an existing recording or PNG
+needs no build-rule edit; adding a new generated resource requires a declared
+producer and assembly path. Missing inputs and conflicting paths fail the
+build. Historical measurements remain recorded evidence and are not remeasured
+by documentation builds.
 
-The mdBook static site continues to load its fonts and KaTeX from pinned CDN
-URLs. Those payloads are not included in the deployment ZIP. The separate print
-pipeline reads mdBook's own `print.html`, renders its math statically with the
+The combined mdBook static site loads fonts and KaTeX from pinned CDN URLs.
+Those payloads are not included in the deployment ZIP. The separate print
+pipeline reads each book's mdBook `print.html`, renders math statically with the
 pinned KaTeX package, and vendors the required fonts into the derived PDF and
 EPUB inputs. It uses the same authored Markdown and chapter ordering without
 changing the site output.

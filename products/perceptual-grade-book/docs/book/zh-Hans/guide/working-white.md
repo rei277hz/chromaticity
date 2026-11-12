@@ -68,4 +68,4 @@ ACEScg 场景与 LUT 基底相同，理想精度下外侧转换相消为单位�
 
 这些边界转换不重复施加创意白平衡；Grade 白点已包含在实际阶段 1 矩阵与烘焙函数中。Stack 的完整计算为 \(\mathrm{out}=A^{-1}\mathcal L_{\mathrm{stack}}(A\,\mathrm{in})\)。
 
-仅切换 Blender 工作空间只改变 \(A,A^{-1}\)，**不改变 LUT 内容**；改变 Grade 白点则改变解析函数并重烘焙。预览细化只改变采样密度，白点与色域转换保持相同。参见[堆栈烘焙](inverse-stack.md)及[采样选择](../theory/lut.md)。
+仅切换 Blender 工作空间只改变 \(A,A^{-1}\)，**不改变 LUT 内容**；改变 Grade 白点则改变解析函数并重烘焙。预览细化只改变采样密度，白点与色域转换保持相同。参见[堆栈烘焙](inverse-stack.md#烘焙与示波器更新)及[采样选择](../theory/lut.md)。

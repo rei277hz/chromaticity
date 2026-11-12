@@ -29,10 +29,12 @@ class PublishTests(unittest.TestCase):
         (self.destination / "stale.txt").write_bytes(b"previous publication")
         self.archive = self.root / "site.zip"
         self.site = {
-            "index.html": b"<a href='en/index.html'>English</a>",
+            "index.html": b"<a href='manual/index.html'>User Manual</a><a href='technical/en/index.html'>Technical Report</a>",
             ".nojekyll": b"",
-            "en/index.html": b"<h1>Perceptual Grade</h1>",
-            "zh-Hans/index.html": b"<h1>Perceptual Grade</h1>",
+            "manual/index.html": b"<a href='en/index.html'>English</a>",
+            "manual/en/index.html": b"<h1>User Manual</h1>",
+            "manual/zh-Hans/index.html": "<h1>用户手册</h1>".encode(),
+            "technical/en/index.html": b"<h1>Technical Report</h1>",
             "downloads/perceptual_grade-v1.23.2-20261101.zip": bytes(range(256)),
         }
 
@@ -96,7 +98,7 @@ class PublishTests(unittest.TestCase):
         self.assertEqual((self.checkout / ".git").stat().st_mtime_ns, git_before.st_mtime_ns)
 
     def test_accepts_explicit_empty_and_parent_directories(self):
-        self.write_archive([("empty/", b""), ("en/", b"")])
+        self.write_archive([("empty/", b""), ("manual/en/", b"")])
         publish_archive(self.archive, self.destination)
         self.assertTrue((self.destination / "empty").is_dir())
         self.assertEqual(self.snapshot(self.destination), self.contents)
@@ -112,7 +114,7 @@ class PublishTests(unittest.TestCase):
     def test_rejects_duplicate_paths_and_file_directory_conflicts(self):
         for entries in (
             [("index.html", b"duplicate")],
-            [("en", b"file replaces directory")],
+            [("manual/en", b"file replaces directory")],
             [("index.html/child", b"child below file")],
             [("index.html/", b"")],
             [("empty/", b"nonempty directory")],
@@ -154,10 +156,6 @@ class PublishTests(unittest.TestCase):
     def test_rejects_missing_required_files_and_wrong_manifest(self):
         original = self.site.copy()
         for name in original:
-            if name not in {
-                    "index.html", ".nojekyll",
-                    "downloads/perceptual_grade-v1.23.2-20261101.zip"}:
-                continue
             with self.subTest(missing=name):
                 self.site = {key: value for key, value in original.items() if key != name}
                 self.write_archive()

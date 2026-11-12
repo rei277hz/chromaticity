@@ -285,6 +285,7 @@ def _normalize_figures(section, chapter, language):
 
 def _copy_media(main, site_root, origin, edition_output, in_book_ids):
     media_dir = edition_output / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
     refs = []
     for element in main.xpath(".//*[@src] | .//*[@poster] | .//a[@href]"):
         attr = "src" if element.get("src") else "poster" if element.get("poster") else "href"
@@ -354,7 +355,7 @@ def _build_figure_list(figures, language):
     return "".join(rows)
 
 
-def build_document(site_root, book_root, language, front_matter, output_dir, node, math_renderer, katex_js, katex_css, katex_package, noto_package, font_sans, font_mono, theme_dir):
+def build_document(site_root, book_root, language, front_matter, output_dir, node, math_renderer, katex_js, katex_css, katex_package, noto_package, font_sans, font_mono, theme_dir, site_prefix=""):
     site_root = Path(site_root).resolve()
     book_root = Path(book_root).resolve()
     output_dir = Path(output_dir)
@@ -363,7 +364,7 @@ def build_document(site_root, book_root, language, front_matter, output_dir, nod
     if site_builder.check_chapters(book_root, language) != [chapter["path"] for chapter in chapters]:
         raise ValueError(f"SUMMARY chapter paths differ from assembled sources: {language}")
 
-    print_page = site_root / language / "print.html"
+    print_page = site_root / site_prefix / language / "print.html"
     if not print_page.is_file():
         raise ValueError(f"Missing mdBook print output: {print_page}")
     document = html.document_fromstring(print_page.read_bytes())
