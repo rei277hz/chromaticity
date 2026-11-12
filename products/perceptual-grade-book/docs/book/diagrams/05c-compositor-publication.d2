@@ -1,0 +1,11 @@
+direction: down
+
+open: "Unprotected\nscene=None; epoch=None"
+protected: "Protected\nscene + epoch"
+open -> open: "eligible admit / publish epoch"
+open -> protected: "eligible superseded"
+protected -> open: "later success; same scene\nor quiescent reset"
+protected -> protected: "old / unrelated / failed"
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

@@ -1,0 +1,14 @@
+:root {
+  --book-ink: #252525;
+  --book-muted: #686761;
+  --book-accent: #c1a138;
+  --book-border: #e4e2dc;
+  --book-surface: #faf9f6;
+  --book-link: #806000;
+  --book-cover-ink: #ffffff;
+  --book-cover-surface: #343434;
+  --book-cover-accent: #e3c665;
+  --book-cover-muted: #deddd8;
+  --book-font-sans: "Pontano Sans", "Noto Sans SC Variable", sans-serif;
+  --book-font-mono: "Roboto Mono", monospace;
+}

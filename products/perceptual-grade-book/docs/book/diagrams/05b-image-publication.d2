@@ -1,0 +1,21 @@
+direction: down
+
+snapshot: "idle -> prepare\n-> snapshot"
+update: "upload -> pack"
+commit: "commit -> deliver"
+restore: "restore_upload\n-> restore_pack\n-> restore_metadata"
+fail: "fail"
+finish: "retire -> terminal"
+snapshot -> update: "not matching / not clean"
+snapshot -> commit: "matching and clean"
+snapshot -> fail: "failure"
+update -> commit: "success + clean"
+update -> restore: "failure / unclean"
+commit -> restore: "commit fails"
+commit -> finish: "delivery succeeds"
+commit -> fail: "delivery fails"
+restore -> fail: "complete; stop on failure"
+fail -> finish
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

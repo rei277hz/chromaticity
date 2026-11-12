@@ -1,10 +1,10 @@
 # Saturation-preserving tone curve
 
-Tone remaps \(H\) while retaining hue and modCAM16 saturation. Five input landmarks define the mapping; fixed tone targets come from the reference and peak calibration. The same analytic curve is the DCTL reference and the source of the extension’s curve tables.
+The analytic reference remaps the nonnegative magnitude \(M=\sqrt{J_A^2+66C}\), then scales \(J_A\) and the opponent pair together. This preserves hue and signed modCAM16 saturation. Five neutral-nits landmarks define the mapping; fixed tone targets come from the reference and peak calibration. The frozen 1.23.2 products use the same broad curve construction with different target/effective-parameter rules, documented below.
 
 ## Build a monotone curve
 
-Convert each input neutral-nits value to normalized \(H\). Order the five levels with minimum spacing. Normalize their span to knots \(u_i\) from Black to Highlights; the corresponding targets are \(y_i\). Choose the smallest positive interval slope \(m\) and nonnegative residual rises \(r_i\):
+Convert each neutral-nits input landmark to \(J_A/100\); for a neutral, this is also \(M/100\). Order the five levels with minimum spacing. Normalize their span to knots \(u_i\) from Black to Highlights; the corresponding targets are \(y_i\). Choose the smallest positive interval slope \(m\) and nonnegative residual rises \(r_i\):
 
 $$
 m=\min_i\frac{y_{i+1}-y_i}{u_{i+1}-u_i},\qquad
@@ -22,21 +22,21 @@ $$
 
 Since every window derivative and \(r_i\) is nonnegative, the curve remains monotone. It reaches the Highlights target at \(t=1\) and has a linear asymptote beyond the landmarks. Intermediate targets are soft. Fit changes how concentrated the interval transitions are.
 
-![Tone curves at several Fit settings](../assets/figures/tone-curves.png)
+![Tone curves at several Fit settings](../assets/figures/tone-curves.svg)
 
-<p class="figure-caption">The crosses are landmark targets. Their influence overlaps smoothly, with tighter transitions at higher Fit. The reference-white guides are at normalized lightness 1.</p>
+<p class="figure-caption">Current reference curves use the Shadows ratio 0.015507796089266005. The crosses are landmark targets; their influence overlaps smoothly, with tighter transitions at higher Fit. The reference-white guides are at normalized lightness 1.</p>
 
 The active curve is smooth above Input Black. Values at and below that threshold map to zero. The removed black-toe treatment means this cutoff does not acquire a \(C^2\) toe; smoothness at a positive black threshold is a separate boundary behavior. Default landmarks take an exact identity branch. Setting Fit alone at reset leaves that identity intact.
 
 ## Preserve saturation through the H–K relation
 
-For this fixed dark surround, modCAM16 saturation is:
+For this fixed dark surround, signed modCAM16 saturation is \(s=75C/J_A\), defined when \(J_A\ne0\). The positive-branch H–K relation is:
 
 $$
 s=75\frac{C}{J_A},\qquad H^2=J_A^2+66C.
 $$
 
-To reach a desired \(H_2\) while preserving \(k=C_1/J_{A,1}\), solve the positive quadratic root:
+On the positive branch, to reach a desired \(H_2\) while preserving \(k=C_1/J_{A,1}\), solve the positive quadratic root:
 
 $$
 J_{A,2}=\sqrt{H_2^2+(33k)^2}-33k,
@@ -50,13 +50,22 @@ g=\frac{2H_2^2}{\operatorname{hypot}(66C_1,\ 2J_{A,1}H_2)+66C_1},
 \qquad J_{A,2}=gJ_{A,1},\qquad C_2=gC_1.
 $$
 
-Both expressions select the same root; the second keeps \(C/J_A\) exact by construction and stays finite as \(J_{A,1}\to0\). A neutral naturally keeps \(C=0\). Black uses the zero output limit. This makes the mapped pair valid by construction.
+Both expressions select the same root on this branch; the second keeps \(C/J_A\) exact by construction. A neutral naturally keeps \(C=0\). Black uses the zero output limit.
 
-![Saturation-preserving and squared-H policies](../assets/figures/tone-saturation.png)
+The signed reference applies the same saturation-preserving scale to either sign. Let \(M_1=\sqrt{J_{A,1}^2+66C_1}\) and let the curve map it to \(M_2\). Then
 
-<p class="figure-caption">For \(H=100,\ C=20\), preserving \(C/J_A\) holds saturation constant. Squared-H chroma coupling instead changes saturation in proportion to mapped \(H\).</p>
+$$
+g=\frac{2M_2^2}{\operatorname{hypot}(66C_1,\ 2J_{A,1}M_2)+66C_1},\qquad
+J_{A,2}=gJ_{A,1},\qquad (a_2,b_2)=g(a_1,b_1),\qquad C_2=gC_1.
+$$
 
-Reference Nits defaults to 203 and sets White’s neutral lightness. Highlights uses the selected effective peak, at least twice Reference Nits. The diagrams extend to the neutral lightness of 4000 nits, independently of that peak choice. After this remap, Color’s tone-dependent coefficients use the resulting \(H_2\).
+The gain is positive for a nonblack output, preserving the sign of \(J_A\), hue and \(C/|J_A|\) when defined. The black plateau uses zero gain; a zero denominator also gives zero output. The output coordinate is recomputed with the signed H–K map: \(H_2=M_2\) for \(J_{A,2}\ge0\), and \(H_2=2\sqrt{66C_2}-M_2\) for \(J_{A,2}<0\). Tone and the later Color tonal selectors use the magnitude \(M_2\), not this signed \(H_2\).
+
+![Saturation-preserving and squared-H policies](../assets/figures/tone-saturation.svg)
+
+<p class="figure-caption">This positive-branch example starts at \(H=100,\ C=20\). Preserving \(C/J_A\) holds saturation constant; squared-H chroma coupling instead changes saturation in proportion to mapped \(H\).</p>
+
+Reference Nits defaults to 203 and sets White’s neutral lightness. Highlights uses the effective peak, at least twice Reference Nits. After this remap, Color’s tone-dependent coefficients use the resulting magnitude \(M_2\). The complete analytic Model currently fixes Grade white to D65 and Reference Nits to 203; its lower-level Tone helper accepts a wider effective-reference range.
 
 ## Targets and the effective configuration
 
@@ -66,7 +75,7 @@ $$
 y_1=\nu(0.015507796089266005\,R_w)\approx\nu(3.148\ \mathrm{nits}).
 $$
 
-The 1.23.2 DCTL and the bundled legacy model use \(0.037153526983R_w\), or 7.542 nits, for the same landmark. Every other target is identical between the two, so a curve comparison isolates that one anchor. Report which constant a measurement used before comparing tone curves across releases.
+The 1.23.2 DCTL and bundled legacy figure model use \(0.037153526983R_w\), or 7.542 nits, for the same landmark. At matching effective reference and peak values, this Shadows target is the difference in the fixed target set. The legacy products also round effective reference and peak settings to whole nits, while the analytic Tone helper maps them smoothly; fractional or out-of-range inputs can therefore change other targets too. The complete analytic Model currently accepts only D65 / 203 nits.
 
 The effective reference and peak are not the raw inputs. The reference passes each through a smooth bounded map, so fractional and out-of-range requests move continuously:
 

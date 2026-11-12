@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["new"],
+  "step": "step",
+  "invariants": {},
+  "contracts": {
+    "new": {
+      "ensures": ["result.phase == 'waiting'", "result.generation == generation"]
+    }
+  },
+  "properties": [
+    {
+      "name": "release_requires_correlated_exact_publication",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["state.phase == 'waiting'"],
+      "lets": {"transition": "step(state, event)"},
+      "assert": "transition[1].action != 'release' or (event.kind == 'published' and event.render_identity == state.render_identity and event.scene_identity == state.scene_identity and event.frame == state.frame and event.subframe == state.subframe and event.generation == state.generation and event.signature is not None and event.error is None and event.published_signature == event.signature and transition[0].phase == 'released' and transition[0].signature == event.signature)"
+    },
+    {
+      "name": "stale_generation_cannot_release_or_fail_current_ticket",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["state.phase == 'waiting'", "event.generation != state.generation"],
+      "assert": "step(state, event) == (state, Effects())"
+    },
+    {
+      "name": "frame_or_scene_mismatch_fails_closed",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["state.phase == 'waiting'", "event.generation == state.generation", "event.kind == 'published'", "event.scene_identity != state.scene_identity or event.frame != state.frame or event.subframe != state.subframe or event.render_identity != state.render_identity"],
+      "lets": {"transition": "step(state, event)"},
+      "assert": "transition[0].phase == 'failed' and transition[1].action == 'fail'"
+    },
+    {
+      "name": "publication_mismatch_fails_closed",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["state.phase == 'waiting'", "event.kind == 'published'", "event.render_identity == state.render_identity", "event.scene_identity == state.scene_identity", "event.frame == state.frame", "event.generation == state.generation", "event.published_signature != event.signature or event.error is not None or event.signature is None"],
+      "lets": {"transition": "step(state, event)"},
+      "assert": "transition[0].phase == 'failed' and transition[1].action == 'fail'"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "matching_frame_releases_after_exact_publication",
+      "variables": {},
+      "lets": {
+        "waiting": "new(10, 20, 17, '0x0.0p+0', 4)",
+        "released": "step(waiting, Event('published', 10, 20, 17, '0x0.0p+0', 4, signature='grade-17', published_signature='grade-17'))"
+      },
+      "assert": "released == (State('released', 10, 20, 17, '0x0.0p+0', 4, signature='grade-17'), Effects('release'))"
+    },
+    {
+      "name": "late_previous_frame_result_cannot_release_new_frame",
+      "variables": {},
+      "lets": {
+        "waiting": "new(10, 20, 18, '0x0.0p+0', 5)",
+        "stale": "step(waiting, Event('published', 10, 20, 17, '0x0.0p+0', 4, signature='grade-17', published_signature='grade-17'))"
+      },
+      "assert": "stale == (waiting, Effects())"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "release_accepts_unpublished_signature",
+      "function": "step",
+      "target": "event.published_signature != event.signature",
+      "replacement": "False",
+      "detects": ["property.release_requires_correlated_exact_publication", "property.publication_mismatch_fails_closed"]
+    },
+    {
+      "name": "stale_generation_is_accepted",
+      "function": "step",
+      "target": "event.generation != state.generation",
+      "replacement": "False",
+      "detects": ["property.stale_generation_cannot_release_or_fail_current_ticket"]
+    }
+  ]
+}

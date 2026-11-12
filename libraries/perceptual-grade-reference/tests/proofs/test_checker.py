@@ -138,6 +138,7 @@ class ProofTests(unittest.TestCase):
         required.update({
             'warp_carried_zero_threshold', 'warp_carried_negative_threshold',
             'warp_compact_hue_preserved', 'warp_compact_radius_bounds',
+            'warp_compact_coordinates_scale', 'warp_compact_radius_scale',
             'warp_compact_radius_on_raw_rim', 'warp_compact_radius_strict_interior',
             'warp_guarded_raw_rim_moves_interior', 'warp_guarded_chart_interior',
             'web_negative_scale_height_factor', 'web_negative_scale_height_positive_iff',
@@ -148,8 +149,16 @@ class ProofTests(unittest.TestCase):
             'web_negative_scale_physical_ceiling',
             'web_negative_scale_signed_hk', 'web_negative_scale_turning_point',
             'web_negative_scale_final_state_ceiling',
+            'warp_scale_energy', 'warp_scale_pad_invariant', 'warp_scale_radius_invariant',
+            'warp_positive_scale_signed_hk', 'warp_positive_scale_height_monotone',
+            'warp_positive_scale_height_strict_mono', 'warp_positive_scale_height_black',
+            'warp_repaired_scale_ja_nonnegative', 'warp_repaired_scale_ja_positive',
+            'warp_repaired_scale_energy', 'warp_repaired_scale_energy_nonnegative',
+            'warp_repaired_scale_energy_positive', 'warp_repaired_scale_pad_invariant',
+            'warp_repaired_scale_height_strict_mono',
         })
         required.update({
+            'hk_repaired_energy_nonnegative', 'hk_repaired_ray_ja_nonnegative',
             'hk_repaired_energy_positive', 'hk_repaired_ray_energy', 'hk_repaired_ray_ja_positive',
             'hk_repaired_coordinates_energy', 'hk_repaired_ray_chroma_bounds',
             'hk_repaired_zero_reference_counterexample', 'hk_zero_reference_cube_black',

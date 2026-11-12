@@ -1,5 +1,6 @@
 load("//build_defs:artifacts.bzl", "generate", "source_tree")
 load(":rules.bzl", "documentation")
+load("//products/perceptual-grade-book/print:rules.bzl", "book_exports")
 
 source_tree(
     name = "docs",
@@ -73,6 +74,23 @@ source_tree(
     visibility = ["PUBLIC"],
 )
 
+source_tree(
+    name = "policy_diagram_sources",
+    srcs = {path.removeprefix("docs/book/diagrams/"): path for path in glob(["docs/book/diagrams/*.d2"])},
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "historical_figure_inputs",
+    srcs = {
+        "shaper.zip": "docs/book/src/downloads/lut-shaper-report.zip",
+        "shaper-selection.json": "docs/book/src/downloads/lut-shaper-selection.json",
+        "domain-report.md": "docs/engineering/lut-domain128/report.md",
+        "domain-selection.json": "docs/book/src/downloads/lut-domain128-selection.json",
+    },
+    visibility = ["PUBLIC"],
+)
+
 python_library(
     name = "build_support",
     srcs = {path.removeprefix("tools/"): path for path in glob(["tools/*.py"])},
@@ -103,6 +121,8 @@ generate(
         "--assets",
         "$(location //products/perceptual-grade-book/cdn:assets)",
         "--assets",
+        "$(location //products/perceptual-grade-book/diagrams:assets)",
+        "--assets",
         "$(location :data_downloads)",
         "--historical",
         "$(location :historical)",
@@ -121,6 +141,29 @@ documentation(
     pins = ":tool_pins",
     rust_versions = "//third_party/rust/tools:versions",
     tool = ":site_tool",
+    visibility = ["PUBLIC"],
+)
+
+book_exports(
+    name = "book",
+    site = ":site[html]",
+    book = ":book_inputs",
+    front_matter = "//products/perceptual-grade-book/print:front_matter",
+    theme = "//products/perceptual-grade-book/print:theme",
+    katex_js = "//third_party/book:katex_script",
+    katex_css = "//third_party/book:katex_stylesheet",
+    katex_package = "//products/perceptual-grade-book/print:katex_package",
+    font_sans = "//third_party/book:pontano_sans_normal",
+    font_mono = "//third_party/book:roboto_mono_normal",
+    font_sans_license = "//third_party/book:pontano_sans_license",
+    font_mono_license = "//third_party/book:roboto_mono_license",
+    noto_package = "//products/perceptual-grade-book/print:noto_sans_sc_package",
+    pdf_fonts = "//products/perceptual-grade-book/print:pdf_fonts",
+    node = "//tools/web-build:node[binary]",
+    math_renderer = "//products/perceptual-grade-book/print:math_renderer",
+    versions = "//products/perceptual-grade-book/print:versions",
+    native_runtime = "//products/perceptual-grade-book/print:native_runtime",
+    tool = "//products/perceptual-grade-book/print:builder",
     visibility = ["PUBLIC"],
 )
 
@@ -160,8 +203,9 @@ python_library(
     resources = {"perceptual-grade-site.zip": ":archive[zip]"},
 )
 
-# Buck builds the completed ZIP through NativeLink; `buck2 run` launches the
-# publisher on the client so it can replace the local website checkout's files.
+# Buck builds the completed ZIP through remote execution; `buck2 run` launches
+# the publisher on the client so it can replace the local website checkout's
+# files.
 python_binary(
     name = "publish",
     main_module = "pg_book_build.publish",

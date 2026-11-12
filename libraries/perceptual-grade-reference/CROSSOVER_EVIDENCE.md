@@ -1,4 +1,11 @@
-# Reference Stage 3 crossover acceptance
+# Historical reference Stage 3 crossover acceptance
+
+This record describes the 2026-10-28 implementation. The corrected reference
+now repairs H–K before Warp Scale, and reference-owned BakeStack CPU/GPU
+backends support the 35/75 crossover. The old BakeStack rejection and deferred
+acceleration statements below are historical. The saved build results are not
+validation of the current implementation and are not instructions to rerun
+core or frozen-product validation.
 
 Date: 2026-10-28. The analytic reference now uses `r=(35/75)*abs(J_A)` with
 visibility `V=C²/(C²+4)` and low/high weights `V*(r²,C²)/(C²+r²)`.

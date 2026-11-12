@@ -1,44 +1,43 @@
 import unittest
 
 from policy.node import Event, new, step
+from color_tools.runtime.stack_observations import (
+    grade_is_referenced,
+    stack_changed,
+)
+
+
+class StackObservationTests(unittest.TestCase):
+    def test_stack_change_preserves_order_and_multiplicity(self):
+        previous = (11, 12, 11)
+        self.assertFalse(stack_changed(previous, (11, 12, 11)))
+        self.assertTrue(stack_changed(previous, (12, 11, 11)))
+        self.assertTrue(stack_changed(previous, (11, 12)))
+        self.assertTrue(stack_changed(previous, ()))
+
+    def test_grade_reference_uses_current_stack_membership(self):
+        grade_ids = (5, 8, 5)
+        self.assertTrue(grade_is_referenced(grade_ids, 8))
+        self.assertFalse(grade_is_referenced(grade_ids, 13))
 
 
 class StackPolicyTests(unittest.TestCase):
-    def test_replacement_tracks_order_and_repeated_occurrences(self):
-        state, effects = step(
-            new(), Event("stack_replace", grade_ids=(11, 12, 11))
-        )
-        self.assertEqual(state.grade_ids, (11, 12, 11))
+    def test_stack_replacement_uses_runtime_observation(self):
+        state, effects = step(new(), Event("stack_replace", stack_changed=True))
+        self.assertEqual(state, new())
         self.assertTrue(effects.rebuild)
 
-        same, effects = step(
-            state, Event("stack_replace", grade_ids=(11, 12, 11))
-        )
-        self.assertEqual(same, state)
+        state, effects = step(new(), Event("stack_replace", stack_changed=False))
+        self.assertEqual(state, new())
         self.assertFalse(effects.rebuild)
 
-        reordered, effects = step(
-            state, Event("stack_replace", grade_ids=(12, 11, 11))
-        )
-        self.assertEqual(reordered.grade_ids, (12, 11, 11))
+    def test_grade_change_uses_runtime_membership_observation(self):
+        state, effects = step(new(), Event("grade_changed", grade_referenced=True))
+        self.assertEqual(state, new())
         self.assertTrue(effects.rebuild)
 
-    def test_shared_grade_edits_rebuild_only_when_referenced(self):
-        state, _ = step(new(), Event("stack_replace", grade_ids=(5, 8)))
-        updated, effects = step(state, Event("grade_changed", grade_ids=(8,)))
-        self.assertEqual(updated, state)
-        self.assertTrue(effects.rebuild)
-
-        _, effects = step(state, Event("grade_changed", grade_ids=(13,)))
-        self.assertFalse(effects.rebuild)
-
-    def test_empty_and_unassigned_projection_is_identity(self):
-        state, effects = step(new(), Event("stack_replace", grade_ids=()))
-        self.assertEqual(state.grade_ids, ())
-        self.assertFalse(effects.rebuild)
-
-        unchanged, effects = step(state, Event("grade_changed"))
-        self.assertEqual(unchanged, state)
+        state, effects = step(new(), Event("grade_changed", grade_referenced=False))
+        self.assertEqual(state, new())
         self.assertFalse(effects.rebuild)
 
 

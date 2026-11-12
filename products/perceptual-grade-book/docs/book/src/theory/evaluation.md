@@ -1,27 +1,28 @@
 # Evaluation and interpolation
 
-The equations define one grade. Producing the same result in an analytic DCTL, a native node graph and a sampled color table also requires a valid inverse domain and controlled numerical approximations. This chapter follows those requirements from the end of Color to the returned linear color.
+The current analytic reference is `libraries/perceptual-grade-reference`. Its Stage 3 evaluates lightness/chroma rows → Warp hue/chroma → selective Adaptance → H–K repair → common positive Scale. The frozen Blender implementation and the archived 1.23.2 DCTL retain their own ordering and controls. Next Blender has not exposed Warp yet; its future implementation must follow the corrected reference.
 
-There are four distinct things in the pipeline after the Color coefficients, and they are routinely confused with each other:
+## From appearance to RGB
 
-1. **H–K repair**, a fixed-reference repair of the requested appearance pair. It is part of the model: every implementation applies it, and its result is what the later stages see.
-2. **Decoding**, the signed inverse of the appearance encoding, which requires a real positive achromatic energy and a response magnitude strictly below the pole at 400.
-3. **The export cube guard**, a projection onto the native AP1 RGB bound that holds \(J_A\) and hue and reduces chroma. It runs only at export.
-4. **Sampled evaluation**, a table lookup and interpolation that approximates the composed function at a finite number of vertices.
+H–K repair belongs inside Stage 3. It uses frozen post-Tone reference energy and runs after Adaptance, before Scale. For a repaired point, Scale sends \((a,b,E)\) to \((\lambda a,\lambda b,\lambda^2E)\), with \(\lambda>0\). The saturation-pad point \((a,b)/\sqrt{C^2+|E|}\) stays fixed. On the nonnegative-H repair branch, \(E\ge0\); its scaled H–K height is \(\sqrt{\lambda^2E+66\lambda C}\), increasing strictly for every nonblack point.
 
-Steps 1 and 2 are model transformations. Steps 3 and 4 are approximations of a different kind: the guard changes the color on purpose, while the table changes it by error. A measurement that agrees between two table implementations therefore says nothing about whether either agrees with the analytic grade.
+`Model.grade_state` returns this repaired, scaled appearance. A forward→inverse Stack handoff carries it directly, bypassing only RGB cube projection. `release_state(..., guard=False)` decodes the supplied state; `guard=True` applies only the export cube guard. H–K repair is not idempotent and must not be repeated at export or when drawing the pad.
 
-The [bounded H–K guard](hk-guard.md) covers steps 1 and 2, including the signed energy path and the export projection. Its historical evaluation explains how the current guard was chosen, with recorded experiments kept distinct from regenerated comparisons.
+The export cube guard checks the actual decoder and native AP1 RGB cube \([0,1024]^3\). For interior positive energy, it holds \(J_A\) and hue while reducing chroma until decoding is legal. Nonpositive energy exports black; energy at or above the cube-white endpoint exports cube white. Decoder trials with response magnitude at or beyond the pole at 400 are rejected. This projection can change saturation after the pad's appearance-space guarantee, and is lossy.
 
-[Direct and sampled evaluation](lut.md) covers step 4: the extension's curve tables, the signed HDR sampling grid and physical-linear-RGB interpolation. It also distinguishes agreement with a sampler from agreement with the analytic grade: matching interpolation implementations does not remove the color table's approximation error.
+The [bounded H–K guard](hk-guard.md) gives the repair equations, signed-energy treatment and separate export policy. The reference inverse evaluates the complete forward function, including repair before Scale and final cube containment, for every candidate. It does not nest a standalone H–K inverse inside that search; see the [reference inverse contract](../development/forward-inverse-math.md#20-the-reference-inverse).
 
-## Keep the paths on the same settings
+## Approximate the complete function
 
-The same current parameters must reach both paths. A completed LUT is accepted only for the grade that produced it, while forward nodes use Direct during preparation and inverse and Stack nodes retain their previous completed LUT. A table is identified by its model, size, sampling space, address constants and every control that changes the function; a change to any of them invalidates it rather than reusing it with different numbers.
+A LUT samples the complete function of its selected profile. Input repair, Stage 3 H–K repair and RGB cube containment are deliberate parts of that function; finite sampling and interpolation add approximation error. Agreement between two samplers therefore does not establish agreement with the analytic grade.
 
-Two consequences follow, and both have been the source of real defects:
+[Direct and sampled evaluation](lut.md) describes the native AP1 input grid, input repair, physical-linear-RGB interpolation and the different table profiles. The recorded plots and measurements identify the older implementations that produced them; they do not validate the corrected Warp ordering.
 
-- **A stale table must never be presented as current.** If a replacement cannot be completed, the correct behaviour is a visible failure that preserves alpha, not a silent fallback that keeps rendering the previous result.
-- **Previews are not results.** A coarse preview installs and updates interactively, but final rendering and ordinary saving require the completed table. The nesting is arranged so the preview vertices are a subset of the final ones and are reused exactly, never recomputed with different arithmetic.
+## Keep the result tied to its settings
 
-The [runtime architecture](../development/architecture.md) explains how the extension maintains that agreement during interaction, and the [full specification](../development/forward-inverse-math.md) gives the boundary conversions and the inverse contract.
+A completed table is valid only for the settings and model that produced it. Its signature includes model version, size, sampling space, address constants and every control that changes the function. A changed function requires a replacement table.
+
+- **A stale table must never be presented as current.** A last-good result may remain visible with an updating indication. If the current kernel cannot be built or recovered, fail visibly with magenta output preserving alpha.
+- **A preview is identified as a preview.** A coarse table may update during interaction, while final rendering requires the completed current result. Nested 33³/65³ grids reuse their shared vertices exactly.
+
+The [Next Blender policy machines](../development/next-policies.md) document the current product's publication and render-preflight contract. The [runtime architecture](../development/architecture.md) and legacy inverse implementation sections retain historical behavior under their stated scope.

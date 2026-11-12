@@ -1,10 +1,15 @@
-# Perceptual Grade 1.23.2 handbook
+# Perceptual Grade handbook
 
 The handbook is published at
 [rei277hz.github.io/perceptual-grade/](https://rei277hz.github.io/perceptual-grade/).
-It documents **Perceptual Grade 1.23.2**. Its mathematical content, measurements,
-and archived release downloads retain that version's meaning; it has not been
-updated for Perceptual Grade Next.
+This is the maintained handbook for the **latest Perceptual Grade**. The model
+chapters follow `libraries/perceptual-grade-reference`, including Stage 3
+Adaptance → H–K repair → common positive Scale. Some chapters still lag: the
+usage guide, host captures, and much of the runtime engineering material describe
+the preserved 1.23.2 release. Each current or historical profile is identified;
+archived downloads and recorded measurements retain their original meaning.
+The English-only **Next Blender policy machines** chapter follows the current
+Next policies and adapters. Next has not yet implemented its Warp UI.
 
 Submit [issues](https://github.com/rei277hz/perceptual-grade/issues) to the
 downstream project and [pull requests](https://github.com/rei277hz/chromaticity/pulls)
@@ -15,26 +20,46 @@ to this development repository. The handbook's GitHub toolbar links here.
 Run from the monorepo root:
 
 ```sh
-buck2 build //:perceptual_grade_book --show-output
-buck2 build '//products/perceptual-grade-book:site[html]' --show-output
-buck2 build '//products/perceptual-grade-book:archive[zip]' --show-output
+buck2 build --remote-only //:perceptual_grade_book --show-output
+buck2 build --remote-only '//products/perceptual-grade-book:site[html]' --show-output
+buck2 build --remote-only '//products/perceptual-grade-book:archive[zip]' --show-output
+buck2 build --remote-only '//products/perceptual-grade-book:book[pdf]' --show-output
+buck2 build --remote-only '//products/perceptual-grade-book:book[epub]' --show-output
 buck2 run //products/perceptual-grade-book:preview -- --port 8080
-buck2 test //products/perceptual-grade-book/tests:book //products/perceptual-grade-book/tests:publish
+buck2 test --remote-only //products/perceptual-grade-book/tests:book //products/perceptual-grade-book/tests:publish
+buck2 test --remote-only //products/perceptual-grade-book/print:print //products/perceptual-grade-book/print:epub
 ```
 
 The root alias builds the site. The `html` output is its deployable directory;
 `:archive[zip]` produces `perceptual-grade-site.zip` with stable ordering, fixed
 ZIP timestamps and permissions, and a SHA256 report. The preview serves the
 built site at `http://127.0.0.1:8080/`. Build actions use the configured Buck2
-execution platform, including NativeLink; preview and publishing run locally.
+remote execution platform; preview and publishing run locally.
+
+The separate `:book[pdf]` and `:book[epub]` outputs derive English and
+Simplified Chinese editions from the same assembled Markdown and mdBook print
+document. PDF is the fixed-page A4 edition; EPUB is reflowable. These targets do
+not modify the deployable site. The print builder consumes the existing
+`:site[html]` and tests compare its manifest and archive with the reviewed site
+baseline. See [the print workflow](print/README.md) for layout ownership and
+review guidance.
 
 Buck2 builds mdBook 0.5.4 from the central
 [Rust dependency graph](../../third_party/rust/README.md). Separate actions
 regenerate numerical and photographic figures, composed screenshots, demo and
 introductory WebPs, favicons, and manifests from declared source inputs. The
-photo and figure generators use the original 1.23.2 mathematical implementation.
-Their pinned Python packages and bundled FFmpeg are build dependencies; a clean
-build needs neither the sibling legacy checkout nor locally installed tools.
+11 generated numerical plots combine current-reference Linear, Tone, driver,
+and H–K calculations with explicitly historical Concentration, LUT examples,
+and benchmark data. Python produces the data and a pinned XeLaTeX/PGFPlots
+toolchain renders outlined-text SVGs. Each figure records its model scope and
+source hashes. Four recorded LUT-study plots are
+redrawn from archived measurements. These shared charts keep English axis
+labels in both editions; surrounding captions and alt text remain localized.
+The publication includes [chart sources and plotted data](https://rei277hz.github.io/perceptual-grade/downloads/chart-sources.zip)
+for inspection and reuse, with candidate keys beside the historical plots.
+Photos, screenshots, and D2 diagrams retain their existing producers. Pinned
+Python/TeX dependencies and bundled FFmpeg are build inputs; a clean build needs
+neither the sibling legacy checkout nor locally installed tools.
 
 The renderer preserves English and Simplified Chinese editions, language
 selection, Chinese search, part numbering, print pages, themes, equations, and
@@ -45,13 +70,27 @@ license notices; font and KaTeX payloads are absent from the deployment ZIP.
 Media are served locally. Reading equations and loading the chosen fonts require
 access to the CDN.
 
+The Next policy chapter appears in English HTML, PDF, and EPUB only. On its web
+page the Chinese language choice is marked unavailable. Every other chapter
+still requires matching translated paths and order. Its D2 diagrams are static
+SVGs with embedded fonts, generated by a pinned D2 distribution through Buck2:
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-book/diagrams:assets --show-output
+```
+
+Edit the diagram sources in `docs/book/diagrams/` and their accessible titles in
+`diagrams/figures.json`. Outputs and provenance stay in Buck2 artifacts; no
+installed D2, browser renderer, or checked-in generated SVG is used.
+
 ## Sources and generated resources
 
 | Path | Ownership |
 | --- | --- |
 | `docs/book/` | Maintained Markdown, navigation, theme, source artwork, and archived reports. |
+| `print/` | Derived PDF and EPUB pipeline, print themes, and edition front matter. |
 | `docs/data/`, `docs/media/` | Figure settings, recorded measurements, screenshots, and original recordings. |
-| `generators/` | Build-time producers and the isolated legacy numerical inputs needed by the handbook. |
+| `generators/` | Build-time producers using the current reference for current theory and isolated legacy inputs for historical illustrations. |
 | `cdn/` | Pinned CDN configuration, resource verification, and license assembly. |
 | `historical/`, `historical-manifest.json` | Immutable historical downloads and their SHA256 inventory. |
 | `tools/` | Assembly, rendering, validation, archive, preview, and publishing adapters. |

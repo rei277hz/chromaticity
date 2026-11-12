@@ -1,17 +1,16 @@
 # Full forward and inverse math
 
-Implementation: **Perceptual Grade 1.23.2**, 6 October 2026. This handbook maintains the full specification, including p=2 drivers, shared working whites, matrix-owned Stage 1, the fixed native ACEScg/ACES-white LUT boundary, enabled forward/inverse Stack entries, and the installed GPU evaluation profile.
-Scope: stages 1, 2, 3, the H–K guard, appearance conversion, signed-color extension, and fallback. Fixed grade parameters and viewing conditions are assumed throughout.
+This chapter contains the current reference specification alongside the retained **Perceptual Grade 1.23.2** derivation. The current analytic authority is `libraries/perceptual-grade-reference`: section 6.5 describes its Stage 3, and section 20 its inverse and Stack oracle. Sections 6.3–6.4 and 9–19 retain the historical control set, signed-lift/fallback policy and deployed inverse machinery except where a current comparison is explicitly marked. Those historical profiles do not implement the corrected Warp ordering.
 
-This chapter reconstructs the current forward model and specifies an inverse evaluator for baking an inverse LUT. The inverse is not required to have a slider representation. Equations describe real arithmetic; numerical branches and deployment differences are stated separately. An algebraic reduction followed by scalar or two-variable root solving is called a **semi-analytic inverse** here. It is not a claim of a universal elementary closed-form inverse or of global solver convergence.
+The equations assume fixed grade parameters and viewing conditions. An inverse need not have a slider representation. Equations describe real arithmetic; numerical branches and implementation profiles are stated separately. An algebraic reduction followed by scalar or two-variable root solving is called a **semi-analytic inverse** here. That term describes the retained production inverse, not the current reference search, and does not claim a universal closed form or global convergence.
 
-The main result is precise: **for a fixed positive reference energy and positive requested lightness, the H–K guard is one-to-one and has a unique inverse obtained from a bounded, strictly monotone scalar equation.** In the full grade, the reference energy belongs to the unknown stage-2 color. Evaluate this guard inverse inside a two-variable inverse of stage 3. Then undo stage 2 and apply the inverse stage-1 matrix.
+For a fixed positive reference energy and positive requested lightness, the standalone H–K guard is one-to-one and has a unique inverse from a bounded, strictly monotone scalar equation. The retained production inverse nests that guard inverse inside a two-variable Stage-3 solve, then undoes Tone and Stage 1. The current reference instead evaluates the complete forward map for each candidate, with H–K repair before Scale and cube containment at RGB export; section 20 specifies that search.
 
 The full grade can still have multiple preimages. Black clipping, singular matrices, signed extension, fallback selection, finite precision, and creative stage-3 folds require explicit policies. A fixed-reference guard inverse does not by itself establish injectivity of the complete grade.
 
 ## 1. Source contract and implementation profiles
 
-The inspected source functions are:
+The following source names belong to the retained 1.23.2 derivation. Current reference entry points are `src/model.py`, `src/grading.py`, `src/inverse.py` and `src/stack.py` under `libraries/perceptual-grade-reference`.
 
 | Source | Relevant functions |
 | --- | --- |
@@ -22,17 +21,17 @@ The inspected source functions are:
 | `graph/tone.py`, `graph/color.py`, `graph/curve_tables.py` | Native graph equivalents and coefficient-table evaluation |
 | `Perceptual-Grade.dctl` | `pg_model`, `pg_linear`, `pg_stage2_appearance`, `pg_drivers_ja`, `pg_attributes`, `pg_hue_concentration`, `pg_stage3_ja`, `pg_hk_energy`, `pg_project_energy`, `pg_decode_reference`, `pg_core`, `pg_nonlinear_eval` |
 
-The component equations describe the current p=2 classifier and grading model. Section 18 defines the implemented semi-analytic inverse and Stack composition. Section 19 distinguishes the unchanged canonical grading coordinates from the native ACEScg/ACES-white LUT sampling coordinates. The [sampling chapter](../theory/lut.md) explains why this grid was selected; [testing](testing.md#lut-sampling-and-aces-20-display-error) records the experiment and its limits.
+The shared coefficient machinery is compared with the current reference where marked. Section 18 retains the historical semi-analytic inverse and Stack composition; section 19 retains its working-white and LUT-boundary contract. The [sampling chapter](../theory/lut.md) gives the current reference/shared input-repair and sampler rules, while [testing](testing.md#lut-sampling-and-aces-20-display-error) records the historical experiments and their limits.
 
 When implementing an inverse, select the forward evaluator to invert:
 
-1. **Analytic reference:** evaluate the kernels and coefficient curves below directly in float64.
-2. **Deployed scalar tables:** use the actual stored coefficient tables, endpoint jets, and evaluation rules in section 14.
-3. **Deployed DCTL/native kernel:** preserve its parameter preprocessing, arithmetic precision, validity tests, FMA usage, and bypass decisions when validating candidates.
+1. **Current independent reference:** use the reference Stage 3 in section 6.5 and the complete forward evaluation in section 20.
+2. **Historical scalar tables:** use the profile-specific coefficient tables, endpoint jets and rules in section 14.
+3. **Retained DCTL/native kernel:** preserve that profile's controls, ordering, preprocessing, precision, validity tests and bypass decisions.
 
-These profiles share the mathematical design. They are not bitwise interchangeable. In particular, the Python reference is a validation model, not evidence of a completed Resolve/Blender render test. Invert the selected profile and finally validate against the actual renderer if matching that renderer is required.
+These profiles differ in mathematical design as well as arithmetic. Agreement with the independent Python reference is not evidence of a completed Resolve or Blender render test. Select the intended forward function before inverting it.
 
-The DCTL execution order is used below for the complete branch contract. Sections 2–18 express RGB/XYZ boundary conversions in one grading RGB basis for clarity. The Blender scene boundary and per-Grade white are specified in section 19; apply those boundaries to both forward and inverse evaluation. Optional diagnostics, scopes, image statistics, and display rendering are outside this transform.
+The retained DCTL order defines the historical signed-lift/fallback contract in sections 9–19. It must not replace the current reference order in section 6.5. RGB/XYZ adapters use the selected grading basis; optional diagnostics, scopes and display rendering remain outside the grading function.
 
 ## 2. Symbols, spaces, and units
 
@@ -54,11 +53,11 @@ Vectors are columns. Products such as division of two cone triples, absolute val
 | \(p_d=2\), \(s_0=35\), \(C_n=2\) | Fixed classifier exponent, saturation midpoint, and absolute-chroma neutral fade scale |
 | \(r_s=s_0/75=7/15\) | Ratio converting \(J\) to the classifier boundary |
 | \(v_n(C)\), \(\omega(J,C)\) | Neutral visibility and high-saturation membership, defined in section 6.2 |
-| \(H=J_{\mathrm{HK}}=\sqrt{J^2+k_{\mathrm{HK}}C}\) | H–K lightness used by the controls |
+| \(H=J_{\mathrm{HK}}\) | Signed H–K lightness; \(H=\sqrt{J^2+66C}\) only for \(J\ge0\) |
 | \(k_{\mathrm{HK}}=66\) | Fixed chromatic contribution to squared H–K lightness |
 | \(q_0,q_2,q_3,q_g\) | Appearance after stage 1, after stage 2, raw stage-3 request, and guarded stage-3 output |
 | \(J_i,C_i,z_i\) | The corresponding achromatic lightness, chroma, and complex pair at index \(i\) |
-| \(E_r=J_2^2\) | Guard reference energy, fixed by the incoming stage-2 color; called `E0` in source |
+| \(E_r\) | Nonnegative guard reference: \(\max(J_2\lvert J_2\rvert,0)\) in the current reference; \(J_2^2\) on the historical positive branch |
 | \(E=J_g^2\) | Guard output energy, carried directly into appearance decoding |
 | \(X=H_3^2\), \(D=X-66C_3\) | Raw requested squared lightness and raw requested achromatic energy |
 | \(U=H_g^2=E+66C_g\) | Guarded squared lightness |
@@ -70,7 +69,7 @@ Vectors are columns. Products such as division of two cone triples, absolute val
 
 \(H,J,C\) are appearance-coordinate values, not nits or log RGB code values. The grading \(a,b\) have radius \(C\); they are not the logarithmically compressed CAM16-UCS pair.
 
-Carry an internal record such as `Appearance(H, a, b, J)` from encoding through Tone to the classifier. The full paths carry \(J=100(A_c/A_w)^\gamma\), followed by \(J_2=k_TJ_0\). Standalone appearance probes without a carried \(J\) reconstruct \(\sqrt{\max(0,H^2-66C)}\). The H–K guard still derives its reference energy from the stage-2 \(H,C\) in the selected renderer arithmetic; this sampling change does not change that guard policy. In exact arithmetic the two representations agree. Candidate validation must preserve this distinction near cancellation.
+The current reference carries `State(q, energy)` with \(E_s=J_A|J_A|\), so \(J_A=\operatorname{sign}(E_s)\sqrt{|E_s|}\). With \(b=\sqrt{66C}\), its signed lightness is \(H=\sqrt{J_A^2+b^2}\) for \(J_A\ge0\), and \(H=2b-\sqrt{J_A^2+b^2}\) otherwise. Tone carries the scaled energy; the guard receives its frozen post-Tone value. Do not reconstruct that reference by subtracting rounded \(H_2^2-66C_2\). The older `Appearance(H,a,b,J)` and subtraction-based probe conventions belong to the retained profile below.
 
 ## 3. Stage 1: exact matrix construction
 
@@ -504,60 +503,85 @@ Equivalently, the actual Hue operation is \(R_\theta\) on \((a_f,b_f)\), multipl
 
 ### 6.5 The reference stage: tonal web, selective Adaptance, final scale
 
-The analytic reference keeps the coefficient curves and drivers of sections 6.1 and 6.2 and replaces sections 6.3 and 6.4 with the following. Freeze the post-Tone selectors \(C_0\), \(E_0=J_A\lvert J_A\rvert\) and \(h=\sqrt{\lvert E_0\rvert+66C_0}\); every step below reads those frozen values, never the running result.
-
-**Direct rows.** Let \(L_j\) and \(R_j\) be the lightness and chroma coefficient rows, \(g_0\) Global \(C\) Gain and \(\mathbf d\) the drivers of section 6.2:
+The current reference replaces sections 6.3 and 6.4 with the following. Freeze post-Tone chroma \(C_0\), signed energy \(E_0=J_A|J_A|\), drivers \(\mathbf d\), and the nonnegative tonal selector
 
 $$
-H_1=H+\mathbf L\cdot\mathbf d,\qquad (a_1,b_1)=2^{\,g_0+\mathbf R\cdot\mathbf d}(a,b).
+h=\sqrt{|E_0|+66C_0}.
 $$
 
-**Web radial field.** For source radius \(R\), target \(T\), and a hue-dependent toe \(\tau\),
+Coefficient rows, web geometry and Adaptance read this frozen selector, which differs from signed \(H\) when \(E_0<0\). Pixel chroma, hue and energy continue to change through the operations. The final Scale is selected separately from the pre-Adaptance web result.
+
+**Direct rows.** For lightness and chroma coefficient vectors evaluated at the frozen selector, \(\mathbf L(h)\), \(\mathbf R(h)\), and global chroma gain \(g_0\),
+
+$$
+H_1=H+\mathbf L(h)\cdot\mathbf d,\qquad
+(a_1,b_1)=2^{g_0+\mathbf R(h)\cdot\mathbf d}(a,b).
+$$
+
+The implementation carries the corresponding signed energy rather than reconstructing it by an unstable difference of squared coordinates.
+
+**Web radial field.** For source radius \(R\), target \(T\), and positive toe \(\tau\),
 
 $$
 A(C)=\left(1+(C/\tau)^4\right)^{-1/4},\quad
 g_{\mathrm c}=\frac{T/R-A(R)}{1-A(R)},\quad
-F(C)=C\left[g_{\mathrm c}+(1-g_{\mathrm c})A(C)\right],
+F(C)=C\left[g_{\mathrm c}+(1-g_{\mathrm c})A(C)\right].
 $$
 
-with \(F'(C)=g_{\mathrm c}+(1-g_{\mathrm c})(1+(C/\tau)^4)^{-5/4}>0\). Evaluate \(1-A\) in factored form; the direct difference loses the fourth-order toe before a large gain. A second field of the same form maps \(T\to\lambda T\), and the two toe widths are soft minima, of order \(-8\), over \(\max(2,0.1r_i)\) across the six radii.
-
-**Web angular field.** For source sector width \(w\), endpoints \(\varphi_0,\varphi_1\), slope \(m=(\varphi_1-\varphi_0)/w\) and shared vertex derivative \(d=\left(\tfrac12(m_{\mathrm{left}}^{-4}+m_{\mathrm{right}}^{-4})\right)^{-1/4}\),
+Its derivative is \(g_{\mathrm c}+(1-g_{\mathrm c})(1+(C/\tau)^4)^{-5/4}>0\). Evaluate \(1-A\) in factored form to retain the fourth-order toe. The angular, chroma and Scale toes are unnormalized soft minima:
 
 $$
-[\varphi_0,\ \varphi_0+wd_0/5,\ \varphi_0+2wd_0/5,\ \varphi_1-2wd_1/5,\ \varphi_1-wd_1/5,\ \varphi_1],
+\tau_\theta=\left(2^{-8}+\sum_i(0.1R_i)^{-8}\right)^{-1/8},\quad
+\tau_C=\left(2^{-8}+\sum_i[(0.1R_i)^{-8}+(0.1T_i)^{-8}]\right)^{-1/8},
+$$
+$$
+\tau_S=\left(2^{-8}+\sum_i[(0.1T_i)^{-8}+(0.1V_i)^{-8}]\right)^{-1/8},
+\qquad V_i=2^{\mathrm{log\_scale}_i}T_i.
 $$
 
-applied as \(h+S_5(\min(C/\tau_\theta,1))(\mathrm{warp}(h)-h)\). Coefficients interpolate logarithmically between destination hues and rows interpolate with \(\mathrm{smoother}\) on the anchor spacing, with constant tails. Reject any target ordering that crosses or collapses.
+Thus each toe is no larger than 2 or one tenth of any participating radius. A second radial field maps \(T_i\) to \(V_i\). Evaluating it at the pre-Adaptance web chroma \(C_1\) selects \(\lambda=F_S(C_1)/C_1\), with the neutral limit \(\lambda=1\). Adaptance and repair do not resample that field.
 
-**Selective Adaptance.** Four neutral a/b destinations and one half-influence saturation. For anchor \(H_i\), with \(A_0=A_w(H_i/100)^{1/\gamma}\), \(r_0=A_0/3.05\) and target responses \(r_i^\ast\in(0,400)\),
-
-$$
-m_i=\frac{r_i^\ast(400-r_0)}{r_0(400-r_i^\ast)},\qquad g_i=m_i^{1/0.42},
-$$
-
-interpolated as \(\log m\) through the same cardinal weights. The frozen mask is
+**Web angular field.** Let source sector width be \(w\), destination endpoints \(\varphi_0,\varphi_1\), slope \(s=(\varphi_1-\varphi_0)/w\), and shared vertex derivative \(d=(\tfrac12(s_{\mathrm{left}}^{-4}+s_{\mathrm{right}}^{-4}))^{-1/4}\). The quintic Bézier ordinates are
 
 $$
-R=\frac{C_0}{\lvert J_A\rvert},\qquad
-v=\frac{R^4E_0^2}{R^4E_0^2+C_0^4},
+[\varphi_0,\ \varphi_0+wd_0/5,\ \varphi_0+2wd_0/5,\ \varphi_1-2wd_1/5,\ \varphi_1-wd_1/5,\ \varphi_1].
 $$
 
-so \(v=1\) on neutrals, \(v=0\) at \(E_0=0\) with nonzero chroma, and \(v=1/2\) at \(C_0/\lvert J_A\rvert=R\). Responses are transformed as \(r_i'=k^{v}\,T_{m_i^{v}}(r_i)\), with
+For pixel hue \(\theta\), apply \(\theta+S_5(\min(C/\tau_\theta,1))(\mathrm{warp}(\theta)-\theta)\). Positive radial coefficients interpolate logarithmically between destination hues. Rows interpolate with the quintic smoother on anchor spacing, with constant tails; target hues must preserve strict cyclic order.
+
+**Selective Adaptance.** Four neutral a/b destinations calibrate positive response gains. At anchor \(H_i\), let \(A_0=A_w(H_i/100)^{1/\gamma}\), \(r_0=A_0/3.05\), and decode target responses \(r_i^*\in(0,400)\):
 
 $$
-T_m(r)=\frac{m\,r}{1+(m-1)\lvert r\rvert/400}\quad(\lvert r\rvert\le400),
+m_i=\frac{r_i^*(400-r_0)}{r_0(400-r_i^*)},\qquad g_i=m_i^{1/0.42}.
 $$
 
-and an algebraic exterior continuation beyond the physical response range. Reconstruct responses from the carried energy and opponent coordinates rather than by subtracting \(66C\) from \(H^2\). The common \(k\) normalizes against a hypothetical neutral at the same frozen height, preserving the original neutral's \(J_A\) at every tone.
+Interpolate \(\log m_i\) with cardinal weights. The independent setting \(R_{1/2}\in[0.05,1]\), default 0.25, specifies the source \(C/|J_A|\) ratio at half influence. The frozen mask is
 
-**Final scale.** The scale \(\lambda\) is selected from the pre-Adaptance web state; then \(a/b\mapsto\lambda\,a/b\) and \(E\mapsto\lambda^2E\), preserving raw \(C/\lvert J_A\rvert\) where defined.
+$$
+v=\frac{R_{1/2}^4E_0^2}{R_{1/2}^4E_0^2+C_0^4}.
+$$
 
-The whole order is: direct rows, web hue warp and radial chroma at fixed signed \(H\), selective Adaptance, final scale. The reference stage has an explicit inverse only for Adaptance with supplied selectors; the complete stack is inverted by the joint solve of sections 10–13, evaluated against the reference forward function rather than the 1.23.2 one.
+Neutrals have \(v=1\); chromatic \(E_0=0\) has \(v=0\); exact black remains unchanged. Transform responses by \(r_i'=k^vT_{m_i^v}(r_i)\), where
+
+$$
+T_m(r)=\frac{mr}{1+(m-1)|r|/400}\qquad(|r|\le400).
+$$
+
+The exterior continuation is algebraic; responses at or beyond the physical pole are not directly uncompressed. Reconstruct responses from carried energy and opponent coordinates. The common \(k\) is calibrated against a hypothetical neutral at the same frozen tonal selector. It preserves that neutral's \(J_A\) at the Adaptance output; the subsequent H–K repair may change it.
+
+**Repair, then Scale.** Apply the H–K guard of section 7 to the Adaptance result, using \(E_r=\max(E_0,0)\). For requested \(H\ge0\) it produces \(E_g\ge0\); for \(H>0\) and \(E_r>0\), \(E_g>0\). Negative requested H retains the signed bypass. Then apply the previously selected \(\lambda>0\):
+
+$$
+(a,b,E)=(\lambda a_g,\lambda b_g,\lambda^2E_g).
+$$
+
+The compact pad coordinate \((a,b)/\sqrt{C^2+|E|}\) is invariant under this Scale. On the repaired nonnegative branch, \(H(\lambda)=\sqrt{\lambda^2E_g+66\lambda C_g}\) increases strictly for every nonblack point. The guard is not idempotent: a second application at export would reintroduce Scale-dependent saturation movement.
+
+The order is **direct rows → web hue/chroma → selective Adaptance → H–K repair → common positive Scale**. RGB export subsequently performs only cube containment. Appearance Stack handoffs retain repair and Scale. The complete reference inverse is the forward-validated search of section 20; the historical two-variable inverse of sections 10–13 does not implement this Stage 3.
 
 ## 7. H–K guard: complete forward math
 
-The guard takes both the raw request \(q_3=S(q_2)\) and its stage-2 reference \(q_2\). Its constants are
+The equations below define the standalone bounded guard used by both profiles. For the current reference, \(q_3\) is the request after Adaptance and before Scale, and \(E_r=\max(E_0,0)\) comes from carried post-Tone signed energy. Historically, the reference was formed from Stage-2 coordinates as \(E_r=\max(H_2^2-66C_2,0)\); on the exact positive appearance branch this equals \(J_2^2\), but finite-precision subtraction need not equal the carried value. The current reference uses its frozen carried \(E_0\) instead. Its historical guard request is \(q_3=S(q_2)\). The constants are
 
 $$
 k_{\mathrm{HK}}=66,\quad \text{knee}=1,\quad
@@ -565,11 +589,11 @@ k_{\mathrm{HK}}=66,\quad \text{knee}=1,\quad
 \lambda=(1+.20)^2-1=.44.
 $$
 
-For a finite request with \(H_3\ge0\), define
+For a finite request with \(H_3\ge0\), the exact-real notation is
 
 $$
 X=H_3^2,\quad C_3=|z_3|,\quad D=X-66C_3,\quad
-E_r=\max(H_2^2-66C_2,0),
+E_r=\max(E_0,0),
 $$
 
 $$
@@ -634,7 +658,16 @@ $$
 H_3\le H_g<1.2H_3,\qquad E+66C_g=H_g^2.
 $$
 
-Negative requested \(H_3\), nonfinite requests, and invalid appearance decoding lead to source fallback. Do not treat squaring a negative \(H_3\) as permission to invert it on the positive branch.
+The historical execution profile sends negative requested \(H_3\), nonfinite requests and invalid decoding to its fallback path. Current reference repair instead bypasses negative H, rejects nonfinite requests and leaves RGB legality to cube export. Squaring a negative \(H_3\) never admits it to the positive-branch proof.
+
+For the current signed reference, compute the guard's legacy deficit without subtracting nearly equal \(H^2\) and \(66C\). With authoritative request energy \(E_s\), set
+
+$$
+b=\sqrt{66C},\qquad u=\frac{E_s}{\operatorname{hypot}(\sqrt{|E_s|},b)+b},\qquad
+D=\begin{cases}E_s,&E_s\ge0,\\ E_s+2u^2,&E_s<0.\end{cases}
+$$
+
+Use the zero limit when the denominator vanishes. This equals \(H^2-66C\) under the signed H–K map. The current guard bypasses negative requested H; nonnegative-H repair yields nonnegative carried energy, including zero-reference cases. The retained fallback policy discussed above belongs to the historical execution profile. The current reference applies this repair once before Scale and carries \(\lambda^2E_g\) to export.
 
 ## 8. Is the guard invertible? Domain and proof
 
@@ -1220,17 +1253,18 @@ Take the same weight differences and height dot products to obtain curve derivat
 
 ### 14.2 Existing forward tables
 
-No shipping implementation builds a Stage-3 coefficient table. The shipped 1.23.2 package contains `tone_table.py` and no basis-table module; Stage-3 coefficients are evaluated analytically in every profile, from the same sigmoid-window kernel as Tone. The 2048-interval, 2049-jet, 14-curve, \(512\times70\) texture described in earlier revisions of this chapter belongs to `generators/legacy/model/curves.py`, where `BasisTable` is constructible but nothing constructs it: the module's `model`, `table` and `basis_for` entry points have no callers, and `pipeline.py` imports the module only for the name `Prepared`. Do not implement against that description.
-
-What is tabulated in practice:
+The independent analytic reference evaluates Tone and Stage-3 coefficient functions directly. Its accelerated `BakeStack` prepares the shared scalar inverse Tone table. These are distinct execution profiles; an acceleration resource does not redefine the analytic model.
 
 | Profile | Stage 2 | Stage 3 |
 | --- | --- | --- |
-| Analytic reference, DCTL | closed form | closed form |
-| Shipped 1.23.2 inverse bake | adaptive scalar inverse-tone table, cap 2048 cells | analytic |
-| Next native runtime | fixed 256 cells | four fixed fields (8192 / 4096 / 1536 / 3072) |
+| Independent analytic reference | closed-form forward Tone | closed-form coefficients and corrected Warp |
+| Reference `BakeStack` | prepared inverse Tone table | reference forward kernel |
+| Retained production inverse | profile-specific inverse Tone preparation | retained controls and ordering |
+| Next Blender product | Stage 1/Tone implementation | Warp not implemented |
 
-The Stage-2 inverse-tone table is the adaptive one: cells are added by bisection until each cell's five-fraction probe error is within half the tolerance (default `2e-5`) and a Bernstein monotonicity test passes, bounded by `MAX_CELLS=2048`, `MAX_ROUNDS=32`, `MAX_ROOT_EVALUATIONS=80` and a 64 KiB budget. 2048 is an abort condition; a representative grade needs a few dozen cells and defaults need four. The next runtime instead fixes 256 cells and fails a build that misses its scalar accuracy gate rather than falling back.
+The shared inverse-Tone table used by the reference `BakeStack` solves for the scalar inverse \(t(H)\) during preparation and represents \(q(H)=t(H)/H\) against \(u=\log(1+H/s)\), where \(s\) is its table scale. It uses an adaptive node axis and quintic Hermite interpolation; the positive linear tail is evaluated analytically. Intervals are refined until five fractional probes and Bernstein checks for positive \(q\) and increasing \(Hq\) pass. Preparation is bounded by `MAX_CELLS=2048`, `MAX_ROUNDS=32`, `MAX_ROOT_EVALUATIONS=80` and a 64 KiB budget. A limit is not the stored size. Next's experimental Color preparation is not evidence of a shipped Warp path.
+
+**Historical residual-coordinate forward table.** The construction below and its uniform 2048-cell example belong to the retained derivation; they do not describe the reference `BakeStack` inverse-Tone table. Use the selected historical implementation's own table layout when reproducing its output.
 
 Tone retains its linear tail analytically. It tables only
 
@@ -1267,19 +1301,11 @@ $$
 
 Evaluate \(\sum_{j=0}^5a_ju^j\) by Horner's rule. Adjacent intervals use the same stored values, slopes, and curvatures.
 
-The hermite construction above is what the Stage-2 inverse-tone table uses, at whatever cell count its refinement produced. It is *not* the deployment recipe for Stage 3, because no Stage-3 table is deployed: the four-curve-family description and the \(512\times70\) atlas belong to the unreachable legacy generator noted in 14.2. The p=2 classifier is evaluated analytically from the carried \(J_2\) and current \(C_2\) in every profile; it is not approximated by Quintic interpolation. Height dot products remain live.
-
-The source applies a sufficient monotonicity check to the Tone residual before float32 storage. For derivative power coefficients \(b_j=(j+1)a_{j+1}\), the degree-4 Bernstein coefficients are
-
-$$
-B_k=\sum_{j=0}^k b_j\frac{\binom{k}{j}}{\binom{4}{j}},\qquad k=0,\ldots,4.
-$$
-
-If a segment has a coefficient below \(-10^{-13}\), it zeroes the shared first and second derivatives at both endpoints, then reconstructs and rechecks affected segments. When implementing this path, also verify monotonicity of the complete **stored/evaluated** tone curve after rounding and transport; the pre-storage check alone is not a bitwise floating-point guarantee.
-
-Texture transport uses power-of-two channel normalization and tiled raw jet data. Reuse the source's texture decoding and scales if matching native output. A mathematically equivalent float64 table is not necessarily the exact GPU table after transport quantization.
+The current inverse-Tone table uses the same quintic Hermite interpolation basis, but on its adaptive \(u=\log(1+H/s)\) nodes and stored inverse ratio \(q=t/H\); it does not use the historical residual coordinates, uniform grid, or forward residual table above. Its monotonicity gate checks the stored interpolation itself before accepting each interval. No Stage-3 table is deployed: the four-curve-family description and the \(512\times70\) atlas belong to the unreachable legacy generator noted in 14.2. The p=2 classifier is evaluated analytically from carried \(J_2\) and current \(C_2\); height dot products remain live.
 
 ### 14.3 A new inverse tone table
+
+This is a general construction for a scalar inverse table. The current reference `BakeStack` uses the specialized implementation described in section 14.2; this subsection is not its storage or refinement recipe.
 
 A scalar inverse table can be constructed from root-solved endpoint values even if no elementary inverse expression exists. For \(g=T_H^{-1}\),
 
@@ -1775,7 +1801,7 @@ $$
 
 Every \(T_i\), including its matrix, runs in float64 on each CPU sample or through the analytic float32 GPU profile above, with flagged whole-Stack CPU recovery. No intermediate 3D LUT or Quintic approximation is sampled. No additional clamp is placed between entries. Empty and bypassed rows are skipped; a sequence with no enabled Grades is identity. Runtime evaluates one physical-linear-ACEScg tetrahedral interpolation of \(V\); alpha bypasses the transform.
 
-The grid is \(65^3\) over \([0,1024]^3\), with zero at address 0 and 64 positive cells per component. Its plain log1p constant is \(k=0.01\). [Direct and sampled evaluation](../theory/lut.md) defines the address curve and its inverse. Both the address and the interpolation fraction are bounded, so inputs outside the grid hold the nearest edge cell instead of extrapolating. Stored output values remain signed linear ACEScg/ACES white. The CPU/Shader interpolant uses the equivalent vertex-difference form. Compositor storage encodes one base plane and three forward-axis difference planes independently with RGBE; it reads one base and three ordered edges and accumulates the physical fractions with fused multiply-adds. This is one LUT representation, not four chained transforms. Reducing the number of interpolations does not establish a universal precision improvement: the composed function may have sharper curvature or selected-inverse discontinuities.
+The grid is \(65^3\) over \([0,1024]^3\), with zero at address 0 and 64 positive cells per component. Its plain log1p constant is \(k=0.01\). [Direct and sampled evaluation](../theory/lut.md) defines the address curve and its inverse. This grid paragraph describes the current shared sampler: it repairs RGB into the cube before computing bounded addresses and fractions. It does not independently hold each out-of-range channel at an edge. The archived 1.23.2 sampler used its recorded domain and extrapolation rule. Stored output values remain signed linear ACEScg/ACES white. The CPU/Shader interpolant uses the equivalent vertex-difference form. Compositor storage encodes one base plane and three forward-axis difference planes independently with RGBE; it reads one base and three ordered edges and accumulates the physical fractions with fused multiply-adds. This is one LUT representation, not four chained transforms. Reducing the number of interpolations does not establish a universal precision improvement: the composed function may have sharper curvature or selected-inverse discontinuities.
 
 Stack signatures include the sampling basis, grid bounds, shape constants, solver policy/version and the ordered enabled entries with their directions, Grade whites and all three stages’ settings. Skipped entries do not contribute. Blender scene space affects only the outer matrices. Names and editor focus are excluded. Stack diagnostics validate complete inverse entries, including their matrices, and count singular matrices separately.
 
@@ -2002,7 +2028,7 @@ D65 is the chosen internal grading default. These scene-linear nodes remain befo
 
 ### 19.6 Sampling choice and implementation evidence
 
-The production grid uses native ACEScg/ACES white, bounds \([0,1024]\), 64 positive cells and plain log1p \(k=0.01\). There is no negative sample branch, but original negative inputs and signed outputs are retained. Both the address and the interpolation fraction are bounded, so out-of-grid inputs hold the nearest edge cell; a numerically stable vertex-difference interpolant is defined in [Direct and sampled evaluation](../theory/lut.md). The shaper and the sampling space were chosen by the domain study among its \(+128\) finalists; the bound was raised afterwards, so the study's error figures describe its own domain rather than this one. The encoded-RGB objective selects a different curve. The [domain study](lut-domain-study.md) records both objectives, experimental inputs and measured limitations.
+The current reference/shared grid uses native ACEScg/ACES white, bounds \([0,1024]\), 64 positive cells and plain log1p \(k=0.01\). It repairs input into the cube before addressing and computes bounded fractions from the repaired RGB; signed stored outputs remain possible. This is a current comparison, not the 1.23.2 input policy; a numerically stable vertex-difference interpolant is defined in [Direct and sampled evaluation](../theory/lut.md). The shaper and the sampling space were chosen by the domain study among its \(+128\) finalists; the bound was raised afterwards, so the study's error figures describe its own domain rather than this one. The encoded-RGB objective selects a different curve. The [domain study](lut-domain-study.md) records both objectives, experimental inputs and measured limitations.
 
 The production validation uses `test_lut_study.py`, `test_cube_math.py`, `test_cube_native.py`, `test_lut_grid_regression.py`, `test_working_white.py` and native render fixtures. `evaluate_lut_sampling.py --production` measures the actual Baker/Cube path through all four requested ACES 2.0 outputs on every stored IMG_* pixel. Solver residuals, basis covariance, native graph transport and off-grid interpolation errors remain distinct measurements.
 
@@ -2018,7 +2044,7 @@ This section describes `libraries/perceptual-grade-reference/src/inverse.py` and
 
 ### 20.1 Contract
 
-The entry point is `solve(model, xyz, forward=None)`, returning `InverseResult(value, residual, status)` with three per-row arrays. `value` is canonical grading RGB, `residual` is the scaled maximum residual, and `status` is one of:
+The entry point is `solve(model, xyz, forward=None)`, returning `InverseResult(value, residual, status)` with three per-row arrays. `value` is XYZ in the model's grading context; canonical grading RGB is the internal search and ranking coordinate. `residual` is the scaled maximum residual, and `status` is one of:
 
 | Status | Meaning |
 | --- | --- |
@@ -2036,7 +2062,7 @@ $$
 h_i = \sqrt[3]{\varepsilon}\,(1+\lvert z_i\rvert),
 $$
 
-with \(\varepsilon\) the binary64 machine epsilon, so the step follows the magnitude of the coordinate rather than a fixed absolute value. `eps` is used directly rather than `sqrt(eps)` because the residual is a difference of two forward evaluations, which loses about one digit of precision; the larger cube-root step keeps the difference above the noise floor.
+with \(\varepsilon\) the binary64 machine epsilon. The cube-root step scales with the search coordinate and balances central-difference truncation and floating-point roundoff; it does not guarantee a fixed number of accurate digits.
 
 ### 20.3 Seeds
 
@@ -2084,7 +2110,7 @@ Lexicographic RGB breaks remaining ties. This matters because several seeds can 
 
 ### 20.6 No nested guard inverse
 
-Every candidate's residual evaluates the **complete forward export**, including the H–K repair at that candidate's own post-tone reference energy. The search therefore never calls a separate guard inverse, never builds a guard lookup table, and never assumes the repair is invertible in isolation.
+Every candidate's residual evaluates the **complete forward export**: the candidate supplies its own frozen post-Tone reference energy, then Stage 3 applies Adaptance → H–K repair → common positive Scale, followed by RGB cube containment. The search never calls a separate guard inverse, never builds a guard lookup table and never reapplies H–K repair at export.
 
 This is deliberate. The post-tone reference energy is not known before the input is known, so a fixed-reference guard inverse has no meaning until a candidate proposes one. Inverting per component would require guessing the reference, and a wrong guess produces a candidate that fails validation anyway.
 
@@ -2098,15 +2124,15 @@ Differences worth knowing:
 
 | | `inverse.py` | `stack.py` |
 | --- | --- | --- |
-| Search coordinate | `arcsinh` RGB, bound \(\lVert x\rVert \le 2^{20}\) | `arcsinh(x/0.01)` RGB, clipped to `[0, 1024]` |
+| Search coordinate | `arcsinh` RGB, bound \(\lVert x\rVert_\infty \le 2^{20}\) | `arcsinh(x/0.01)` RGB, clipped to `[0, 1024]` |
 | Seeds | prior, target, zero, \(1/4\ldots4\times\), \(3^3\) stencil, neutral preimage | prior, zero, the \(Y\)-projected prior, \(1/4\ldots4\times\), \(3^3\) stencil |
 | Bound handling | symmetric, signed | nonnegative AP1 cube |
 | Damping | `1e-3`, `×1/3` / `×10`, `[1e-12, 1e12]` | same |
 | Tolerance and cap | `2e-10`, 128 | `2e-10`, 128 |
 
-Two solvers with the same acceptance tolerance but independent seeding is a deliberate redundancy: agreement between them is evidence about the forward model, whereas agreement between a solver and itself is not. The Stack oracle also supports an `appearance=True` mode that inverts to raw appearance coordinates rather than RGB, so a Stack can hand raw coordinates between stages without an RGB round trip.
+The separate searches provide evidence about their finite solver profiles, not a proof of unique inversion. The Stack oracle also supports `appearance=True`: its target is the repaired, scaled Stage-3 appearance, including carried signed energy, before RGB cube projection. A forward→inverse handoff therefore avoids the lossy cube export while retaining H–K repair and Scale.
 
-In a mixed Stack, adjacent forward and inverse entries with equal Tone and Color settings pass raw appearance straight through without re-encoding, and the final forward applies the export repair once. Each RGB export therefore gets its own guard, including one produced inside a Stack that is otherwise operating on raw coordinates.
+Adjacent forward and inverse entries with equal Tone and Color settings cancel their nonlinear work as an explicit Stack optimization. Otherwise, the forward entry calls `grade_state` and passes its repaired, scaled state to the appearance inverse. A forward RGB export calls `release_state(..., guard=True)`, which applies cube containment only; H–K repair is already complete. An empty reference Stack still applies native input repair. These rules do not assert a global mathematical inverse.
 
 ### 20.8 Limits
 

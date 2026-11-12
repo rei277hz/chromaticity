@@ -7,6 +7,7 @@ import threading
 from typing import Optional
 
 from ..policy import compositor_publication
+from ..policy import render_preflight
 
 
 JOBS = ("RENDER", "RENDER_PREVIEW", "OBJECT_BAKE", "COMPOSITE",
@@ -37,8 +38,47 @@ class RenderPreflightTicket:
     """Plain cross-thread rendezvous; it contains no Blender/RNA references."""
 
     render_identity: int
+    scene_identity: int
+    frame: int
+    subframe: str
+    generation: int
+    state: render_preflight.State
     _finished: threading.Event = field(default_factory=threading.Event)
     _error: Optional[BaseException] = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _resolution: Optional[render_preflight.Effects] = None
+
+    def resolve(self, event):
+        with self._lock:
+            self.state, effects = render_preflight.step(self.state, event)
+            if effects.action == "fail":
+                self._error = RuntimeError(effects.error or "Render preflight failed")
+            if effects.action is not None:
+                self._resolution = effects
+            return effects
+
+    def fail(self, error):
+        effects = self.resolve(render_preflight.Event(
+            "failed", self.render_identity, self.scene_identity, self.frame,
+            self.subframe, self.generation, error=str(error),
+        ))
+        if effects.action == "fail":
+            with self._lock:
+                self._error = error
+        return effects
+
+    @property
+    def failure_authorized(self):
+        with self._lock:
+            return (self._resolution is not None
+                    and self._resolution.action == "fail")
+
+    def deliver(self):
+        with self._lock:
+            if self._resolution is not None:
+                self._finished.set()
+                return True
+            return False
 
     def wait(self):
         if threading.current_thread() is threading.main_thread():
@@ -70,6 +110,7 @@ class PublicationGate:
         self._preflight_queue = deque()
         self._preflight_active = None
         self._preflight_scope = None
+        self._preflight_generation = 0
 
     @contextmanager
     def callback(self):
@@ -116,6 +157,14 @@ class PublicationGate:
                         successful=receipt.successful))
             return receipt
 
+    def evaluation_active(self, kind, identity=0) -> bool:
+        """Report whether this scene still has a matching native evaluation."""
+        if kind not in ("render", "compositor"):
+            raise ValueError("Evaluation kind must be render or compositor")
+        key = kind, int(identity)
+        with self._lock:
+            return bool(self._evaluations.get(key))
+
     def _current_compositor_locked(self):
         if len(self._evaluations) != 1:
             return None
@@ -149,22 +198,34 @@ class PublicationGate:
                 self._progress, compositor_publication.Event(
                     "superseded", scene_identity, epoch, eligible=True))
 
-    def request_render_preflight(self, identity):
-        """Queue an exact render's demand for a main-thread reconcile."""
+    def request_render_preflight(self, identity, scene_identity, frame, subframe):
+        """Queue one frame's demand for a correlated main-thread reconcile."""
         identity = int(identity)
+        scene_identity = int(scene_identity)
+        frame = int(frame)
+        subframe = str(subframe)
         with self._lock:
+            self._preflight_generation += 1
+            generation = self._preflight_generation
+            ticket = RenderPreflightTicket(
+                identity, scene_identity, frame, subframe, generation,
+                render_preflight.new(identity, scene_identity, frame, subframe,
+                                     generation),
+            )
             if not self._evaluations.get(("render", identity)):
-                raise PublicationDeferred("Render preflight has no active render lease")
-            ticket = RenderPreflightTicket(identity)
+                ticket.fail(PublicationDeferred(
+                    "Render preflight has no matching active render lease"))
             self._preflight_queue.append(ticket)
             return ticket
 
-    def take_render_preflight(self) -> Optional[RenderPreflightTicket]:
+    def take_render_preflight(self, *, failed_only=False) -> Optional[RenderPreflightTicket]:
         """Take one request on the main thread; a timer should poll this method."""
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("Render preflight must be taken on Blender's main thread")
         with self._lock:
             if self._preflight_active is not None or not self._preflight_queue:
+                return None
+            if failed_only and not self._preflight_queue[0].failure_authorized:
                 return None
             ticket = self._preflight_queue.popleft()
             self._preflight_active = ticket
@@ -183,8 +244,9 @@ class PublicationGate:
         if reason is not None:
             raise PublicationDeferred(reason)
         with self._lock:
-            if self._committing or self._callbacks:
-                raise PublicationDeferred("Cannot reset publication state during a callback")
+            if self._committing or self._callbacks or self._evaluations:
+                raise PublicationDeferred(
+                    "Cannot reset publication state during an active evaluation")
             tickets = tuple(self._preflight_queue)
             self._preflight_queue.clear()
             if self._preflight_active is not None:
@@ -195,8 +257,8 @@ class PublicationGate:
                 self._progress, compositor_publication.Event("reset", quiescent=True))
         error = PublicationDeferred("Render preflight was invalidated by host lifecycle reset")
         for ticket in tickets:
-            ticket._error = error
-            ticket._finished.set()
+            ticket.fail(error)
+            ticket.deliver()
 
     def _activity_reason(self, *, render_preflight_job=None,
                          compositor_snapshot=False) -> Optional[str]:
@@ -366,12 +428,13 @@ class PublicationGate:
                 self._committing = False
 
     @contextmanager
-    def render_preflight(self, ticket, *, defer=False):
+    def render_preflight(self, ticket, *, defer=False, deliver_failure=True):
         """Commit only the main-thread reconcile requested by an active render.
 
         This scope exempts only that render's active lease and identified job,
         along with its interface lock. Other render jobs, modal bake operations
-        and compositor leases still defer publication.
+        and compositor leases still defer publication. A host adapter can defer
+        failed-ticket delivery until it has applied the policy-authorized failure.
         """
         error = None
         claimed = False
@@ -426,13 +489,37 @@ class PublicationGate:
                     self._preflight_scope = None
                     self._committing = False
                 if claimed and self._preflight_active is ticket:
-                    self._preflight_active = None
                     retry = defer and not entered and isinstance(error, PublicationDeferred)
                     if retry:
+                        self._preflight_active = None
                         # Admission can race with a second host reader. Keep
                         # the request live for the next foreground timer turn;
                         # only failures after yielding are terminal.
                         self._preflight_queue.appendleft(ticket)
+                    elif (deliver_failure or (error is None
+                            and ticket._resolution is not None
+                            and ticket._resolution.action == "release")):
+                        self._preflight_active = None
             if claimed and not retry:
-                ticket._error = error
-                ticket._finished.set()
+                if error is not None:
+                    ticket.fail(error)
+                elif not ticket._finished.is_set():
+                    if ticket._resolution is None:
+                        ticket.fail(RuntimeError(
+                            "Render preflight exited without an exact publication receipt"))
+                if (deliver_failure or ticket._resolution is None
+                        or ticket._resolution.action == "release"):
+                    ticket.deliver()
+
+    def finish_render_preflight_failure(self, ticket):
+        """Deliver a terminal failure after the host adapter revokes output."""
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError("Render preflight failure requires Blender's main thread")
+        with self._lock:
+            if self._preflight_active is not ticket:
+                return False
+            if (ticket._resolution is None
+                    or ticket._resolution.action != "fail"):
+                return False
+            self._preflight_active = None
+        return ticket.deliver()

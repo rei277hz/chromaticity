@@ -1,5 +1,7 @@
 # Grade in three stages
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 Follow two images through the same sequence. Example A is SDR; Example B is HDR. They stay on the left and right throughout the book. Each pair demonstrates the same control with a different grading intention.
 
 Start by neutralizing the light and balancing exposure in both images. Refine the SDR image’s muted color relationships while preserving the HDR image’s separation between diffuse surfaces and bright highlights. In Tone, build an S-shaped contrast curve for A and use a gamma-like curve to open darker areas in B. Carry those choices into Color, where the same controls refine each image’s own tonal distribution.

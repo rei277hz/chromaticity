@@ -1,5 +1,7 @@
 # Code and grading model
 
+> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+
 Start by locating the behavior in [Architecture and runtime](architecture.md). A model change belongs in the shared equations; an interaction change belongs in the UI and update lifecycle. Keep the change focused enough that its effect can be explained and reviewed.
 
 Treat the analytic DCTL as the reference. Match its equations in the numerical model and native graph. Keep the Direct curve approximation and the paired baker/sampler aligned. Preserve exact-reset paths, signed-value support, finite domain guards and current-parameter signatures. Test the affected numerical, DCTL, parity and native-render targets through Buck2 before broadening coverage.

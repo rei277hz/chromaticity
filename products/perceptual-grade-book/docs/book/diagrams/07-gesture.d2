@@ -1,0 +1,16 @@
+direction: down
+
+none: "No observer\ncurrent=None"
+current: "Current A\npending=None"
+pending: "Pending B\ncurrent=A or None"
+next: "Current B\npending=None"
+none -> pending: "window seen / invoke B"
+current -> pending: "handoff / invoke B"
+pending -> next: "B installed successfully"
+pending -> current: "B fails/lost; A retained"
+pending -> none: "B fails/lost; no A"
+current -> none: "A lost / reset"
+next -> none: "lost / reset"
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

@@ -1,5 +1,7 @@
 # Share and reuse Grades
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 A Grade stores the Stage 1 matrix, Working White, Tone and Color settings used by the extension. Select the same Grade on several nodes to adjust them together, including Shader and Compositor users and Grade Stack entries.
 
 The displayed node titles are **Grade** and **Grade Stack**. The extension, sidebar and Add-menu product names remain Perceptual Grade.

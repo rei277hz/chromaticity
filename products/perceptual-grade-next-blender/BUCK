@@ -123,6 +123,16 @@ python_library(
 )
 
 python_library(
+    name = "stack_observations_runtime",
+    srcs = {
+        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
+        "runtime/stack_observations.py": PREFIX + "runtime/stack_observations.py",
+    },
+    base_module = "color_tools",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
     name = "gesture_runtime",
     srcs = {
         "runtime/__init__.py": PREFIX + "runtime/__init__.py",
@@ -146,10 +156,44 @@ export_file(
     visibility = ["PUBLIC"],
 )
 
+export_file(
+    name = "render_preflight_source",
+    src = POLICY_PREFIX + "render_preflight.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "render_preflight_requirements",
+    src = "requirements/render_preflight.inv",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_render_preflight",
+    required_mutations = [
+        "release_accepts_unpublished_signature",
+        "stale_generation_is_accepted",
+    ],
+    required_properties = [
+        "release_requires_correlated_exact_publication",
+        "stale_generation_cannot_release_or_fail_current_ticket",
+        "frame_or_scene_mismatch_fails_closed",
+        "publication_mismatch_fails_closed",
+    ],
+    required_witnesses = [
+        "matching_frame_releases_after_exact_publication",
+        "late_previous_frame_result_cannot_release_new_frame",
+    ],
+    requirements = ":render_preflight_requirements",
+    runtime_source = "policy/render_preflight.py",
+    source = ":render_preflight_source",
+    visibility = ["PUBLIC"],
+)
+
 invariant_proof(
     name = "proof_node",
     required_mutations = [
-        "replacement_ignores_order",
+        "stack_replacement_ignores_runtime_observation",
         "recovery_ignores_current_signature",
     ],
     required_properties = [
@@ -163,20 +207,14 @@ invariant_proof(
         "current_failure_clears_applied_output",
         "recovery_requires_current_full_installation",
         "return_to_applied_settings_updates_preparation_demand",
-        "replacement_rebuild_tracks_order_and_multiplicity",
-        "grade_edit_rebuilds_only_when_referenced",
+        "stack_replacement_uses_runtime_observation",
+        "grade_edit_uses_runtime_observation",
         "kernel_match_does_not_override_preparation_correlation",
         "preparation_failure_requires_current_preparation_signature",
-        "request_preserves_reducer_owned_stack_membership",
         "disposal_clears_node_lifecycle",
         "disposal_authorizes_cleanup_without_presentation",
         "disposal_is_idempotent",
         "disposed_demand_rejects_correlated_late_receipts",
-    ],
-    required_witnesses = [
-        "preview_remains_visible_until_full_installation",
-        "repaired_current_kernel_restores_output",
-        "duplicate_grade_occurrences_are_preserved",
     ],
     requirements = ":node_requirements",
     runtime_source = "policy/node.py",
@@ -260,20 +298,21 @@ invariant_proof(
         "stale_generation_is_ignored",
         "terminal_poll_never_touches_transport",
         "shutdown_does_not_cleanup_live_process",
-        "exit_publishes_failure_before_cleanup",
+        "exit_authorizes_failure_and_cleanup",
         "cleanup_failure_retains_owner_and_error",
         "shutdown_fences_admission",
         "cancel_request_retains_active_slot",
         "cancel_acknowledgement_dispatches_successor",
         "stale_stage_timeout_has_no_effects",
-        "shutdown_escalates_in_order",
+        "stopping_timeout_requests_termination",
+        "terminating_timeout_requests_kill",
+        "killing_timeout_marks_unretired",
         "duplicate_exit_does_not_republish",
         "repeated_shutdown_preserves_stage_deadline",
         "first_causal_error_is_preserved",
-    ],
-    required_witnesses = [
         "successful_probe_admits_work",
-        "cancelled_startup_completes_retirement",
+        "cancelled_startup_exit_publishes_cancellation",
+        "startup_exit_publishes_probe_failure",
     ],
     requirements = "requirements/helper.inv",
     runtime_source = "policy/helper.py",
@@ -404,39 +443,6 @@ invariant_proof(
 )
 
 invariant_proof(
-    name = "proof_parameter_publication",
-    required_mutations = [
-        "allocation_ignores_pool_bound",
-        "exposed_candidate_is_overwritten",
-        "active_reader_does_not_block_retirement",
-        "dirty_candidate_is_published",
-        "failed_delivery_skips_restoration",
-    ],
-    required_properties = [
-        "allocation_keeps_three_version_bound",
-        "only_unexposed_candidates_can_be_reused",
-        "retirement_requires_quiescence_and_no_users",
-        "current_and_candidate_versions_remain_pinned",
-        "snapshot_requires_completely_packed_candidate",
-        "binding_requires_snapshot_receipt",
-        "publication_requires_committed_bindings",
-        "partial_transaction_failure_restores_bindings",
-        "restoration_failures_still_attempt_every_component",
-        "failed_transaction_never_delivers",
-        "terminal_receipts_are_inert",
-    ],
-    required_witnesses = [
-        "packed_candidate_can_publish_and_deliver",
-        "delivery_failure_restores_then_fails_closed",
-        "quiescent_unreferenced_version_can_retire",
-    ],
-    requirements = "requirements/parameter_publication.inv",
-    runtime_source = "policy/parameter_publication.py",
-    source = POLICY_PREFIX + "parameter_publication.py",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
     name = "proof_bank_publication",
     required_mutations = [
         "active_bank_can_be_staged",
@@ -478,7 +484,6 @@ invariant_proof(
 POLICY_PROOFS = [
     ":proof_bank_publication",
     ":proof_compositor_publication",
-    ":proof_parameter_publication",
     ":proof_node",
     ":proof_preparation",
     ":proof_preparation_join",
@@ -486,6 +491,7 @@ POLICY_PROOFS = [
     ":proof_resources",
     ":proof_image_publication",
     ":proof_gesture",
+    ":proof_render_preflight",
 ]
 
 verification_group(
@@ -602,13 +608,63 @@ generate(
     visibility = ["PUBLIC"],
 )
 
+python_library(
+    name = "publication_compare_policy_runtime",
+    srcs = {
+        "__init__.py": "examples/publication_compare/policy/__init__.py",
+        "parameter_publication.py": "examples/publication_compare/policy/parameter_publication.py",
+    },
+    base_module = "policy",
+)
+
+python_test(
+    name = "publication_compare_parameter_policy",
+    srcs = {
+        "test_policy_parameter_publication.py": "examples/publication_compare/tests/test_policy_parameter_publication.py",
+    },
+    base_module = "tests.publication_compare",
+    deps = [":publication_compare_policy_runtime"],
+)
+
+invariant_proof(
+    name = "proof_publication_compare_parameter_publication",
+    required_mutations = [
+        "allocation_ignores_pool_bound",
+        "exposed_candidate_is_overwritten",
+        "active_reader_does_not_block_retirement",
+        "dirty_candidate_is_published",
+        "failed_delivery_skips_restoration",
+    ],
+    required_properties = [
+        "allocation_keeps_three_version_bound",
+        "only_unexposed_candidates_can_be_reused",
+        "retirement_requires_quiescence_and_no_users",
+        "current_and_candidate_versions_remain_pinned",
+        "snapshot_requires_completely_packed_candidate",
+        "binding_requires_snapshot_receipt",
+        "publication_requires_committed_bindings",
+        "partial_transaction_failure_restores_bindings",
+        "restoration_failures_still_attempt_every_component",
+        "failed_transaction_never_delivers",
+        "terminal_receipts_are_inert",
+    ],
+    required_witnesses = [
+        "packed_candidate_can_publish_and_deliver",
+        "delivery_failure_restores_then_fails_closed",
+        "quiescent_unreferenced_version_can_retire",
+    ],
+    requirements = "examples/publication_compare/requirements/parameter_publication.inv",
+    runtime_source = "policy/parameter_publication.py",
+    source = "examples/publication_compare/policy/parameter_publication.py",
+)
+
 invariant_bundle(
     name = "publication_compare_policy_evidence",
     deps = [
         ":proof_bank_publication",
         ":proof_compositor_publication",
         ":proof_image_publication",
-        ":proof_parameter_publication",
+        ":proof_publication_compare_parameter_publication",
     ],
 )
 
@@ -620,16 +676,16 @@ extension_tree(
         "blender_manifest.toml": "examples/publication_compare/blender_manifest.toml",
         "README.md": "examples/publication_compare/README.md",
         "LICENSE": "LICENSE",
-        "policy/__init__.py": POLICY_PREFIX + "__init__.py",
+        "policy/__init__.py": "examples/publication_compare/policy/__init__.py",
         "policy/compositor_publication.py": POLICY_PREFIX + "compositor_publication.py",
         "policy/image_publication.py": POLICY_PREFIX + "image_publication.py",
-        "policy/parameter_publication.py": POLICY_PREFIX + "parameter_publication.py",
+        "policy/parameter_publication.py": "examples/publication_compare/policy/parameter_publication.py",
         "policy/bank_publication.py": POLICY_PREFIX + "bank_publication.py",
         "runtime/__init__.py": "examples/publication_compare/runtime/__init__.py",
         "runtime/compositor_receipts.py": RUNTIME_PREFIX + "compositor_receipts.py",
         "runtime/drag_trace.py": "examples/publication_compare/runtime/drag_trace.py",
         "runtime/image_publication.py": RUNTIME_PREFIX + "image_publication.py",
-        "runtime/parameter_publication.py": RUNTIME_PREFIX + "parameter_publication.py",
+        "runtime/parameter_publication.py": "examples/publication_compare/runtime/parameter_publication.py",
         "runtime/bank_publication.py": RUNTIME_PREFIX + "bank_publication.py",
         "runtime/publication_compare_diagnostics.py": "examples/publication_compare/runtime/publication_compare_diagnostics.py",
         "runtime/publication.py": RUNTIME_PREFIX + "publication.py",

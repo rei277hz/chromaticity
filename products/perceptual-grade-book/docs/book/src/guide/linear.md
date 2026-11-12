@@ -1,5 +1,7 @@
 # Linear
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 Linear correction gives the image a sound starting point before creative grading. It corrects the lighting cast and broad color relationships across the whole image, so Tone and Color can shape the look without compensating for an unwanted tint. Global Exposure raises or lowers the overall level; establish a useful level, then work through white balance and the relationships below.
 
 ## Balance white and color relationships

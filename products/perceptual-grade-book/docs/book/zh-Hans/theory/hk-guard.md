@@ -1,79 +1,90 @@
 # 有界 H–K 保护
 
-创作性的明度与彩度请求可能落到 \(H^2<66C\)，那里无法恢复实数非彩色明度。保护把该修复分摊为一个有界的 \(H\) 抬升和一次 \(C\) 缩减，同时保持色相不变。
+创作性的明度与彩度请求可能进入负的非彩色能量区域；参考实现的带符号外观映射在那里仍有实数的带符号 \(J_A\)。默认 `hk_guard=True` 时，H–K 修复在 \(H\ge0\) 分支上选择非负能量结果，把调整分摊为有界的 \(H\) 抬升与 \(C\) 缩减，并保持色相。它在阶段 3 内部执行，位于 Adaptance 之后、最终公共 Scale 之前。负 \(H\) 走带符号旁路；显式的 `hk_guard=False` 诊断模式会跳过修复。
 
 ## 设定能量拐点
 
-把阶段 2 的点逐像素保留为参考。定义请求的明度平方 \(X\)、请求的非彩色能量 \(D\) 与参考能量 \(E_0\)：
+逐像素保留阶段 2 携带的能量 \(E_2\) 作为参考。对 \(H\ge0\) 的有限请求，定义明度平方 \(X\)、平方缺口 \(D\) 与截到零以上的参考能量 \(E_0\)：
 
 $$
-X=H^2,\qquad D=X-66C,\qquad E_0=\max(H_2^2-66C_2,0),
+X=H^2,\qquad D=X-66C,\qquad E_0=\max(E_2,0),
 \qquad\delta=\frac{E_0X}{E_0+X}.
 $$
 
-调和式用 min/max 归一化求值，以避免大乘积。两个能量都为零时 \(\delta\) 为零。其系数是固定的内部常数 1.0，与图像统计无关。
+带符号请求能量 \(E_{\mathrm{req}}=J_A\lvert J_A\rvert\) 是权威值；在负分支上，它不同于 \(D\)。实现不对舍入后的 \(H^2\) 与 \(66C\) 做相减，而是计算
 
-当 \(D\ge\delta\) 时保留请求。低于拐点时使用正的能量下限：
+$$
+B=\sqrt{66C},\qquad u=\frac{E_{\mathrm{req}}}{\sqrt{\lvert E_{\mathrm{req}}\rvert+66C}+B},\qquad
+D=\begin{cases}E_{\mathrm{req}},&E_{\mathrm{req}}\ge0,\\ E_{\mathrm{req}}+2u^2,&E_{\mathrm{req}}<0.\end{cases}
+$$
+
+分母为零时取 \(u=0\)。\(\delta\) 的调和式使用 min/max 归一化以避免大乘积；只要 \(E_0=0\) 或 \(X=0\) 就取零，也包括两者皆零的情形。其系数是固定的内部常数 1.0，与图像统计无关。
+
+当 \(D\ge\delta\) 时保留请求并令 \(E_g=E_{\mathrm{req}}\)。低于正拐点时，修复后的能量为
 
 $$
 t=\frac{\delta-D}{\delta},\qquad
-E=\frac{\delta}{(1+4t+10t^2)^{1/4}}.
+E_g=\frac{\delta}{(1+4t+10t^2)^{1/4}}.
 $$
 
-该 \(E\) 分支在 \(D=\delta\) 处与前者值、斜率与二阶导数均衔接。实现使用 \(v=1/(1+t)\) 以获得有界的中间量。零 \(\delta\) 分支取相应的非负能量极限。
+该分支在 \(D=\delta\) 处与前者值、斜率及二阶导数均衔接。实现使用 \(v=1/(1+t)\) 获得有界中间量。\(\delta=0\) 时的极限为 \(E_g=\max(D,0)\)。因此 \(H\ge0\)、\(E_0\ge0\) 保证 \(E_g\ge0\)；\(H>0\)、\(E_0>0\) 则保证 \(E_g>0\)，不要求原始带符号缺口为正。
 
-![保护能量与实域边界](../assets/figures/guard-energy.png)
+![保护能量与非负能量边界](../assets/figures/guard-energy.svg)
 
-<p class="figure-caption">拐点过渡到正非彩色能量。修复后的点仍满足 \(H^2=66C\) 之上，因此逆有实数 \(J_A\)。</p>
+<p class="figure-caption">当请求的 \(H\) 与参考能量均为正时，拐点使修复后的能量严格为正，位于 \(H^2=66C\) 之上。零参考或零明度情形可能位于边界上。</p>
 
 ## 分摊修复
 
 令 \(Z\) 为能量缺口，\(L\) 为明度平方的最大抬升。把平滑有界的一部分 \(G\) 分配给 \(H\)：
 
 $$
-Z=\max(E-D,0),\qquad L=(1.2^2-1)X=0.44X,
+Z=\max(E_g-D,0),\qquad L=(1.2^2-1)X=0.44X,
 \qquad G=\frac{LZ}{\sqrt{4L^2+Z^2}}.
 $$
 
 然后恢复输出对：
 
 $$
-H_{\mathrm{out}}=\sqrt{X+G},\qquad
-C_{\mathrm{out}}=\frac{X+G-E}{66},\qquad
-\mathbf u_{\mathrm{out}}=\frac{C_{\mathrm{out}}}{C}\mathbf u.
+H_g=\sqrt{X+G},\qquad
+C_g=\frac{X+G-E_g}{66},\qquad
+(a_g,b_g)=\frac{C_g}{C}(a,b).
 $$
 
-黑与 \(C=0\) 使用显式零分支。舍入保护把 \(C_{\mathrm{out}}\) 约束在零与请求的 \(C\) 之间。合格输出满足 \(H\le H_{\mathrm{out}}\le1.2H\) 与 \(0\le C_{\mathrm{out}}\le C\)。在请求 \(H=50,\ C=80\)、参考 \(H=50,\ C=20\) 时，输出约为 \(H=58.188,\ C=48.142\)。
+黑色与 \(C=0\) 使用显式零分支。舍入保护把 \(C_g\) 约束在零与请求的 \(C\) 之间。修复分支满足 \(H\le H_g\le1.2H\) 与 \(0\le C_g\le C\)。这些界限只约束修复本身；后续 Scale 可以增加两个坐标。在请求 \(H=50,\ C=80\)、正分支参考 \(H=50,\ C=20\) 时，修复后的输出约为 \(H=58.188,\ C=48.142\)。
 
-![在 H 与 C 之间分摊修复](../assets/figures/guard-boundary.png)
+![在 H 与 C 之间分摊修复](../assets/figures/guard-boundary.svg)
 
 <p class="figure-caption">在请求的 \(H=50\) 处，更强的彩度请求逐渐使用有界抬升与更多彩度缩减。抬升逼近固定的 20% 相对上限。</p>
 
-## 把能量带入解码
+## 经 Scale 把能量带入解码
 
-解码器直接接收 \(E\)。若由四舍五入的 \(H_{\mathrm{out}}^2-66C_{\mathrm{out}}\) 重建，会抹掉很小的正非彩色分量。DCTL、解析 Python 模型与原生节点都保留这条能量路径。精确复位、中性色与未改变的请求保留其旁路行为。负的请求 \(H\)、非有限值与锥响应极点遵循必要的逆域策略。
+参考实现接着执行公共正缩放：\((a_g,b_g,E_g)\mapsto(\lambda a_g,\lambda b_g,\lambda^2E_g)\)。解码器直接接收缩放后的能量；若由舍入后的外观坐标重建，可能抹掉很小的正非彩色分量。[Color 章节](color.md#饱和度色板与-scale)解释了紧致饱和度色板为什么在此 Scale 下保持不变。
 
-该保护处理模型的实能量边界。输出色域与影调渲染仍在后续。LUT 采样的是完整受保护的变换；插值 RGB 有其自身的有限网格误差。[样例对比](#重建样例对比)分别说明这两个问题。
+高于拐点的请求保留其坐标和能量。负的请求 \(H\) 旁路 H–K 修复并保留带符号状态，非负能量保证不适用于该分支。非有限输入会被拒绝。只要锥响应满足 \(\lvert r\rvert<400\)，带符号解码器就可以接收有限的带符号能量；正性是修复／导出策略，而不是带符号逆本身的必要条件。
 
-实现来源是 `libraries/perceptual-grade-reference/src/responses.py` 中的带符号 H–K 映射与能量传递、`libraries/perceptual-grade-core/src/perceptual_grade_core/model/hk_guard.py` 中的保护本身，以及位于 `products/perceptual-grade-blender/src/graph/` 与 `products/perceptual-grade-dctl/src/core.dctlh` 的产品图。测试覆盖独立高精度计算、float DCTL 一致性、原生表达式、带符号输入以及采样的 EXR/PQ 样例，均通过 [Buck2](../development/building.md) 运行。
+[HKCubeLuminance.lean](https://github.com/rei277hz/chromaticity/blob/main/libraries/perceptual-grade-reference/proofs/PerceptualGrade/HKCubeLuminance.lean) 证明修复后的能量与 \(J_A\) 非负、在 \(H>0,E_0>0\) 下严格为正，以及 \(H_g^2-66C_g=E_g\) 的恒等式。[WarpRepairedScale.lean](https://github.com/rei277hz/chromaticity/blob/main/libraries/perceptual-grade-reference/proofs/PerceptualGrade/WarpRepairedScale.lean) 证明正 Scale 保持这些符号。零参考能量不能支持无条件严格正性的结论：已证明的反例 \(H=1,C=1,E_0=0\) 修复后能量为零，并导出为黑色。
+
+参考实现的次序位于 `libraries/perceptual-grade-reference/src/grading.py`，带符号映射位于 `src/responses.py`，修复公式共用 `libraries/perceptual-grade-core/src/perceptual_grade_core/model/hk_guard.py`。冻结的 Blender 产品仍先 Scale 后修复。下方历史 DCTL 与原生节点对比是针对其记录版本的独立证据。
 
 ## 投影到导出立方体
 
-H–K 修复留下的是一个有效的外观对，而不是可显示的 RGB。参考实现在导出处施加第二个、独立的保护，两者不可混为一谈：
+H–K 修复不保证 RGB 位于立方体内。参考实现在导出处施加独立的立方体保护：
 
-1. H–K 修复使用 Tone 之后的参考能量，得到 \((H_g,a_g,b_g)\) 并携带 \(E\)。
-2. 解码器在该对上运行。任何锥响应逼近 \(\lvert r\rvert=400\) 极点的点会被拒绝，而不是被截断。
-3. 立方体保护在修复后的 \(J_A\) 与色相处搜索能解码进原生 AP1 立方体的最大彩度。它先在锥坐标中由八个立方体顶点框定半径，用该明度与色相处的拟合容量作为搜索种子，随后二分，并用实际解码器验证每一次试探。容量种子只是起始猜测，从不决定结果。只有当 RGB 有限且位于 \([0,1024]^3\) 内时才保存。
+1. 阶段 3 提供已经修复并完成最终公共 Scale 的外观；导出不再执行一次 H–K 修复。
+2. 当携带的能量 \(E\le0\) 时，立方体导出返回黑色。当 \(E\ge W^2\) 时，其中 \(W\) 为立方体白点的 \(J_A\)，返回中性白端点 RGB \((1024,1024,1024)\)。
+3. 对 \(0<E<W^2\)，如果直接解码值有限且位于原生 AP1 立方体内，就接受它；否则沿固定 \(J_A\)、固定色相的射线搜索可接受的最大彩度。搜索在锥坐标中由八个立方体顶点框定半径，仅将拟合容量用作种子，再二分并通过实际解码器检查每一次试探。\(\lvert r\rvert\ge400\) 的试探会被拒绝。只有 RGB 有限且位于 \([0,1024]^3\) 内时才保存。
 
-因此立方体保护在固定 \(J_A\) 与色相的同时缩减彩度，这是与 H–K 保护的有界明度抬升不同的策略。它是投影而非逆：两个不同的外观请求可以导出到同一 RGB，投影按构造是有损的。只有 H–K 保护参与上面的定参考可逆性论证；立方体保护的输出不继承该性质。
+只有内部径向分支会固定 \(J_A\) 与色相并缩减彩度；黑、白端点分支有不同的行为。立方体投影有损，不同的外观请求可以导出为同一 RGB，因此不继承独立 H–K 保护的一一映射结论；该结论要求固定的正参考能量与正请求 \(H\)。
 
-调色中间量在导出之前从不被迫经过立方体保护。调色在原始带符号外观坐标上进行，保护只在边界运行，因此一个 Stack 可以让同一个外观值穿过若干阶段，并在最后投影一次。仅导出时修复也意味着逆向不能假定前向路径已经投影过。
+Appearance Stack 交接的是每阶段 Scale 后经策略处理的带符号状态，同时把立方体投影推迟到导出处。默认启用保护时，非负 \(H\) 请求会修复，负 \(H\) 请求旁路修复；Scale 将任一携带能量乘以 \(\lambda^2\)，因此保持其符号。逆向必须求值这一完整前向次序，包括所选的导出策略。
 
-早期 1.23.2 版本在其自身的立方体域上施加等价的导出保护。跨版本比较必须说明上界：本部分描述参考实现的 \([0,1024]\) AP1 域，而 1.23.2 的采样网格记录在归档的 LUT 研究中。
+`HKCubeLuminance.lean` 中的 `hk_cube_guard_positive_luminance` 定理要求 \(H>0\)、\(E_0>0\)、立方体白点 \(W>0\)，并明确假设输出 RGB 合法且非负、局部解码与能量编码精确一致、RGB 黑色能量为零、亮度权重为正，从而证明输出亮度为正。定理包含正白端点。这些精确实数结果不证明拟合容量或浮点包含性；可执行参考实现会通过解码器检查所接受的 RGB。
+
+本章描述参考实现的 \([0,1024]\) AP1 立方体。历史版本的域与 LUT 采样研究保留各自注明的参数。
 
 ## 历史评估
 
-本节记录的是较早的保留 C 保护及其最初的 LUT 编码。当前实现使用[有界共享保护](hk-guard.md)与[线性 RGB 插值的非对称输入网格](lut.md)。下面的测量记录的是那次较早的实验。当前的回归样例与验收结果在[验证](../development/building.md)中说明。包中保留了采样的 EXR 探针与 PQ PNG。当前 Buck2 构建用这些样例生成下面的对比。
+本节记录较早的保留 C 保护及其最初的 LUT 编码。下面的测量与样例对比属于那次实验，不验证当前参考实现先修复后 Scale 的次序。采样的 EXR 探针与 PQ PNG 作为历史证据保留。当前求值与采样约定见[直接与采样求值](lut.md)。
 
 ### 记录实验：1.4.0
 

@@ -95,3 +95,30 @@ python_test(
     },
     deps = ["//libraries/perceptual-grade-reference:boundary_table_code"],
 )
+
+python_library(
+    name = "warp_gpu_support",
+    srcs = {
+        "gpu_test_main.py": "gpu/gpu_test_main.py",
+        "gpu_support.py": "gpu/gpu_support.py",
+    },
+    base_module = "tests.reference.gpu",
+)
+
+python_test(
+    name = "warp_gpu",
+    srcs = ["gpu/test_warp_gpu.py"],
+    base_module = "tests.reference",
+    labels = ["gpu"],
+    main_module = "tests.reference.gpu.gpu_test_main",
+    resources = {
+        "gpu/blender": "//third_party:blender_native",
+        "gpu/native_runner.py": "gpu/native_runner.py",
+        "gpu/xvfb": "//third_party:xvfb_software_linux",
+    },
+    target_compatible_with = ["prelude//os:linux"],
+    deps = [
+        ":warp_gpu_support",
+        "//libraries/perceptual-grade-reference:runtime",
+    ],
+)

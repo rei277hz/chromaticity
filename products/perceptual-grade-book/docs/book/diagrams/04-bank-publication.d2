@@ -1,0 +1,23 @@
+direction: down
+
+idle: "idle\nB2: candidate = 1 - active"
+repair: "repair_gate\nconfirm closed output"
+stage: "stage / repair_stage [B1]"
+activation: "select -> deliver\nread back then deliver"
+restore: "restore_selector"
+closed: "fail -> terminal\nafter confirmed closure"
+done: "terminal"
+idle -> stage: "admitted; active valid"
+idle -> repair: "admitted; active invalid"
+idle -> closed: "invalid / denied"
+repair -> repair: "closure failed / retry"
+repair -> stage: "closed / repair effect"
+stage -> activation: "clean staging"
+stage -> closed: "failure / unclean"
+activation -> restore: "wrong readback / failure"
+restore -> closed: "restoration receipt"
+activation -> done: "delivered"
+closed -> closed: "closure failed / retry"
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

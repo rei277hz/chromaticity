@@ -23,7 +23,7 @@ extensions bundle private dependencies and have independent lifecycles.
 | [HDR Color Picker for Blender](products/hdr-color-picker-blender/README.md) | HDR color authoring for Grease Pencil |
 | [HDR Color Picker for the web](products/hdr-color-picker-web/README.md) | Browser picker and image processing with WebGPU/Wasm |
 | [Perceptual Grade DCTL](products/perceptual-grade-dctl/README.md) | Standalone grading tools for DaVinci Resolve |
-| [Perceptual Grade handbook](products/perceptual-grade-book/README.md) | Historical 1.23.2 documentation, static-site build, and preview |
+| [Perceptual Grade handbook](products/perceptual-grade-book/README.md) | Maintained English/Chinese handbook for the latest reference model, with identified historical and lagging material; HTML, PDF, and EPUB |
 
 The preserved Grade product and the rebuilt Blender product have separate
 contracts and evidence. The rebuilt product owns its state-machine policies,
@@ -50,21 +50,33 @@ behavior and installed acceptance remain with the products.
 
 ## Build entry points
 
-Linux x86_64 builds use pinned Buck2 and default to NativeLink remote execution.
-Install Buck2 with the [CI tooling instructions](tools/ci/README.md), then follow
-[NativeLink setup](remote_execution/README.md#start) for Docker and client setup.
-Run from the repository root:
+Linux x86_64 builds use pinned Buck2 with remote execution. NativeLink is the
+service currently configured for this checkout; it is one compatible backend,
+not a project requirement. Install Buck2 with the
+[CI tooling instructions](tools/ci/README.md). Contributors need access to a
+compatible remote execution service and a Linux x86-64 worker with the tools
+required by the targets they build. If no shared service is available,
+contributors may need to deploy their own remote execution platform.
+
+Configure Buck2's execution, action-cache, and content-addressable storage
+endpoints, TLS, and instance in the `[buck2_re_client]` section of
+[.buckconfig](.buckconfig). Set `[remote_execution].worker_image` to the worker's
+immutable SHA-256 image identity. The checked-in settings identify the
+maintainer's current service. The execution platform in
+[toolchains/remote_execution.bzl](toolchains/remote_execution.bzl) requests
+`OSFamily`, `ISA`, and `worker-image` properties; configure the service to match
+them or adapt that mapping for the chosen backend. Update the worker identity
+when its tools or system dependencies change.
+
+Run builds from the repository root with `--remote-only`:
 
 ```sh
-./remote_execution/re up
-./remote_execution/re validate
-buck2 build //:hdr_color_picker_web --show-output
+buck2 build //:hdr_color_picker_web --remote-only --show-output
 ```
 
 The example builds the web app's deployable ZIP. Other product commands are in
-the linked READMEs above. For local execution, switching modes, and dependency
-changes, see [Buck client configuration](remote_execution/README.md#buck-client-configuration)
-and [runtime dependencies](remote_execution/README.md#runtime-dependencies-and-upgrades).
+the linked READMEs above. Development builds and validation require remote
+execution; CI uses its own disposable runtime as described in the CI guide.
 
 Handwritten Python defines policy behavior; Invariant checks source-bound
 requirements with Z3, and Lean verifies color mathematics. Native behavior and
@@ -77,8 +89,6 @@ physical-device acceptance require separate evidence. See the
 | --- | --- |
 | [Component packaging](build_defs/README.md) | Source ownership, Buck Python dependencies, and private extension packages |
 | [CI and formatting](tools/ci/README.md) | Workflow triggers, local checks, and badge publishing |
-| [Remote execution](remote_execution/README.md) | Deployment, dependency ownership, and runtime maintenance |
-| [Remote validation](remote_execution/tests/README.md) | Local/remote execution checks, cache reuse, and acceptance coverage |
 | [Verification](tools/verification/README.md) | Proofs, archive integrity, integration tests, and evidence boundaries |
 | [Rust dependencies](third_party/rust/README.md) | Central dependency lock, Reindeer targets, and crate fixups |
 | [Web dependencies](third_party/web/README.md) | Pinned npm archives, Node, and browser tooling |

@@ -17,23 +17,23 @@
   target_platform_detector_spec = target:root//...->prelude//platforms:default target:prelude//...->prelude//platforms:default target:toolchains//...->prelude//platforms:default
 
 [project]
-  ignore = .git, buck-out, __pycache__, remote_execution/.state, third_party/rust/.cargo
+  ignore = .git, buck-out, __pycache__, third_party/rust/.cargo
 
-# BEGIN NativeLink settings (managed by remote_execution/re)
+# BEGIN NativeLink settings
 [build]
-  execution_platforms = root//remote_execution:platforms
+  execution_platforms = toolchains//:platforms
 
 [buck2]
   digest_algorithms = SHA256
 
 [buck2_re_client]
-  engine_address = perceptual-grade-nativelink:50051
-  action_cache_address = perceptual-grade-nativelink:50051
-  cas_address = perceptual-grade-nativelink:50051
+  engine_address = 172.19.0.1:50051
+  action_cache_address = 172.19.0.1:50051
+  cas_address = 172.19.0.1:50051
   tls = false
   instance_name = main
 
 [remote_execution]
   enabled = true
-  worker_image = sha256:950122d8ff3471616c1fabb735da6fc429f320e6dc20556ba65da44f31d5acaf
+  worker_image = sha256:86685863442b62b2acffbac76fa98bd217ad3fa3856bd423d72ad5f79b790969
 # END NativeLink settings

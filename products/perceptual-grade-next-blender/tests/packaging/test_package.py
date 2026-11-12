@@ -23,6 +23,7 @@ class PackageTests(unittest.TestCase):
                 "runtime/image_publication.py",
                 "runtime/gesture_coordinator.py",
                 "runtime/execution.py",
+                "runtime/stack_observations.py",
                 "runtime/host.py",
                 "runtime/payloads.py",
                 "runtime/transport.py",
@@ -59,8 +60,10 @@ class PackageTests(unittest.TestCase):
             self.assertFalse(any(name.startswith("perceptual_grade_core/") for name in names))
             self.assertFalse(any(name.startswith("src/") for name in names))
             self.assertFalse(any(name in {
+                "policy/parameter_publication.py",
                 "runtime/drag_trace.py",
                 "runtime/drag_diagnostics.py",
+                "runtime/parameter_publication.py",
                 "runtime/publication_compare_diagnostics.py",
             } for name in names))
             nodes_source = archive.read("nodes.py")

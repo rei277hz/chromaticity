@@ -1,79 +1,90 @@
 # Bounded H–K guard
 
-Creative lightness and chroma requests can reach \(H^2<66C\), where a real achromatic lightness cannot be recovered. The guard shares that repair between a bounded increase in \(H\) and a reduction in \(C\) while preserving hue.
+Creative lightness and chroma requests can cross into negative carried achromatic energy. The reference's signed appearance map still has a real signed \(J_A\) there. With the default `hk_guard=True`, H–K repair selects a nonnegative-energy result on the \(H\ge0\) branch by sharing the adjustment between a bounded increase in \(H\) and a reduction in \(C\), preserving hue. It runs after Adaptance and before the final common Scale inside Stage 3. Negative \(H\) takes the signed bypass; the explicit `hk_guard=False` diagnostic mode skips repair.
 
 ## Set the energy knee
 
-Keep the Stage-2 point as the per-pixel reference. Define requested squared lightness \(X\), requested achromatic energy \(D\), and reference energy \(E_0\):
+Keep the Stage-2 carried energy \(E_2\) as the per-pixel reference. For a finite request with \(H\ge0\), define squared lightness \(X\), squared deficit \(D\), and clamped reference energy \(E_0\):
 
 $$
-X=H^2,\qquad D=X-66C,\qquad E_0=\max(H_2^2-66C_2,0),
+X=H^2,\qquad D=X-66C,\qquad E_0=\max(E_2,0),
 \qquad\delta=\frac{E_0X}{E_0+X}.
 $$
 
-The harmonic expression is evaluated with min/max normalization to avoid a large product. \(\delta\) is zero when both energies vanish. Its coefficient is the fixed internal constant 1.0, independent of image statistics.
+The signed requested energy \(E_{\mathrm{req}}=J_A\lvert J_A\rvert\) is authoritative. On the negative branch it differs from \(D\). The implementation avoids subtracting rounded \(H^2\) and \(66C\) by evaluating
 
-For \(D\ge\delta\), retain the request. Below the knee, use a positive energy floor:
+$$
+B=\sqrt{66C},\qquad u=\frac{E_{\mathrm{req}}}{\sqrt{\lvert E_{\mathrm{req}}\rvert+66C}+B},\qquad
+D=\begin{cases}E_{\mathrm{req}},&E_{\mathrm{req}}\ge0,\\ E_{\mathrm{req}}+2u^2,&E_{\mathrm{req}}<0.\end{cases}
+$$
+
+Use \(u=0\) when its denominator is zero. The harmonic expression for \(\delta\) uses min/max normalization to avoid a large product and is zero when either \(E_0=0\) or \(X=0\), including the joint zero case. Its coefficient is the fixed internal constant 1.0, independent of image statistics.
+
+For \(D\ge\delta\), retain the request and set \(E_g=E_{\mathrm{req}}\). Below a positive knee, use the repaired energy
 
 $$
 t=\frac{\delta-D}{\delta},\qquad
-E=\frac{\delta}{(1+4t+10t^2)^{1/4}}.
+E_g=\frac{\delta}{(1+4t+10t^2)^{1/4}}.
 $$
 
-The \(E\) branch matches value, slope and second derivative at \(D=\delta\). The implementation uses \(v=1/(1+t)\) for bounded intermediate values. The zero-delta branch uses the corresponding nonnegative-energy limit.
+This branch matches value, slope and second derivative at \(D=\delta\). The implementation uses \(v=1/(1+t)\) for bounded intermediate values. At \(\delta=0\), the limit is \(E_g=\max(D,0)\). Thus \(H\ge0\) and \(E_0\ge0\) guarantee \(E_g\ge0\); \(H>0\) and \(E_0>0\) give \(E_g>0\), regardless of the signed raw deficit.
 
-![Guard energy and real-domain boundary](../assets/figures/guard-energy.png)
+![Guard energy and nonnegative-energy boundary](../assets/figures/guard-energy.svg)
 
-<p class="figure-caption">The knee transitions to a positive achromatic energy. Repaired points remain above \(H^2=66C\), so the inverse has a real \(J_A\).</p>
+<p class="figure-caption">With positive requested \(H\) and reference energy, the knee keeps repaired energy strictly positive, above \(H^2=66C\). Zero-reference and zero-lightness cases can lie on the boundary.</p>
 
 ## Share the repair
 
 Let \(Z\) be the energy deficit and \(L\) the maximum squared-lightness lift. Allocate a smooth, bounded amount \(G\) to \(H\):
 
 $$
-Z=\max(E-D,0),\qquad L=(1.2^2-1)X=0.44X,
+Z=\max(E_g-D,0),\qquad L=(1.2^2-1)X=0.44X,
 \qquad G=\frac{LZ}{\sqrt{4L^2+Z^2}}.
 $$
 
 Then recover the output pair:
 
 $$
-H_{\mathrm{out}}=\sqrt{X+G},\qquad
-C_{\mathrm{out}}=\frac{X+G-E}{66},\qquad
-\mathbf u_{\mathrm{out}}=\frac{C_{\mathrm{out}}}{C}\mathbf u.
+H_g=\sqrt{X+G},\qquad
+C_g=\frac{X+G-E_g}{66},\qquad
+(a_g,b_g)=\frac{C_g}{C}(a,b).
 $$
 
-Explicit zero branches handle black and \(C=0\). Rounding protection bounds \(C_{\mathrm{out}}\) between zero and requested \(C\). Eligible outputs satisfy \(H\le H_{\mathrm{out}}\le1.2H\) and \(0\le C_{\mathrm{out}}\le C\). At \(H=50,\ C=80\) with reference \(H=50,\ C=20\), the output is approximately \(H=58.188,\ C=48.142\).
+Explicit zero branches handle black and \(C=0\). Rounding protection bounds \(C_g\) between zero and requested \(C\). On the repair branch, \(H\le H_g\le1.2H\) and \(0\le C_g\le C\). These are bounds on repair alone; the later Scale can increase both coordinates. At \(H=50,\ C=80\) with positive-branch reference \(H=50,\ C=20\), the repaired output is approximately \(H=58.188,\ C=48.142\).
 
-![Sharing repair between H and C](../assets/figures/guard-boundary.png)
+![Sharing repair between H and C](../assets/figures/guard-boundary.svg)
 
 <p class="figure-caption">At requested \(H=50\), stronger chroma requests gradually use the bounded lift and more chroma reduction. The lift approaches the fixed 20% relative cap.</p>
 
-## Carry energy into decoding
+## Carry energy through Scale and decoding
 
-The decoder receives \(E\) directly. Reconstructing it from rounded \(H_{\mathrm{out}}^2-66C_{\mathrm{out}}\) could erase a small positive achromatic component. The DCTL, analytic Python model and native nodes preserve this energy path. Exact reset, neutrals and unchanged requests retain their bypass behavior. Negative requested \(H\), nonfinite values and cone-response poles follow the necessary inverse-domain policy.
+The reference next applies the common positive Scale: \((a_g,b_g,E_g)\mapsto(\lambda a_g,\lambda b_g,\lambda^2E_g)\). The decoder receives this scaled energy directly. Reconstructing it from rounded appearance coordinates could erase a small positive achromatic component. The [Color chapter](color.md#saturation-pad-and-scale) explains why the compact saturation pad stays fixed under this Scale.
 
-This guard addresses the model’s real-energy boundary. Output gamut and tone rendering remain downstream. A LUT samples the complete guarded transform; interpolated RGB has its own finite-grid error. The [fixture comparisons](#rebuilt-fixture-comparisons) illustrate both issues separately.
+Requests above the knee retain their coordinates and energy. Negative requested \(H\) bypasses H–K repair and retains the signed state; the nonnegative-energy guarantee does not cover this branch. Nonfinite inputs are rejected. The signed decoder accepts finite signed energy when its cone responses satisfy \(\lvert r\rvert<400\); positivity is a repair/export policy, not a prerequisite for the signed inverse itself.
 
-Implementation sources are `libraries/perceptual-grade-reference/src/responses.py` for the signed H–K map and carried energy, `libraries/perceptual-grade-core/src/perceptual_grade_core/model/hk_guard.py` for the guard itself, and the product graphs at `products/perceptual-grade-blender/src/graph/` and `products/perceptual-grade-dctl/src/core.dctlh`. Tests cover independent high-precision calculations, float DCTL parity, native expressions, signed inputs and the sampled EXR/PQ fixtures through [Buck2](../development/building.md#run-tests).
+[HKCubeLuminance.lean](https://github.com/rei277hz/chromaticity/blob/main/libraries/perceptual-grade-reference/proofs/PerceptualGrade/HKCubeLuminance.lean) proves nonnegative repaired energy and \(J_A\), the strict versions under \(H>0,E_0>0\), and the identity \(H_g^2-66C_g=E_g\). [WarpRepairedScale.lean](https://github.com/rei277hz/chromaticity/blob/main/libraries/perceptual-grade-reference/proofs/PerceptualGrade/WarpRepairedScale.lean) proves that positive Scale preserves these signs. Zero reference energy cannot support a universal strict-positivity claim: the proved counterexample \(H=1,C=1,E_0=0\) repairs to zero energy and exports to black.
+
+The reference order is implemented in `libraries/perceptual-grade-reference/src/grading.py`; its signed map is in `src/responses.py`, and the repair formula is shared from `libraries/perceptual-grade-core/src/perceptual_grade_core/model/hk_guard.py`. The frozen Blender product retains Scale-before-repair behavior. Historical DCTL and native-node comparisons below are separate evidence for their recorded implementations.
 
 ## Project into the export cube
 
-H–K repair leaves a valid appearance pair, not displayable RGB. The reference applies a second, separate guard at export, and the two must not be conflated:
+H–K repair does not guarantee RGB cube containment. The reference applies a separate cube guard at export:
 
-1. H–K repair, with the post-Tone reference energy, produces \((H_g,a_g,b_g)\) and carries \(E\).
-2. The decoder runs on that pair. Any point whose cone response approaches the \(\lvert r\rvert=400\) pole is rejected rather than clamped.
-3. A cube guard searches for the largest chroma at the repaired \(J_A\) and hue that decodes inside the native AP1 cube. It brackets the radius from the eight cube vertices in cone coordinates, seeds the search with the fitted capacity at that lightness and hue, and then bisects, validating every trial through the actual decoder. The capacity seed is only a starting guess; it never decides the result. Accepted RGB is saved only when it is finite and inside \([0,1024]^3\).
+1. Stage 3 supplies the repaired appearance after the final common Scale; export does not apply H–K repair again.
+2. For carried energy \(E\le0\), cube export returns black. For \(E\ge W^2\), where \(W\) is the cube-white \(J_A\), it returns the neutral cube-white endpoint, RGB \((1024,1024,1024)\).
+3. For \(0<E<W^2\), accept the direct decode if it is finite and inside the native AP1 cube. Otherwise search along the fixed-\(J_A\), fixed-hue ray for the greatest accepted chroma. The search brackets the radius from the eight cube vertices in cone coordinates, uses fitted capacity only as a seed, and bisects while checking each trial through the actual decoder. A trial with \(\lvert r\rvert\ge400\) is rejected. Accepted RGB is saved only when finite and inside \([0,1024]^3\).
 
-The cube guard therefore holds \(J_A\) and hue fixed while reducing chroma, which is a different policy from the H–K guard's bounded lightness lift. It is a projection, not an inverse: two different appearance requests can export to the same RGB, and the projection is lossy by construction. Only the H–K guard participates in the fixed-reference invertibility argument above; the cube guard's output does not inherit it.
+Only the interior radial branch holds \(J_A\) and hue fixed while reducing chroma; the black and white endpoint branches have different behavior. Cube projection is lossy: different appearance requests can export to the same RGB. It does not inherit the standalone guard's one-to-one result, which requires fixed positive reference energy and positive requested \(H\).
 
-The graded intermediate is never forced through the cube guard before export. Grading operates on raw signed appearance coordinates and the guard runs at the boundary, so a Stack can carry one appearance value through several stages and project once at the end. Export-only repair also means an inverse cannot assume the forward path already projected.
+Appearance Stack handoffs carry each stage's post-policy signed state after Scale, while deferring cube projection until export. With the default guard enabled, nonnegative-\(H\) requests are repaired and negative-\(H\) requests bypass repair; Scale multiplies either carried energy by \(\lambda^2\), preserving its sign. The inverse must evaluate this complete forward order, including the selected export policy.
 
-The earlier 1.23.2 release applies an equivalent export guard over its own cube domain. Comparisons across releases must state the bound: this part describes the reference's \([0,1024]\) AP1 domain, while the 1.23.2 sampling grid is documented in the archived LUT study.
+The ideal cube composition theorem `hk_cube_guard_positive_luminance` in `HKCubeLuminance.lean` proves positive output luminance under \(H>0\), \(E_0>0\), and cube-white \(W>0\), plus explicit assumptions: legal nonnegative output RGB, exact local decode/energy-encoding consistency, zero energy at RGB black, and positive luminance weights. The theorem includes its positive white endpoint. These exact-real results do not certify fitted capacity or floating-point containment; the executable reference checks accepted RGB through its decoder.
+
+This chapter describes the reference's \([0,1024]\) AP1 cube. Historical release domains and LUT sampling studies retain their own stated parameters.
 
 ## Historical evaluation
 
-This archived study concerns the earlier retain-C guard and its original LUT encoding. The current implementations use the [bounded shared guard](hk-guard.md) and [asymmetric input grid with linear-RGB interpolation](lut.md). The measurements below document that earlier experiment. Current regression fixtures and acceptance results are described under [validation](../development/building.md). The package retains sampled EXR probes and the PQ PNG. The current Buck2 build uses those fixtures to create the comparisons below.
+This archived study concerns the earlier retain-C guard and its original LUT encoding. The measurements and fixture comparisons below document that experiment; they do not validate the current reference's repair-before-Scale order. The sampled EXR probes and PQ PNG remain as historical evidence. Current evaluation and sampling contracts are described in [Direct and sampled evaluation](lut.md).
 
 ### Recorded experiment: 1.4.0
 

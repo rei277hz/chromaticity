@@ -1,12 +1,19 @@
 # Perceptual Grade for Blender
 
 This step adds Grade and Grade Stack nodes to the Shader and Compositor Color Add
-menus. Grade nodes apply Stage 1 and Tone through the product's `kernel` package;
-Stack nodes apply ordered, forward-only Stage 1 and Tone Grades through progressive
-33³/65³ GPU LUTs. Both products use shared Grade datablocks and the same Grade controls.
-Create or select a Grade using the node's datablock selector before adjusting it.
-Without a Grade, Linear and Tone controls are disabled and local setting writes reset
-to neutral without creating a datablock.
+menus. Regular Grade nodes apply Stage 1 and Tone through the product's `kernel`
+package; Grade Stack nodes apply ordered, forward-only Stage 1 and Tone Grades through
+progressive 33³/65³ GPU LUTs. Both remain static and use shared Grade datablocks.
+Per-Node Grade nodes own their settings and support numeric keyframes in Blender's
+native animation editors. All variants use the same Grade controls and preparation
+model. Regular Grade controls remain disabled until a Grade datablock is selected.
+
+The [Perceptual Grade handbook](../perceptual-grade-book/README.md) follows the
+latest mathematical reference in English and Simplified Chinese, with HTML,
+PDF, and EPUB editions. Some usage chapters still describe preserved 1.23.2
+behavior; their scope is identified. Next has not yet implemented the Warp UI.
+Its future Warp implementation must follow the reference's Adaptance → H–K
+repair → common positive Scale order.
 
 A private asyncio loop owns the preparation schedulers. Each shared
 Grade has one active preparation and one replaceable latest settings snapshot;
@@ -78,6 +85,44 @@ preparation never waits for graph installation. Current failures produce a visib
 error and magenta output with alpha preserved. File load, working-space changes,
 and Grade reassignment fence obsolete source subscriptions and reconcile kernels.
 Shutdown withdraws pending demand and waits for active physical work to retire.
+
+## Animated Grades
+
+Per-Node Grade settings animate on the scene timeline. Hover a numeric control in the
+Shader or Compositor sidebar and press `I` to insert a keyframe, or use its right-click
+menu. With Blender Auto Key enabled, changed settings are keyed when the slider gesture
+ends. The curves belong to the containing Shader or Compositor node tree and appear in
+the native Dope Sheet and Graph Editor when that tree is reachable from the scene.
+The containing tree owns the animation: reusing a material or node group shares those
+curves across its users and instances. Per-Node means each Grade node has its own
+channels in the tree Action, not that each object or node-group instance has a separate
+animation. Blender's timeline preview reconciles Grade kernels asynchronously, so it
+may show an `Updating` result while a replacement is prepared; native animation renders
+use exact per-frame preflight before rendering each output frame.
+Regular Grade and Grade Stack controls do not support keyframes. The discrete
+`peak_nits` control also remains static. Use Blender's F-curve controls to choose
+interpolation and edit keyframes. Render
+with Blender's native Render Animation command, including Ctrl+F12 or its F3
+search result. The per-frame render handler prepares and verifies the full Grade
+result before Blender continues each frame, for either image-sequence or movie
+output. Shader Grade uses the evaluated Grade settings at the output frame's
+exact time and holds that Grade fixed across the frame's motion-blur shutter
+samples. Scene motion still receives Blender's native motion blur; Grade values
+do not animate within that shutter interval. This is center-frame Grade
+semantics, not per-sample Grade animation. Compositor Grade runs once after the
+scene render and motion blur, using the exact output-frame time. The render
+returns to the starting frame, subframe, and frame range when it finishes or
+stops.
+
+The installed motion-blur test compares animated Grade with a static copy made
+from the same fractional output time. It checks both Shader and Compositor Grade
+while confirming that scene motion still produces visible blur. It runs on each
+available EEVEE or Cycles engine. The pinned Blender 5.2.2 test artifact
+currently exposes EEVEE only; Cycles coverage remains outstanding:
+
+```sh
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:installed_motion_blur_conformance
+```
 
 The publication comparison example provides F3 drag recording for comparing
 helper-image publication strategies across Shader and Compositor trees. Its

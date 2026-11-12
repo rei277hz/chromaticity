@@ -115,7 +115,9 @@ class SelectiveAdaptanceTests(unittest.TestCase):
             calls.append(len(np.atleast_2d(values)))
             return decoder(ctx,values,energy)
         with patch.object(type(context),'decode',physical_only):
-            rgb=model.release_state(State(out,stored),guard=True,reference_energy=abs(e))
+            from color_tools.perceptual_grade_core.model.hk_guard import guard
+            repaired,energy=guard(out,stored,abs(e))
+            rgb=model.release_state(State(repaired,energy),guard=True)
         self.assertTrue(calls)
         self.assertTrue(np.isfinite(rgb).all())
         self.assertTrue(np.all((rgb>=0)&(rgb<=1024)))
@@ -141,11 +143,11 @@ class SelectiveAdaptanceTests(unittest.TestCase):
             with self.assertRaises(ValueError):SelectiveAdaptance(target,self.anchors,self.aw, response_math=response_math)
         for reach in (0.,.049,1.001,2.,np.inf):
             with self.assertRaises(ValueError):SelectiveAdaptance(self.targets,self.anchors,self.aw,reach, response_math=response_math)
-        color=Color(ColorSettings(adaptance=tuple(map(tuple,self.targets))),self.tone)
+        color=Color(ColorSettings(adaptance=tuple(map(tuple,self.targets))),self.tone,hk_guard=False)
         for row in range(4):
             target=color.warp_targets(row).q[1,1:]+[.1,-.1]
             changed=color.target_settings(row,0,target)
-            np.testing.assert_allclose(Color(changed,self.tone).warp_targets(row).q[1,1:],target,rtol=2e-12,atol=2e-12)
+            np.testing.assert_allclose(Color(changed,self.tone,hk_guard=False).warp_targets(row).q[1,1:],target,rtol=2e-12,atol=2e-12)
 
     def test_exact_folded_corner_target_is_rejected(self):
         # A physically valid cone calibration can still fold its fixed-H a/b
@@ -156,7 +158,7 @@ class SelectiveAdaptanceTests(unittest.TestCase):
                  (55.10410325750891,-13.3427987554869))
         web=TonalWeb(WebSettings(),self.tone, encoder=encode_cones)
         settings=web.settings_for_target(0,3,[-5.550044051892587,-1.6012204525629576])
-        color=Color(ColorSettings(adaptance=targets,adaptance_half_saturation=2**(4*.7612082038878359-4),web=settings),self.tone)
+        color=Color(ColorSettings(adaptance=targets,adaptance_half_saturation=2**(4*.7612082038878359-4),web=settings),self.tone,hk_guard=False)
         target=color.warp_targets(0).q[4,1:]
         with self.assertRaisesRegex(ValueError,'folded or singular'):
             color.target_settings(0,3,target)
@@ -185,20 +187,20 @@ class SelectiveAdaptanceTests(unittest.TestCase):
     def test_saturation_centers_and_scale_independent_corner_targets(self):
         settings=ColorSettings(adaptance=tuple(map(tuple,self.targets)))
         for row in range(4):
-            color=Color(settings,self.tone)
+            color=Color(settings,self.tone,hk_guard=False)
             center=np.array([.03,-.02])
             changed=color.target_saturation_settings(row,-1,center)
             np.testing.assert_allclose(np.asarray(changed.adaptance)[row],self.anchors[row]*center)
-            np.testing.assert_allclose(Color(changed,self.tone).saturation_targets(row)[0],center,atol=2e-14)
-        base=Color(settings,self.tone)
+            np.testing.assert_allclose(Color(changed,self.tone,hk_guard=False).saturation_targets(row)[0],center,atol=2e-14)
+        base=Color(settings,self.tone,hk_guard=False)
         target=base.saturation_targets(1)[1]*1.02+[.001,-.001]
         outcomes=[]
         for stops in (-8.,0.,8.):
             scales=np.zeros((4,6));scales[1,0]=stops
-            color=Color(replace(settings,web=WebSettings(log_scale=tuple(map(tuple,scales)))),self.tone)
+            color=Color(replace(settings,web=WebSettings(log_scale=tuple(map(tuple,scales)))),self.tone,hk_guard=False)
             np.testing.assert_allclose(color.saturation_targets(1),base.saturation_targets(1),rtol=2e-13,atol=2e-14)
             changed=color.target_saturation_settings(1,0,target)
-            result=Color(changed,self.tone)
+            result=Color(changed,self.tone,hk_guard=False)
             np.testing.assert_allclose(result.saturation_targets(1)[1],target,rtol=2e-12,atol=2e-13)
             self.assertEqual(changed.web.log_scale[1][0],stops)
             outcomes.append(changed.web.log_chroma[1][0])
@@ -223,18 +225,18 @@ class SelectiveAdaptanceTests(unittest.TestCase):
         for factor in (1.2,3.):
             c=factor*h*h/66
             web=base.settings_for_target(row,handle,c*np.array([np.cos(angle),np.sin(angle)]))
-            color=Color(ColorSettings(web=web),self.tone)
+            color=Color(ColorSettings(web=web),self.tone,hk_guard=False)
             source=color.warp_targets(row);self.assertLess(source.energy[handle+1],0.)
             target=color.saturation_targets(row)[handle+1]*1.005
             changed=color.target_saturation_settings(row,handle,target)
-            result=Color(changed,self.tone)
+            result=Color(changed,self.tone,hk_guard=False)
             self.assertLess(result.warp_targets(row).energy[handle+1],0.)
             np.testing.assert_allclose(result.saturation_targets(row)[handle+1],target,rtol=2e-12,atol=2e-13)
             radius=result.web.parameters(h)['target_radii'][handle]
             self.assertEqual(radius<2*h*h/66,factor<2)
             bounded=bounded_from_linear(target)
             bounded_settings=color.target_bounded_saturation_settings(row,handle,bounded)
-            bounded_result=Color(bounded_settings,self.tone)
+            bounded_result=Color(bounded_settings,self.tone,hk_guard=False)
             self.assertLess(bounded_result.warp_targets(row).energy[handle+1],0.)
             np.testing.assert_allclose(bounded_result.bounded_saturation_targets(row)[handle+1],bounded,rtol=3e-12,atol=3e-13)
             self.assertEqual(bounded_result.web.parameters(h)['target_radii'][handle]<2*h*h/66,factor<2)
@@ -281,18 +283,18 @@ class SelectiveAdaptanceTests(unittest.TestCase):
 
     def test_bounded_targets_reuse_branch_inverse_and_preserve_scale(self):
         settings=ColorSettings(adaptance=tuple(map(tuple,self.targets)))
-        base=Color(settings,self.tone)
+        base=Color(settings,self.tone,hk_guard=False)
         for row in range(4):
             target=np.array([.03,-.02])
             changed=base.target_bounded_saturation_settings(row,-1,target)
-            np.testing.assert_allclose(Color(changed,self.tone).bounded_saturation_targets(row)[0],target,atol=2e-14)
+            np.testing.assert_allclose(Color(changed,self.tone,hk_guard=False).bounded_saturation_targets(row)[0],target,atol=2e-14)
         target=base.bounded_saturation_targets(1)[1]*1.02+[.001,-.001]
         for stops in (-8.,0.,8.):
             scales=np.zeros((4,6));scales[1,0]=stops
-            color=Color(replace(settings,web=WebSettings(log_scale=tuple(map(tuple,scales)))),self.tone)
+            color=Color(replace(settings,web=WebSettings(log_scale=tuple(map(tuple,scales)))),self.tone,hk_guard=False)
             np.testing.assert_allclose(color.bounded_saturation_targets(1),base.bounded_saturation_targets(1),rtol=3e-13,atol=2e-14)
             changed=color.target_bounded_saturation_settings(1,0,target)
-            np.testing.assert_allclose(Color(changed,self.tone).bounded_saturation_targets(1)[1],target,rtol=3e-12,atol=3e-13)
+            np.testing.assert_allclose(Color(changed,self.tone,hk_guard=False).bounded_saturation_targets(1)[1],target,rtol=3e-12,atol=3e-13)
             self.assertEqual(changed.web.log_scale[1][0],stops)
 
 if __name__=='__main__':unittest.main()

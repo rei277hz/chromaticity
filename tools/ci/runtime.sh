@@ -37,7 +37,8 @@ mkdir -p -- "$ci_cache/home" "$ci_cache/xdg" "$ci_cache/cargo" "$ci_cache/rust-c
 mkdir -p -- "$ci_root/third_party/rust/.cargo"
 
 ci_image=${CI_RUNTIME_IMAGE:-perceptual-grade-ci-runtime}
-docker build --platform linux/amd64 --target ci --tag "$ci_image" "$ci_root/remote_execution/docker"
+docker build --platform linux/amd64 --tag "$ci_image" \
+  --file "$ci_root/tools/ci/Dockerfile" "$ci_root/tools/ci"
 exec docker run --rm --init --platform linux/amd64 \
   --ulimit nofile=65536:65536 \
   --user "$(id -u):$(id -g)" \
@@ -52,7 +53,7 @@ exec docker run --rm --init --platform linux/amd64 \
   --env BUCK_NO_INTERACTIVE_CONSOLE=1 \
   --workdir /workspace --entrypoint /bin/bash \
   "$ci_image" -euo pipefail -c '
-    ./remote_execution/re local
+    python3 tools/ci/select_local.py /workspace
     python3 tools/ci/check_targets.py
     exec "$@"
   ' ci-command "$@"

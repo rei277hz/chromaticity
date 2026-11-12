@@ -1,17 +1,16 @@
-"""Reference H-K export and validated raw-candidate inverse on the portable CPU."""
+"""Reference H-K-before-Scale grading and validated appearance inverse."""
 from unittest.mock import patch
 import unittest
 import numpy as np
 
 from color_tools.perceptual_grade_core.model import bake_inverse
-from color_tools.perceptual_grade_core.model.bake import Kernel
+from color_tools.perceptual_grade_reference.bake import Kernel
 from color_tools.perceptual_grade_core.model.bake_cache import CachedKernel,Store
-from color_tools.perceptual_grade_core.model.bake_inverse import TOLERANCE
 from color_tools.perceptual_grade_reference.grading import ToneSettings
 from color_tools.perceptual_grade_reference.grading import ColorSettings
 from color_tools.perceptual_grade_core.model.tonal_web import WebSettings
 from color_tools.perceptual_grade_reference.model import Model,Settings
-from color_tools.perceptual_grade_reference.responses import hk_energy
+from color_tools.perceptual_grade_reference.responses import State, hk_energy
 from color_tools.perceptual_grade_reference.stack_bake import BakeStack
 
 
@@ -25,26 +24,30 @@ class HKBakingTests(unittest.TestCase):
     def stack(self,settings,direction='FORWARD',**kwargs):
         return BakeStack([settings],[direction],self.table,**kwargs)
 
-    def test_guard_repairs_positive_height_negative_energy_and_is_export_only(self):
+    def test_guard_repairs_negative_energy_in_grade_and_export_is_cube_only(self):
         settings=Settings(color=ColorSettings(global_gain=3.))
         reference=self.stack(settings);production=self.stack(settings,hk_guard=False)
         k=reference.kernels[0];old=production.kernels[0]
-        toned=k.tone_state(k.enter(self.points));raw=k.grade(toned)
-        repaired=k._hk_export(raw,toned)
+        toned=k.tone_state(k.enter(self.points));raw=old.grade(toned)
+        repaired=k.grade(toned)
+        expected_state=Model(settings).color.apply_state(State(toned[:,:3],toned[:,3]))
+        expected=np.concatenate((expected_state.q,expected_state.energy[...,None]),axis=-1).astype('f4')
+        np.testing.assert_array_equal(repaired,expected)
         active=raw[:,3]<0
         self.assertTrue(np.any(active))
         self.assertTrue(np.all(repaired[active,3]>0))
         self.assertTrue(np.all(repaired[active,0]>=raw[active,0]))
         self.assertTrue(np.all(repaired[active,0]<=1.2*raw[active,0]))
         self.assertTrue(np.all(np.hypot(repaired[:,1],repaired[:,2])<=np.hypot(raw[:,1],raw[:,2])))
-        np.testing.assert_array_equal(old.grade(toned),raw)
         np.testing.assert_array_equal(k.export(raw),old.export(raw))
         np.testing.assert_array_equal(old.export(raw,toned),old.export(raw))
         np.testing.assert_array_equal(k.export(raw)[active],0.)
-        output=k.evaluate(self.points)
+        with patch.object(k,'_hk_export',side_effect=AssertionError('Kernel grade/export must not use legacy repair')):
+            output=k.evaluate(self.points)
         self.assertTrue(np.all(np.max(output[active],axis=-1)>0))
         self.assertTrue(np.all((output>=0)&(output<=1024)))
-        np.testing.assert_array_equal(output,k.export(raw,toned))
+        with patch.object(k,'_hk_export',side_effect=AssertionError('Export must not use legacy repair')):
+            np.testing.assert_array_equal(output,k.export(repaired,toned))
         # Compare the independently evaluated float64 reference at a gain
         # that actively repairs negative requested energy before cube export.
         expected=Model(settings).forward_native(self.points.astype(float))
@@ -83,7 +86,13 @@ class HKBakingTests(unittest.TestCase):
         cached=CachedKernel(k,len(self.points),Store())
         np.testing.assert_array_equal(cached.evaluate(self.points,np.arange(len(self.points))),k.evaluate(self.points))
         default=Kernel(k.data,k.tone,Model(settings).color,k.table)
-        self.assertFalse(default.hk_guard)
+        self.assertTrue(default.hk_guard)
+        diagnostic=Kernel(k.data,k.tone,Model(settings).color,k.table,hk_guard=False)
+        toned=k.tone_state(k.enter(self.points))
+        raw=diagnostic.grade(toned)
+        np.testing.assert_array_equal(raw,self.stack(settings,hk_guard=False).kernels[0].grade(toned))
+        self.assertTrue(np.any(raw[:,3]<0))
+        self.assertTrue(np.all(default.grade(toned)[:,3]>=0))
 
     def test_active_guard_simple_inverse_uses_candidates_and_reports_error(self):
         for gain in (.25,1.,3.):
@@ -113,19 +122,20 @@ class HKBakingTests(unittest.TestCase):
             result=solver.evaluate(target)
         self.assertEqual(solve.call_count,1)
         self.assertEqual(solve.call_args.args[4],bake_inverse.ITERATIONS)
-        self.assertTrue(np.any(result[:,3]>solver.acceptance_limit(target)))
         np.testing.assert_array_equal(result[:,3],np.max(abs(solver.residual(result[:,:3],target,False)),axis=-1))
         self.assertTrue(np.isfinite(result).all())
         self.assertTrue(np.all((result[:,:3]>=0)&(result[:,:3]<=1024)))
 
-    def test_raw_inverse_and_matching_pair_do_not_apply_export_repair(self):
+    def test_appearance_inverse_uses_repaired_grade_and_matching_pair_cancels(self):
         settings=Settings(color=ColorSettings(global_gain=3.))
-        stack=self.stack(settings,'INVERSE');old=self.stack(settings,'INVERSE',hk_guard=False)
-        k=stack.kernels[0];raw=k.grade(k.tone_state(k.enter(self.points)))
-        with patch.object(k,'_hk_export',side_effect=AssertionError('Raw inverse must not H-K repair')):
-            result=stack.solvers[0].evaluate(raw,True)
-        np.testing.assert_array_equal(result,old.solvers[0].evaluate(raw,True))
-        self.assertTrue(np.all(result[:,3]<=TOLERANCE),result)
+        stack=self.stack(settings,'INVERSE')
+        k=stack.kernels[0];target=k.grade(k.tone_state(k.enter(self.points)))
+        self.assertTrue(np.all(target[:,3]>=0))
+        with patch.object(k.color_model,'apply_state',wraps=k.color_model.apply_state) as grade:
+            result=stack.solvers[0].evaluate(target,True)
+        self.assertGreater(grade.call_count,0)
+        np.testing.assert_array_equal(result[:,3],
+            np.max(abs(stack.solvers[0].residual(result[:,:3],target,True)),axis=-1))
         pair=BakeStack([settings,settings],['FORWARD','INVERSE'],self.table)
         with patch.object(pair.kernels[0],'evaluate',side_effect=AssertionError('Matching pair should cancel')):
             np.testing.assert_array_equal(pair.bake_native(self.points)[:,:3],self.points)

@@ -1,0 +1,14 @@
+direction: down
+
+pending: "pending\n3 children"
+partial: "partial [J1]\nfirst error kept"
+complete: "complete\nno error"
+failed: "complete\nerror delivered"
+
+pending -> partial: "first receipt"
+partial -> partial: "next distinct receipt"
+partial -> complete: "last receipt; success"
+partial -> failed: "last receipt; error"
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

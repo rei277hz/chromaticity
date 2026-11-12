@@ -72,8 +72,8 @@ python_library(
     },
 )
 
-# Build the completed ZIP through NativeLink, then use `buck2 run` to replace
-# the local website checkout's files on the client.
+# Build the completed ZIP through remote execution, then use `buck2 run` to
+# replace the local website checkout's files on the client.
 python_binary(
     name = "publish",
     main_module = "hdr_color_picker_publish.publish",

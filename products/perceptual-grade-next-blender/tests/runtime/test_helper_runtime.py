@@ -256,6 +256,40 @@ class HelperRuntimeTests(unittest.TestCase):
         self.assertEqual(updated, state)
         self.assertEqual(effects, policy.Effects())
 
+    def test_scalar_effects_keep_publication_and_cleanup_order(self):
+        policy = self.module.helper_policy
+        effects = policy.Effects(
+            clear_deadline=True,
+            publish_kind="failure",
+            publish_id=8,
+            publish_error="original",
+            probe_publish_kind="failure",
+            probe_publish_id=7,
+            probe_publish_error="original",
+            queue_kind="fail",
+            queue_error="original",
+            cleanup=True,
+        )
+
+        actions = self.module._actions_for(effects)
+
+        self.assertEqual(
+            tuple((action.kind, action.job_id, action.error) for action in actions),
+            (("clear_deadline", None, None),
+             ("publish_failure", 8, "original"),
+             ("publish_failure", 7, "original"),
+             ("fail_queued", None, "original"),
+             ("cleanup", None, None)),
+        )
+
+    def test_deadline_precedes_process_control(self):
+        policy = self.module.helper_policy
+        actions = self.module._actions_for(
+            policy.Effects(deadline_stage="terminating", terminate=True))
+
+        self.assertEqual(tuple(action.kind for action in actions),
+                         ("deadline", "terminate"))
+
     def test_close_before_first_helper_request_retires_owned_storage(self):
         runtime = self.module.HelperRuntime(
             package=Path(self.directory.name),

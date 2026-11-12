@@ -1,5 +1,17 @@
 # "Understanding the model" vs `perceptual-grade-reference`
 
+## Current maintenance baseline — 2026-11-12
+
+The handbook follows the current reference. The audit below is a historical
+record of the earlier revision, not a list of outstanding issues. The current
+update covers signed appearance and Tone selectors, Linear's target-y floor,
+Warp/Adaptance formulas, H–K repair before Scale, repaired appearance Stack
+handoffs, XYZ inverse results, and native LUT input repair. Active theory plots
+now use the reference; dated studies and legacy-only illustrations keep their
+original scope. Usage and runtime chapters still identify their 1.23.2 scope.
+
+## Historical audit
+
 Scope: the seven chapters of PART "Understanding the model"
 (`docs/book/src/theory/*.md`) plus the guide chapters and
 `development/forward-inverse-math.md` sections that state the same equations.

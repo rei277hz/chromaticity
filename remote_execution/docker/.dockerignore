@@ -1,5 +1,0 @@
-# Runtime state and local configuration are not image inputs.
-.state/
-.env
-__pycache__/
-*.pyc

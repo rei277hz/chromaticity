@@ -45,7 +45,7 @@ ZIP 不另外包含 MIT/Apache 许可证文本或 `NOTICE.md`，清单声明为
 此授权不会改变第三方数据、参考插图、字体及其他署名材料的许可；这些材料仍保留原有条款与署名。
 详见[致谢与参考文献](credits.md)及其[英文完整说明](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/docs/book/src/reference/credits.md)。
 
-本手册的其他内容描述历史版本 1.23.2。提供的
+本手册在持续更新的同时保留历史版本下载。提供的
 [日期为 2026-11-01 的 Perceptual Grade 1.23.2 开发版 ZIP](../downloads/perceptual_grade-v1.23.2-20261101.zip)
 已替换原扩展下载，该下载适用 ZIP 内的许可证。归档的 DCTL 下载、原始运行时声明及
 [历史 GPL 许可证](../downloads/licenses/perceptual-grade-LICENSE)

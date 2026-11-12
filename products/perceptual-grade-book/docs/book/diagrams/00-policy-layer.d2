@@ -1,0 +1,13 @@
+direction: down
+
+settings: "Grade settings"
+reducer: "Pure step\nstate + event"
+consumer: "Effect consumer"
+receipt: "Operation receipt"
+settings -> reducer: "observed demand"
+reducer -> consumer: "effects authorize work"
+consumer -> receipt: "success / failure"
+receipt -> reducer: "next event"
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

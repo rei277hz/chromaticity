@@ -4,6 +4,7 @@
     "//products/perceptual-grade-next-blender:extension"
   ],
   "tests": [
+    "//products/perceptual-grade-next-blender:publication_compare_parameter_policy",
     "//products/perceptual-grade-next-blender/tests:policy_preparation",
     "//products/perceptual-grade-next-blender/tests:policy_preparation_join",
     "//products/perceptual-grade-next-blender/tests:policy_node",
@@ -36,6 +37,7 @@
     "//products/perceptual-grade-next-blender/tests:architecture",
     "//products/perceptual-grade-next-blender/tests:policy_coverage",
     "//products/perceptual-grade-next-blender/tests:package",
+    "//products/perceptual-grade-next-blender/tests:publication_compare_package",
     "//products/perceptual-grade-next-blender/tests:install_workspace",
     "//products/perceptual-grade-next-blender/tests:installed",
     "//products/perceptual-grade-next-blender/tests:compositor_gui",

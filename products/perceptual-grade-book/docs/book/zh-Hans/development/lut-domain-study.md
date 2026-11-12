@@ -103,11 +103,15 @@ s(x)=64\left[\frac{\ln(1+x/\kappa)}{\ln(1+128/\kappa)}\right]^{1/p}.
 
 仍有罕见大误差。选中方案的 HDR P3-D65 编码最大误差为 **0.184539**，当前方案为 0.190931；其 p99 为 0.002989。场景 RGB 最大误差为 0.126010，当前方案为 0.189842。完整表保留这些异常值与像素坐标。选择目标是 p99/RMS，不是最大误差。
 
-![完整入围方案的误差权衡](../../assets/illustrations/lut-domain128-errors.png)
+![完整入围方案的误差权衡](../assets/illustrations/lut-domain128-errors.svg)
 
-![各基底采样位置](../../assets/illustrations/lut-domain128-placement.png)
+![各基底采样位置](../assets/illustrations/lut-domain128-placement.svg)
 
-[下载所选采样轴与分数](../../downloads/lut-domain128-selection.json)。完整源码包含 `docs/engineering/lut-domain128/report.md`；单独提供的结果包包含全部 JSON/CSV、图表及指纹。1.21.0 采用普通原生 AP1 log1p κ = 0.01，按显示线性 RGB／峰值 nits 目标选择；上面的变形曲线是编码目标的实验优胜者。参见[当前生产采样规范](../theory/lut.md)。
+{{#include ../assets/fragments/lut-domain128-key.md}}
+
+本书图表根据已记录的实验数据重新绘制为矢量图。domain-128 入围方案误差坐标在已发布报告中保留至小数点后八位；采样位置图中的两个对比轴依据文档化的采样公式重建。原始工程报告及其归档图表保持不变。[下载绘图源文件及所绘数据](../downloads/chart-sources.zip)。
+
+[下载所选采样轴与分数](../downloads/lut-domain128-selection.json)。完整源码包含 `docs/engineering/lut-domain128/report.md`；单独提供的结果包包含全部 JSON/CSV、图表及指纹。1.21.0 采用普通原生 AP1 log1p κ = 0.01，按显示线性 RGB／峰值 nits 目标选择；上面的变形曲线是编码目标的实验优胜者。参见[当前生产采样规范](../theory/lut.md)。
 
 ## 通过 Buck2 复现
 

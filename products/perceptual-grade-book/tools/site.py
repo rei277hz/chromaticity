@@ -16,7 +16,14 @@ import sys
 import tempfile
 from urllib.parse import unquote, urlsplit, urlunsplit
 from xml.etree import ElementTree
-from pg_book_build.languages import LANGUAGES, language_chrome, share_assets, landing, enable_chinese_search
+from pg_book_build.languages import (
+    ENGLISH_ONLY_CHAPTERS,
+    LANGUAGES,
+    enable_chinese_search,
+    landing,
+    language_chrome,
+    share_assets,
+)
 
 
 INTRO_VIDEO_EMBED = ('https://player.bilibili.com/player.html?isOutside=true'
@@ -171,6 +178,23 @@ def check_chapters(book, language="en"):
     if missing or orphaned:
         raise ValueError(f'Missing chapters: {sorted(missing)}; unlisted chapters: {sorted(orphaned)}')
     return paths
+
+
+def check_language_chapters(book):
+    """Require exact translation coverage except for declared English-only chapters."""
+    chapters = check_chapters(book)
+    undeclared = ENGLISH_ONLY_CHAPTERS - set(chapters)
+    if undeclared:
+        raise ValueError(f'English-only chapters are missing from English: {sorted(undeclared)}')
+    localized = {language: check_chapters(book, language) for language in LANGUAGES}
+    expected_chinese = [path for path in chapters if path not in ENGLISH_ONLY_CHAPTERS]
+    if localized['zh-Hans'] != expected_chinese:
+        raise ValueError(
+            'Simplified Chinese chapter paths must match English except for '
+            f'declared English-only chapters: expected={expected_chinese}, '
+            f'actual={localized["zh-Hans"]}'
+        )
+    return chapters, localized
 
 
 class Page(HTMLParser):
@@ -364,10 +388,7 @@ def main(argv=None):
     version = subprocess.run([str(executable), '--version'], check=True, capture_output=True, text=True).stdout.strip()
     if version != 'mdbook v' + pins['mdbook']['version']:
         raise ValueError(f'Expected pinned mdBook, received {version}')
-    chapters = check_chapters(args.book)
-    localized = {language: check_chapters(args.book, language) for language in LANGUAGES}
-    if any(paths != chapters for paths in localized.values()):
-        raise ValueError('Language chapter paths must match exactly; missing pages never fall back to English.')
+    chapters, localized = check_language_chapters(args.book)
     labels = json.loads((args.book/'locales.json').read_text(encoding='utf-8'))
     if set(labels) != set(LANGUAGES):
         raise ValueError('Every supported language requires its explicit UI catalog.')
@@ -390,7 +411,9 @@ def main(argv=None):
             for directory in [book, *(path for path in book.rglob('*') if path.is_dir())]:
                 directory.chmod(directory.stat().st_mode | 0o700)
             if language != 'en':
-                for name in [*chapters, 'SUMMARY.md']:
+                for name in ENGLISH_ONLY_CHAPTERS:
+                    (book/'src'/name).unlink()
+                for name in [*localized[language], 'SUMMARY.md']:
                     shutil.copyfile(args.book/language/name, book/'src'/name)
             config = (book/'book.toml').read_text(encoding='utf-8')
             config = re.sub(r'^language = "[^"]+"', 'language = '+json.dumps(language), config, flags=re.M)
@@ -400,7 +423,7 @@ def main(argv=None):
             config += ('\n[preprocessor.part-numbers]\ncommand = ' + json.dumps(command)
                        + '\nafter = ["links", "index"]\n')
             (book/'book.toml').write_text(config, encoding='utf-8')
-            for name in chapters:
+            for name in localized[language]:
                 path = book/'src'/name
                 path.write_text(prepare_math(path.read_text(encoding='utf-8')), encoding='utf-8')
             edition = site/language

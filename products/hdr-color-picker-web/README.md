@@ -121,8 +121,8 @@ checkout, preinstalled `node_modules`, and developer Rust caches are not build
 inputs.
 
 Compilation runs offline after Buck downloads the declared archives. Complete
-tool distributions and dependency trees cross the NativeLink boundary through
-CAS. [`tools/rust-build/`](../../tools/rust-build/) owns Rust distribution,
+tool distributions and dependency trees cross the remote execution boundary
+through CAS. [`tools/rust-build/`](../../tools/rust-build/) owns Rust distribution,
 Wasm binding and notice helpers; [`tools/web-build/`](../../tools/web-build/)
 owns offline npm assembly and deterministic site packaging.
 
@@ -160,9 +160,9 @@ monorepo root:
 buck2 run //products/hdr-color-picker-web:publish
 ```
 
-This builds `hdr-color-picker-web.zip` through NativeLink, then runs the publisher
-locally. The publisher validates the completed ZIP against its build manifest,
-removes **every file and directory** under
+This builds `hdr-color-picker-web.zip` through remote execution, then runs the
+publisher locally. The publisher validates the completed ZIP against its build
+manifest, removes **every file and directory** under
 `~/workspace/rei277hz.github.io/color-picker/`, and extracts the ZIP's contents
 there. It creates `color-picker/` if absent and preserves the parent checkout's
 `.git` and other site directories.
@@ -170,7 +170,6 @@ there. It creates `color-picker/` if absent and preserves the parent checkout's
 To use another checkout, append `-- --destination /path/to/website/site-directory`.
 The destination must be a direct child of an existing Git worktree and must not
 contain its own `.git`. Committing and pushing the website are separate steps.
-NativeLink stays enabled throughout.
 
 ```sh
 buck2 test //products/hdr-color-picker-web:publish_test
@@ -214,9 +213,6 @@ Production acceptance served the extracted ZIP at `/` and `/nested/`, loaded
 both Wasm modules and all image workers with WebGPU disabled, and checked the
 360×645 DPR-3 layout. A separate fresh checkout reused the remote cache for all
 eight dependency/compilation/bundle actions and reproduced the exact ZIP hash.
-NativeLink infrastructure validation passed 16 local probes, 16 remote probes,
-and 16 remote-cache hits on worker image
-`sha256:2c0180f95923d81012e70ad19f0cde306eb0708e3b3b1e259b50bf69956c3cc7`.
 
 The broader existing `//tools/architecture/tests:components` gate reports ten
 assertion failures in untouched Next Python bundles: absolute fallback imports

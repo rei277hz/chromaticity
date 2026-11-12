@@ -1,5 +1,7 @@
 # 测试与测量
 
+> **历史实现说明：** 本章保留 1.23.2 的运行时、源码布局与验证范围。当前开发命令及支持的行为请以 [chromaticity](https://github.com/rei277hz/chromaticity) 中各产品的 README 为准。
+
 ## CPU 优化与 GPU 探索（1.22.0）
 
 1.22.0 正式扩展使用 float64 CPU 求解器；以下为历史测量，1.23.0 已安装 GPU 路径见下一节。常规二维逆改用解析残差／雅可比，共享系数曲线计算，并对参考能量相关的 H–K 反解求导；二维阻尼法使用防抵消的显式解。正向函数、迭代上限、接受阈值和诊断容差保持不变。[完整方程](../../en/development/forward-inverse-math.html#analytic-regular-jacobian)统一维护在英文数学规范。
@@ -273,9 +275,13 @@ buck2 build '//:lut_shaper_evaluation[selection]' \
 
 非负 ACEScg [0,64]³ 的最小蓝通道约 −1.939416，与给出的计算吻合，但正向最大值约 +65.939415。更关键的是，+2 档有符号照片的 Stack 查询低至 −4.902344；该用例有 137 个像素低于 −2，只有五个低于 −4。各工作负载最差范围外比例分别为 0.184240% 与 0.005905%。全部范围外像素仍计算每项指标并使用连续边界外推，没有裁剪或删除。因此，源空间角点范围不足以证明收窄范围后分级更准。
 
-![最终候选的显示与 RGB 误差](../assets/illustrations/lut-shaper-errors.png)
+![最终候选的显示与 RGB 误差](../assets/illustrations/lut-shaper-errors.svg)
 
-![原网格与所选网格采样](../assets/illustrations/lut-shaper-placement.png)
+![原网格与所选网格采样](../assets/illustrations/lut-shaper-placement.svg)
+
+{{#include ../assets/fragments/lut-shaper-key.md}}
+
+这些矢量图使用原始地址函数报告档案中已记录的入围分数及精确采样轴重新绘制，不重新运行测量。[下载绘图源文件及所绘数据](../downloads/chart-sources.zip)。
 
 [所选网格与摘要](../downloads/lut-shaper-selection.json)；[完整 JSON／CSV 结果、图、输入元数据与当前源代码复测](../downloads/lut-shaper-report.zip)。源包含全部照片样本与规格。原生 CPU Shader／Compositor、33／65 嵌套和半精度缓冲运输另行验证，不宣称 GPU／Metal 精度已通过。
 

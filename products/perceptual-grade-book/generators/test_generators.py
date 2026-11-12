@@ -16,6 +16,39 @@ RESOURCES = Path(__file__).with_name('test_resources')
 
 
 class GeneratorsTest(unittest.TestCase):
+    def test_current_figure_data_and_historical_scope(self):
+        root = RESOURCES / 'figures'
+        data = json.loads((root / 'numerical-data.json').read_text())
+        self.assertEqual(data['model'], 'perceptual-grade-reference')
+        self.assertEqual(data['shadow_ratio'], 0.015507796089266005)
+        # These samples catch using the old 27.65 shadow anchor or passing
+        # normalized H to the reference API, which takes appearance units.
+        np.testing.assert_allclose(data['tone_targets'],
+                                   [0., .19599678, .51351504, 1., 1.83748822], atol=5e-9, rtol=0)
+        curves = np.genfromtxt(root / 'tables/tone-curves.dat', names=True)
+        landmarks = np.genfromtxt(root / 'tables/tone-landmarks.dat', names=True)
+        self.assertGreater(curves['fit3'][-1], 2.)
+        self.assertGreater(landmarks['x'][-1], landmarks['y'][-1])
+        weights = np.genfromtxt(root / 'tables/color-tone-weights.dat', names=True)
+        np.testing.assert_allclose(sum(weights[f'weight{i}'] for i in range(4)), 1., atol=1e-14)
+        guard = np.genfromtxt(root / 'tables/guard-boundary.dat', names=True)
+        self.assertTrue(np.all((guard['repaired_h'] >= 50) & (guard['repaired_h'] <= 60)))
+        self.assertTrue(np.all(guard['repaired_c'] <= guard['x']))
+        np.testing.assert_allclose(data['guard_sample_50_80'],
+                                   [58.18807665868112, 48.1416478163039, 0.], rtol=1e-12)
+        self.assertGreater(data['guard_sample_energy'], 0.)
+        figures = json.loads((root / 'figures.json').read_text())['figures']
+        scopes = {figure['id']: figure['scope'] for figure in figures}
+        self.assertEqual({name for name, scope in scopes.items() if scope == 'current-reference'},
+                         {'linear-basis', 'tone-curves', 'tone-saturation', 'color-tone-weights',
+                          'color-drivers', 'guard-boundary', 'guard-energy'})
+        self.assertEqual(scopes['color-hue-concentration'], 'historical')
+        self.assertEqual(scopes['lut-input-grid'], 'historical')
+        inputs = json.loads((root / 'manifest.json').read_text())['inputs']
+        for name in ('reference/grading.py', 'reference/model.py', 'reference/responses.py',
+                     'shared-model/hk_guard.py', 'legacy/model/color.py'):
+            self.assertIn(name, inputs)
+
     def test_legacy_model_and_compiled_catalogs(self):
         self.assertEqual(tr('product.name', locale='en'), CATALOGS['en']['product.name'])
         self.assertEqual(set(CATALOGS), {'en', 'zh_HANS'})

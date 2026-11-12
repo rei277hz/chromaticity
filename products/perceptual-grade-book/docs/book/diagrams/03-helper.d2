@@ -1,0 +1,19 @@
+direction: down
+
+startup: "stopped -> starting [J3]\nlaunch -> hello\n-> probing"
+ready: "ready\nmatching probe succeeded"
+closing: "stopping -> terminating\ntimeout -> killing\ntimeout -> unretired"
+retiring: "retiring\nexit settles jobs; cleanup"
+done: "closed if close requested\notherwise failed"
+startup -> ready: "probe success"
+startup -> closing: "failure / shutdown"
+ready -> ready: "submit / preview / result"
+ready -> closing: "failure / shutdown"
+startup -> retiring: "physical exit / stopped shutdown"
+ready -> retiring: "physical exit"
+closing -> retiring: "physical exit"
+retiring -> retiring: "cleanup failure / retry"
+retiring -> done: "cleanup success"
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

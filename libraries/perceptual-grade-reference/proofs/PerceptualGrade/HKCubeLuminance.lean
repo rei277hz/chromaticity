@@ -18,6 +18,19 @@ def hkRepairedRay (H C E0 hue : ℝ) : CubeRay :=
   ⟨signedRoot (hkRepairedEnergy H C E0), hue,
     hkGuardChroma (H^2) C (hkRepairedEnergy H C E0)⟩
 
+/-- The algebraic repair is nonnegative even at zero reference energy or H=0.
+    Its executable application requires the nonnegative-H repair branch. -/
+theorem hk_repaired_energy_nonnegative (H C E0 : ℝ)
+    (hH : 0 ≤ H) (h0 : 0 ≤ E0) :
+    0 ≤ hkRepairedEnergy H C E0 := by
+  exact hk_guard_energy_nonnegative _ _
+    (hk_guard_delta_bounds E0 (H^2) h0 (pow_nonneg hH 2)).1
+
+theorem hk_repaired_ray_ja_nonnegative (H C E0 hue : ℝ)
+    (hH : 0 ≤ H) (h0 : 0 ≤ E0) :
+    0 ≤ (hkRepairedRay H C E0 hue).ja := by
+  exact signed_root_nonneg _ (hk_repaired_energy_nonnegative H C E0 hH h0)
+
 /-- No lower bound on the requested deficit H²−66C is needed. In particular,
     the request may lie on either side of raw J_A=0. -/
 theorem hk_repaired_energy_positive (H C E0 : ℝ) (hH : 0 < H) (h0 : 0 < E0) :

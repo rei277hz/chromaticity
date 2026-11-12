@@ -4,11 +4,34 @@ load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
 load("@prelude//toolchains:python.bzl", "remote_python_toolchain")
 load("@prelude//toolchains:remote_test_execution.bzl", "remote_test_execution_toolchain")
 load(":clang.bzl", "clang_tools")
-load(":remote_execution.bzl", "test_profile", "test_profiles")
+load(
+    ":remote_execution.bzl",
+    "platform_properties",
+    "remote_execution_platform",
+    "remote_execution_platforms",
+    "test_profile",
+    "test_profiles",
+)
 load(":rust.bzl", "pinned_rust_toolchain", "wasm_cxx_toolchain")
 
 remote_python_toolchain(
     name = "python",
+    visibility = ["PUBLIC"],
+)
+
+remote_execution_platform(
+    name = "linux",
+    constraints = [
+        "prelude//cpu:x86_64",
+        "prelude//os:linux",
+    ],
+    properties = platform_properties(),
+    visibility = ["PUBLIC"],
+)
+
+remote_execution_platforms(
+    name = "platforms",
+    platforms = [":linux"],
     visibility = ["PUBLIC"],
 )
 

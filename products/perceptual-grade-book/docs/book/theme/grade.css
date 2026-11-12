@@ -141,6 +141,7 @@ button, input, select { font-family: inherit; }
 .language-options a { display: block; padding: 7px 18px; color: var(--fg); text-decoration: none; white-space: nowrap; }
 .language-options a:hover, .language-options a:focus-visible { background: var(--theme-hover); }
 .language-options a[aria-current] { font-weight: 700; border-left: 3px solid var(--pg-accent); padding-left: 15px; }
+.language-options .language-unavailable { display: block; padding: 7px 18px; color: var(--fg); opacity: .55; cursor: not-allowed; }
 #mdbook-menu-bar .menu-title a { max-width: 100%; }
 #mdbook-menu-bar .menu-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 767px) { .language-picker summary { width: 36px; } }

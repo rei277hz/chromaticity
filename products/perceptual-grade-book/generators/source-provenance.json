@@ -2,8 +2,9 @@
   "adaptations": [
     "Imports use isolated build-only packages pg_book_generators and pg_book_legacy.",
     "Provenance inputs use stable logical names instead of sandbox paths.",
+    "Numerical plots use Python-generated model data and pinned PGFPlots SVG rendering; archived LUT plots are redrawn from recorded measurements.",
     "Photographic sample arrays reuse the monorepo fixture source target; the original metadata and PQ input are retained.",
-    "Icon test copies are writable private fixtures even when NativeLink inputs are read-only."
+    "Icon test copies are writable private fixtures even when remote execution inputs are read-only."
   ],
   "copyright": "Rei277Hz and the Perceptual Grade contributors; original GPL-3.0 license retained in LICENSE.",
   "files": {

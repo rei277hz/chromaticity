@@ -10,7 +10,7 @@ The handbook is an mdBook with declared Buck2 inputs for chapters, recordings, s
 
 ## Edit and build
 
-Edit English chapters in docs/book/src and register their paths in SUMMARY.md. Mirror the hierarchy in docs/book/zh-Hans; its title-only pages are explicit required sources, never generated English fallbacks. Keep reader instructions in guide, calculations in theory and maintenance here. Use Markdown chapter links, `$$` display equations and `\( ... \)` inline TeX.
+Edit English chapters in docs/book/src and register their paths in SUMMARY.md. Mirror the hierarchy in docs/book/zh-Hans; its title-only pages are explicit required sources, never generated English fallbacks. The Next Blender policy-machines chapter is the declared English-only exception because it documents a separate product generation. Keep reader instructions in guide, calculations in theory and maintenance here. Use Markdown chapter links, `$$` display equations and `\( ... \)` inline TeX.
 
 ``` sh
 buck2 build //:docs_site '//:docs_deploy[zip]' --show-full-output
@@ -167,6 +167,8 @@ The runtime flowchart is authored as assets/illustrations/runtime-flow.svg and h
 
 The two published modCAM16 reference images are ordinary source PNGs under docs/book/src/assets/illustrations. Replace them directly and update captions and attribution when choosing final artwork. Their origin and hashes are recorded in docs/data/appearance-references.json. They have no drawing generator.
 
-The //:book_figures target generates the linear basis, tone, color, guard, LUT and benchmark illustrations from production model code. The //:book_photos target generates current and historical-guard comparisons from the five sampled EXR/PQ fixtures. Historical recorded measurements remain explicitly identified inside Bounded H–K guard; regenerated comparison sheets are distinct.
+The `//products/perceptual-grade-book/generators:figures` target uses the current reference for the linear basis, Tone, coefficient weights, drivers, and H–K repair. Concentration and the archived LUT examples use the isolated 1.23.2 model; benchmarks and LUT-study comparisons retain their recorded inputs. Each figure declares its scope in `figures.json`, and provenance includes the reference and legacy source hashes. Python supplies the numerical samples to pinned XeLaTeX/PGFPlots, which emits static SVGs for the website, PDF and EPUB. Axis labels remain English in both editions; captions and alt text are localized. Four book-facing LUT-study figures are redrawn from recorded data. The domain-128 finalist errors retain the report's eight-decimal precision, and two placement axes are reconstructed from the documented formulas; the downloadable report archives remain unchanged. The `//products/perceptual-grade-book/generators:photos` target generates preserved-release and historical-guard comparisons from the five sampled EXR/PQ fixtures. Historical recorded measurements remain explicitly identified inside Bounded H–K guard; regenerated comparison sheets are distinct.
 
 Each producer records input/output hashes. Source or data changes invalidate the corresponding Buck2 action; docs_inputs collects the declared outputs. The site manifest inventories all shipped files, including local mathematical fonts and media, plus the pinned CDN typography manifest.
+
+[Download the chart sources and plotted data](../downloads/chart-sources.zip) to inspect the numerical inputs, figure definitions and provenance used by the current vector renderer. Candidate keys beside the historical LUT plots map their compact labels to complete grid names.

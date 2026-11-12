@@ -8,10 +8,8 @@ import subprocess
 import sys
 
 
-@contextmanager
-def virtual_display(resources, root, env):
+def configure_software_graphics(resources, root, env):
     if sys.platform != "linux":
-        yield
         return
     fixture = Path(str(resources / "xvfb")).resolve()
     library_dir = fixture / "usr/lib/x86_64-linux-gnu"
@@ -19,15 +17,25 @@ def virtual_display(resources, root, env):
     if env.get("LD_LIBRARY_PATH"):
         library_path += os.pathsep + env["LD_LIBRARY_PATH"]
     runtime = root / "xdg-runtime"
-    runtime.mkdir(mode=0o700)
-    driver_path = str(library_dir / "dri")
-    child_env = dict(
-        env,
+    runtime.mkdir(mode=0o700, exist_ok=True)
+    env.update(
+        XDG_RUNTIME_DIR=str(runtime),
         LD_LIBRARY_PATH=library_path,
         LIBGL_ALWAYS_SOFTWARE="1",
         GALLIUM_DRIVER="llvmpipe",
-        LIBGL_DRIVERS_PATH=driver_path,
+        LIBGL_DRIVERS_PATH=str(library_dir / "dri"),
     )
+    env.pop("WAYLAND_DISPLAY", None)
+
+
+@contextmanager
+def virtual_display(resources, root, env):
+    if sys.platform != "linux":
+        yield
+        return
+    fixture = Path(str(resources / "xvfb")).resolve()
+    child_env = dict(env)
+    configure_software_graphics(resources, root, child_env)
     read_fd, write_fd = os.pipe()
     process = None
     with (root / "xvfb.log").open("w") as log:
@@ -63,14 +71,9 @@ def virtual_display(resources, root, env):
             if not display.isdigit():
                 raise RuntimeError("Xvfb startup failed: " + (root / "xvfb.log").read_text())
             env.update(
+                child_env,
                 DISPLAY=":" + display,
-                XDG_RUNTIME_DIR=str(runtime),
-                LD_LIBRARY_PATH=library_path,
-                LIBGL_ALWAYS_SOFTWARE="1",
-                GALLIUM_DRIVER="llvmpipe",
-                LIBGL_DRIVERS_PATH=driver_path,
             )
-            env.pop("WAYLAND_DISPLAY", None)
             yield
         finally:
             os.close(read_fd)

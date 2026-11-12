@@ -19,6 +19,12 @@
 - CI checks only `products/perceptual-grade-next-blender`, including its policy proofs. Shared build and tool dependencies are permitted, but unrelated validation targets are not.
 - Keep CI target selection and formatting scoped to that product; do not use repository-wide validation selectors.
 
+# Development Execution
+
+- Run builds, tests, proofs, and other executable validation only through Buck2 with remote execution (`--remote-only`). Do not run test modules, build scripts, proof scripts, or other validation directly from the local shell.
+- A local formatter is permitted only when formatting a specifically identified code range is necessary; keep it scoped to `products/perceptual-grade-next-blender`.
+- Non-Buck2 build and validation scripts are strictly forbidden. Configure or deploy a compatible remote execution environment as needed, then use Buck2 for the actual build and validation work.
+
 # Contributing with Sapling
 
 - Keep the working copy on the local `main` bookmark. To sync it, first ensure the working copy is clean, then run `sl pull -B main`, `sl bookmark -f -r remote/main main`, and `sl goto main`. `sl pull` fetches commits; it does not switch the working copy by itself.

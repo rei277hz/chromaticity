@@ -53,6 +53,7 @@ from .kernel.tone_ui import (
     clamp_tone_anchor,
 )
 from .policy import node as node_policy
+from .policy import render_preflight as render_preflight_policy
 from .runtime import gesture_coordinator as gesture_policy
 from .runtime.preparation import PreparationRuntime
 from .runtime.grade_preparation import GradePreparer
@@ -63,6 +64,7 @@ from .runtime.grade_resources import (
 from .runtime.publication import PublicationDeferred
 from .runtime.compositor_receipts import CompositorReceipts
 from .runtime.resource_lifecycle import run_resource_lifecycle
+from .runtime.stack_observations import grade_is_referenced, stack_changed
 from .runtime.image_publication import (
     pack_image_for_save, write_metadata,
 )
@@ -76,6 +78,11 @@ NODE_TYPES = {
     SHADER_TREE: "PGShaderGrade",
     COMPOSITOR_TREE: "PGCompositorGrade",
 }
+PER_NODE_NODE_TYPES = {
+    SHADER_TREE: "PGShaderGradePerNode",
+    COMPOSITOR_TREE: "PGCompositorGradePerNode",
+}
+GRADE_NODE_TYPES = (*NODE_TYPES.values(), *PER_NODE_NODE_TYPES.values())
 STACK_NODE_TYPES = {
     SHADER_TREE: "PGShaderGradeStack",
     COMPOSITOR_TREE: "PGCompositorGradeStack",
@@ -92,6 +99,12 @@ _registered_handlers = []
 _reconciling = False
 _last_working_space = None
 _node_stores = {}
+_grade_consumers = {}
+_stack_entry_owners = {}
+_indexed_node_grades = {}
+_indexed_node_entries = {}
+_indexed_output_nodes = {}
+_output_registry_ready = False
 _node_reset_pending = False
 _preparation_runtime = None
 _grade_preparer = None
@@ -101,7 +114,11 @@ _gesture_state = gesture_policy.new()
 _gesture_node_serial = count(1)
 _gesture_nodes = {}
 _gesture_invocations = {}
+_gesture_keyframe_baselines = {}
 _compositor_receipts = CompositorReceipts()
+_frame_change_active = False
+_frame_reconcile_pending = False
+_frame_reconcile_scenes = {}
 _KERNEL_SCHEMA = 6
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
@@ -109,7 +126,10 @@ _KERNEL_QUALITY = "_perceptual_grade_quality"
 _IDENTITY_KERNEL_KIND = "_perceptual_grade_identity_kernel"
 _ERROR_KERNEL_KIND = "_perceptual_grade_error_kernel"
 _NODE_ERROR = "_perceptual_grade_kernel_error"
+_NODE_ERROR_REASON = "_perceptual_grade_kernel_error_reason"
 _NODE_PENDING = "_perceptual_grade_kernel_pending"
+_NODE_ANIMATION_ERROR = "_perceptual_grade_animation_error"
+_render_validated_scenes = set()
 _LINEAR_FIELDS = (
     "exposure",
     "source_x",
@@ -134,9 +154,18 @@ _LINEAR_DEFAULTS = {
 }
 
 _TONE_FIELDS = TONE_FIELDS
+_ANIMATABLE_TONE_FIELDS = tuple(name for name in _TONE_FIELDS if name != "peak_nits")
 
 
 def _is_grade_node(node):
+    return getattr(node, "bl_idname", None) in GRADE_NODE_TYPES
+
+
+def _is_per_node_grade_node(node):
+    return getattr(node, "bl_idname", None) in PER_NODE_NODE_TYPES.values()
+
+
+def _is_shared_grade_node(node):
     return getattr(node, "bl_idname", None) in NODE_TYPES.values()
 
 
@@ -150,20 +179,30 @@ def _is_output_node(node):
 
 def _holder(settings):
     try:
+        if _is_per_node_grade_node(settings):
+            return settings
         owner = settings.id_data
         if getattr(owner, "bl_idname", None) == PGGradeData.bl_idname:
             return owner
-        if _is_grade_node(owner):
+        if _is_shared_grade_node(owner):
             return owner
         pointer = settings.as_pointer()
         for node in getattr(owner, "nodes", ()):
-            if _is_grade_node(node) and any(
+            if _is_shared_grade_node(node) and any(
                     getattr(node, name).as_pointer() == pointer
                     for name in ("pg_linear", "pg_tone")):
                 return node
     except (AttributeError, ReferenceError, RuntimeError, ValueError):
         return None
     return None
+
+
+def _linear_controls(owner):
+    return owner if _is_per_node_grade_node(owner) else owner.pg_linear
+
+
+def _tone_controls(owner):
+    return owner if _is_per_node_grade_node(owner) else owner.pg_tone
 
 
 @contextmanager
@@ -208,17 +247,37 @@ def _make_grade(source=None):
     )
     try:
         if source is not None:
-            if _is_grade_node(source):
+            if _is_shared_grade_node(source):
                 source = source.pg_grade
             if source is None:
                 return grade
-            _copy_linear(source.pg_linear, grade.pg_linear)
-            _copy_tone(source.pg_tone, grade.pg_tone)
+            _copy_linear(_linear_controls(source), grade.pg_linear)
+            _copy_tone(_tone_controls(source), grade.pg_tone)
     except BaseException:
         if grade.users == 0:
             bpy.data.node_groups.remove(grade)
         raise
     return grade
+
+
+def _animated_values_for_node(node):
+    if not _is_per_node_grade_node(node):
+        return ()
+    return tuple((name, float(getattr(node, name)))
+                 for name in (*_LINEAR_FIELDS, *_ANIMATABLE_TONE_FIELDS))
+
+
+def _insert_node_keyframes(node, fields, frame):
+    failures = []
+    for data_path in fields:
+        try:
+            inserted = node.keyframe_insert(data_path=data_path, frame=frame)
+            if not inserted:
+                failures.append(RuntimeError("Blender rejected a Per-Node Grade keyframe"))
+        except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
+            failures.append(error)
+    if failures:
+        raise ExceptionGroup("Could not insert Auto Key Per-Node Grade values", failures)
 
 
 def _working_space():
@@ -278,8 +337,8 @@ def _tone_settings(settings):
 
 
 def _grade_settings(owner, working_space):
-    return Settings(linear=_linear_settings(owner.pg_linear),
-                    tone=_tone_settings(owner.pg_tone), space=working_space)
+    return Settings(linear=_linear_settings(_linear_controls(owner)),
+                    tone=_tone_settings(_tone_controls(owner)), space=working_space)
 
 
 def _snapshot_values(settings):
@@ -487,10 +546,9 @@ def _settings_for_node(node, working_space=None):
             for entry in node.pg_stack_entries
             if entry.enabled and entry.grade is not None
         )
-    if node.pg_grade is not None:
+    if _is_shared_grade_node(node) and node.pg_grade is not None:
         return _grade_settings(node.pg_grade, working_space)
-    return Settings(linear=_linear_settings(node.pg_linear),
-                    tone=_tone_settings(node.pg_tone), space=working_space)
+    return _grade_settings(node, working_space)
 
 
 def _kernel_is_current(kernel, tree_type, signature, quality="full", stack=None,
@@ -525,6 +583,10 @@ def _kernel_error_text(node):
     return localization.tr("error.output_magenta") if node.get(_NODE_ERROR) else ""
 
 
+def _animation_error_text(node):
+    return localization.tr("error.autokey_failed") if node.get(_NODE_ANIMATION_ERROR) else ""
+
+
 _LEGACY_PENDING_MESSAGES = {
     "Updating - waiting for compositor result": "status.waiting_compositor",
     "Updating - showing last-good result": "status.showing_last_good",
@@ -550,6 +612,8 @@ def _draw_node_status(node, layout):
         layout.label(text=pending, icon="TIME")
     if node.get(_NODE_ERROR):
         layout.label(text=_kernel_error_text(node), icon="ERROR")
+    if node.get(_NODE_ANIMATION_ERROR):
+        layout.label(text=_animation_error_text(node), icon="ERROR")
 
 
 def _visible_compositor_scenes(record):
@@ -670,7 +734,7 @@ def _apply_output_presentation(node, mode, error):
             "status.showing_last_good" if mode == "preview"
             else "status.preparing_identity"
         )
-    for key in (_NODE_ERROR, _NODE_PENDING):
+    for key in (_NODE_ERROR, _NODE_PENDING, _NODE_ERROR_REASON):
         if key in values:
             if node.get(key) != values[key]:
                 node[key] = values[key]
@@ -867,7 +931,7 @@ def _source_for(node, working_space):
     if _is_stack_node(node):
         key = ("stack-node", node.as_pointer(), working_space)
         return _preparation_sources.setdefault(key, object())
-    grade = node.pg_grade
+    grade = node.pg_grade if _is_shared_grade_node(node) else None
     owner = ("grade", grade.as_pointer()) if grade is not None else ("node", node.as_pointer())
     key = (*owner, working_space)
     return _preparation_sources.setdefault(key, object())
@@ -897,6 +961,7 @@ def _kernel_belongs_to_node(node, kernel):
 
 def _record_for(node, desired_signature=None, source=None):
     pointer = node.as_pointer()
+    _index_output_node(node)
     record = _node_stores.get(pointer)
     if record is not None and (source is None or record.get("source") is source):
         record["node"] = node
@@ -931,15 +996,16 @@ def _record_for(node, desired_signature=None, source=None):
             kernel_quality, stack=_is_stack_node(node))):
         applied_signature = desired_signature
         applied_quality = kernel_quality
+    stack_grade_ids = _stack_grade_ids(node) if _is_stack_node(node) else ()
     state = node_policy.new(
         desired_signature=desired_signature,
         applied_signature=applied_signature,
         applied_quality=applied_quality,
         gesture_active=gesture_active,
-        grade_ids=_stack_grade_ids(node) if _is_stack_node(node) else (),
     )
     record = {"node": node, "state": state, "source": source,
-              "stack": _is_stack_node(node)}
+              "stack": _is_stack_node(node),
+              "stack_grade_ids": stack_grade_ids}
     _node_stores[pointer] = record
     return record
 
@@ -1033,7 +1099,7 @@ def _dispatch(node, event, preparation=None):
 def _request_node(node, working_space, snapshots=None):
     if _node_reset_pending:
         return ()
-    if _is_grade_node(node) and node.pg_grade is None:
+    if _is_shared_grade_node(node) and node.pg_grade is None:
         _reset_linear(node.pg_linear)
         _reset_tone(node.pg_tone)
     source = _source_for(node, working_space)
@@ -1979,13 +2045,14 @@ def _admit_parameter_candidate(publication):
     return True
 
 
-def _publish_pending_preparations(*, drain=False):
+def _publish_pending_preparations(*, drain=False, sources=None):
     """Consume mailboxes only inside an admitted publication/preflight scope."""
     if _node_reset_pending:
         raise PublicationDeferred("Grade lifecycle reconciliation is pending")
     failures = []
     # One complete source per foreground turn, with no settling delay or rate cap.
-    keys = tuple(_grade_resources.pending)
+    keys = tuple(key for key in _grade_resources.pending
+                 if sources is None or key[0] in sources)
     deferred = None
     for key in keys:
         publication = _grade_resources.pending[key]
@@ -2119,7 +2186,7 @@ def _retire_images():
     return tuple(failures)
 
 
-def _refresh_nodes(nodes, working_space=None):
+def _refresh_nodes(nodes, working_space=None, *, defer_failure_mutations=False):
     if _node_reset_pending:
         return ()
     nodes = tuple(node for node in nodes if _is_output_node(node))
@@ -2129,6 +2196,8 @@ def _refresh_nodes(nodes, working_space=None):
     try:
         working_space = working_space or _working_space()
     except Exception as error:
+        if defer_failure_mutations:
+            return tuple(((node,), error) for node in nodes)
         return _block_nodes(nodes, error)
     failures = []
     snapshots = {}
@@ -2136,7 +2205,10 @@ def _refresh_nodes(nodes, working_space=None):
         try:
             failures.extend(((node,), error) for error in _request_node(node, working_space, snapshots))
         except Exception as error:
-            failures.extend(_block_nodes((node,), error))
+            if defer_failure_mutations:
+                failures.append(((node,), error))
+            else:
+                failures.extend(_block_nodes((node,), error))
     return tuple(failures)
 
 
@@ -2162,6 +2234,7 @@ def _forget_node(node):
         record = _node_stores.pop(pointer, None)
     except (AttributeError, ReferenceError, RuntimeError):
         return
+    _unindex_output_node(pointer)
     _forget_compositor_node(pointer)
     if record is not None:
         _release_source(record.get("source"))
@@ -2180,7 +2253,7 @@ def _apply_node_disposal(node):
     def detach():
         _syncing.add(pointer)
         try:
-            if _is_grade_node(node):
+            if _is_shared_grade_node(node):
                 node.pg_grade = None
             node.node_tree = None
         finally:
@@ -2203,8 +2276,11 @@ def _dispose_node(node):
 
 
 def _reset_node_stores():
-    global _node_reset_pending
+    global _node_reset_pending, _frame_reconcile_pending
     _node_reset_pending = True
+    _frame_reconcile_pending = False
+    _frame_reconcile_scenes.clear()
+    _render_validated_scenes.clear()
     if _grade_resources is not None:
         # Load/undo invalidates callback identities, but only actual host
         # quiescence permits releasing the retained native image versions.
@@ -2212,6 +2288,7 @@ def _reset_node_stores():
         _grade_resources.clear()
     sources = tuple(_preparation_sources.values())
     _node_stores.clear()
+    _clear_output_registry()
     _preparation_sources.clear()
     if _preparation_runtime is not None:
         for source in sources:
@@ -2237,17 +2314,155 @@ def _stack_grade_ids(node):
     )
 
 
-def _stack_owner(entry):
-    pointer = entry.as_pointer()
-    for tree in _all_node_trees():
-        try:
-            nodes = tuple(tree.nodes)
-        except (AttributeError, ReferenceError, RuntimeError):
+def _consumer_grade_ids(node):
+    if _is_shared_grade_node(node):
+        grade = node.pg_grade
+        return (grade.as_pointer(),) if grade is not None else ()
+    if _is_stack_node(node):
+        return tuple(
+            entry.grade.as_pointer()
+            for entry in node.pg_stack_entries
+            if entry.enabled and entry.grade is not None
+        )
+    return ()
+
+
+def _clear_output_registry():
+    global _output_registry_ready
+    _grade_consumers.clear()
+    _stack_entry_owners.clear()
+    _indexed_node_grades.clear()
+    _indexed_node_entries.clear()
+    _indexed_output_nodes.clear()
+    _output_registry_ready = False
+
+
+def _unindex_output_node(pointer):
+    node_grades = _indexed_node_grades.pop(pointer, ())
+    for grade_pointer in node_grades:
+        consumers = _grade_consumers.get(grade_pointer)
+        if consumers is None:
             continue
-        for node in nodes:
-            if _is_stack_node(node) and any(item.as_pointer() == pointer
-                                             for item in node.pg_stack_entries):
-                return node
+        consumers.pop(pointer, None)
+        if not consumers:
+            _grade_consumers.pop(grade_pointer, None)
+    for entry_pointer in _indexed_node_entries.pop(pointer, ()):
+        owner = _stack_entry_owners.get(entry_pointer)
+        if owner is not None and owner[0] == pointer:
+            _stack_entry_owners.pop(entry_pointer, None)
+    _indexed_output_nodes.pop(pointer, None)
+
+
+def _index_output_node(node):
+    """Maintain the derived Grade-consumer and stack-entry owner indexes."""
+    global _output_registry_ready
+    try:
+        if not _is_output_node(node):
+            return True
+        pointer = node.as_pointer()
+        if not pointer:
+            return True
+        _unindex_output_node(pointer)
+        _indexed_output_nodes[pointer] = node
+        grades = tuple(grade_pointer for grade_pointer in _consumer_grade_ids(node)
+                       if grade_pointer)
+        _indexed_node_grades[pointer] = grades
+        for grade_pointer in grades:
+            _grade_consumers.setdefault(grade_pointer, {})[pointer] = node
+        entries = ()
+        if _is_stack_node(node):
+            entries = tuple(entry.as_pointer() for entry in node.pg_stack_entries
+                            if entry.as_pointer())
+            for entry_pointer in entries:
+                _stack_entry_owners[entry_pointer] = (pointer, node)
+        _indexed_node_entries[pointer] = entries
+        return True
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        # RNA objects can disappear while Blender is editing or undoing a tree.
+        # The next lifecycle reconciliation rebuilds the complete index.
+        _output_registry_ready = False
+        return False
+
+
+def _rebuild_output_registry():
+    global _output_registry_ready
+    _clear_output_registry()
+    complete = True
+    for node in tuple(_all_grade_nodes()):
+        complete = _index_output_node(node) and complete
+    _output_registry_ready = complete
+
+
+def _indexed_consumers(grade_pointer):
+    if not _output_registry_ready:
+        _rebuild_output_registry()
+    if not _output_registry_ready:
+        consumers = {}
+        for node in _all_grade_nodes():
+            try:
+                if grade_pointer in _consumer_grade_ids(node):
+                    _index_output_node(node)
+                    consumers[node.as_pointer()] = node
+            except (AttributeError, ReferenceError, RuntimeError,
+                    TypeError, ValueError):
+                continue
+        return tuple(consumers.values())
+    consumers = _grade_consumers.get(grade_pointer, {})
+    live = []
+    for pointer, node in tuple(consumers.items()):
+        try:
+            if node.as_pointer() != pointer or not _is_output_node(node):
+                _unindex_output_node(pointer)
+                continue
+            grades = _consumer_grade_ids(node)
+            if tuple(grades) != _indexed_node_grades.get(pointer, ()):
+                _index_output_node(node)
+                if grade_pointer not in _indexed_node_grades.get(pointer, ()):
+                    continue
+            if grade_pointer in _indexed_node_grades.get(pointer, ()):
+                live.append(node)
+        except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+            _unindex_output_node(pointer)
+    return tuple(live)
+
+
+def _stack_owner(entry):
+    try:
+        pointer = entry.as_pointer()
+    except (AttributeError, ReferenceError, RuntimeError):
+        return None
+    indexed = _stack_entry_owners.get(pointer)
+    owner = indexed[1] if indexed is not None else None
+    if owner is not None:
+        try:
+            if (owner.as_pointer() == indexed[0] and _is_stack_node(owner)
+                    and any(item.as_pointer() == pointer
+                            for item in owner.pg_stack_entries)):
+                return owner
+        except (AttributeError, ReferenceError, RuntimeError):
+            pass
+        _stack_entry_owners.pop(pointer, None)
+    try:
+        tree = getattr(entry, "id_data", None)
+        for candidate in tuple(getattr(tree, "nodes", ())):
+            if not _is_stack_node(candidate):
+                continue
+            if any(item.as_pointer() == pointer
+                   for item in candidate.pg_stack_entries):
+                _index_output_node(candidate)
+                return candidate
+    except (AttributeError, ReferenceError, RuntimeError, TypeError):
+        pass
+    if not _output_registry_ready:
+        _rebuild_output_registry()
+        indexed = _stack_entry_owners.get(pointer)
+        if indexed is not None:
+            return indexed[1]
+    else:
+        _rebuild_output_registry()
+        indexed = _stack_entry_owners.get(pointer)
+        if indexed is not None:
+            return indexed[1]
     return None
 
 
@@ -2255,17 +2470,27 @@ def _stack_changed(entry, _context):
     node = _stack_owner(entry)
     if node is None:
         return
-    failures = _dispatch(node, node_policy.Event(
-        "stack_replace", grade_ids=_stack_grade_ids(node)))
+    _index_output_node(node)
+    failures = _dispatch_stack_replacement(node)
     if failures:
         print("Perceptual Grade Stack update failed:", failures[-1])
 
 
 def _refresh_stack_policy(node):
-    failures = _dispatch(node, node_policy.Event(
-        "stack_replace", grade_ids=_stack_grade_ids(node)))
+    _index_output_node(node)
+    failures = _dispatch_stack_replacement(node)
     if failures:
         print("Perceptual Grade Stack update failed:", failures[-1])
+
+
+def _dispatch_stack_replacement(node):
+    if _node_reset_pending:
+        return ()
+    record = _record_for(node)
+    grade_ids = _stack_grade_ids(node)
+    changed = stack_changed(record["stack_grade_ids"], grade_ids)
+    record["stack_grade_ids"] = grade_ids
+    return _dispatch(node, node_policy.Event("stack_replace", stack_changed=changed))
 
 
 def _stack_focus_changed(node, _context):
@@ -2274,13 +2499,16 @@ def _stack_focus_changed(node, _context):
 
 
 def _gesture_related_nodes(node):
-    grade = node.pg_grade if _is_grade_node(node) else _stack_active_grade(node)
     related = {node.as_pointer(): node}
+    if _is_per_node_grade_node(node):
+        return tuple(related.values())
+    grade = node.pg_grade if _is_shared_grade_node(node) else _stack_active_grade(node)
     if grade is None:
         return tuple(related.values())
-    for candidate in _all_grade_nodes():
+    grade_pointer = grade.as_pointer()
+    for candidate in _indexed_consumers(grade_pointer):
         try:
-            if _is_grade_node(candidate) and candidate.pg_grade == grade:
+            if _is_shared_grade_node(candidate) and candidate.pg_grade == grade:
                 related[candidate.as_pointer()] = candidate
             elif _is_stack_node(candidate) and any(
                     item.enabled and item.grade == grade
@@ -2348,6 +2576,38 @@ def _gesture_observations(window_key):
     return tuple(observed)
 
 
+def _capture_gesture_keyframe_baseline(targets):
+    values = {}
+    for target in targets:
+        node = _gesture_node(target.node_id)
+        if node is None or not _is_per_node_grade_node(node):
+            continue
+        values[target.node_id] = dict(_animated_values_for_node(node))
+    return values
+
+
+def _keyframe_gesture(token, frame):
+    baseline = _gesture_keyframe_baselines.pop(token, None)
+    if baseline is None or frame is None:
+        return
+    for identity, fields in baseline.items():
+        node = _gesture_node(identity)
+        if node is None or not _is_per_node_grade_node(node):
+            continue
+        changed = []
+        for field, before in fields.items():
+            current = float(getattr(node, field))
+            if current != before:
+                changed.append(field)
+        try:
+            _insert_node_keyframes(node, changed, frame)
+            if _NODE_ANIMATION_ERROR in node:
+                del node[_NODE_ANIMATION_ERROR]
+        except Exception as error:
+            node[_NODE_ANIMATION_ERROR] = True
+            print("Perceptual Grade Auto Key failed:", error)
+
+
 def _gesture_target_at(window, x, y):
     """Resolve a sidebar press in the window-level modal event context."""
     if window is None:
@@ -2407,9 +2667,15 @@ def _settings_signature_for(node):
 
 def _arm_gesture(window_key, node, position):
     """Explicit adapter entrypoint; native routing supplies its observer token."""
+    scene = bpy.context.scene
+    auto_key = bool(scene is not None and _is_per_node_grade_node(node)
+                    and scene.tool_settings.use_keyframe_insert_auto)
+    frame = (float(scene.frame_current + scene.frame_subframe)
+             if auto_key else None)
     _dispatch_gesture(gesture_policy.Event(
         "press", window_id=window_key, x=int(position[0]), y=int(position[1]),
         undo_owner="adapter",
+        auto_key=auto_key, frame=frame,
         targets=tuple(gesture_policy.Target(_gesture_identity(target),
                                            _settings_signature_for(target))
                       for target in _live_gesture_targets(_gesture_related_nodes(node))),
@@ -2480,6 +2746,7 @@ def _observe_gesture_finish(window_key, token):
         "finish_observed", window_id=window_key, gesture_token=token,
         observed=_gesture_observations(window_key),
     ))
+    _gesture_keyframe_baselines.pop(token, None)
     return None
 
 
@@ -2560,11 +2827,14 @@ def _consume_gesture_effects(effects):
                 failures = _dispatch(node, node_policy.Event("gesture_release"))
                 if failures:
                     print("Perceptual Grade gesture transition failed:", failures[-1])
+        elif action.kind == "keyframe":
+            _keyframe_gesture(action.gesture_token, action.frame)
         elif action.kind == "forget_node":
             _gesture_nodes.pop(action.node_id, None)
         elif action.kind == "clear_registry":
             _gesture_nodes.clear()
             _gesture_invocations.clear()
+            _gesture_keyframe_baselines.clear()
         elif action.kind == "report_install_failure":
             print("Perceptual Grade could not install gesture observer for window",
                   action.window_id, ":", _gesture_invocations.get(action.token, {}).get("error")
@@ -2576,8 +2846,13 @@ def _consume_gesture_effects(effects):
 
 def _dispatch_gesture(event):
     global _gesture_state
+    token = (event.gesture_token if event.gesture_token is not None else
+             gesture_policy.current_gesture(_gesture_state, event.window_id)
+             if event.window_id is not None else None)
     _gesture_state, effects = gesture_policy.step(_gesture_state, event)
     _consume_gesture_effects(effects)
+    if event.kind in ("finish", "finish_observed", "window_gone"):
+        _gesture_keyframe_baselines.pop(token, None)
 
 
 class PG_OT_gesture_router(bpy.types.Operator):
@@ -2617,15 +2892,30 @@ class PG_OT_gesture_router(bpy.types.Operator):
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
             active = _gesture_target_at(context.window, event.mouse_x, event.mouse_y)
             if active is not None:
+                targets = _live_gesture_targets(_gesture_related_nodes(active))
+                scene = getattr(context, "scene", None)
+                auto_key = bool(scene is not None and _is_per_node_grade_node(active)
+                                and scene.tool_settings.use_keyframe_insert_auto)
+                keyframe_frame = (float(scene.frame_current + scene.frame_subframe)
+                                  if auto_key else None)
                 _dispatch_gesture(gesture_policy.Event(
                     "press", window_id=self.window_key, token=self.token,
                     x=int(event.mouse_x), y=int(event.mouse_y), undo_owner="native",
                     targets=tuple(gesture_policy.Target(_gesture_identity(target),
                                                        _settings_signature_for(target))
-                                  for target in _live_gesture_targets(
-                                      _gesture_related_nodes(active))),
+                                  for target in targets),
                     observed=_gesture_observations(self.window_key),
+                    auto_key=auto_key,
+                    frame=keyframe_frame,
                 ))
+                gesture_token = _gesture_token(self.window_key)
+                if gesture_token is not None and auto_key:
+                    _gesture_keyframe_baselines[gesture_token] = (
+                        _capture_gesture_keyframe_baseline(
+                            tuple(gesture_policy.Target(_gesture_identity(target), None)
+                                  for target in targets)
+                        )
+                    )
         elif event.type == "MOUSEMOVE":
             _dispatch_gesture(gesture_policy.Event(
                 "move", window_id=self.window_key, token=self.token,
@@ -2696,27 +2986,31 @@ def _stack_active_grade(node):
 
 
 def _grade_changed(grade):
+    global _frame_reconcile_pending
+    if _frame_change_active:
+        _frame_reconcile_pending = True
+        return
+    grade_pointer = grade.as_pointer()
     users = []
     failures = []
-    for tree in _all_node_trees():
+    for node in _indexed_consumers(grade_pointer):
         try:
-            nodes = tuple(tree.nodes)
+            if _is_shared_grade_node(node) and node.pg_grade == grade:
+                users.append(node)
+            elif _is_stack_node(node):
+                record = _record_for(node)
+                referenced = grade_is_referenced(
+                    record["stack_grade_ids"], grade_pointer,
+                )
+                failures.extend(
+                    (node, error) for error in _dispatch(
+                        node, node_policy.Event(
+                            "grade_changed", grade_referenced=referenced,
+                        ),
+                    )
+                )
         except (AttributeError, ReferenceError, RuntimeError):
             continue
-        for node in nodes:
-            try:
-                if (_is_grade_node(node) and node.pg_grade == grade):
-                    users.append(node)
-                elif _is_stack_node(node):
-                    failures.extend(
-                        (node, error) for error in _dispatch(
-                            node, node_policy.Event(
-                                "grade_changed", grade_ids=(grade.as_pointer(),)
-                            ),
-                        )
-                    )
-            except (AttributeError, ReferenceError, RuntimeError):
-                continue
     refresh = []
     for node in users:
         armed = _gesture_is_armed(node.as_pointer())
@@ -2758,6 +3052,74 @@ def _all_grade_nodes():
         for node in nodes:
             if _is_output_node(node):
                 yield node
+
+
+@persistent
+def _frame_change_pre(_scene, *_args):
+    global _frame_change_active
+    _frame_change_active = True
+
+
+def _frame_reconcile_blocked(scene_identity):
+    if _grade_resources is not None:
+        gate = _grade_resources.gate
+        if (gate.evaluation_active("render", scene_identity)
+                or gate.evaluation_active("compositor", scene_identity)):
+            return True
+    return (bpy.app.is_job_running("RENDER")
+            or bpy.app.is_job_running("RENDER_PREVIEW")
+            or bpy.app.is_job_running("COMPOSITE"))
+
+
+@persistent
+def _frame_change_post(scene, *_args):
+    global _frame_change_active, _frame_reconcile_pending
+    _frame_change_active = False
+    _frame_reconcile_pending = True
+    if threading.current_thread() is not threading.main_thread():
+        return
+    try:
+        pointer = scene.as_pointer()
+        _frame_reconcile_scenes[pointer] = scene
+        if _frame_reconcile_blocked(pointer):
+            return
+        failures = _refresh_nodes(_scene_grade_nodes(scene))
+        _frame_reconcile_scenes.pop(pointer, None)
+        _frame_reconcile_pending = bool(_frame_reconcile_scenes)
+        for nodes, error in failures:
+            names = ", ".join(getattr(node, "name", "Grade") for node in nodes)
+            print(f"Perceptual Grade frame update failed for {names}: {error}")
+    except Exception as error:
+        print("Perceptual Grade frame update failed:", error)
+
+
+def _frame_reconcile_tick():
+    global _frame_reconcile_pending
+    if PGShaderGrade not in _registered_classes:
+        return None
+    if _frame_reconcile_pending and not _node_reset_pending:
+        try:
+            if not _frame_reconcile_scenes:
+                scene = getattr(bpy.context, "scene", None)
+                if scene is not None:
+                    _frame_reconcile_scenes[scene.as_pointer()] = scene
+            for pointer, scene in tuple(_frame_reconcile_scenes.items()):
+                if _frame_reconcile_blocked(pointer):
+                    continue
+                try:
+                    if scene.as_pointer() == pointer:
+                        _refresh_nodes(_scene_grade_nodes(scene))
+                except (AttributeError, ReferenceError, RuntimeError):
+                    pass
+                _frame_reconcile_scenes.pop(pointer, None)
+            _frame_reconcile_pending = bool(_frame_reconcile_scenes)
+        except PublicationDeferred:
+            _frame_reconcile_pending = True
+        except Exception as error:
+            nodes = tuple(node for scene in _frame_reconcile_scenes.values()
+                          for node in _scene_grade_nodes(scene))
+            _block_nodes(nodes, error)
+    return 0.1
 
 
 def _ensure_all_kernels(working_space=None):
@@ -2807,6 +3169,7 @@ def _startup_reconcile_tick():
         return None
     if not hasattr(bpy.data, "node_groups"):
         return 0.1
+    _rebuild_output_registry()
     _ensure_all_kernels()
     return None
 
@@ -2816,6 +3179,7 @@ def _load_post(_filepath):
     try:
         _clear_gestures()
         _reset_node_stores()
+        _rebuild_output_registry()
         _ensure_all_kernels()
     except PublicationDeferred:
         _undo_redo_post()
@@ -2846,6 +3210,7 @@ def _undo_redo_reconcile_tick():
         return None
     try:
         _reset_node_stores()
+        _rebuild_output_registry()
         _ensure_all_kernels()
     except PublicationDeferred:
         return 0.02
@@ -2861,42 +3226,137 @@ def _render_pre(scene):
     if _grade_resources is None:
         return
     gate = _grade_resources.gate
+    render_identity = scene.as_pointer()
     with gate.callback():
-        ticket = gate.request_render_preflight(0)
+        ticket = gate.request_render_preflight(
+            render_identity, render_identity, scene.frame_current,
+            float(scene.frame_subframe).hex(),
+        )
     if threading.current_thread() is threading.main_thread():
         try:
             _service_render_preflight(defer=False)
         except PublicationDeferred as error:
-            # A synchronous host call cannot wait for its own foreground
-            # timer. Revoke output before evaluation without writing images.
-            _block_nodes(tuple(_all_grade_nodes()), error)
+            _block_nodes(_scene_grade_nodes(scene), error)
+            print("Perceptual Grade render preflight failed:", error)
     else:
-        # Blender invokes this callback from its render worker. Release the GIL
-        # while its pre-evaluation boundary waits for a foreground timer turn.
-        ticket.wait()
+        try:
+            # Blender invokes this callback from its render worker. Release the
+            # GIL while the main-thread timer prepares and validates this frame.
+            ticket.wait()
+        except Exception as error:
+            print("Perceptual Grade render preflight failed:", error)
 
 
 def _service_render_preflight(*, defer=True):
     if _grade_resources is None:
         return
-    if _node_reset_pending:
-        if not defer:
-            raise PublicationDeferred("Grade lifecycle reconciliation is pending")
-        return
     gate = _grade_resources.gate
+    if _node_reset_pending:
+        if defer:
+            ticket = gate.take_render_preflight(failed_only=True)
+            if ticket is not None:
+                _fail_render_preflight(
+                    ticket, RuntimeError(ticket.state.error or "Render preflight failed"))
+            return
+        ticket = gate.take_render_preflight()
+        if ticket is None:
+            raise PublicationDeferred("Grade lifecycle reconciliation is pending")
+        _fail_render_preflight(
+            ticket, PublicationDeferred("Grade lifecycle reconciliation is pending"))
+        return
     ticket = gate.take_render_preflight()
     if ticket is not None:
+        if ticket.failure_authorized:
+            _fail_render_preflight(
+                ticket, RuntimeError(ticket.state.error or "Render preflight failed"))
+            return
         try:
-            with gate.render_preflight(ticket, defer=defer):
+            with gate.render_preflight(ticket, defer=defer, deliver_failure=False):
                 try:
-                    _ensure_all_kernels()
-                    _drain_preparations_in_scope()
+                    scene = next((candidate for candidate in bpy.data.scenes
+                                  if candidate.as_pointer() == ticket.scene_identity), None)
+                    if scene is None:
+                        raise RuntimeError("Render scene no longer exists")
+                    if (scene.frame_current != ticket.frame
+                            or float(scene.frame_subframe).hex() != ticket.subframe):
+                        raise RuntimeError("Render frame changed before Grade preflight")
+                    # Native animation rendering may advance an evaluated scene
+                    # copy while the original ID still exposes the previous
+                    # frame's RNA values. Re-assert the exact ticket time on
+                    # the main-thread scene before reading animated Grade data.
+                    scene.frame_set(ticket.frame, subframe=float.fromhex(ticket.subframe))
+                    nodes, _signatures, signature = _animation_snapshot(scene)
+                    failures = []
+                    first_frame = ticket.scene_identity not in _render_validated_scenes
+                    failures.extend(_refresh_nodes(
+                        nodes, defer_failure_mutations=True))
+                    failures.extend(_drain_preparations_in_scope(
+                        nodes, defer_failure_mutations=True))
+                    current_nodes, current_signatures, current_signature = (
+                        _animation_snapshot(scene))
+                    if current_signature != signature:
+                        raise RuntimeError(
+                            "Evaluated Grade settings changed during frame preflight")
+                    ready, error = _animation_outputs_current(
+                        current_nodes, current_signatures,
+                        validate_graph=first_frame)
+                    node_ids = {node.as_pointer() for node in current_nodes}
+                    relevant = [failure for failed_nodes, failure in failures
+                                if any(node.as_pointer() in node_ids
+                                       for node in failed_nodes)]
+                    if relevant:
+                        error = str(relevant[-1])
+                        ready = False
+                    if not ready:
+                        failure = RuntimeError(error or
+                            "Grade output did not become current for this render frame")
+                        effects = ticket.resolve(render_preflight_policy.Event(
+                            "published", ticket.render_identity,
+                            ticket.scene_identity, ticket.frame, ticket.subframe,
+                            ticket.generation, signature=signature,
+                            error=str(failure),
+                        ))
+                        if effects.action != "fail":
+                            raise RuntimeError(effects.error or
+                                               "Render failure was not authorized")
+                    else:
+                        effects = ticket.resolve(render_preflight_policy.Event(
+                            "published", ticket.render_identity,
+                            ticket.scene_identity, ticket.frame, ticket.subframe,
+                            ticket.generation, signature=signature,
+                            published_signature=current_signature,
+                        ))
+                        if effects.action != "release":
+                            raise RuntimeError(effects.error or
+                                               "Grade render preflight was not authorized")
+                        if first_frame:
+                            _render_validated_scenes.add(ticket.scene_identity)
                 except Exception as error:
-                    _block_nodes(tuple(_all_grade_nodes()), error)
-                    raise
-        except PublicationDeferred:
+                    ticket.fail(error)
+                    print("Perceptual Grade frame output failed closed:", error)
+        except PublicationDeferred as error:
             if not defer:
-                raise
+                _fail_render_preflight(ticket, error)
+        except Exception as error:
+            _fail_render_preflight(ticket, error)
+        else:
+            if ticket.failure_authorized:
+                _fail_render_preflight(
+                    ticket, RuntimeError(ticket.state.error or "Render preflight failed"))
+
+
+def _fail_render_preflight(ticket, error):
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("Render failure reconciliation requires Blender's main thread")
+    effects = ticket.fail(error)
+    if ticket.failure_authorized:
+        scene = next((candidate for candidate in bpy.data.scenes
+                      if candidate.as_pointer() == ticket.scene_identity), None)
+        if scene is not None:
+            _block_nodes(_scene_grade_nodes(scene), error)
+        _grade_resources.gate.finish_render_preflight_failure(ticket)
+    elif effects.action == "release":
+        ticket.deliver()
 
 
 def _render_preflight_tick():
@@ -2913,15 +3373,26 @@ def _render_preflight_tick():
 @persistent
 def _render_init(scene, *_args):
     if _grade_resources is not None:
+        _render_validated_scenes.discard(scene.as_pointer())
         with _grade_resources.gate.callback():
-            _grade_resources.gate.evaluation_started("render", 0)
+            _grade_resources.gate.evaluation_started("render", scene.as_pointer())
 
 
 @persistent
 def _render_finished(scene, *_args):
     if _grade_resources is not None:
+        _render_validated_scenes.discard(scene.as_pointer())
         with _grade_resources.gate.callback():
-            _grade_resources.gate.evaluation_finished("render", 0)
+            _grade_resources.gate.evaluation_finished("render", scene.as_pointer())
+
+
+@persistent
+def _render_cancelled(scene, *_args):
+    if _grade_resources is not None:
+        _render_validated_scenes.discard(scene.as_pointer())
+        with _grade_resources.gate.callback():
+            _grade_resources.gate.evaluation_finished(
+                "render", scene.as_pointer(), successful=False)
 
 
 @persistent
@@ -2970,32 +3441,45 @@ def _drain_preparations():
         return _drain_preparations_in_scope()
 
 
-def _drain_preparations_in_scope():
+def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
     if _node_reset_pending:
         raise PublicationDeferred("Grade lifecycle reconciliation is pending")
     if _preparation_runtime is None:
         return ()
     failures = []
-    sources = tuple({record["source"] for record in _node_stores.values()
-                     if record.get("source") is not None})
+    records = (tuple(_node_stores.values()) if nodes is None else tuple(
+        record for node in nodes
+        if (record := _node_stores.get(node.as_pointer())) is not None
+    ))
+    sources = {record["source"] for record in records
+               if record.get("source") is not None}
     # The async barrier waits only for preparation, never for Blender mutation.
     try:
         _queue_preparation_completions(_preparation_runtime.wait(sources))
-        failures.extend(_publish_pending_preparations(drain=True))
+        failures.extend(_publish_pending_preparations(drain=True, sources=sources))
     except Exception as error:
-        # Blender need not abort a render when a handler raises. Revoke output
-        # through the machine before returning to the host.
-        failures.extend(_block_nodes(tuple(record["node"] for record in _node_stores.values()), error))
-    for record in tuple(_node_stores.values()):
+        failed_nodes = tuple(record["node"] for record in records)
+        if defer_failure_mutations:
+            failures.append((failed_nodes, error))
+        else:
+            # Blender need not abort a render when a handler raises. Revoke
+            # output before returning to the host.
+            failures.extend(_block_nodes(failed_nodes, error))
+    for record in records:
         state = record["state"]
         node = record["node"]
         if (not node_policy.output_allowed(state)
                 or not _kernel_is_current(
                     node.node_tree, node.id_data.bl_idname, state.desired_signature,
-                    state.applied_quality or "full", stack=record["stack"])):
-            failures.extend(_dispatch(node, node_policy.Event(
-                "installation_result", state.desired_signature,
-                state.error or "Grade did not become current for rendering")))
+                    state.applied_quality or "full", stack=record["stack"],
+                    validate_graph=False)):
+            error = RuntimeError(
+                state.error or "Grade did not become current for rendering")
+            if defer_failure_mutations:
+                failures.append(((node,), error))
+            else:
+                failures.extend(_dispatch(node, node_policy.Event(
+                    "installation_result", state.desired_signature, str(error))))
     return tuple(failures)
 
 
@@ -3025,7 +3509,11 @@ def _linear_changed(settings, _context):
         _grade_changed(holder)
         return
 
-    if holder.pg_grade is None:
+    if _is_per_node_grade_node(holder):
+        _per_node_grade_changed(holder)
+        return
+
+    if _is_shared_grade_node(holder) and holder.pg_grade is None:
         # Local settings only supply the disabled controls' neutral values.
         # A Grade must be explicitly created before its settings can be edited.
         _reset_linear(settings)
@@ -3041,8 +3529,23 @@ def _tone_changed(settings, _context):
     if holder.bl_idname == PGGradeData.bl_idname:
         _grade_changed(holder)
         return
-    if holder.pg_grade is None:
+    if _is_per_node_grade_node(holder):
+        _per_node_grade_changed(holder)
+        return
+    if _is_shared_grade_node(holder) and holder.pg_grade is None:
         _reset_tone(settings)
+
+
+def _per_node_grade_changed(node):
+    global _frame_reconcile_pending
+    if _frame_change_active:
+        _frame_reconcile_pending = True
+        return
+    if _gesture_is_armed(node.as_pointer()):
+        return
+    failures = _refresh_nodes((node,))
+    if failures:
+        print("Perceptual Grade kernel repair failed:", failures[-1][1])
 
 
 def _tone_anchor_changed(index):
@@ -3082,6 +3585,7 @@ def _source_white_changed(axis):
 def _selection_changed(node, _context):
     if node.as_pointer() in _syncing:
         return
+    _index_output_node(node)
     if node.pg_grade is None:
         _reset_linear(node.pg_linear)
         _reset_tone(node.pg_tone)
@@ -3092,7 +3596,14 @@ def _selection_changed(node, _context):
 
 
 def _assign_values(node, values):
-    if node.pg_grade is None:
+    if _is_per_node_grade_node(node):
+        settings = _linear_controls(node)
+        with _suspend(settings):
+            for name, value in values.items():
+                setattr(settings, name, value)
+        _per_node_grade_changed(node)
+        return
+    if not _is_shared_grade_node(node) or node.pg_grade is None:
         return
     settings = node.pg_grade.pg_linear
     with _suspend(settings):
@@ -3124,113 +3635,70 @@ def _output_node_from_context(context):
     return node if _is_output_node(node) else None
 
 
+def _float_setting(message_id, default, minimum, maximum, precision, update,
+                   *, animatable):
+    options = {"ANIMATABLE"} if animatable else set()
+    return FloatProperty(
+        name=localization.native(message_id),
+        translation_context=localization.CONTEXT,
+        description=localization.native("tooltip." + message_id.removeprefix("property.")),
+        default=default, min=minimum, max=maximum, precision=precision,
+        options=options, update=update,
+    )
+
+
+def _linear_setting_properties(*, animatable):
+    return {
+        "exposure": _float_setting("property.exposure", 0.0, -6.0, 6.0, 2,
+                                    _linear_changed, animatable=animatable),
+        "source_x": _float_setting("property.source_x", D65[0], 0.0, 0.9, 5,
+                                    _source_white_changed(0), animatable=animatable),
+        "source_y": _float_setting("property.source_y", D65[1], 0.0, 0.9, 5,
+                                    _source_white_changed(1), animatable=animatable),
+        "cr_balance": _float_setting("property.cr_balance", 0.0, -2.0, 2.0, 3,
+                                      _linear_changed, animatable=animatable),
+        "yb_balance": _float_setting("property.yb_balance", 0.0, -2.0, 2.0, 3,
+                                      _linear_changed, animatable=animatable),
+        "cr_spread": _float_setting("property.cr_spread", 0.0, -100.0, 150.0, 1,
+                                     _linear_changed, animatable=animatable),
+        "yb_spread": _float_setting("property.yb_spread", 0.0, -100.0, 150.0, 1,
+                                     _linear_changed, animatable=animatable),
+        "cr_heading": _float_setting("property.cr_heading", 0.0, -180.0, 180.0, 1,
+                                      _linear_changed, animatable=animatable),
+        "yb_heading": _float_setting("property.yb_heading", 0.0, -180.0, 180.0, 1,
+                                      _linear_changed, animatable=animatable),
+    }
+
+
+def _tone_setting_properties(*, animatable):
+    return {
+        name: _float_setting(
+            "property." + name, TONE_DEFAULTS[name], *TONE_LIMITS[index],
+            3 if index < 2 else 2 if index < 4 else 1,
+            _tone_anchor_changed(index), animatable=animatable,
+        )
+        for index, name in enumerate(TONE_LEVEL_FIELDS)
+    } | {
+        "fit": _float_setting("property.fit", 0.0, -2.0, 2.0, 2,
+                              _tone_changed, animatable=animatable),
+        "peak_nits": EnumProperty(
+            name=localization.native("property.peak"),
+            translation_context=localization.CONTEXT,
+            description=localization.native("tooltip.peak"),
+            default="1000",
+            items=[(str(peak), localization.native(f"tone.peak.{peak}"), "")
+                   for peak in TONE_PEAKS],
+            options=set(), update=_tone_changed,
+        ),
+    }
+
+
 class PGLinearSettings(bpy.types.PropertyGroup):
-    exposure: FloatProperty(
-        name=localization.native("property.exposure"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.exposure"),
-        default=0.0, min=-6.0, max=6.0,
-                             precision=2, update=_linear_changed)
-    source_x: FloatProperty(
-        name=localization.native("property.source_x"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.source_x"),
-        default=D65[0], min=0.0, max=0.9,
-                            precision=5, update=_source_white_changed(0))
-    source_y: FloatProperty(
-        name=localization.native("property.source_y"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.source_y"),
-        default=D65[1], min=0.0, max=0.9,
-                            precision=5, update=_source_white_changed(1))
-    cr_balance: FloatProperty(
-        name=localization.native("property.cr_balance"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.cr_balance"),
-        default=0.0, min=-2.0, max=2.0,
-                              precision=3, update=_linear_changed)
-    yb_balance: FloatProperty(
-        name=localization.native("property.yb_balance"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.yb_balance"),
-        default=0.0, min=-2.0, max=2.0,
-                              precision=3, update=_linear_changed)
-    cr_spread: FloatProperty(
-        name=localization.native("property.cr_spread"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.cr_spread"),
-        default=0.0, min=-100.0, max=150.0,
-                             precision=1, update=_linear_changed)
-    yb_spread: FloatProperty(
-        name=localization.native("property.yb_spread"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.yb_spread"),
-        default=0.0, min=-100.0, max=150.0,
-                             precision=1, update=_linear_changed)
-    cr_heading: FloatProperty(
-        name=localization.native("property.cr_heading"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.cr_heading"),
-        default=0.0, min=-180.0, max=180.0,
-                              precision=1, update=_linear_changed)
-    yb_heading: FloatProperty(
-        name=localization.native("property.yb_heading"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.yb_heading"),
-        default=0.0, min=-180.0, max=180.0,
-                              precision=1, update=_linear_changed)
+    __annotations__ = _linear_setting_properties(animatable=False)
 
 
 class PGToneSettings(bpy.types.PropertyGroup):
-    input_black: FloatProperty(
-        name=localization.native("property.input_black"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.input_black"),
-        default=TONE_DEFAULTS["input_black"],
-        min=TONE_LIMITS[0][0], max=TONE_LIMITS[0][1], precision=3,
-        update=_tone_anchor_changed(0))
-    input_shadows: FloatProperty(
-        name=localization.native("property.input_shadows"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.input_shadows"),
-        default=TONE_DEFAULTS["input_shadows"],
-        min=TONE_LIMITS[1][0], max=TONE_LIMITS[1][1], precision=3,
-        update=_tone_anchor_changed(1))
-    input_midtones: FloatProperty(
-        name=localization.native("property.input_midtones"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.input_midtones"),
-        default=TONE_DEFAULTS["input_midtones"],
-        min=TONE_LIMITS[2][0], max=TONE_LIMITS[2][1], precision=2,
-        update=_tone_anchor_changed(2))
-    input_white: FloatProperty(
-        name=localization.native("property.input_white"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.input_white"),
-        default=TONE_DEFAULTS["input_white"],
-        min=TONE_LIMITS[3][0], max=TONE_LIMITS[3][1], precision=2,
-        update=_tone_anchor_changed(3))
-    input_highlights: FloatProperty(
-        name=localization.native("property.input_highlights"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.input_highlights"),
-        default=TONE_DEFAULTS["input_highlights"],
-        min=TONE_LIMITS[4][0], max=TONE_LIMITS[4][1], precision=1,
-        update=_tone_anchor_changed(4))
-    fit: FloatProperty(
-        name=localization.native("property.fit"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.fit"),
-        default=0.0, min=-2.0, max=2.0,
-        precision=2, update=_tone_changed)
-    peak_nits: EnumProperty(
-        name=localization.native("property.peak"),
-        translation_context=localization.CONTEXT,
-        description=localization.native("tooltip.peak"),
-        default="1000",
-        items=[(str(peak), localization.native(f"tone.peak.{peak}"), "")
-               for peak in TONE_PEAKS],
-        update=_tone_changed)
+    __annotations__ = _tone_setting_properties(animatable=False)
 
 
 class PGGradeData(bpy.types.NodeTree):
@@ -3306,14 +3774,21 @@ def _draw_stack_settings(node, layout):
 
 def _draw_tone_settings(node, layout):
     layout.context_pointer_set("pg_stack_node" if _is_stack_node(node) else "pg_node", node)
-    grade = _stack_active_grade(node) if _is_stack_node(node) else node.pg_grade
-    settings = grade.pg_tone if grade is not None else (
-        node.pg_tone if _is_grade_node(node) else None
-    )
+    if _is_stack_node(node):
+        grade = _stack_active_grade(node)
+        settings = grade.pg_tone if grade is not None else None
+        enabled = grade is not None
+    elif _is_shared_grade_node(node):
+        grade = node.pg_grade
+        settings = grade.pg_tone if grade is not None else node.pg_tone
+        enabled = grade is not None
+    else:
+        settings = _tone_controls(node)
+        enabled = True
     if settings is None:
         return
     column = layout.column()
-    column.enabled = grade is not None
+    column.enabled = enabled
     for field in TONE_LEVEL_FIELDS:
         column.prop(settings, field, slider=True)
     column.prop(settings, "fit", slider=True)
@@ -3332,6 +3807,10 @@ class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
 
     def init(self, _context):
         self["_perceptual_grade_stack"] = 1
+        _index_output_node(self)
+
+    def copy(self, _source):
+        _index_output_node(self)
 
     def draw_buttons(self, context, layout):
         _draw_stack_node(self, context, layout)
@@ -3353,6 +3832,10 @@ class PGCompositorGradeStack(bpy.types.CompositorNodeCustomGroup):
 
     def init(self, _context):
         self["_perceptual_grade_stack"] = 1
+        _index_output_node(self)
+
+    def copy(self, _source):
+        _index_output_node(self)
 
     def draw_buttons(self, context, layout):
         _draw_stack_node(self, context, layout)
@@ -3372,6 +3855,12 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
     pg_tone: PointerProperty(type=PGToneSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
                               update=_selection_changed)
+
+    def init(self, _context):
+        _index_output_node(self)
+
+    def copy(self, _source):
+        _index_output_node(self)
 
     def draw_buttons(self, context, layout):
         layout.context_pointer_set("pg_node", self)
@@ -3395,10 +3884,72 @@ class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
                               update=_selection_changed)
 
+    def init(self, _context):
+        _index_output_node(self)
+
+    def copy(self, _source):
+        _index_output_node(self)
+
     def draw_buttons(self, context, layout):
         layout.context_pointer_set("pg_node", self)
         layout.template_ID(self, "pg_grade", new=PG_OT_new_grade.bl_idname,
                            unlink=PG_OT_unlink_grade.bl_idname)
+        _draw_node_status(self, layout)
+
+    def draw_buttons_ext(self, context, layout):
+        self.draw_buttons(context, layout)
+
+    def free(self):
+        _dispose_node(self)
+
+
+class PGShaderGradePerNode(bpy.types.ShaderNodeCustomGroup):
+    bl_idname = "PGShaderGradePerNode"
+    bl_label = localization.native("node.grade.per_node_title")
+    bl_translation_context = localization.CONTEXT
+    bl_width_default = 260
+    __annotations__ = (
+        _linear_setting_properties(animatable=True)
+        | _tone_setting_properties(animatable=True)
+    )
+
+    def init(self, _context):
+        _index_output_node(self)
+
+    def copy(self, _source):
+        if _NODE_ANIMATION_ERROR in self:
+            del self[_NODE_ANIMATION_ERROR]
+        _index_output_node(self)
+
+    def draw_buttons(self, _context, layout):
+        _draw_node_status(self, layout)
+
+    def draw_buttons_ext(self, context, layout):
+        self.draw_buttons(context, layout)
+
+    def free(self):
+        _dispose_node(self)
+
+
+class PGCompositorGradePerNode(bpy.types.CompositorNodeCustomGroup):
+    bl_idname = "PGCompositorGradePerNode"
+    bl_label = localization.native("node.grade.per_node_title")
+    bl_translation_context = localization.CONTEXT
+    bl_width_default = 260
+    __annotations__ = (
+        _linear_setting_properties(animatable=True)
+        | _tone_setting_properties(animatable=True)
+    )
+
+    def init(self, _context):
+        _index_output_node(self)
+
+    def copy(self, _source):
+        if _NODE_ANIMATION_ERROR in self:
+            del self[_NODE_ANIMATION_ERROR]
+        _index_output_node(self)
+
+    def draw_buttons(self, _context, layout):
         _draw_node_status(self, layout)
 
     def draw_buttons_ext(self, context, layout):
@@ -3417,11 +3968,11 @@ class PG_OT_new_grade(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _node_from_context(context) is not None
+        return _is_shared_grade_node(_node_from_context(context))
 
     def execute(self, context):
         node = _node_from_context(context)
-        if node is None:
+        if not _is_shared_grade_node(node):
             return {"CANCELLED"}
         source = node.pg_grade
         grade = _make_grade(source)
@@ -3444,11 +3995,11 @@ class PG_OT_unlink_grade(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         node = _node_from_context(context)
-        return node is not None and node.pg_grade is not None
+        return _is_shared_grade_node(node) and node.pg_grade is not None
 
     def execute(self, context):
         node = _node_from_context(context)
-        if node is None:
+        if not _is_shared_grade_node(node):
             return {"CANCELLED"}
         node.pg_grade = None
         return {"FINISHED"}
@@ -3464,11 +4015,13 @@ class PG_OT_match_white(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         node = _node_from_context(context)
-        return node is not None and node.pg_grade is not None
+        return (_is_per_node_grade_node(node)
+                or (_is_shared_grade_node(node) and node.pg_grade is not None))
 
     def execute(self, context):
         node = _node_from_context(context)
-        if node is None or node.pg_grade is None:
+        if not _is_per_node_grade_node(node) and (
+                not _is_shared_grade_node(node) or node.pg_grade is None):
             return {"CANCELLED"}
         _assign_values(node, {"source_x": D65[0], "source_y": D65[1]})
         return {"FINISHED"}
@@ -3484,11 +4037,13 @@ class PG_OT_reset_directions(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         node = _node_from_context(context)
-        return node is not None and node.pg_grade is not None
+        return (_is_per_node_grade_node(node)
+                or (_is_shared_grade_node(node) and node.pg_grade is not None))
 
     def execute(self, context):
         node = _node_from_context(context)
-        if node is None or node.pg_grade is None:
+        if not _is_per_node_grade_node(node) and (
+                not _is_shared_grade_node(node) or node.pg_grade is None):
             return {"CANCELLED"}
         _assign_values(node, {name: 0.0 for name in _LINEAR_FIELDS[3:]})
         return {"FINISHED"}
@@ -3506,6 +4061,8 @@ class PG_OT_reset_tone(bpy.types.Operator):
         node = _output_node_from_context(context)
         if node is None:
             return False
+        if _is_per_node_grade_node(node):
+            return True
         return (_stack_active_grade(node) if _is_stack_node(node)
                 else node.pg_grade) is not None
 
@@ -3513,6 +4070,10 @@ class PG_OT_reset_tone(bpy.types.Operator):
         node = _output_node_from_context(context)
         if node is None:
             return {"CANCELLED"}
+        if _is_per_node_grade_node(node):
+            _reset_tone(_tone_controls(node))
+            _per_node_grade_changed(node)
+            return {"FINISHED"}
         grade = _stack_active_grade(node) if _is_stack_node(node) else node.pg_grade
         if grade is None:
             return {"CANCELLED"}
@@ -3538,6 +4099,30 @@ class PG_OT_add_grade(bpy.types.Operator):
         space = context.space_data
         tree = space.edit_tree
         node = create_node(tree)
+        node.location = space.cursor_location
+        for item in tree.nodes:
+            item.select = item == node
+        tree.nodes.active = node
+        return {"FINISHED"}
+
+
+class PG_OT_add_per_node_grade(bpy.types.Operator):
+    bl_idname = "perceptual_grade.add_per_node_grade"
+    bl_label = localization.native("operator.add_per_node_grade")
+    bl_description = localization.native("action.add_per_node_grade_description")
+    bl_translation_context = localization.CONTEXT
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        space = getattr(context, "space_data", None)
+        tree = getattr(space, "edit_tree", None)
+        return tree is not None and tree.bl_idname in PER_NODE_NODE_TYPES
+
+    def execute(self, context):
+        space = context.space_data
+        tree = space.edit_tree
+        node = create_per_node_node(tree)
         node.location = space.cursor_location
         for item in tree.nodes:
             item.select = item == node
@@ -3603,6 +4188,7 @@ class PG_OT_stack_action(bpy.types.Operator):
         entries = node.pg_stack_entries
         if self.action == "ADD":
             entries.add().key = uuid4().hex
+            _index_output_node(node)
             node.pg_active_index = len(entries) - 1
             _refresh_stack_policy(node)
         elif not 0 <= self.index < len(entries):
@@ -3653,6 +4239,88 @@ class PG_OT_new_stack_grade(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _scene_grade_nodes(scene):
+    roots = []
+    for owner in (getattr(scene, "world", None),
+                  getattr(scene, "compositing_node_group", None),
+                  getattr(scene, "node_tree", None)):
+        tree = getattr(owner, "node_tree", owner)
+        if tree is not None:
+            roots.append(tree)
+    for obj in tuple(getattr(scene, "objects", ())):
+        for slot in tuple(getattr(obj, "material_slots", ())):
+            material = getattr(slot, "material", None)
+            if material is not None and getattr(material, "use_nodes", False):
+                roots.append(material.node_tree)
+        data = getattr(obj, "data", None)
+        if getattr(data, "use_nodes", False):
+            tree = getattr(data, "node_tree", None)
+            if tree is not None:
+                roots.append(tree)
+
+    outputs = {}
+    seen = set()
+
+    def visit(tree):
+        if tree is None:
+            return
+        try:
+            pointer = tree.as_pointer()
+            if not pointer or pointer in seen:
+                return
+            seen.add(pointer)
+            tree_nodes = tuple(tree.nodes)
+        except (AttributeError, ReferenceError, RuntimeError):
+            return
+        for node in tree_nodes:
+            if _is_output_node(node):
+                outputs[node.as_pointer()] = node
+                continue
+            child = getattr(node, "node_tree", None)
+            if child is not None:
+                visit(child)
+
+    for tree in roots:
+        visit(tree)
+    return tuple(outputs.values())
+
+
+def _animation_snapshot(scene):
+    nodes = _scene_grade_nodes(scene)
+    signatures = []
+    for node in nodes:
+        signature = _settings_signature_for(node)
+        if signature is None:
+            raise RuntimeError("Could not read evaluated Grade settings")
+        signatures.append((node.as_pointer(), signature))
+    signatures = tuple(sorted(signatures))
+    digest = hashlib.sha256(json.dumps(signatures, separators=(",", ":"))
+                            .encode("ascii")).hexdigest()
+    return nodes, dict(signatures), digest
+
+
+def _animation_outputs_current(nodes, signatures, *, validate_graph=True):
+    for node in nodes:
+        pointer = node.as_pointer()
+        signature = signatures.get(pointer)
+        record = _node_stores.get(pointer)
+        if record is None:
+            return False, None
+        state = record["state"]
+        if state.error is not None:
+            return False, state.error
+        if (signature is None or state.desired_signature != signature
+                or state.applied_signature != signature
+                or state.applied_quality != "full"
+                or not node_policy.output_allowed(state)):
+            return False, None
+        if not _kernel_is_current(
+                node.node_tree, node.id_data.bl_idname, signature, "full",
+                stack=_is_stack_node(node), validate_graph=validate_graph):
+            return False, "Installed Grade kernel does not match the evaluated frame"
+    return True, None
+
+
 class PG_PT_linear(bpy.types.Panel):
     bl_idname = "PG_PT_linear"
     bl_label = localization.native("panel.linear")
@@ -3691,9 +4359,10 @@ class PG_PT_linear(bpy.types.Panel):
                 return
         if node is None:
             return
-        settings = node.pg_grade.pg_linear if node.pg_grade is not None else node.pg_linear
+        grade = node.pg_grade if _is_shared_grade_node(node) else None
+        settings = _linear_controls(grade if grade is not None else node)
         layout = self.layout.column()
-        layout.enabled = node.pg_grade is not None
+        layout.enabled = _is_per_node_grade_node(node) or grade is not None
         layout.prop(settings, "exposure", slider=True)
         row = layout.row(align=True)
         row.prop(settings, "source_x")
@@ -3750,6 +4419,23 @@ def create_node(tree):
     return node
 
 
+def create_per_node_node(tree):
+    try:
+        node_type = PER_NODE_NODE_TYPES[tree.bl_idname]
+    except KeyError as exc:
+        raise ValueError("Per-Node Grade nodes require a Shader or Compositor tree") from exc
+
+    node = tree.nodes.new(node_type)
+    try:
+        failures = _refresh_nodes((node,))
+        if failures:
+            print("Perceptual Grade kernel initialization failed:", failures[-1][1])
+    except BaseException:
+        tree.nodes.remove(node)
+        raise
+    return node
+
+
 def create_stack_node(tree):
     try:
         node_type = STACK_NODE_TYPES[tree.bl_idname]
@@ -3776,6 +4462,10 @@ def draw_add_menu(self, context):
         text=localization.tr("operator.add_grade"), icon="COLOR",
     )
     self.layout.operator(
+        PG_OT_add_per_node_grade.bl_idname,
+        text=localization.tr("operator.add_per_node_grade"), icon="ANIM_DATA",
+    )
+    self.layout.operator(
         PG_OT_add_stack.bl_idname,
         text=localization.tr("operator.add_stack"), icon="NODETREE",
     )
@@ -3788,10 +4478,12 @@ def _register_handlers():
         (bpy.app.handlers.redo_pre, _undo_redo_pre),
         (bpy.app.handlers.undo_post, _undo_redo_post),
         (bpy.app.handlers.redo_post, _undo_redo_post),
+        (bpy.app.handlers.frame_change_pre, _frame_change_pre),
+        (bpy.app.handlers.frame_change_post, _frame_change_post),
         (bpy.app.handlers.render_pre, _render_pre),
         (bpy.app.handlers.render_init, _render_init),
         (bpy.app.handlers.render_complete, _render_finished),
-        (bpy.app.handlers.render_cancel, _render_finished),
+        (bpy.app.handlers.render_cancel, _render_cancelled),
         (bpy.app.handlers.composite_pre, _compositor_pre),
         (bpy.app.handlers.composite_post, _compositor_post),
         (bpy.app.handlers.composite_cancel, _compositor_cancel),
@@ -3831,12 +4523,15 @@ def register():
         PGCompositorGradeStack,
         PGShaderGrade,
         PGCompositorGrade,
+        PGShaderGradePerNode,
+        PGCompositorGradePerNode,
         PG_OT_new_grade,
         PG_OT_unlink_grade,
         PG_OT_match_white,
         PG_OT_reset_directions,
         PG_OT_reset_tone,
         PG_OT_add_grade,
+        PG_OT_add_per_node_grade,
         PG_OT_add_stack,
         PG_OT_stack_action,
         PG_OT_new_stack_grade,
@@ -3877,6 +4572,9 @@ def register():
         if not bpy.app.timers.is_registered(_render_preflight_tick):
             bpy.app.timers.register(_render_preflight_tick, first_interval=0.02,
                                     persistent=True)
+        if not bpy.app.timers.is_registered(_frame_reconcile_tick):
+            bpy.app.timers.register(_frame_reconcile_tick, first_interval=0.1,
+                                    persistent=True)
     except Exception as registration_error:
         try:
             unregister()
@@ -3909,6 +4607,11 @@ def unregister():
     try:
         if bpy.app.timers.is_registered(_gesture_router_tick):
             bpy.app.timers.unregister(_gesture_router_tick)
+    except Exception as exc:
+        errors.append(exc)
+    try:
+        if bpy.app.timers.is_registered(_frame_reconcile_tick):
+            bpy.app.timers.unregister(_frame_reconcile_tick)
     except Exception as exc:
         errors.append(exc)
     try:

@@ -1,4 +1,4 @@
-"""Historical H-K export repair, signed-energy integration and inverse contracts."""
+"""H-K repair equations, Stage 3 integration and inverse contracts."""
 import unittest
 from unittest.mock import patch
 import numpy as np
@@ -117,20 +117,27 @@ class HKGuardTests(unittest.TestCase):
         settings=Settings(color=ColorSettings(global_gain=3))
         model=Model(settings);old=Model(settings,hk_guard=False)
         rgb=np.array([[.1,.2,.3],[0.,.2,0.],[.2,0.,0.],[0,0,0.]])
-        raw=model.grade_state(model.enter_native(rgb))
+        raw=old.grade_state(old.enter_native(rgb))
         self.assertTrue(np.any(raw.energy<0))
         expected_e=model.tone.apply(model.enter_native(rgb)).ja**2
-        np.testing.assert_allclose(raw.reference_energy,expected_e)
-        output=model.release_state(raw,guard=True)
+        expected_q,expected_energy=guard(raw.q,raw.energy,expected_e)
+        with patch('color_tools.perceptual_grade_reference.grading.guard',wraps=guard) as repair:
+            graded=model.grade_state(model.enter_native(rgb))
+        self.assertEqual(repair.call_count,1)
+        np.testing.assert_allclose(graded.q,expected_q,rtol=2e-14,atol=2e-13)
+        np.testing.assert_allclose(graded.energy,expected_energy,rtol=2e-14,atol=2e-13)
+        self.assertTrue(np.all(graded.energy>=0))
+        with patch('color_tools.perceptual_grade_reference.grading.guard',
+                   side_effect=AssertionError('Export must not repeat H-K repair')):
+            output=model.release_state(graded,guard=True)
         np.testing.assert_allclose(output,model.forward_native(rgb),atol=3e-13,rtol=3e-12)
         self.assertTrue(np.all((output>=0)&(output<=1024)))
         self.assertTrue(np.all(output[:3].max(axis=-1)>0))
         self.assertTrue(np.all(old.forward_native(rgb[:3])==0))
-        np.testing.assert_array_equal(model.release_state(raw),old.release_state(raw))
-        # A bare handoff/seed intentionally has no invented tone reference.
-        bare=State(raw.q,raw.energy)
+        np.testing.assert_array_equal(model.release_state(graded),old.release_state(graded))
+        bare=State(graded.q,graded.energy)
         np.testing.assert_array_equal(model.release_state(bare,guard=True),old.release_state(bare,guard=True))
-        np.testing.assert_array_equal(model.release_state(bare,guard=True,reference_energy=raw.reference_energy),output)
+        np.testing.assert_array_equal(model.release_state(bare,guard=True),output)
         model.vector_controls=False
         scaled=model.grade_state(model.enter_native(rgb))
         np.testing.assert_allclose(model.release_state(scaled,guard=True),output,rtol=4e-12,atol=3e-13)
@@ -144,11 +151,11 @@ class HKGuardTests(unittest.TestCase):
         self.assertTrue(np.all(result.status=='root'),result)
         np.testing.assert_allclose(model.forward(result.value),target,rtol=2e-8,atol=5e-10)
 
-    def test_matching_stack_pair_keeps_raw_cancellation(self):
+    def test_matching_stack_pair_keeps_exact_cancellation(self):
         settings=Settings(color=ColorSettings(global_gain=3))
         rgb=np.array([[.1,.2,.3],[0.,.2,0.],[1024.,0.,0.],[0,0,0.]])
         stack=Stack([settings,settings],['FORWARD','INVERSE'])
-        with patch('color_tools.perceptual_grade_reference.model.hk_guard',side_effect=AssertionError('Guarded handoff')):
+        with patch('color_tools.perceptual_grade_reference.grading.guard',side_effect=AssertionError('Matching pair should cancel')):
             np.testing.assert_allclose(stack.apply_native(rgb),rgb,rtol=3e-12,atol=1e-11)
 
 

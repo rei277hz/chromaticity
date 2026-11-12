@@ -73,10 +73,10 @@ checkout downloads the locked crates there automatically; no cache symlinks or
 manual setup are needed. Reindeer verifies each archive checksum before using
 its size, avoiding an extra network request per crate on subsequent runs.
 
-Linux NativeLink validation covers both native library test suites, both Wasm
-packages, the deployed web archive, and the rendered handbook. A fresh source
-checkout reused all 855 Rust compilation and 101 build-script actions from the
-remote cache and reproduced both product archives exactly. Locked regeneration
-also passes with an initially empty maintenance cache. The Darwin compiler
+Linux remote execution validation covers both native library test suites, both
+Wasm packages, the deployed web archive, and the rendered handbook. A fresh
+source checkout reused all 855 Rust compilation and 101 build-script actions
+from the remote cache and reproduced both product archives exactly. Locked
+regeneration also passes with an initially empty maintenance cache. The Darwin compiler
 archives and component layouts were verified; execution on macOS has not been
 tested from this Linux environment.

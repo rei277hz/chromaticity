@@ -58,7 +58,7 @@ It does not relicense third-party data, reference illustrations, fonts, or other
 credited materials; their existing terms and attributions remain applicable.
 See [Credits and references](credits.md).
 
-This handbook otherwise describes the historical 1.23.2 release. The supplied
+The maintained handbook also preserves historical release downloads. The supplied
 [Perceptual Grade 1.23.2 development ZIP dated 2026-11-01](../downloads/perceptual_grade-v1.23.2-20261101.zip)
 replaces the original extension download; its included license applies to that
 download. The archived DCTL downloads, original runtime notice, and

@@ -31,6 +31,7 @@ component_library(
         "model.py": PREFIX + "model.py",
         "responses.py": PREFIX + "responses.py",
         "stack.py": PREFIX + "stack.py",
+        "warp.py": PREFIX + "warp.py",
     },
     external_deps = [
         "//third_party:colour-science",

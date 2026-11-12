@@ -9,6 +9,7 @@ python_test(
         "historical-manifest.json": "//products/perceptual-grade-book:historical_manifest",
         "book-inputs": "//products/perceptual-grade-book:book_inputs",
         "generated-assets": "//products/perceptual-grade-book/generators:assets",
+        "diagram-assets": "//products/perceptual-grade-book/diagrams:assets",
         "cdn-assets": "//products/perceptual-grade-book/cdn:assets",
         "data-downloads": "//products/perceptual-grade-book:data_downloads",
         "tool-pins.bzl": "//products/perceptual-grade-book:tool_pins",

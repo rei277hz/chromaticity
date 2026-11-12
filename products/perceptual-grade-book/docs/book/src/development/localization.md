@@ -1,5 +1,7 @@
 # Localization
 
+> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+
 A useful translation preserves the meaning of a control across its label, tooltip and demonstration. Interface catalogs and handbook pages are separate sources, so you can contribute either without duplicating runtime logic.
 
 ## Translate the interface
@@ -34,7 +36,7 @@ To add a new message, add the same ID to every locale, use that ID in the implem
 
 ## Translate the handbook
 
-English chapters live in docs/book/src. Simplified Chinese chapters live in docs/book/zh-Hans with exactly the same relative filenames. Their SUMMARY.md files describe the same chapter hierarchy; translate the titles and content without changing the page correspondence. Chinese pages currently contain only their translated title.
+English chapters live in docs/book/src. Simplified Chinese chapters live in docs/book/zh-Hans with the same relative filenames, except for the explicitly English-only `development/next-policies.md` chapter about Perceptual Grade Next. Their SUMMARY.md files describe matching chapter order with that one exception; translate titles and content without changing the remaining page correspondence. Chinese pages currently contain only their translated title.
 
 Shared illustrations, recordings and downloads remain declared once. A translated chapter uses the same relative asset paths as its English counterpart. Run the documentation build and check the language menu, links and equations in both versions. The menu keeps the current page and remembers the chosen language.
 
