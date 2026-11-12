@@ -8,7 +8,7 @@ from unittest.mock import patch
 import unittest
 import numpy as np
 from color_tools.perceptual_grade_reference.model import Settings,LinearSettings
-from tests.reference.legacy_capacity import LegacyCapacityModel, LegacyCapacityBakeStack as BakeStack
+from tests.reference.legacy_capacity import LegacyCapacityModel, LegacyCapacityStack, LegacyCapacityBakeStack as BakeStack
 from color_tools.perceptual_grade_reference.grading import ToneSettings
 from color_tools.perceptual_grade_reference.grading import ColorSettings
 from color_tools.perceptual_grade_core.model.tonal_web import WebSettings
@@ -53,7 +53,7 @@ class LegacyInverseBakingTests(unittest.TestCase):
     def test_raw_grade_exceeds_response_pole_without_an_extra_guard(self):
         model=LegacyCapacityModel(Settings(color=ColorSettings(global_gain=10)))
         original=model.enter_native(np.array([[0.,.2,0.],[.2,0.,0.]]))
-        with patch('color_tools.perceptual_grade_reference.model.cube_guard',side_effect=AssertionError('Guarded during grade')):
+        with patch('tests.reference.legacy_capacity.hk_guard',side_effect=AssertionError('Guarded during grade')):
             raw=model.grade_state(original)
         np.testing.assert_array_equal(raw.q[:,0],original.q[:,0])
         np.testing.assert_array_equal(raw.q[:,1:],original.q[:,1:]*1024)
@@ -62,6 +62,42 @@ class LegacyInverseBakingTests(unittest.TestCase):
         responses=neutral[:,None]+(raw.q[:,1:]*(model.aw/(1204*eccentricity(angle)))[:,None])@INVERSE[:,1:].T
         self.assertGreater(float(np.max(abs(responses))),400)
         self.assertTrue(np.isfinite(model.release_state(raw,guard=True)).all())
+
+    def test_legacy_context_repairs_only_at_export_in_both_representations(self):
+        settings=Settings(color=ColorSettings(global_gain=3.,
+            web=WebSettings(log_scale=((.3,)*6,)*4)))
+        model=LegacyCapacityModel(settings)
+        source=self.points.astype(float)
+        entered=model.enter_native(source)
+        raw=model.grade_state(entered)
+        self.assertTrue(np.any(raw.energy<0))
+        np.testing.assert_array_equal(raw.reference_energy,entered.energy)
+        self.assertFalse(model.color.hk_guard)
+        output=model.release_state(raw,guard=True)
+        np.testing.assert_allclose(output,model.forward_native(source),rtol=3e-12,atol=3e-13)
+        model.vector_controls=False
+        scaled=model.grade_state(entered)
+        np.testing.assert_allclose(np.asarray(scaled.q,float),raw.q,rtol=3e-13,atol=3e-12)
+        np.testing.assert_allclose(np.asarray(scaled.energy,float),raw.energy,rtol=3e-13,atol=3e-10)
+        np.testing.assert_allclose(model.release_state(scaled,guard=True),output,rtol=4e-12,atol=3e-13)
+        np.testing.assert_allclose(model.forward_native(source),output,rtol=4e-12,atol=3e-13)
+
+    def test_legacy_stack_constructs_legacy_models_and_display_order(self):
+        settings=Settings(color=ColorSettings(web=WebSettings(
+            log_chroma=((.8,)*6,)*4,log_scale=((.4,)*6,)*4)))
+        stack=LegacyCapacityStack([settings])
+        model=stack.models[0]
+        self.assertIsInstance(model,LegacyCapacityModel)
+        from color_tools.perceptual_grade_core.model.hk_guard import guard
+        for row in range(4):
+            color=model.color;raw=color.warp_targets(row)
+            reference=np.r_[color.web.geometry.anchors[row]**2,color.web.geometry.energy[row]]
+            q,e=guard(raw.q,raw.energy,reference)
+            displayed=color.guarded_warp_targets(row)
+            np.testing.assert_array_equal(displayed.q,q)
+            np.testing.assert_array_equal(displayed.energy,e)
+        np.testing.assert_allclose(stack.apply_native(self.points.astype(float)),
+                                   model.forward_native(self.points.astype(float)),rtol=3e-12,atol=3e-13)
 
     def test_raw_inverse_against_independent_float64_oracle(self):
         for settings in (Settings(color=ColorSettings(global_gain=10)),mixed(),
