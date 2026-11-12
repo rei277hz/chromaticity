@@ -1,5 +1,7 @@
 # Tone
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 Keep the completed Linear adjustments in A and B. Now shape the tonal relationships for each image’s purpose: stronger contrast in A, and more readable dark areas in B.
 
 ## Shape contrast and open the shadows

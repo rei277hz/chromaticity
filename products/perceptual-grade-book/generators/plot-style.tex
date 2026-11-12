@@ -1,0 +1,41 @@
+% Common typography and geometry for the book's numerical charts.
+% This preamble is also shipped in chart-sources.zip for independent reuse.
+\def\pgfsysdriver{pgfsys-dvisvgm.def}
+\PassOptionsToPackage{dvisvgm}{graphicx}
+\PassOptionsToPackage{dvisvgm}{xcolor}
+\documentclass[border=2pt]{standalone}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\input{font-paths.tex}
+\setmainfont[Path=\BookFontPath,
+  UprightFont=Tinos-Regular.ttf,BoldFont=Tinos-Bold.ttf,
+  ItalicFont=Tinos-Italic.ttf,BoldItalicFont=Tinos-BoldItalic.ttf]{Tinos}
+\setmathfont[Path=\BookMathFontPath]{texgyretermes-math.otf}
+\usepackage{pgfplots}
+\usepgfplotslibrary{groupplots}
+\usetikzlibrary{plotmarks}
+\definecolor{bookblue}{HTML}{265787}
+\definecolor{bookorange}{HTML}{B55C09}
+\definecolor{bookgreen}{HTML}{54834F}
+\definecolor{bookpurple}{HTML}{AA4773}
+\definecolor{bookgray}{HTML}{666666}
+\pgfplotsset{
+  compat=1.18,
+  book axis/.style={
+    width=70mm,height=55mm,
+    font=\fontsize{9}{11}\selectfont,
+    title style={font=\fontsize{9}{11}\selectfont,align=center},
+    label style={font=\fontsize{9}{11}\selectfont},
+    tick label style={font=\fontsize{8}{10}\selectfont},
+    legend style={font=\fontsize{8}{10}\selectfont,draw=none,fill=white,
+      cells={anchor=west},inner sep=2pt},
+    axis background/.style={fill=white},
+    axis line style={black!70},
+    axis x line*=bottom,axis y line*=left,
+    tick align=outside,grid=major,grid style={black!12},
+    every axis plot/.append style={line width=0.8pt,mark options={solid}},
+    unbounded coords=jump,
+    scaled ticks=false,
+    /pgf/number format/1000 sep={\,},
+  },
+}

@@ -1,5 +1,7 @@
 # 架构与运行时
 
+> **历史实现说明：** 本章保留 1.23.2 的运行时、源码布局与验证范围。当前开发命令及支持的行为请以 [chromaticity](https://github.com/rei277hz/chromaticity) 中各产品的 README 为准。
+
 ## 跨编辑器共享参数所有权
 
 `graph/grades.py` 使用只保存参数的 NodeTree ID `PGGradeData`。节点以 `pg_grade` 指针引用该 ID。节点 PropertyGroup 保存空选择框和手柄拖动所需的本地编辑状态；选择 Grade 后，读取以该 Grade 为准。Grade 保存模型参数和源白点跟随状态；渲染方式、输入连接及界面焦点保持本地。共享编辑先同步各用户，再通过各节点已有的求值器和烘焙调度更新资源。

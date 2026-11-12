@@ -1,5 +1,7 @@
 # Publishing
 
+> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+
 Publish only after reviewing the installable extension and DCTL in their hosts, and the built handbook in both languages. Keep RELEASES.md in the repository up to date; it is intentionally not a book chapter.
 
 ``` sh

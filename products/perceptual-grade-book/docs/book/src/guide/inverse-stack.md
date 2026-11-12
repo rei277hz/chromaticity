@@ -1,5 +1,7 @@
 # Inverse grading and Grade Stacks
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 A **Grade** node always applies its shared Grade forward. For an inverse, add **Perceptual Grade Stack** from the node editor’s Color menu and use an inverse entry. Its node title is **Grade Stack**. Both Add-menu entries use the same color icon as the Grade selector.
 
 ## Arrange a Stack

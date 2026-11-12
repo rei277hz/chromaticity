@@ -1,0 +1,16 @@
+direction: down
+
+start: "idle -> stage -> snapshot"
+transaction: "bind -> commit\n-> activate -> deliver"
+restore: "restore_bindings\n-> restore_metadata\n-> restore_resource"
+fail: "fail"
+finish: "retire -> terminal"
+start -> transaction: "clean stage; snapshot succeeds"
+start -> fail: "failure"
+transaction -> finish: "all succeed"
+transaction -> restore: "any failure"
+restore -> fail: "all restores attempted"
+fail -> finish
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

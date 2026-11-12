@@ -27,6 +27,7 @@
 # Developing the project
 
 - [Architecture and runtime](development/architecture.md)
+- [Next Blender policy machines](development/next-policies.md)
 - [Building, testing and provenance](development/building.md)
 - [Contributing and publishing](development/contributing.md)
   - [Code and grading model](development/contributing-model.md)

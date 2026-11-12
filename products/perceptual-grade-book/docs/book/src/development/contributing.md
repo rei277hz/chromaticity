@@ -13,7 +13,7 @@ Development takes place in
 code, documentation, and translation changes. Work from that repository's
 current source and build instructions.
 
-The technical guidance in this part describes the historical 1.23.2 source layout and has not been updated for Perceptual Grade Next. The model itself now has two homes: [Understanding the model](../theory/structure.md) follows the analytic reference in `libraries/perceptual-grade-reference`, while this part and the guide describe the 1.23.2 products.
+The handbook is maintained for the latest Perceptual Grade. [Understanding the model](../theory/structure.md) and the current-reference sections of [Full forward and inverse math](forward-inverse-math.md) follow `libraries/perceptual-grade-reference`; [Next Blender policy machines](next-policies.md) follows the current Next product. Usage, host captures, and much of the runtime/build guidance still describe the 1.23.2 products and their original source layout. Keep those version labels until the corresponding sections are updated. Current book authoring instructions are in [Documentation and media](documentation.md) and the [book product README](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/README.md).
 
 You can improve Perceptual Grade through its grading model, host integration, translations, teaching material or reproducible measurements. Start with the part you want to change and read the corresponding section below. You do not need to work on every layer to make a useful contribution.
 

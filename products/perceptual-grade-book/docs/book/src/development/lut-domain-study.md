@@ -104,9 +104,13 @@ The view metrics materially change the choice. Native AP1 log1p with κ = .1 ach
 
 Rare errors remain. The selected grid's maximum HDR P3-D65 encoded error is **0.184539**, compared with 0.190931 for the former grid; its p99 is 0.002989. Maximum scene RGB error is 0.126010 versus 0.189842. The complete tables retain these outliers and their pixel coordinates. The choice optimizes p99/RMS, not maximum error.
 
-![Full-finalist error tradeoffs](../assets/illustrations/lut-domain128-errors.png)
+![Full-finalist error tradeoffs](../assets/illustrations/lut-domain128-errors.svg)
 
-![Sample placement by basis](../assets/illustrations/lut-domain128-placement.png)
+![Sample placement by basis](../assets/illustrations/lut-domain128-placement.svg)
+
+{{#include ../assets/fragments/lut-domain128-key.md}}
+
+These book figures are redrawn as vectors from the recorded study data. The domain-128 finalist error coordinates are available in the published report to eight decimal places; two comparison axes in the placement chart are reconstructed from the documented sampling formulas. The original engineering report and its archived figures remain unchanged. [Download the chart sources and plotted data](../downloads/chart-sources.zip).
 
 [Download the selected axes and scores](../downloads/lut-domain128-selection.json). The full source includes `docs/engineering/lut-domain128/report.md`; the separately provided result archive contains all JSON/CSV records, plots and fingerprints. Version 1.21.0 now adopts the plain native AP1 log1p κ = 0.01 candidate for its display-linear/peak-nits objective. The warped curve above remains the encoded-objective study winner, not the production curve. See [the production sampling contract](../theory/lut.md).
 

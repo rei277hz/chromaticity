@@ -1,5 +1,7 @@
 # Building Perceptual Grade
 
+> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+
 Buck2 builds the extension ZIP, localized DCTLs, diagram artwork, translation review CSV, static handbook, test harness, and complete source archive. Dependencies are declared in `BUCK`; generated files live in `buck-out`.
 
 ## Docker (Linux x86-64)

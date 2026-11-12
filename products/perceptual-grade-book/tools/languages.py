@@ -9,6 +9,7 @@ import shutil
 from urllib.parse import urlsplit, urlunsplit
 
 LANGUAGES = ('en', 'zh-Hans')
+ENGLISH_ONLY_CHAPTERS = frozenset({'development/next-policies.md'})
 SHARED = ('assets', 'downloads', 'favicon.ico', 'apple-touch-icon.png',
           'android-192.png', 'android-512.png', 'android-512-maskable.png', 'site.webmanifest')
 GLOBE = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z"/></svg>'
@@ -21,6 +22,13 @@ def language_chrome(text, page, language, labels):
     choices=[]
     alternates=[]
     for target in LANGUAGES:
+        if page.with_suffix('.md').as_posix() in ENGLISH_ONLY_CHAPTERS and target == 'zh-Hans':
+            choices.append(
+                '<span class="language-unavailable" aria-disabled="true" '
+                'title="No Simplified Chinese edition of this chapter">'
+                'Simplified Chinese (unavailable)</span>'
+            )
+            continue
         href=prefix+target+'/'+page.as_posix()
         current=' aria-current="page"' if target==language else ''
         choices.append(f'<a href="{href}" data-book-language="{target}" lang="{target}" hreflang="{target}"{current}>{html.escape(labels[target]["name"])}</a>')

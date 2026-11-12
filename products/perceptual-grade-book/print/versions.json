@@ -1,0 +1,11 @@
+{
+  "node": "v26.13.0",
+  "weasyprint": "70.0",
+  "pikepdf": "10.18.0",
+  "native_runtime": "Debian 13 amd64",
+  "katex": "0.19.0",
+  "pontano_sans": "5.3.0",
+  "roboto_mono": "5.3.0",
+  "noto_sans_sc": "5.3.0",
+  "google_fonts_revision": "5bb28733cec313b63fbd415b574b5ae35c8aa8b8"
+}

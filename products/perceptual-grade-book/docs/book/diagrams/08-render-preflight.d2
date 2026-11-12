@@ -1,0 +1,9 @@
+direction: down
+waiting: "waiting [P1]"
+
+waiting -> released: "match"
+waiting -> failed: "mismatch"
+waiting -> waiting: "stale generation"
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

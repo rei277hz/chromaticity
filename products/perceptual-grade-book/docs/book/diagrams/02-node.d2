@@ -1,0 +1,20 @@
+direction: down
+
+pending: "pending\nno kernel"
+preview: "preview\nlast-good kernel"
+current: "current\nfull + matching"
+error: "error\nno applied kernel"
+
+pending -> preview: "preview install"
+pending -> current: "matching full install"
+preview -> current: "matching full install"
+current -> preview: "new demand"
+preview -> preview: "new demand"
+pending -> error: "current error"
+preview -> error: "current error"
+current -> error: "current error"
+error -> pending: "new request"
+error -> current: "full recovery"
+
+**.style.font-size: 20
+(** -> **)[*].style.font-size: 20

@@ -1,0 +1,56 @@
+load("//products/perceptual-grade-book/generators:rules.bzl", "book_generate")
+
+# D2 embeds its fonts in the SVG. The remote action does not discover a host D2.
+http_file(
+    name = "d2_archive",
+    out = "d2-v0.9.0-linux-amd64.tar.gz",
+    sha256 = "5669ddc46b99e942cc96078f4a4e36d5e62103348f4c05179ede27802fdd87a9",
+    urls = ["https://github.com/d2lang/d2/releases/download/v0.9.0/d2-v0.9.0-linux-amd64.tar.gz"],
+)
+
+python_library(
+    name = "support",
+    srcs = ["render.py"],
+    base_module = "pg_book_diagrams",
+)
+
+python_binary(
+    name = "renderer",
+    main_module = "pg_book_diagrams.render",
+    deps = [":support"],
+)
+
+book_generate(
+    name = "assets",
+    args = [
+        "--archive", "$(location :d2_archive)",
+        "--sources", "$(location //products/perceptual-grade-book:policy_diagram_sources)",
+        "--manifest", "$(location :manifest)",
+    ],
+    outputs = {
+        "manifest": "src/downloads/provenance/next-policy-diagrams.json",
+        "license": "src/downloads/licenses/D2-LICENSE.txt",
+        "notices": "src/downloads/licenses/D2-THIRD_PARTY_NOTICES.txt",
+        "00_policy_layer": "src/assets/illustrations/next-policy/00-policy-layer.svg",
+        "01_preparation": "src/assets/illustrations/next-policy/01-preparation.svg",
+        "01b_preparation_join": "src/assets/illustrations/next-policy/01b-preparation-join.svg",
+        "02_node": "src/assets/illustrations/next-policy/02-node.svg",
+        "03_helper": "src/assets/illustrations/next-policy/03-helper.svg",
+        "04_bank_publication": "src/assets/illustrations/next-policy/04-bank-publication.svg",
+        "05_parameter_publication": "src/assets/illustrations/next-policy/05-parameter-publication.svg",
+        "05b_image_publication": "src/assets/illustrations/next-policy/05b-image-publication.svg",
+        "05c_compositor_publication": "src/assets/illustrations/next-policy/05c-compositor-publication.svg",
+        "06_resources": "src/assets/illustrations/next-policy/06-resources.svg",
+        "07_gesture": "src/assets/illustrations/next-policy/07-gesture.svg",
+        "07b_gesture_participants": "src/assets/illustrations/next-policy/07b-gesture-participants.svg",
+        "08_render_preflight": "src/assets/illustrations/next-policy/08-render-preflight.svg",
+    },
+    tool = ":renderer",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "manifest",
+    src = "figures.json",
+    visibility = ["PUBLIC"],
+)

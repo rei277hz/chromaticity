@@ -1,5 +1,7 @@
 # Render methods
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 An ordinary **Grade** node always applies its Grade forward. Choose **Baked LUT** or **Direct** in the Perceptual Grade sidebar. The node body contains the Grade selector and a pencil for showing or hiding its diagram; it has no Render Method or Direction dropdown. The Perceptual Grade DCTL in Resolve evaluates the equations analytically.
 
 ## Choose for the job

@@ -1,5 +1,7 @@
 # Choose a working white
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 **Working White belongs to the shared Grade** and always defaults to **D65**, including in an ACEScg project. It stays as selected when Blender’s working space changes. Open **Stage 1 in the sidebar** to change it. For a Stack, first click an enabled entry’s pencil. Every user of that Grade updates.
 
 The choices match the DCTL presets: **D65, D60 daylight, ACES, D50, D55, D75, DCI white and Equal energy E**. Blender does not offer custom xy for this setting. ACES white and daylight D60 have slightly different coordinates and are separate choices.

@@ -1,5 +1,7 @@
 # Architecture and runtime
 
+> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+
 The extension's central job is to keep one current grade consistent while the reader edits controls, inspects scopes and renders through native nodes. The model owns the meaning of that grade. The runtime transports its values into the chosen evaluator and accepts completed work only when it still belongs to the current parameters.
 
 ![From a control edit to rendering and diagnostic feedback](../assets/illustrations/runtime-flow.svg)

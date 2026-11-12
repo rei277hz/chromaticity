@@ -1,0 +1,54 @@
+load("//build_defs:artifacts.bzl", "generate")
+load(":packages.bzl", "TEX_PACKAGES")
+
+[http_file(
+    name = name + "_archive",
+    out = spec["filename"],
+    urls = [spec["url"]],
+    sha256 = spec["sha256"],
+    target_compatible_with = ["prelude//os:linux", "prelude//cpu:x86_64"],
+) for name, spec in TEX_PACKAGES.items()]
+
+python_library(
+    name = "support",
+    srcs = ["render.py"],
+    base_module = "pg_book_latex",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "unpack_support",
+    srcs = ["unpack.py"],
+    base_module = "pg_book_latex",
+)
+
+python_binary(
+    name = "unpack",
+    main_module = "pg_book_latex.unpack",
+    deps = [":unpack_support"],
+)
+
+generate(
+    name = "runtime",
+    args = [arg for name in TEX_PACKAGES for arg in [
+        "--archive", "$(location :" + name + "_archive)",
+    ]],
+    outputs = {"manifest": "runtime-manifest.json"},
+    tool = ":unpack",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "renderer",
+    main_module = "pg_book_latex.render",
+    deps = [":support"],
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "tests",
+    srcs = ["test_render.py"],
+    base_module = "tests.pg_book_latex",
+    deps = [":support"],
+    visibility = ["PUBLIC"],
+)

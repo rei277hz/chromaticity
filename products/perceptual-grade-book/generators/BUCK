@@ -1,10 +1,17 @@
 load("//build_defs:artifacts.bzl", "python_tool", "source_tree")
 load(":rules.bzl", "book_generate")
 
-python_tool(
-    name = "action",
+python_library(
+    name = "action_sources",
     srcs = {"pg_book_generators/action.py": "action.py"},
+    base_module = "",
+)
+
+python_binary(
+    name = "action",
     main_module = "pg_book_generators.action",
+    deps = [":action_sources"],
+    visibility = ["PUBLIC"],
 )
 
 python_library(
@@ -53,10 +60,22 @@ python_library(
     deps = ["//third_party:numpy"],
 )
 
+python_library(
+    name = "historical_figure_support",
+    srcs = ["historical_figures.py"],
+    base_module = "pg_book_generators",
+)
+
+export_file(
+    name = "plot_style",
+    src = "plot-style.tex",
+)
+
 TOOLS = {
     "figures": [
         ":legacy_model",
-        "//third_party:matplotlib",
+        ":historical_figure_support",
+        "//libraries/perceptual-grade-reference:model_code",
     ],
     "photos": [
         ":legacy_model",
@@ -106,23 +125,63 @@ FIGURES = [
     "render-benchmark",
 ]
 
-FIGURE_OUTPUTS = {name: "images/" + name + ".png" for name in FIGURES}
+HISTORICAL_FIGURES = [
+    "lut-shaper-errors",
+    "lut-shaper-placement",
+    "lut-domain128-errors",
+    "lut-domain128-placement",
+]
+
+FIGURE_OUTPUTS = {name: "images/" + name + ".svg" for name in FIGURES + HISTORICAL_FIGURES}
 
 FIGURE_OUTPUTS.update({
     "benchmark": "fragments/benchmark.md",
     "manifest": "manifest.json",
     "data": "numerical-data.json",
+    "sources": "chart-sources.zip",
+    "shaper_key": "fragments/lut-shaper-key.md",
+    "domain_key": "fragments/lut-domain128-key.md",
 })
+
+book_generate(
+    name = "figures_data",
+    args = [
+        "--data",
+        "$(location //products/perceptual-grade-book:book_data)",
+        "--historical",
+        "$(location //products/perceptual-grade-book:historical_figure_inputs)",
+        "--style",
+        "$(location :plot_style)",
+    ],
+    outputs = {
+        "manifest": "manifest.json",
+        "figures": "figures.json",
+        "data": "numerical-data.json",
+    },
+    tool = ":figures_tool",
+    visibility = ["PUBLIC"],
+)
 
 book_generate(
     name = "figures",
     args = [
-        "--data",
-        "$(location //products/perceptual-grade-book:book_data)",
+        "--sources", "$(location :figures_data)",
+        "--runtime", "$(location //products/perceptual-grade-book/generators/latex:runtime)",
+        "--fonts", "$(location //products/perceptual-grade-book/print:pdf_fonts)",
     ],
     outputs = FIGURE_OUTPUTS,
-    tool = ":figures_tool",
+    tool = "//products/perceptual-grade-book/generators/latex:renderer",
     visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "historical_figures_test",
+    srcs = ["test_historical_figures.py"],
+    base_module = "pg_book_generators",
+    resources = {
+        "historical_inputs": "//products/perceptual-grade-book:historical_figure_inputs",
+    },
+    deps = [":historical_figure_support"],
 )
 
 source_tree(
@@ -287,6 +346,9 @@ ASSETS = {
     "src/assets/intro/match-three-images-still.webp": ":intro[still]",
     "src/assets/demos/manifest.json": ":demos[manifest]",
     "src/assets/fragments/benchmark.md": ":figures[benchmark]",
+    "src/assets/fragments/lut-shaper-key.md": ":figures[shaper_key]",
+    "src/assets/fragments/lut-domain128-key.md": ":figures[domain_key]",
+    "src/downloads/chart-sources.zip": ":figures[sources]",
     "src/downloads/photo-metrics.json": ":photos[metrics]",
     "src/downloads/provenance/numerical-figures.json": ":figures[manifest]",
     "src/downloads/provenance/photographic-figures.json": ":photos[manifest]",
@@ -296,7 +358,9 @@ ASSETS = {
     "src/downloads/provenance/legacy-generator-sources.json": "source-provenance.json",
 }
 
-ASSETS.update({"src/assets/figures/" + name + ".png": ":figures[" + name + "]" for name in FIGURES})
+ASSETS.update({"src/assets/figures/" + name + ".svg": ":figures[" + name + "]" for name in FIGURES})
+
+ASSETS.update({"src/assets/illustrations/" + name + ".svg": ":figures[" + name + "]" for name in HISTORICAL_FIGURES})
 
 ASSETS.update({"src/assets/figures/photo-" + name + ".png": ":photos[" + name + "]" for name in PHOTO_GRADES})
 
@@ -323,6 +387,7 @@ python_test(
     base_module = "pg_book_generators",
     resources = {
         "test_resources/data": "//products/perceptual-grade-book:book_data",
+        "test_resources/figures": ":figures_data",
         "test_resources/icons": "//products/perceptual-grade-book:book_icons",
         "test_resources/intro_source": "//products/perceptual-grade-book:book_intro_recording",
         "test_resources/intro": ":intro",

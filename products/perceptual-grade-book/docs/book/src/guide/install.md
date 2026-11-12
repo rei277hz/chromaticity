@@ -1,5 +1,7 @@
 # Install and connect
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 ## Blender Extension
 
 Download the [development extension ZIP, perceptual_grade-v1.23.2-20261101.zip](../downloads/perceptual_grade-v1.23.2-20261101.zip).

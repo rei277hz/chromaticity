@@ -16,7 +16,7 @@ def main():
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='pg-icon-test-') as temporary:
         root=Path(temporary);sources=root/'sources';shutil.copytree(args.icons,sources,copy_function=shutil.copyfile)
-        # NativeLink inputs can be read-only; these are private mutable fixtures.
+        # Remote execution inputs can be read-only; these are private mutable fixtures.
         for directory in [sources, *(p for p in sources.rglob('*') if p.is_dir())]:
             directory.chmod(directory.stat().st_mode | 0o700)
         with patch.object(Image.Image,'resize',side_effect=AssertionError('Icon resampling is forbidden')):

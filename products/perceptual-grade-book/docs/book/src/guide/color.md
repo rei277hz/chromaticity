@@ -1,5 +1,7 @@
 # Color
 
+> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+
 Keep the Linear and Tone results. Each operation below adds to the preceding one in both examples; do not reset between recordings. A stays SDR, B stays HDR. In Resolve, use the named Perceptual Grade DCTL sliders given beside each demonstration.
 
 Select a tone with its curve dot, S/M/W/H label or waveform indicator. The curve height is the strength of an adjustment, not a final pixel value. Cₗ favors lower-chroma colors and Cₕ favors higher-chroma colors, with smooth weights. The scope shows the selected input-tone region after grading.

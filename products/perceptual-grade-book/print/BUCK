@@ -1,0 +1,302 @@
+load("//build_defs:artifacts.bzl", "generate", "source_tree")
+load(":dependencies.bzl", "KATEX_PACKAGE", "NOTO_SANS_SC_PACKAGE", "PDF_FONTS", "PYTHON_WHEELS")
+load(":native_packages.bzl", "NATIVE_PACKAGES")
+load(":review_dependencies.bzl", "PDFIUM_WHEEL")
+load(":rules.bzl", "chart_preview")
+
+source_tree(
+    name = "front_matter",
+    srcs = {
+        "en/front-matter.html": "front-matter/en/front-matter.html",
+        "zh-Hans/front-matter.html": "front-matter/zh-Hans/front-matter.html",
+    },
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "theme",
+    srcs = {
+        "epub.css": "theme/epub.css",
+        "print.css": "theme/print.css",
+        "tokens.css": "theme/tokens.css",
+    },
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "math_renderer",
+    src = "math-render.js",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "versions",
+    src = "versions.json",
+    visibility = ["PUBLIC"],
+)
+
+[http_file(
+    name = name + "_wheel",
+    out = spec["filename"],
+    sha256 = spec["sha256"],
+    urls = [spec["url"]],
+    visibility = ["PUBLIC"],
+) for name, spec in PYTHON_WHEELS.items()]
+
+[
+    prebuilt_python_library(
+        name = name,
+        binary_src = ":" + name + "_wheel",
+        visibility = ["PUBLIC"],
+    )
+    for name in ["pycparser", "webencodings", "pydyf", "tinyhtml5", "tinycss2", "pyphen", "brotli", "lxml"]
+]
+
+prebuilt_python_library(
+    name = "cffi",
+    binary_src = ":cffi_wheel",
+    deps = [":pycparser"],
+    visibility = ["PUBLIC"],
+)
+
+prebuilt_python_library(
+    name = "cssselect2",
+    binary_src = ":cssselect2_wheel",
+    deps = [":tinycss2", ":webencodings"],
+    visibility = ["PUBLIC"],
+)
+
+prebuilt_python_library(
+    name = "weasyprint",
+    binary_src = ":weasyprint_wheel",
+    deps = [
+        ":pydyf",
+        ":cffi",
+        ":tinyhtml5",
+        ":tinycss2",
+        ":cssselect2",
+        ":pyphen",
+        ":brotli",
+        "//third_party:fonttools",
+        "//third_party:pillow",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+prebuilt_python_library(
+    name = "pikepdf",
+    binary_src = ":pikepdf_wheel",
+    deps = [":lxml", "//third_party:packaging", "//third_party:pillow"],
+    visibility = ["PUBLIC"],
+)
+
+prebuilt_python_library(
+    name = "pypdf",
+    binary_src = ":pypdf_wheel",
+    visibility = ["PUBLIC"],
+)
+
+http_file(
+    name = "katex_package",
+    out = "katex-0.19.0.tgz",
+    sha256 = KATEX_PACKAGE["sha256"],
+    urls = [KATEX_PACKAGE["url"]],
+    visibility = ["PUBLIC"],
+)
+
+http_file(
+    name = "noto_sans_sc_package",
+    out = "noto-sans-sc-5.3.0.tgz",
+    sha256 = NOTO_SANS_SC_PACKAGE["sha256"],
+    urls = [NOTO_SANS_SC_PACKAGE["url"]],
+    visibility = ["PUBLIC"],
+)
+
+[http_file(
+    name = name,
+    out = spec["filename"],
+    sha256 = spec["sha256"],
+    urls = [spec["url"]],
+    visibility = [],
+) for name, spec in PDF_FONTS.items()]
+
+source_tree(
+    name = "pdf_fonts",
+    srcs = {spec["filename"]: ":" + name for name, spec in PDF_FONTS.items()},
+    visibility = ["PUBLIC"],
+)
+
+[http_file(
+    name = "native_" + name + "_archive",
+    out = spec["filename"],
+    sha256 = spec["sha256"],
+    urls = [spec["url"]],
+    target_compatible_with = ["prelude//os:linux", "prelude//cpu:x86_64"],
+    visibility = [],
+) for name, spec in NATIVE_PACKAGES.items()]
+
+python_library(
+    name = "native_unpack_support",
+    srcs = ["unpack_native.py"],
+    base_module = "pg_book_print",
+)
+
+python_binary(
+    name = "native_unpack",
+    main_module = "pg_book_print.unpack_native",
+    deps = [":native_unpack_support"],
+)
+
+generate(
+    name = "native_runtime",
+    args = [arg for name in NATIVE_PACKAGES for arg in [
+        "--archive",
+        "$(location :native_" + name + "_archive)",
+    ]],
+    outputs = {"libraries": "usr/lib/x86_64-linux-gnu"},
+    tool = ":native_unpack",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "support",
+    srcs = ["build.py", "document.py", "epub.py", "pdf.py"],
+    resources = {"math-render.js": "math-render.js"},
+    base_module = "pg_book_print",
+    deps = [":lxml", "//products/perceptual-grade-book:build_support"],
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "builder",
+    main_module = "pg_book_print.build",
+    deps = [":support", ":weasyprint", ":pikepdf", "//third_party:fonttools", "//third_party:pillow"],
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "epub",
+    srcs = ["epub_test.py"],
+    base_module = "tests.pg_book_print_epub",
+    deps = [":support"],
+    visibility = ["PUBLIC"],
+)
+
+http_file(
+    name = "pdfium_wheel",
+    out = PDFIUM_WHEEL["filename"],
+    urls = [PDFIUM_WHEEL["url"]],
+    sha256 = PDFIUM_WHEEL["sha256"],
+)
+
+prebuilt_python_library(
+    name = "pdfium",
+    binary_src = ":pdfium_wheel",
+)
+
+python_library(
+    name = "review_support",
+    srcs = ["review.py"],
+    base_module = "pg_book_print",
+    deps = [":pypdf", ":pdfium", ":lxml", "//third_party:pillow"],
+)
+
+python_binary(
+    name = "review_tool",
+    main_module = "pg_book_print.review",
+    deps = [":review_support"],
+)
+
+generate(
+    name = "review",
+    args = ["--pdf-dir", "$(location //products/perceptual-grade-book:book[pdf])"],
+    outputs = {"manifest": "review.json"},
+    tool = ":review_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "policy_review",
+    args = [
+        "--pdf-dir", "$(location //products/perceptual-grade-book:book[pdf])",
+        "--language", "en",
+        "--chapter", "Next Blender policy machines",
+    ],
+    outputs = {"manifest": "review.json"},
+    tool = ":review_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "chart_review",
+    args = [
+        "--pdf-dir", "$(location //products/perceptual-grade-book:book[pdf])",
+        "--documents", "$(location //products/perceptual-grade-book:book[documents])",
+        "--charts",
+    ],
+    outputs = {
+        "manifest": "review.json",
+        "en": "en/review.json",
+        "zh-Hans": "zh-Hans/review.json",
+    },
+    tool = ":review_tool",
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "print",
+    srcs = ["print_test.py"],
+    base_module = "tests.pg_book_print",
+    resources = {
+        "book": "//products/perceptual-grade-book:book_inputs",
+        "site": "//products/perceptual-grade-book:site[html]",
+        "site-manifest.json": "//products/perceptual-grade-book:site[manifest]",
+        "site.zip": "//products/perceptual-grade-book:archive[zip]",
+        "site-baseline.json": "site-baseline.json",
+        "theme": ":theme",
+        "documents": "//products/perceptual-grade-book:book[documents]",
+        "pdf": "//products/perceptual-grade-book:book[pdf]",
+        "epub": "//products/perceptual-grade-book:book[epub]",
+        "print-manifest.json": "//products/perceptual-grade-book:book[manifest]",
+    },
+    deps = [":support", ":pikepdf", ":pypdf", ":weasyprint", "//third_party:pillow", "//third_party:fonttools", ":native_runtime"],
+    env = {
+        "PG_BOOK_NATIVE_RUNTIME": "$(location //products/perceptual-grade-book/print:native_runtime)",
+        "PAR_APPEND_LD_LIBRARY_PATH": "$(location //products/perceptual-grade-book/print:native_runtime)/usr/lib/x86_64-linux-gnu",
+        "LD_LIBRARY_PATH": "$(location //products/perceptual-grade-book/print:native_runtime)/usr/lib/x86_64-linux-gnu",
+        "FONTCONFIG_PATH": "$(location //products/perceptual-grade-book/print:native_runtime)/etc/fonts",
+        "SOURCE_DATE_EPOCH": "315532800",
+    },
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "chart_preview_support",
+    srcs = ["chart_preview.py"],
+    base_module = "pg_book_print",
+    deps = [":support", ":weasyprint", ":pikepdf", ":pdfium", "//third_party:pillow"],
+)
+
+python_binary(
+    name = "chart_preview_tool",
+    main_module = "pg_book_print.chart_preview",
+    deps = [":chart_preview_support"],
+)
+
+chart_preview(
+    name = "chart_preview",
+    figures = "//products/perceptual-grade-book/generators:figures",
+    native_runtime = ":native_runtime",
+    tool = ":chart_preview_tool",
+    visibility = ["PUBLIC"],
+)
+
+chart_preview(
+    name = "policy_preview",
+    figures = "//products/perceptual-grade-book/diagrams:assets",
+    policy_manifest = "//products/perceptual-grade-book/diagrams:manifest",
+    fonts = ":pdf_fonts",
+    native_runtime = ":native_runtime",
+    tool = ":chart_preview_tool",
+    visibility = ["PUBLIC"],
+)

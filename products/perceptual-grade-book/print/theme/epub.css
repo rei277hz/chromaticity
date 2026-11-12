@@ -1,0 +1,59 @@
+@import url("tokens.css");
+
+body {
+  margin: 5%;
+  color: var(--book-ink);
+  font-family: var(--book-font-sans);
+  font-size: 1em;
+  line-height: 1.45;
+  widows: 2;
+  orphans: 2;
+}
+.cover,
+.title-page,
+.copyright,
+.colophon,
+.toc,
+.figure-list,
+.part,
+.chapter { margin: 0 0 2em; }
+.cover { page-break-after: always; border-top: .35em solid var(--book-accent); padding-top: 2em; }
+.cover .series,
+.cover .edition { color: var(--book-muted); font-size: .8em; font-weight: bold; }
+.cover h1 { font-size: 2em; line-height: 1.15; }
+.title-page,
+.copyright,
+.colophon,
+.toc,
+.figure-list,
+.part { page-break-before: always; }
+.toc ol,
+.figure-list ol { list-style: none; padding: 0; }
+.toc li,
+.figure-list li { margin: .4em 0; }
+.toc .chapter-entry[data-depth="2"] { margin-left: 1em; }
+.part-title { color: var(--book-ink); border-bottom: .08em solid var(--book-accent); padding-bottom: .25em; }
+.chapter-title { color: var(--book-ink); page-break-before: always; }
+.chapter[data-depth="2"] .chapter-title { font-size: 1.35em; }
+h2, h3, h4 { page-break-after: avoid; }
+p { margin: 0 0 .9em; }
+a { color: var(--book-link); text-decoration: underline; }
+blockquote,
+.callout { margin: 1em 0; padding: .7em 1em; border-left: .25em solid var(--book-accent); background: var(--book-surface); }
+.callout .label { display: block; color: var(--book-muted); font-size: .75em; font-weight: bold; text-transform: uppercase; }
+figure { margin: 1.2em 0; page-break-inside: avoid; text-align: center; }
+figure img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+figure figcaption,
+.figure-caption { margin-top: .5em; color: var(--book-muted); font-size: .85em; text-align: left; }
+.figure-number { color: var(--book-ink); font-weight: bold; }
+table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: .9em; }
+tr { page-break-inside: avoid; }
+th, td { padding: .35em .45em; border-bottom: .06em solid var(--book-border); text-align: left; vertical-align: top; }
+th { background: var(--book-surface); border-bottom: .12em solid var(--book-accent); }
+pre, code { font-family: var(--book-font-mono); }
+code { font-size: .85em; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: .7em; border: .06em solid var(--book-border); background: var(--book-surface); font-size: .8em; }
+.grade-equation { margin: 1em 0; text-align: center; }
+.katex-display { margin: 0; }
+.katex { font-size: 1em; }
+img { max-width: 100%; }

@@ -1,5 +1,7 @@
 # 渲染方法
 
+> **保留版本：** 本使用章节及截图描述 1.23.2，仍滞后于最新模型。当前参考见[理解模型](../theory/structure.md)；这些控件并非 Next 未来的 Warp 实现。
+
 普通 **Grade（调色）** 节点始终正向应用 Grade。在 Perceptual Grade 侧栏选择 **Baked LUT（烘焙 LUT）** 或 **Direct（直接求值）**。节点本体显示 Grade 选择器和用于显示／隐藏图表的铅笔，不显示渲染方法或方向下拉框。Resolve 中的 Perceptual Grade DCTL 直接计算解析方程。
 
 ## 根据用途选择

@@ -1,5 +1,7 @@
 # Testing and measurements
 
+> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+
 Choose validation around the behavior you changed. Numerical tests isolate equations and invariants; DCTL parity tests compare the analytic reference; native-render tests check the graph actually evaluated by Blender. Packaging and documentation tests cover the artifacts readers and users receive. The [build chapter](building.md#run-tests) lists the targets.
 
 A failing reproduction should identify the host version, input interpretation, grade, render method and device. Run the focused gate first, then the related integration gates. Report measured results with their workload and settings, so another contributor can reproduce them.
@@ -316,9 +318,9 @@ buck2 run //:benchmark -- \
 
 For Linux, point `--blender` to a full desktop binary and choose CPU, CUDA, OPTIX, HIP or ONEAPI as available. Record the actual selected GPU and desktop build. The worker reports the compositor device separately. The small material occupies approximately 12.25% of the frame; both shader cases use an emissive surface to isolate repeated material grading from complex lighting variation.
 
-The checked-in `benchmark.json` is explicitly **illustrative**. A real run emits `status: measured` and device/version/settings metadata. Replacing that file and building `//:book_figures` updates the labelled chart and Markdown table together. `//:documentation_benchmark` uses six tiny native CPU cases to verify the runner; its timings are validation data, not publication measurements.
+The checked-in `benchmark.json` is explicitly **illustrative**. A real run emits `status: measured` and device/version/settings metadata. In the current book build, replacing `products/perceptual-grade-book/docs/data/benchmark.json` and building `//products/perceptual-grade-book/generators:figures` updates the labelled chart and Markdown table together. The historical `//:documentation_benchmark` target used six tiny native CPU cases to verify the runner; its timings are validation data, not publication measurements.
 
-![Workload and preparation comparison](../assets/figures/render-benchmark.png)
+![Workload and preparation comparison](../assets/figures/render-benchmark.svg)
 
 <p class="figure-caption">The supplied dataset is illustrative. Replacing it with workstation measurements updates this chart and table.</p>
 
@@ -475,9 +477,13 @@ The selected curve reduces the worst absolute RGB p99 from 0.030518 to 0.025583 
 
 The ACEScg nonnegative [0,64]³ corner calculation agrees with the proposed negative bound to stock-processor precision: minimum blue ≈ −1.939416. It also produces positive blue ≈ +65.939415, so +64 is not complete source-cube coverage. More significantly, the stored signed fixture inputs at +2 stops reach −4.902344 at a Stack LUT boundary; 137 pixels in that case lie below −2, compared with five below −4. The worst outside fraction across all workloads is 0.184240% for −2 versus 0.005905% for −4. These pixels are included in every percentile, RMS and display calculation and use continuous boundary-cell extrapolation. None is silently clipped or discarded. A source conversion bound therefore does not establish that −2 improves grading accuracy.
 
-![Full-finalist display and RGB error tradeoffs](../assets/illustrations/lut-shaper-errors.png)
+![Full-finalist display and RGB error tradeoffs](../assets/illustrations/lut-shaper-errors.svg)
 
-![Previous and selected sample placement](../assets/illustrations/lut-shaper-placement.png)
+![Previous and selected sample placement](../assets/illustrations/lut-shaper-placement.svg)
+
+{{#include ../assets/fragments/lut-shaper-key.md}}
+
+These vector redraws use the recorded finalist scores and exact sampling axes in the original shaper report archive. No measurements are rerun to produce them. [Download the chart sources and plotted data](../downloads/chart-sources.zip).
 
 [Download the selected grid and scores](../downloads/lut-shaper-selection.json) or [the complete recorded JSON/CSV results, figures, input metadata and current-source confirmation](../downloads/lut-shaper-report.zip). The source package contains every referenced fixture and specification. Native CPU Shader/Compositor sampling, 33/65 nesting and half-buffer transport are validated separately from these float64-reference interpolation errors. GPU/Metal precision is not claimed.
 
