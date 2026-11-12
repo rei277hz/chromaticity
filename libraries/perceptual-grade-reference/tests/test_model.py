@@ -1,6 +1,7 @@
 """Full reference contracts, with no imports of either implementation under test."""
 from dataclasses import replace
 import unittest
+from unittest.mock import patch
 import colour
 import numpy as np
 from color_tools.perceptual_grade_core.model.tonal_web import WebSettings
@@ -98,9 +99,9 @@ class ModelTests(unittest.TestCase):
         expected=model.release_state(model.grade_state(state),guard=True)
         np.testing.assert_allclose(model.forward_native(native),expected,rtol=2e-12,atol=1e-10)
 
-    def test_stack_handoff_carries_raw_signed_energy_until_export(self):
-        first=Model(Settings(color=ColorSettings(global_gain=3)))
-        second=Model(Settings(color=ColorSettings(global_gain=-3)))
+    def test_explicit_unguarded_handoff_carries_raw_signed_energy(self):
+        first=Model(Settings(color=ColorSettings(global_gain=3)),hk_guard=False)
+        second=Model(Settings(color=ColorSettings(global_gain=-3)),hk_guard=False)
         x=np.array([[.2,.3,.4],[0.,1.,0.],[0.,938.63,0.],[0.,0.,0.]])
         original=first.enter_native(x)
         intermediate=first.grade_state(original)
@@ -114,8 +115,22 @@ class ModelTests(unittest.TestCase):
         self.assertTrue((result>=0).all() and (result<=1024).all())
         np.testing.assert_array_equal(result[-1],0.)
 
+    def test_default_handoff_carries_repaired_energy_and_export_does_not_repair_again(self):
+        first=Model(Settings(color=ColorSettings(global_gain=3)))
+        second=Model(Settings(color=ColorSettings(global_gain=-3)))
+        source=np.array([[.2,.3,.4],[0.,1.,0.],[0.,938.63,0.],[0.,0.,0.]])
+        intermediate=first.grade_state(first.enter_native(source))
+        self.assertTrue(np.all(intermediate.energy>=0))
+        result=second.grade_state(intermediate)
+        self.assertTrue(np.all(result.energy>=0))
+        with patch('color_tools.perceptual_grade_reference.grading.guard',
+                   side_effect=AssertionError('Export must not repeat H-K repair')):
+            output=second.release_state(result,guard=True)
+        self.assertTrue(np.all((output>=0)&(output<=1024)))
+        np.testing.assert_array_equal(output[-1],0.)
+
     def test_raw_release_preserves_signed_energy_in_vector_and_scaled_decode(self):
-        model=Model(Settings(color=ColorSettings(global_gain=3)))
+        model=Model(Settings(color=ColorSettings(global_gain=3)),hk_guard=False)
         x=np.array([[.2,.3,.4],[0.,1.,0.],[.1,.2,.3],[0.,0.,0.]])
         state=model.grade_state(model.enter_native(x))
         self.assertTrue(np.any(state.energy<0))

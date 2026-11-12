@@ -1,14 +1,30 @@
 import PerceptualGrade.HKGuard
+import PerceptualGrade.SelectiveAdaptance
 
-/- The Warp pad uses a compact saturation chart after export H–K repair.
+/- The Warp pad uses a compact saturation chart after H–K repair and Scale.
    Its squared radius is C²/(C²+|E|). The carried energy, rather than a
    subtraction of rounded appearance coordinates, controls the raw rim.
-   The proof concerns this display chart, not global invertibility of grading
-   or invariance of the final-scale edit under the nonlinear guard. -/
+   Common positive Scale preserves both Cartesian coordinates after repair.
+   This does not assert invariance through the subsequent RGB cube guard. -/
 namespace PerceptualGrade
 noncomputable section
 
 def warpCompactRadiusSq (C E : ℝ) : ℝ := C^2/(C^2+|E|)
+
+/-- Both Cartesian pad coordinates are invariant under common positive Scale,
+    including their totalized neutral/black extension. -/
+theorem warp_compact_coordinates_scale (a b C E k : ℝ) (hk : 0 < k) :
+    (boundedSaturationCoordinate (k*a) (k*C) (k^2*E),
+      boundedSaturationCoordinate (k*b) (k*C) (k^2*E)) =
+    (boundedSaturationCoordinate a C E, boundedSaturationCoordinate b C E) := by
+  rw [bounded_saturation_scale a C E k hk, bounded_saturation_scale b C E k hk]
+
+theorem warp_compact_radius_scale (C E k : ℝ) (hk : 0 < k) :
+    warpCompactRadiusSq (k*C) (k^2*E) = warpCompactRadiusSq C E := by
+  unfold warpCompactRadiusSq
+  rw [abs_mul, abs_of_nonneg (sq_nonneg k), mul_pow,
+    show k^2*C^2+k^2*|E| = k^2*(C^2+|E|) by ring]
+  exact mul_div_mul_left _ _ (pow_ne_zero 2 (ne_of_gt hk))
 
 theorem warp_carried_zero_threshold (J : ℝ) : J*|J| = 0 ↔ J = 0 := by
   constructor
@@ -63,9 +79,11 @@ theorem warp_compact_radius_strict_interior (C E : ℝ) (he : E ≠ 0) :
     exact (div_lt_one hden).2 (by linarith)
 
 /-- Positive fixed reference energy and positive H² move every finite raw
-    zero-energy chromatic state strictly inside the guarded unit rim. This is
-    why the Chroma Stops threshold must use the raw carried energy, before
-    repair, rather than detecting a crossing in the guarded pad coordinate. -/
+    zero-energy chromatic state strictly inside the ideal repair-formula rim.
+    Application to executable repair additionally requires H≥0; H<0 bypasses
+    repair, which cannot be inferred from X=H² alone. This is why the Chroma
+    Stops threshold uses raw carried energy before repair rather than detecting
+    a crossing in the repaired pad coordinate. -/
 theorem warp_guarded_raw_rim_moves_interior
     (E0 X Craw Cguard : ℝ) (h0 : 0 < E0) (hx : 0 < X) (hc : Craw ≠ 0) :
     warpCompactRadiusSq Craw 0 = 1 ∧
@@ -75,8 +93,9 @@ theorem warp_guarded_raw_rim_moves_interior
   · exact warp_compact_radius_strict_interior Cguard _
       (ne_of_gt (hk_guard_energy_positive _ _ (hk_guard_delta_positive E0 X h0 hx)))
 
-/-- The same strict interior conclusion holds for any raw signed-energy
-    request. It says nothing about position or scale invariance after repair. -/
+/-- The same ideal repair-formula conclusion holds for any raw signed-energy
+    request. Executable application requires H≥0; the H<0 bypass is excluded.
+    Subsequent common positive Scale preserves this repaired radius. -/
 theorem warp_guarded_chart_interior
     (E0 X C D : ℝ) (h0 : 0 < E0) (hx : 0 < X) :
     warpCompactRadiusSq C (hkGuardEnergy (hkGuardDelta E0 X) D) < 1 := by

@@ -1,6 +1,6 @@
 import PerceptualGrade.ContinuousGuard
 
-/- Exact-real properties of the export H–K repair. The requested energy D is
+/- Exact-real properties of the H–K repair before final Warp Scale. The requested energy D is
    H²−66C, not the signed appearance continuation below that boundary. -/
 namespace PerceptualGrade
 noncomputable section

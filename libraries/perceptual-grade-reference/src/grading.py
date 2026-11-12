@@ -10,7 +10,9 @@ from . import responses as response_math
 from ..color_core.scaled import Scalar as S, total, dot, norm, smooth_floor, smooth_cap
 from .responses import GAMMA, HK, signed_hk, requested_energy, State
 from ..perceptual_grade_core.model.tonal_web import WebSettings, TonalWeb
-from ..perceptual_grade_core.model.selective_adaptance import SelectiveAdaptance, GuardedWarpDisplay
+from ..perceptual_grade_core.model.selective_adaptance import SelectiveAdaptance
+from ..perceptual_grade_core.model.hk_guard import guard, guard_scaled
+from .warp import GuardedWarpDisplay
 from ..perceptual_grade_core.model.saturation import project, bounded_project, bounded_unproject
 
 # Derived by buck2 build //libraries/perceptual-grade-core:shadow_anchor.
@@ -267,8 +269,9 @@ def drivers(q, ja):
 
 class Color(GuardedWarpDisplay):
     """J/C drivers, hue/chroma web, selective cone Adaptance and final scale."""
-    def __init__(self, settings, tone, boundary=None):
+    def __init__(self, settings, tone, boundary=None, *, hk_guard=True):
         self.settings, self.tone, self._boundary = settings, tone, boundary
+        self.hk_guard = bool(hk_guard)
         self.web = TonalWeb(settings.web, tone, encoder=encode_cones)
         self.adaptation = SelectiveAdaptance(settings.adaptance, 100*np.asarray(tone.target[1:]),
                                              response_constants(tone.reference)[1], settings.adaptance_half_saturation,
@@ -296,12 +299,26 @@ class Color(GuardedWarpDisplay):
         return CHROMA_CROSSOVER*abs(ja)
 
     def warp_state(self, state, tonal_h=None, source_chroma=None, source_energy=None):
+        """Hue/chroma -> Adaptance -> H-K repair -> common positive Scale."""
+        return self._warp_state(state, tonal_h, source_chroma, source_energy)
+
+    def pre_repair_warp_state(self, state, tonal_h=None, source_chroma=None, source_energy=None):
+        """Diagnostic signed request after Adaptance, before repair and Scale."""
+        return self._warp_state(state, tonal_h, source_chroma, source_energy, pre_repair=True)
+
+    def _warp_state(self, state, tonal_h, source_chroma, source_energy, *, pre_repair=False):
         c = np.hypot(state.q[..., 1], state.q[..., 2]) if source_chroma is None else np.asarray(source_chroma)
         h = np.hypot(state.ja, np.sqrt(HK*c)) if tonal_h is None else np.asarray(tonal_h)
         e0 = state.energy if source_energy is None else source_energy
-        transform = lambda q, e: self.adaptation.apply(q, e, h, c, e0)
+        captured = None
+        def transform(q, e):
+            nonlocal captured
+            q, e = self.adaptation.apply(q, e, h, c, e0)
+            if pre_repair:
+                captured = State(q, e)
+            return guard(q, e, e0) if self.hk_guard and not pre_repair else (q, e)
         q, e = self.web.apply(state.q, state.energy, h, transform=transform)
-        return State(q, e)
+        return captured if pre_repair else State(q, e)
 
     def apply_state(self, appearance):
         q = appearance.q
@@ -309,7 +326,7 @@ class Color(GuardedWarpDisplay):
         h = np.hypot(appearance.ja, np.sqrt(HK*c))
         p = self.settings
         energy = appearance.energy if hasattr(appearance, 'energy') else appearance.ja*np.abs(appearance.ja)
-        if not self.active:
+        if not self.active and not self.hk_guard:
             return State(q.copy(), np.array(energy, copy=True))
         if any(np.any(v) for v in (p.lightness, p.chroma, p.global_gain)):
             light, chroma = self.terms(h)
@@ -331,7 +348,7 @@ class Color(GuardedWarpDisplay):
         p = self.settings
         energy = S(carried_energy) if carried_energy is not None else ja*abs(ja)
         c = norm(q[1:]); h = norm([ja, (HK*c)**.5])
-        if not self.active or not h:
+        if (not self.active and not self.hk_guard) or not h:
             return q, energy
         result = list(q)
         if any(np.any(v) for v in (p.lightness, p.chroma, p.global_gain)):
@@ -348,17 +365,25 @@ class Color(GuardedWarpDisplay):
             if result != q:
                 energy = requested_energy(result, q, ja)
         e0 = S(carried_energy) if carried_energy is not None else ja*abs(ja)
-        transform = lambda value, stored: self.adaptation.scaled_apply(value, stored, h, c, e0)
+        def transform(value, stored):
+            value, stored = self.adaptation.scaled_apply(value, stored, h, c, e0)
+            return guard_scaled(value, stored, e0) if self.hk_guard else (value, stored)
         return self.web.scaled_apply(result, energy, h, transform=transform)
 
     def scaled_apply(self, q, ja):
         return self.scaled_apply_state(q, ja)[0]
 
     def warp_targets(self, tonal_row):
+        return self._warp_targets(tonal_row, self.warp_state)
+
+    def pre_repair_warp_targets(self, tonal_row):
+        return self._warp_targets(tonal_row, self.pre_repair_warp_state)
+
+    def _warp_targets(self, tonal_row, evaluate):
         geometry = self.web.geometry; h = geometry.anchors[tonal_row]
         q = np.concatenate(([[h, 0., 0.]], geometry.q[tonal_row]), axis=0)
         energy = np.r_[h*h, geometry.energy[tonal_row]]
-        return self.warp_state(State(q, energy), h)
+        return evaluate(State(q, energy), h)
 
     def target_settings(self, tonal_row, handle, target_ab):
         """Absolute combined page target; -1 denotes the neutral center."""
@@ -374,7 +399,9 @@ class Color(GuardedWarpDisplay):
             SelectiveAdaptance(adapted, self.web.geometry.anchors, self.adaptation.aw,
                                self.settings.adaptance_half_saturation)
             return replace(self.settings, adaptance=tuple(map(tuple, adapted)))
-        return replace(self.settings, web=self.adaptation.target(self.web, tonal_row, handle, target))
+        if not self.hk_guard:
+            return replace(self.settings, web=self.adaptation.target(self.web, tonal_row, handle, target))
+        return replace(self.settings, web=self.guarded_corner_evaluator(tonal_row, handle).absolute_target(target))
 
     def saturation_targets(self, tonal_row):
         state = self.warp_targets(tonal_row)
@@ -385,11 +412,11 @@ class Color(GuardedWarpDisplay):
         return bounded_project(state.q, state.energy)
 
     def target_bounded_saturation_settings(self, tonal_row, handle, target):
-        """Convert the bounded display destination to the branch-local solver."""
+        """Convert the bounded display destination to its saturation solver."""
         return self.target_saturation_settings(tonal_row, handle, bounded_unproject(target))
 
     def target_saturation_settings(self, tonal_row, handle, target):
-        """Set a linear saturation destination while preserving the local branch."""
+        """Set a linear saturation destination on the repaired chart."""
         if not 0 <= tonal_row < 4 or not -1 <= handle < 6:
             raise ValueError('Warp target index is outside its four-by-seven grid')
         target = np.asarray(target, float)
@@ -397,4 +424,7 @@ class Color(GuardedWarpDisplay):
             raise ValueError('Warp saturation target must be a finite pair')
         if handle == -1:
             return self.target_settings(tonal_row, handle, self.web.geometry.anchors[tonal_row]*target)
-        return replace(self.settings, web=self.adaptation.saturation_target(self.web, tonal_row, handle, target))
+        if not self.hk_guard:
+            return replace(self.settings, web=self.adaptation.saturation_target(self.web, tonal_row, handle, target))
+        radius = np.hypot(*target)
+        return self.target_guarded_saturation_settings(tonal_row, handle, target/np.hypot(1., radius))

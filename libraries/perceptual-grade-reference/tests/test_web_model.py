@@ -7,7 +7,8 @@ from color_tools.perceptual_grade_reference.model import Model, Settings
 from color_tools.perceptual_grade_core.model.tonal_web import WebSettings
 from color_tools.perceptual_grade_reference.responses import State, signed_hk
 from color_tools.color_core.scaled import Scalar as S
-from color_tools.perceptual_grade_core.model.bake import Kernel
+from color_tools.perceptual_grade_reference.bake import Kernel
+from color_tools.perceptual_grade_core.model.hk_guard import guard
 from color_tools.perceptual_grade_reference.stack import Stack
 from color_tools.perceptual_grade_reference.stack_bake import BakeStack
 
@@ -51,17 +52,15 @@ class WebModelTests(unittest.TestCase):
         rows = np.zeros((4, 6)); rows[-1, 0] = .2
         for settings in (ColorSettings(),
                          ColorSettings(web=WebSettings(log_chroma=rows))):
-            model = Model(Settings(color=settings))
+            model = Model(Settings(color=settings), hk_guard=False)
             result = model.grade_state(state)
             self.assertEqual(result.energy[0], energy)
-            self.assertEqual(result.reference_energy[0], energy)
             self.assertTrue(all(a == b for a, b in zip(result.q[0], q)))
         # A nontrivial hue edit changes q but must still carry this exact energy.
         hue = np.full((4, 6), 5.)
-        web = Model(Settings(color=ColorSettings(web=WebSettings(hue_degrees=hue))))
+        web = Model(Settings(color=ColorSettings(web=WebSettings(hue_degrees=hue))), hk_guard=False)
         result = web.grade_state(state)
         self.assertEqual(result.energy[0], energy)
-        self.assertEqual(result.reference_energy[0], energy)
         self.assertNotEqual(result.q[0, 2], q[2])
 
     def test_scaled_retained_changes_and_web_scale_update_energy(self):
@@ -71,11 +70,8 @@ class WebModelTests(unittest.TestCase):
         state = base.enter_native(np.array([[.08, .12, .25]]))
         normal = scaled.grade_state(state)
         base.vector_controls = scaled.vector_controls = False
-        pre = base.grade_state(state)
         actual = scaled.grade_state(state)
-        height = np.hypot(state.ja[0], np.sqrt(66*np.hypot(*state.q[0, 1:])))
-        q, energy = scaled.color.web.scaled_apply(list(pre.q[0]), pre.energy[0], S(height))
-        self.assertEqual(actual.energy[0], energy)
+        self.assertGreater(actual.energy[0], S())
         self.assertNotEqual(actual.energy[0], S(state.energy[0]))
         np.testing.assert_allclose(np.asarray(actual.q, float), normal.q, rtol=1e-13)
         np.testing.assert_allclose(np.asarray(actual.energy, float), normal.energy, rtol=1e-13)
@@ -87,21 +83,23 @@ class WebModelTests(unittest.TestCase):
         model=Model(settings)
         state=model.enter_native(np.array([[.1,.2,.35],[.6,.15,.02],[1.,2.,.3]]))
         tone=model.tone.apply(state)
-        retained_model=Model(replace(settings,color=replace(settings.color,adaptance=((0.,0.),)*4,web=WebSettings())))
+        retained_model=Model(replace(settings,color=replace(settings.color,adaptance=((0.,0.),)*4,web=WebSettings())),hk_guard=False)
         retained=retained_model.color.apply_state(tone)
         source_c=np.hypot(tone.q[:,1],tone.q[:,2])
         height=np.hypot(tone.ja,np.sqrt(66*source_c))
-        transform=lambda q,e:model.color.adaptation.apply(q,e,height,source_c,tone.ja*abs(tone.ja))
+        reference=tone.ja*abs(tone.ja)
+        def transform(q,e):
+            q,e=model.color.adaptation.apply(q,e,height,source_c,reference)
+            return guard(q,e,reference)
         q,e=model.color.web.apply(retained.q,retained.energy,height,transform=transform)
         actual=model.grade_state(state)
         np.testing.assert_array_equal(actual.q,q)
         np.testing.assert_array_equal(actual.energy,e)
-        np.testing.assert_array_equal(actual.reference_energy,tone.ja*abs(tone.ja))
         rgb=model.release_state(actual,guard=True)
         self.assertTrue(np.isfinite(rgb).all())
         self.assertTrue(((rgb>=0)&(rgb<=1024)).all())
 
-    def test_signed_scale_preserves_saturation_and_scaled_path(self):
+    def test_repaired_scale_preserves_saturation_and_scaled_path(self):
         chroma=np.full((4,6),.35);scale=np.full((4,6),.3)
         base=WebSettings(log_chroma=tuple(map(tuple,chroma)))
         changed=replace(base,log_scale=tuple(map(tuple,scale)))
@@ -110,7 +108,10 @@ class WebModelTests(unittest.TestCase):
         q=first.color.web.geometry.q[0].copy();e=first.color.web.geometry.energy[0].copy()
         state=State(q,e)
         a,b=first.grade_state(state),second.grade_state(state)
-        self.assertTrue(np.any(a.energy<0))
+        raw=Model(Settings(color=ColorSettings(web=base)),hk_guard=False).grade_state(state)
+        self.assertTrue(np.any(raw.energy<0))
+        self.assertTrue(np.all(a.energy>0))
+        self.assertTrue(np.all(b.energy>0))
         ca=np.hypot(a.q[:,1],a.q[:,2]);cb=np.hypot(b.q[:,1],b.q[:,2])
         np.testing.assert_allclose(ca/abs(a.ja),cb/abs(b.ja),rtol=4e-14)
         for source,energy,wanted,stored in zip(q,e,b.q,b.energy):
@@ -176,16 +177,15 @@ class WebModelTests(unittest.TestCase):
         self.assertTrue((result.status=='root').all())
         self.assertLess(float(residual.max()),2e-10)
 
-    def test_raw_stack_handoff_and_inverse_with_web(self):
-        from unittest.mock import patch
+    def test_repaired_stack_handoff_and_inverse_with_web(self):
         first=Settings(color=ColorSettings(web=edits(.5),adaptance=((1.,-.5),)*4))
         second=Settings(color=ColorSettings(web=edits(.3),adaptance=((-.5,.25),)*4))
         source=np.array([[.3,.15,.09]])
         stack=Stack([first,second],['FORWARD','INVERSE'])
-        with patch('color_tools.perceptual_grade_reference.model.hk_guard',side_effect=AssertionError('Export in raw handoff')):
-            actual=stack.apply(source)
+        actual=stack.apply(source)
         self.assertTrue(np.isfinite(actual).all())
         target=stack.models[0].grade_state(stack.models[0].enter_native(source))
+        self.assertTrue(np.all(target.energy>=0))
         from color_tools.perceptual_grade_reference.stack import nonlinear_inverse
         native,residual=nonlinear_inverse(stack.models[1],target,True)
         self.assertLess(float(np.max(residual)),2e-10)

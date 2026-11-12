@@ -1,10 +1,11 @@
 import PerceptualGrade.TonalWebAdaptance
 import PerceptualGrade.SignedAppearance
 
-/- A negative signed-energy Warp corner scales as C ↦ kC and
+/- Diagnostic unrepaired negative signed-energy rays scale as C ↦ kC and
    E ↦ k²E. Here A=66C and q=|E|, so the raw H–K height on that
-   Scale ray is 2√(Ak)-√(Ak+qk²). This is the pre-guard height: the
-   export guard may repair a request after the ray has crossed zero. -/
+   Scale ray is 2√(Ak)-√(Ak+qk²). These historical laws explain the
+   rejected Scale-before-repair ordering. The corrected Warp repairs first;
+   its nonnegative Scale ray is proved in WarpRepairedScale. -/
 namespace PerceptualGrade
 noncomputable section
 
@@ -15,8 +16,9 @@ def webNegativeScaleSlope (A q k : ℝ) : ℝ :=
   (2*Real.sqrt A*Real.sqrt (A+q*k)-(A+2*q*k)) /
     (2*Real.sqrt k*Real.sqrt (A+q*k))
 
-/-- This ray is exactly the current signed appearance coordinate after
-    homogeneous Scale, not a replacement formula for the appearance model. -/
+/-- This ray is the signed appearance coordinate after homogeneous Scale of
+    an unrepaired negative-energy input. The corrected nonnegative-H repaired
+    branch excludes it; negative-H bypass remains outside that guarantee. -/
 theorem web_negative_scale_signed_hk (C E k : ℝ)
     (hC : 0 ≤ C) (hE : E < 0) (hk : 0 < k) :
     signedHK (signedRoot (k^2*E)) (Real.sqrt (66*(k*C))) =
@@ -163,8 +165,8 @@ theorem web_negative_scale_increasing_positive (A q k : ℝ)
   nlinarith [mul_pos hA (sub_pos.mpr hsqrt)]
 
 /-- In physical units A=66C, the turning point is kq=33√3 C.
-    This is the mathematical ceiling for the editor's upward Scale ray;
-    it is not a statement about nonlinear post-guard display height. -/
+    This diagnoses the historical unrepaired Scale ray; it is not a ceiling
+    on the corrected repaired Warp Scale. -/
 theorem web_negative_scale_physical_ceiling (C q k : ℝ)
     (hC : 0 < C) (hq : 0 ≤ q) (hk : 0 < k) :
     (0 ≤ webNegativeScaleSlope (66*C) q k ↔
@@ -199,8 +201,8 @@ theorem web_negative_scale_turning_point (C q k : ℝ)
       not_le, div_lt_iff₀ hq]
     constructor <;> intro h <;> nlinarith
 
-/-- The editor tests the final corner's stored-energy/chroma pair. This
-    condition is exactly the increasing-ray threshold after homogeneous Scale. -/
+/-- The historical stored-energy/chroma condition is exactly the
+    increasing-ray threshold after homogeneous Scale of an unrepaired input. -/
 theorem web_negative_scale_final_state_ceiling (C q k : ℝ) (hk : 0 < k) :
     k^2*q ≤ 33*Real.sqrt 3*(k*C) ↔ q*k ≤ 33*Real.sqrt 3*C := by
   rw [show k^2*q = k*(q*k) by ring,

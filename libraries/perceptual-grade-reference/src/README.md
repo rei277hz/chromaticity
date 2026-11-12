@@ -13,9 +13,44 @@ properties, external mathematical anchors and scoped proofs provide additional
 evidence. The reference passes its own appearance encoder and response semantics
 explicitly to shared tonal-web and selective-adaptance kernels.
 
-No Blender package is required by the reference target. GPU experiments supply
-`BakeStack(..., program_factory=...)` explicitly from the calling host adapter.
+No Blender package is required by the reference target. GPU experiments can
+inject `BakeStack(..., program_factory=...)`; without a factory, GPU preparation
+uses the optional reference-owned Blender adapter. Host GPU imports are lazy.
+The reference owns the CPU kernel and forward/inverse/boundary shader builders.
 CPU evaluation and the CLI do not load a host or discover another product.
+
+## Current Warp ordering (2026-11-11)
+
+The reference evaluates J/C edits → Warp hue/chroma → selective Adaptance →
+H–K repair → common positive J_A/chroma Scale. The repair uses frozen
+post-Tone reference energy. Scale is still selected from the web state before
+Adaptance; moving repair does not change that selector. RGB export applies
+only cube containment. Appearance handoffs already include repair and Scale,
+and inverse searches evaluate this same complete forward map.
+
+For a repaired point with energy E and chroma C, Scale k>0 sends
+(a,b,E) to (ka,kb,k²E). Its compact pad coordinate
+(a,b)/sqrt(C²+|E|) therefore stays fixed. With E,C≥0, its H–K height is
+sqrt(k²E+66kC), which increases strictly for every nonblack point. The
+nonnegative-H repair branch has E≥0, including zero-reference degeneracies;
+H>0 and positive reference energy imply E>0. H<0 retains the existing bypass
+and black RGB export policy, so positivity is not asserted for that branch.
+Cube projection can change chroma after these appearance-space guarantees.
+
+`Model.grade_state` returns a plain `State` after this Stage 3 sequence.
+`release_state(state, guard=True)` adds cube containment only, with no saved
+reference-energy parameter. `pre_repair_warp_state` and
+`pre_repair_warp_targets` expose the signed request after Adaptance and before
+repair/Scale for diagnostics. `warp_state`, `warp_targets` and their
+`guarded_warp_*` aliases return the corrected final appearance without a second
+repair. `hk_guard=False` remains an explicit unrepaired diagnostic mode.
+
+The frozen `products/perceptual-grade-blender` implementation retains its
+historical Scale-before-repair behavior and UI compensation described below.
+`products/perceptual-grade-next-blender` has not implemented Warp yet; its
+future implementation should follow this corrected reference. DCTL and shared
+production kernels retain their existing contracts. Historical step reports
+and validation records below describe their original implementations.
 
 ## Analytic Stage 3 J_A/C crossover (2026-10-28)
 
@@ -32,14 +67,11 @@ That source uses `max(J_A,0)`; this reference deliberately uses `abs(J_A)` for
 signed symmetry. `drivers(q, ja)` has no capacity argument. Float64, scaled
 arithmetic, analytic Model/inverse/Stack and CLI follow this law.
 
-Shared accelerated CPU/GLSL kernels and the existing Blender/DCTL products
-retain `.4*U(J_A,h)` membership. Public reference `BakeStack` therefore rejects
-grades with any nonzero low/high lightness or chroma coefficient before kernel
-preparation, including matching forward/inverse pairs. Linear/Tone, global
-gain, a/b-only drivers, web and Adaptance remain supported when low/high
-coefficients are zero. It never silently executes the old crossover for a
-new-reference grade. Explicit legacy-capacity adapters exist only in
-verification support for retained-product tests and offline analysis.
+Shared production CPU/GLSL kernels and the frozen Blender/DCTL products
+retain `.4*U(J_A,h)` membership. Reference-owned `BakeStack` kernels use the
+35/75 law in CPU and GLSL, including nonzero low/high lightness and chroma
+controls. Explicit legacy-capacity adapters exist only in verification support
+for retained-product tests and offline analysis.
 
 The new crossover is checked by its direct algebra and numerical tests. The
 existing `.4U` Lean driver theorems certify the retained production law; they
@@ -51,10 +83,10 @@ its Color lightness/chroma Fits remain `[-2, 6]`.
 These operational limits do not restrict the analytic reference's finite-Fit
 mathematical domain.
 
-## Blender Warp and selective Adaptance (Step 5.73)
+## Warp and selective Adaptance
 
-The reference and Blender share a tonal web with one draggable Adaptance
-center and six Rec.709 corners. Blender exposes it as **Warp / 塑形**. DCTL
+The reference and frozen Blender product use tonal-web geometry with one
+Adaptance center and six Rec.709 corners. Blender exposes it as **Warp / 塑形**. DCTL
 retains its existing controls, translation envelope and equations; its separate
 oracle is `tests/support/dctl_reference.py`. The retained production low/high
 crossover is ρ=0.4 of AP1 cube capacity; the analytic reference uses the J_A/C
@@ -91,12 +123,14 @@ The evaluation order is:
 1. Retained lightness/chroma operations.
 2. Web hue warp and radial chroma edit at fixed signed J_HK, carrying energy.
 3. Selective cone-derived Adaptance, changing a/b and signed achromatic energy.
-4. The web's final positive scale λ, selected from the pre-Adaptance web state.
+4. H–K repair with frozen post-Tone reference energy, on the nonnegative-H branch.
+5. The web's final positive scale λ, selected from the pre-Adaptance web state.
    Multiply a/b by λ and energy by λ², preserving C/|J_A| where defined.
 
-Raw appearance Stack handoffs bypass export guards. RGB export applies H–K
-repair and then AP1 cube containment. The complete grade inverse uses its
-existing joint iterative solve; no nested per-pixel Adaptance solver is added.
+Appearance Stack handoffs include repair and Scale while bypassing RGB cube
+containment. RGB export applies AP1 cube containment only. The complete grade
+inverse uses its existing joint iterative solve; no nested per-pixel Adaptance
+or H–K solver is added.
 
 ### Direct neutral targets and half-influence saturation
 
@@ -222,7 +256,27 @@ h+S₅(min(C/τθ,1))(warp(h)−h); the angular toe uses default radii.
 Constituent monotonicity does not prove global injectivity of the complete
 selective, source-dependent grade, nor an identity neutral a/b Jacobian.
 
-### Blender pad, plots and verification
+### Reference saturation pad
+
+Evaluate Warp hue/chroma, selective Adaptance, H–K repair and then final Scale.
+Project the resulting `(a,b,E)` directly as p=(a,b)/sqrt(C²+|E|), with horizontal
+−p_b and vertical +p_a. Handles and contours share this state; there is no
+second display repair. Cube projection is excluded from the pad calculation.
+
+Scale multiplies a/b by k and carried energy by k², so both compact Cartesian
+coordinates and the radius stay fixed for every k>0. For a nonblack repaired
+state on the nonnegative-energy branch, H(k)=sqrt(k²E+66kC) strictly increases.
+The contextual E=0 rim comes from the request after Adaptance and before repair
+and Scale, so its repaired pad radius is also independent of Scale. Exported
+RGB samples are projected from their output coordinates without another repair.
+
+### Historical frozen Blender pad and controls (Step 5.73)
+
+This subsection records the frozen Blender implementation. Its final guard
+and paired Scale compensation are not the corrected reference order. The
+reference uses the same compact chart on its already repaired, scaled state;
+changing Scale preserves that point's Cartesian pad coordinates and radius.
+Future next-Blender Warp should consume that corrected state directly.
 
 Warp has a square centered **guarded bounded saturation pad**. First evaluate
 Warp, selective Adaptance and final Scale in raw signed appearance coordinates;
@@ -348,13 +402,9 @@ claim;
 nonfinite, ill-conditioned or invalid hue-order requests retain the last valid
 edit. Center targets retain the explicit inverse a/b=h·p/sqrt(1−|p|²).
 
-```sh
-buck2 build //libraries/perceptual-grade-reference:tonal_web --show-output
-buck2 test //libraries/perceptual-grade-reference/tests:selective_adaptance //libraries/perceptual-grade-reference/tests:web_model //libraries/perceptual-grade-reference/tests:guarded_warp
-buck2 test //products/perceptual-grade-blender/tests/blender:warp //products/perceptual-grade-blender/tests/blender:warp_drag //products/perceptual-grade-blender/tests/blender:warp_guarded //products/perceptual-grade-blender/tests/blender:warp_view //products/perceptual-grade-blender/tests/blender:warp_sidebar
-buck2 build //libraries/perceptual-grade-reference/proofs:color_model
-buck2 test //libraries/perceptual-grade-reference/tests/proofs:color_model
-```
+The earlier Step 5.73 checks covered both the reference display and the
+then-current Blender implementation. Those product results describe the frozen
+historical behavior; they are not validation of the corrected reference.
 
 `//libraries/perceptual-grade-reference:tonal_web` emits `tonal-web.png`, `tonal-web-reset.png`, report/summary and
 reset/mixed JSON settings. Review PNG copies live in the project root. The
@@ -376,22 +426,28 @@ the zero-energy circle, hue collinearity, positive Scale invariance on either
 energy branch, and the open-disk inverse. These apply to raw projection, not
 the source-energy-dependent guard. `WarpGuardChart.lean` additionally proves
 carried-zero/negative threshold invariance under positive Scale, compact hue
-and radius properties, and that the guarded image of the raw E=0 rim lies
-strictly inside the display disk for positive repaired energy.
-`WarpScaleRay.lean` links the negative-energy Scale ray to `signedHK`, proves
-its derivative and unique turning point, and shows the accepted increasing
-branch remains strictly positive before the zero-height threshold
-k|E|=198C. These scalar facts do not guarantee positive height over every
-interpolated contour, or monotonic displayed height after nonlinear H–K repair.
+and radius properties, and that the ideal repair-formula image of the raw E=0
+rim lies strictly inside the display disk for positive repaired energy.
+Applying that rim claim to executable repair requires H≥0; X=H²>0 alone does
+not exclude the negative-H bypass.
+`WarpScaleRay.lean` links the historical unrepaired negative-energy Scale ray
+to `signedHK`, proves its derivative and unique turning point, and shows that
+its increasing branch remains positive only before k|E|=198C. These diagnostic
+facts do not constrain the corrected repaired Scale or guarantee positive
+height over every interpolated contour.
+`WarpRepairedScale.lean` supplies the current reference result: repair first
+keeps energy nonnegative under positive Scale, keeps the compact pad fixed,
+and makes H increase strictly on every repaired nonblack ray. The old negative
+ray proofs remain diagnostic and impose no Scale ceiling on this ordering.
 The older translation-envelope proofs remain scoped to the retained
 DCTL/historical design. Exact-real theorems do not establish floating-point
 correctness or global inverse convergence.
 
 ## Fresh LUT bake timing reports (Step 5.64)
 
-Run `buck2 run //products/perceptual-grade-blender:bake_time_breakdown` from the project directory to measure
-the current reference CPU and GLSL bakers with H–K repair disabled and
-enabled. The fixture mixes tone, retained J/C, tonal web hue/radius/scale and
+The retained bake timing report measures the historical reference CPU and GLSL
+bakers with H–K repair disabled and enabled. It is not a current ordering
+benchmark. The fixture mixes tone, retained J/C, tonal web hue/radius/scale and
 selective Adaptance edits; source fingerprints include the shared web and
 response implementations.
 Each invocation recalculates every vertex; timing reports are runtime outputs,
@@ -405,8 +461,9 @@ Defaults are the production-shaped 65³ lattice (274,625 vertices), four CPU
 workers with 65,536-row chunks, and llvmpipe software GPU. The mixed fixture
 uses active tone and creative adjustments. Forward A has global gain 0.15;
 inverse B retains those controls with gain 0.10, preventing cancellation in
-the A→inverse-B Stack. That Stack passes raw appearance and bypasses H–K
-export repair. The separate-RGB-LUT row adds independently measured forward
+the A→inverse-B Stack. That historical Stack passed raw appearance and bypassed
+H–K export repair. The current reference Stack carries repaired Stage 3 state;
+the separate-RGB-LUT row adds independently measured forward
 and inverse regular-grid bakes (549,250 total vertices); it is the cost of
 building two reusable LUTs, not a composite `inverse(forward(lattice))` bake.
 
@@ -430,16 +487,17 @@ cost and do not by themselves fail the report. Buck build time, UI scheduling,
 LUT packing/publication, compositor rendering and report writing are outside
 the core bake timings. DCTL retains its separate production equations.
 
-## Reference H–K export repair (Step 5.63)
+## Reference H–K repair before Scale
 
-The reference now repairs the H–K deficit before the existing validated AP1
-cube guard. Tone and creative grading use raw appearance coordinates and
-frozen post-Tone selectors. The repair is export-only: `grade_state`
-returns raw signed coordinates plus the post-tone reference energy, and
-`release_state(..., guard=False)` remains a raw signed decode. A forward→inverse
-Stack handoff bypasses both export guards; matching pairs still cancel.
+The reference repairs the H–K deficit after selective Adaptance and before
+Warp's final positive Scale. Frozen post-Tone selectors supply the reference
+energy. `grade_state` returns the repaired, scaled appearance; a forward→inverse
+Stack handoff includes that state and bypasses only cube containment. Matching
+pairs still cancel as an explicit Stack optimization. `release_state(...,
+guard=False)` decodes its supplied state directly; `guard=True` adds only the
+validated AP1 cube guard.
 
-For requested H≥0 and chroma C, the historical repair uses
+For requested H≥0 and chroma C, the repair uses
 
 ```text
 X = H²; D = X − 66C
@@ -455,8 +513,10 @@ Hg = sqrt(X + G); Cg = clamp((X + G − E)/66, 0, C)
 ```
 
 Scale the opponent pair by Cg/C, with an explicit neutral case, and carry E
-separately into the cube guard and decoder. This preserves hue, never increases
-chroma, and lifts positive H by at most 20%. It is identity above the knee.
+through final Warp Scale into the cube guard and decoder. The H–K repair itself
+preserves hue, never increases chroma, and lifts positive H by at most 20%;
+the subsequent common Scale preserves its compact pad coordinates. Repair is
+identity above the knee.
 For positive H and positive E0 it can rescue an H²<66C request instead of
 immediately exporting black. Negative H bypasses this repair; the existing
 cube guard handles its signed energy. The cube guard remains the final
@@ -484,11 +544,13 @@ positive branch and D=E_signed+2u² on the negative branch. This is the
 historical deficit in both cases, including below the reflected H–K boundary.
 The scaled reference uses the same equations with integer exponents.
 
-`GradedState` extends the reference State with `reference_energy`; q and energy
-retain their raw meanings. A plain `State` has no grade reference and receives
-only cube projection unless `release_state` is explicitly given reference
-energy. Repair does not mutate either state. It is applied once per export:
-the smooth H–K repair itself is **not idempotent**. Reset remains unchanged.
+The reference now returns plain `State(q, energy)` after repair and Scale.
+It no longer carries a second export reference in `GradedState`, and
+`release_state` has no reference-energy argument. Explicit mathematical repair
+probes call `hk_guard.guard` or `guard_scaled` directly. Repair does not mutate
+the input state. It is applied once during Stage 3: the smooth H–K repair itself
+is **not idempotent**, so reapplying it at export would reintroduce Scale-dependent
+pad movement. Reset remains unchanged on ordinary entered RGB states.
 
 The independent RGB inverse evaluates this complete forward export for each
 candidate, obtaining that candidate’s own post-tone E0. There is no nested
@@ -497,8 +559,9 @@ a standalone fixed-reference mathematical probe with a bounded scalar
 bisection and measured forward residual. It reports degenerate cases explicitly;
 it is not used to undo a many-to-one final cube projection.
 
-Portable CPU/GLSL kernels accept `hk_guard=False` by default; reference
-`BakeStack` enables it. Parameter slot 115 carries this mode to the shader.
+Reference CPU/GLSL kernels enable `hk_guard=True` by default and repair inside
+Stage 3 before Scale. Shared production kernels keep their existing default
+and ordering. Parameter slot 115 carries this mode to the shader.
 As of Step 5.65, RGB inverse baking uses only its existing raw-appearance
 search (up to eight iterations), or analytic candidates for simple controls.
 The additional 24-iteration complete-forward RGB refinement is removed.
@@ -509,13 +572,15 @@ its actual residual are returned. Raw appearance inversion retains its
 original solve. These finite searches do not guarantee global convergence
 or unique RGB preimages; the independent float64 inverse oracle and standalone
 fixed-reference H–K inverse probe retain their separate solvers.
-Blender now uses this export repair. DCTL retains its previous behavior;
+The frozen Blender product retains export-time repair. DCTL retains its previous behavior;
 its comparison oracle explicitly disables H–K repair.
 
-Buck2 checks the H–K numerical contracts with `//libraries/perceptual-grade-reference/tests:hk_guard` and
-`//libraries/perceptual-grade-reference/tests:hk_baking`, software GLSL with `//products/perceptual-grade-blender/tests/gpu:inverse_baking`,
-and exact-real properties with `//libraries/perceptual-grade-reference/proofs:color_model`. Lean/mathlib remain 4.35.0.
-The H–K suites pass 11 independent-reference and 6 portable-CPU tests; the
+Reference validation targets are `//libraries/perceptual-grade-reference/tests:hk_guard`,
+`//libraries/perceptual-grade-reference/tests:hk_baking` and
+`//libraries/perceptual-grade-reference/proofs:color_model`, run through Buck2
+with `--remote-only`. Lean/mathlib remain 4.35.0. The following counts describe
+the historical Step 5.63 implementation, not validation of the new ordering.
+The H–K suites passed 11 independent-reference and 6 portable-CPU tests; the
 21-test inverse software-GLSL suite passes on llvmpipe LLVM 19.1.7, alongside
 the production shader/baking/Stack suites. The proof build and its checker
 pass with 422 theorems in 22 modules, including 52 H–K theorems. These cover
@@ -1662,8 +1727,8 @@ described above. Tables use Shadows, Midtones, White, Highlights order.
 ## Creative stage
 
 Retained lightness/chroma drivers sample stage-2 appearance once. The web
-then reads its input hue, followed by selective cone-derived Adaptance and
-the final saturation scale; see Step 5.72 above for the full order.
+then reads its input hue, followed by selective cone-derived Adaptance, H–K
+repair and final saturation Scale; see the current-order section above.
 Coefficient weights and Adaptance log gains use magnitude M, so negative
 achromatic colors receive the same tonal weighting as their positive-magnitude
 counterparts. Let
@@ -1684,8 +1749,9 @@ globally unique even on ordinary positive inputs.
 
 Chroma gain is 2^(global_gain+dot(chroma coefficients,drivers)). Lightness
 adds the analogous driver-weighted coefficient sum to signed H. Both directions
-of achromatic sign crossing are allowed; the creative stage applies no
-lightness toe or H–K projection. H–K repair is deferred to guarded RGB export.
+of achromatic sign crossing are allowed. In the corrected reference, the
+adapted request then passes through H–K repair before the web's final positive
+Scale; the frozen Blender product retains its historical export-time repair.
 
 The following hue formula remains in DCTL only; its test oracle is
 `tests/support/dctl_reference.py`. For interpolated concentration
@@ -1704,17 +1770,18 @@ A(M,C,a) = M/100 * a r(C)/(1-a+a r(C)),  a=clip(strength,0,1)
 
 A is between zero and M/100. Only M=0 bypasses creative changes.
 
-## Signed coordinate inverse and carried energy
+## Historical signed coordinate inverse and carried energy
 
 Every creative request (H,a,b) determines signed energy with the equations
 above. Decode its achromatic response as
 A=A_w sign(E)|E|^(1/(2γ))/100^(1/γ), then solve the linear response equations.
 Changing H through B crosses achromatic zero continuously, without replacing
-an invalid request or falling back to an earlier stage. This raw-coordinate
-path uses no H–K guard or scalar inverse. Step 5.63 restores the H–K repair
-only for guarded RGB export and provides a standalone fixed-reference scalar
-inverse probe. RGB inverse baking validates its raw-inverse candidates against
-the complete guarded forward map, without an additional RGB fit.
+an invalid request or falling back to an earlier stage. The standalone
+raw-coordinate decoder has no H–K guard or scalar inverse. The corrected
+complete grade applies H–K repair inside Stage 3 and RGB inverse baking
+validates candidates against that complete map plus cube containment, without
+an additional RGB fit. The fixed-reference scalar inverse remains a
+mathematical probe, not the inverse of the full nonlinear grade.
 
 For a stage-2 anchor J0,H0,C0, carry E0=J0|J0|. Compute the small coordinate
 gap without subtracting nearly equal M and B:
@@ -1773,21 +1840,23 @@ A valid native AP1 result can contain negative Rec.709 scene components.
 
 ## Signed extension and arithmetic
 
-The complete nonlinear grade acts on signed normalized cones until a forward
-RGB export applies optional H–K repair followed by the cube guard. Stack raw
-appearance handoffs do not guard.
+The complete nonlinear grade acts on signed normalized cones through Stage 3,
+where H–K repair follows Adaptance and precedes Warp Scale. It returns a repaired
+appearance state. Stack handoffs carry that state and skip only RGB cube
+containment; RGB export applies cube containment without another H–K repair.
 There is no paired neutral lift/subtraction, full/tone/linear retry, invalid
 zero placeholder or fallback-level API. The final cube guard maps nonpositive
-post-repair E to black and E>=W² to cube white; H–K repair can rescue negative
-raw signed energy before that guard. Low-level `appearance.decode`
+post-repair E to black and E>=W² to cube white. On the nonnegative-H branch,
+H–K repair can rescue negative raw energy before Warp Scale; negative-H
+requests bypass repair and retain the black export policy. Low-level `appearance.decode`
 retains signed mathematical decoding with explicit pole-domain errors.
 Matrix conversions use neutral plus chromatic differences to preserve neutral
 rays without a tolerance boundary.
 
 `scaled.py` uses Float64 mantissas and Python integer binary exponents. It
 extends exponent range without adding arbitrary-precision real arithmetic.
-Vector and scaled paths evaluate the same raw grading, optional export-only
-H–K repair, and cube guard equations;
+Vector and scaled paths evaluate the same grading, in-Stage-3 H–K repair and
+cube guard equations;
 white-distance decoding avoids upper-face cancellation. Tests compare their
 overlapping domains and extreme finite control inputs.
 All such arithmetic still rounds at float64 mantissas; the proofs concern the
@@ -2000,8 +2069,11 @@ prerequisites; the tested Buck2 revision is recorded in the workspace checklist.
 
 Lean checks real-valued equations; it does not execute or verify Python/NumPy.
 Directed interval certificates cover the retained profile and cube-ray geometry;
-the new acceleration certificate remains unfinished. Independent Decimal and numerical tests check implementations. Active grading uses raw appearance and the validated cube guard. Historical
-cubic, pole and piecewise mapping theorem families remain audited separately.
+the new acceleration certificate remains unfinished. Independent Decimal and
+numerical tests check implementations. The corrected reference repairs
+appearance before Scale and uses the validated cube guard at RGB export.
+Historical cubic, pole and piecewise mapping theorem families remain audited
+separately.
 
 | Contract | Representative theorems |
 | --- | --- |
@@ -2009,9 +2081,10 @@ cubic, pole and piecewise mapping theorem families remain audited separately.
 | Response joins at ±400 (endpoint jets) | `selective_boundary_value_and_slope`, `selective_boundary_second_jet`, `selective_negative_boundary_jets` |
 | Direct neutral calibration and normalization | `selective_calibration_positive`, `selective_calibration_target`, `selective_normalization_neutral` |
 | Frozen half-influence mask | `selective_reach_bounds`, `selective_reach_half`, `selective_reach_scale`, `selective_reach_neutral_derivative`, `selective_reach_high_chroma_limit` |
+| Repaired Warp chart and Scale invariants | `warp_compact_coordinates_scale`, `warp_compact_radius_scale` in `WarpGuardChart.lean`; `warp_scale_energy`, `warp_scale_pad_invariant`, `warp_scale_radius_invariant`, `warp_positive_scale_signed_hk`, `warp_positive_scale_height_monotone`, `warp_positive_scale_height_strict_mono`, `warp_positive_scale_height_black`, `warp_repaired_scale_ja_nonnegative`, `warp_repaired_scale_ja_positive`, `warp_repaired_scale_energy`, `warp_repaired_scale_energy_nonnegative`, `warp_repaired_scale_energy_positive`, `warp_repaired_scale_pad_invariant`, `warp_repaired_scale_height_strict_mono` in `WarpRepairedScale.lean` |
 | Guarded Warp display | `warp_carried_zero_threshold`, `warp_carried_negative_threshold`, `warp_compact_hue_preserved`, `warp_compact_radius_bounds`, `warp_compact_radius_on_raw_rim`, `warp_compact_radius_strict_interior`, `warp_guarded_raw_rim_moves_interior`, `warp_guarded_chart_interior` in `WarpGuardChart.lean` |
-| Negative-energy Warp Scale ray | `web_negative_scale_signed_hk`, `web_negative_scale_height_positive_iff`, `web_negative_scale_height_derivative`, `web_negative_scale_slope_nonnegative_iff`, `web_negative_scale_slope_zero_iff`, `web_negative_scale_increasing_positive`, `web_negative_scale_physical_ceiling`, `web_negative_scale_turning_point`, `web_negative_scale_final_state_ceiling` in `WarpScaleRay.lean` |
-| Positive luminance after H–K repair and ideal cube guard | `hk_repaired_energy_positive`, `hk_repaired_ray_energy`, `hk_repaired_ray_ja_positive`, `hk_repaired_coordinates_energy`, `hk_repaired_ray_chroma_bounds`, `encoded_positive_energy_nonblack`, `encoded_positive_energy_luminance`, `hk_ideal_cube_positive_luminance`, `hk_cube_ray_guard_positive_luminance`, `hk_cube_ray_guard_positive_luminance_from_prefix`, `cube_guard_positive_energy`, `hk_cube_guard_positive_luminance`, `hk_repaired_zero_reference_counterexample`, `hk_zero_reference_cube_black` in `HKCubeLuminance.lean` |
+| Historical unrepaired negative-energy Warp Scale diagnostic | `web_negative_scale_signed_hk`, `web_negative_scale_height_positive_iff`, `web_negative_scale_height_derivative`, `web_negative_scale_slope_nonnegative_iff`, `web_negative_scale_slope_zero_iff`, `web_negative_scale_increasing_positive`, `web_negative_scale_physical_ceiling`, `web_negative_scale_turning_point`, `web_negative_scale_final_state_ceiling` in `WarpScaleRay.lean` |
+| Positive luminance after H–K repair and ideal cube guard | `hk_repaired_energy_nonnegative`, `hk_repaired_ray_ja_nonnegative`, `hk_repaired_energy_positive`, `hk_repaired_ray_energy`, `hk_repaired_ray_ja_positive`, `hk_repaired_coordinates_energy`, `hk_repaired_ray_chroma_bounds`, `encoded_positive_energy_nonblack`, `encoded_positive_energy_luminance`, `hk_ideal_cube_positive_luminance`, `hk_cube_ray_guard_positive_luminance`, `hk_cube_ray_guard_positive_luminance_from_prefix`, `cube_guard_positive_energy`, `hk_cube_guard_positive_luminance`, `hk_repaired_zero_reference_counterexample`, `hk_zero_reference_cube_black` in `HKCubeLuminance.lean` |
 | Linear solver and bounded saturation display | `linear_saturation_scale`, `linear_saturation_center_target`, bounded-saturation lemmas in `SelectiveAdaptance.lean`, `web_signed_saturation_scale` |
 | Tonal web radial calibration, monotonicity and C² | `web_radial_calibrates`, `web_radial_derivative`, `web_radial_strict_mono`, `web_radial_c2` |
 | Cardinal tone weights and actual hue sectors | `web_blend_anchors`, `web_s5_clamped_c2`, `web_hue_sector_slope_positive`, `web_hue_join_c2` |
@@ -2022,7 +2095,7 @@ cubic, pole and piecewise mapping theorem families remain audited separately.
 | Actual-cube projection | `cube_guard_identity`, `cube_guard_idempotent`, `cube_guard_preserves_ja_hue`, `cube_guard_chroma_nonincrease`, `cube_guard_containment` |
 | Saved tested-RGB projection | `validated_cube_guard_identity`, `validated_cube_guard_idempotent`, `validated_cube_guard_preserves_ja_hue`, `validated_cube_guard_nonincrease`, `validated_cube_guard_containment` |
 | Signed appearance and carried energy | `signed_hk_unique`, `hk_coordinate_inverse`, `carried_energy_reset`, `signed_compression_inverse` |
-| Export H–K knee and reset | `hk_guard_delta_bounds`, `hk_guard_energy_identity`, `hk_guard_energy_positive`, `hk_guard_energy_above_request`, `hk_guard_energy_c2`, `hk_guard_normalized_knee_jets`, `hk_guard_reset_energy`, `hk_guard_neutral_energy` |
+| H–K knee and reset | `hk_guard_delta_bounds`, `hk_guard_energy_identity`, `hk_guard_energy_positive`, `hk_guard_energy_above_request`, `hk_guard_energy_c2`, `hk_guard_normalized_knee_jets`, `hk_guard_reset_energy`, `hk_guard_neutral_energy` |
 | Bounded H–K repair and hue | `hk_guard_allocation_bounds`, `hk_guard_projection_energy`, `hk_guard_projection_chroma_bounds`, `hk_guard_projection_lightness_bounds`, `hk_guard_hue_preserved` |
 | Fixed-positive-reference H–K inverse | `hk_guard_inverse_parameter`, `hk_guard_inverse_energy_roundtrip`, `hk_guard_inverse_request_roundtrip`, `hk_guard_forward_inverse_residual`, `hk_guard_inverse_residual_strict_mono`, `hk_guard_inverse_exists`, `hk_guard_inverse_unique`, `hk_guard_inverse_bracket`, `hk_guard_active_branch_separation` |
 | Signed-to-legacy energy conversion | `hk_guard_signed_deficit_nonnegative_branch`, `hk_guard_signed_deficit_negative_branch` |

@@ -8,8 +8,7 @@ from ..color_core.scaled import Scalar as S, dot
 from .export import input_repair
 from .cube import context as cube_context
 from .cube_guard import guard as cube_guard, guard_scaled as cube_guard_scaled
-from .responses import compress, coordinates, requested_energy
-from ..perceptual_grade_core.model.hk_guard import GradedState, guard as hk_guard, guard_scaled as hk_guard_scaled
+from .responses import compress, coordinates, requested_energy, State
 
 
 WHITES = {'D65': (.3127, .329), 'D60': (.32161671, .33761992), 'ACES': (.32168, .33767),
@@ -156,7 +155,7 @@ class Model:
             if not np.isfinite(fit):
                 raise ValueError('Fit must be finite')
         self.tone = Tone(settings.tone)
-        self.color = Color(settings.color, self.tone, lambda: self.boundary)
+        self.color = Color(settings.color, self.tone, lambda: self.boundary, hk_guard=self.hk_guard)
         self.white_cones = CAT16 @ self.white
         self.cones_to_xyz = np.linalg.inv(CAT16) @ np.diag(self.white_cones)
         self.fl, self.aw = response_constants(self.tone.reference)
@@ -196,44 +195,33 @@ class Model:
         return State(source.q,source.ja*np.abs(source.ja))
 
     def grade_state(self, state):
-        """Grade raw signed coordinates; retain post-tone energy only for export."""
+        """Grade through pre-Scale H-K repair; hand off before cube export."""
         if state.q.dtype!=object and self.vector_controls:
             tone=self.tone.apply(state)
-            result=self.color.apply_state(tone)
-            reference = tone.ja*np.abs(tone.ja) if self.tone.active else state.energy.copy()
-            return GradedState(result.q, result.energy, reference)
-        coordinates=[];energies=[];references=[]
+            return self.color.apply_state(tone)
+        coordinates=[];energies=[]
         for q,j,e in zip(state.q.reshape(-1,3),state.ja.reshape(-1),state.energy.reshape(-1)):
             base,j=self.tone.scaled_apply(list(map(S,q)),S(j))
             reference = j*abs(j) if self.tone.active else S(e)
             request,energy=self.color.scaled_apply_state(base,j,reference)
             coordinates.append(request);energies.append(energy)
-            references.append(reference)
-        return GradedState(np.asarray(coordinates,dtype=object).reshape(state.q.shape),
-                           np.asarray(energies,dtype=object).reshape(state.energy.shape),
-                           np.asarray(references,dtype=object).reshape(state.energy.shape))
+        return State(np.asarray(coordinates,dtype=object).reshape(state.q.shape),
+                     np.asarray(energies,dtype=object).reshape(state.energy.shape))
 
-    def release_state(self, state, guard=False, *, reference_energy=None):
-        """Raw decode, or export with H-K repair followed by the cube guard.
+    def release_state(self, state, guard=False):
+        """Decode an appearance state, optionally applying only cube containment.
 
-        GradedState carries the post-tone reference. A bare State has no grade
-        context and gets only cube projection (e.g. an inverse seed); callers
-        can explicitly supply reference_energy for standalone repair probes.
+        H-K repair already occurs inside Stage 3, before final Scale. Repeating
+        it here would change the repaired saturation as Scale changes.
         """
-        if reference_energy is None:reference_energy=getattr(state,'reference_energy',None)
-        if not self.hk_guard:reference_energy=None
         if state.q.dtype!=object:
             q,e=state.q,state.energy
             if guard:
-                if reference_energy is not None:q,e=hk_guard(q,e,reference_energy)
                 return cube_guard(self.boundary,q,e)[2]
             return self.boundary.decode(q,e)
         out=[]
-        references=(np.broadcast_to(reference_energy,state.energy.shape).reshape(-1)
-                    if reference_energy is not None else [None]*state.energy.size)
-        for q,e,ref in zip(state.q.reshape(-1,3),state.energy.reshape(-1),references):
+        for q,e in zip(state.q.reshape(-1,3),state.energy.reshape(-1)):
             q=list(q)
-            if guard and ref is not None:q,e=hk_guard_scaled(q,e,ref)
             rgb=(cube_guard_scaled(self.boundary,q,e)[2] if guard
                  else self.boundary.decode_scaled(q,e))
             out.append([float(v) for v in rgb])
@@ -300,7 +288,6 @@ class Model:
         stage2_q, stage2_ja = self.tone.scaled_apply(q, ja)
         request, energy = self.color.scaled_apply_state(stage2_q, stage2_ja)
         if export:
-            if self.hk_guard:request,energy=hk_guard_scaled(request,energy,stage2_ja*abs(stage2_ja))
             return cube_guard_scaled(boundary,request,energy)[2]
         return self.boundary.decode_scaled(request, energy)
 
@@ -312,7 +299,6 @@ class Model:
         request, energy = result.q, result.energy
         if np.any((request[..., 0] > 0) & (request[..., 0] < 2.**-200)):return None
         if export:
-            if self.hk_guard:request,energy=hk_guard(request,energy,stage2.ja*np.abs(stage2.ja))
             return cube_guard(self.boundary, request, energy)[2]
         return self.boundary.decode(request, energy)
 

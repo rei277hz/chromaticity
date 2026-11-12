@@ -79,7 +79,7 @@ class GradingTests(unittest.TestCase):
         self.assertTrue(np.all((actual[:, :2] >= 0) & (actual[:, :2] <= 1)))
         for index in (0, 1):
             coefficients = tuple(float(i == index) for i in range(4))
-            grade = Color(ColorSettings(lightness=(coefficients,)*4), Tone(ToneSettings()))
+            grade = Color(ColorSettings(lightness=(coefficients,)*4), Tone(ToneSettings()), hk_guard=False)
             output = grade.apply(Appearance(q, ja))
             np.testing.assert_allclose(output[:, 0]-q[:, 0], actual[:, index], atol=2e-14)
             for point, anchor, expected in zip(q, ja, output):
@@ -100,7 +100,7 @@ class GradingTests(unittest.TestCase):
         boundary = Mock()
         boundary.capacity.side_effect = AssertionError('Classifier consulted gamut capacity')
         boundary.capacity_scaled.side_effect = AssertionError('Scaled classifier consulted gamut capacity')
-        color = Color(settings, Tone(ToneSettings()), boundary)
+        color = Color(settings, Tone(ToneSettings()), boundary, hk_guard=False)
         output = color.apply(Appearance(q, ja))
         gain = np.exp2(.2 + actual @ np.asarray(settings.chroma[0]))
         np.testing.assert_allclose(output[:, 1:], q[:,1:]*gain[:,None], rtol=3e-15, atol=3e-14)
@@ -122,7 +122,7 @@ class GradingTests(unittest.TestCase):
         np.testing.assert_allclose(actual[:, 2:], q[:, 1:]/np.hypot(c, 2)[:, None], rtol=2e-15)
         for point, anchor, expected in zip(q, ja, actual):
             np.testing.assert_array_equal(drivers(point, anchor), expected)
-        color = Color(ColorSettings(chroma=((.25, -.125, 0., 0.),)*4), Tone(ToneSettings()))
+        color = Color(ColorSettings(chroma=((.25, -.125, 0., 0.),)*4), Tone(ToneSettings()), hk_guard=False)
         expected = q[:, 1:]*np.exp2(actual[:, :2] @ [.25, -.125])[:, None]
         np.testing.assert_allclose(color.apply(Appearance(q, ja))[:, 1:], expected, rtol=3e-15)
         for point, anchor, target in zip(q, ja, expected):
@@ -165,7 +165,7 @@ class GradingTests(unittest.TestCase):
         values = hk_energy(b+np.array([-1., 0., 1.]), 80.)
         np.testing.assert_array_equal(np.sign(values), [-1., 0., 1.])
         base = Appearance(np.array([0., 10., 0.]), np.array(-np.sqrt(1980.)))
-        color = Color(ColorSettings(lightness=((0., 1., 0., 0.),)*4), Tone(ToneSettings()))
+        color = Color(ColorSettings(lightness=((0., 1., 0., 0.),)*4), Tone(ToneSettings()), hk_guard=False)
         self.assertGreater(color.apply(base)[0], 0.)
         scaled = color.scaled_apply([S(v) for v in base.q], S(float(base.ja)))
         np.testing.assert_allclose([float(v) for v in scaled], color.apply(base), atol=3e-14)
@@ -184,7 +184,7 @@ class GradingTests(unittest.TestCase):
 
     def test_creative_gain_can_reverse_chroma_order(self):
         tone = Tone(ToneSettings())
-        color = Color(replace(ColorSettings(), chroma=((0., -4., 0., 0.),)*4), tone)
+        color = Color(replace(ColorSettings(), chroma=((0., -4., 0., 0.),)*4), tone, hk_guard=False)
         c = np.array([10., 20., 40.])
         q = np.column_stack((np.full(3, 100.), c, np.zeros(3)))
         j = np.sqrt(10000-66*c)

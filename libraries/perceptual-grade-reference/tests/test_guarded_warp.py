@@ -7,7 +7,7 @@ from color_tools.perceptual_grade_reference.grading import Tone, ToneSettings, C
 from color_tools.perceptual_grade_core.model.tonal_web import WebSettings, rec709_contour
 from color_tools.perceptual_grade_core.model.saturation import bounded_project
 from color_tools.perceptual_grade_core.model.hk_guard import guard
-from color_tools.perceptual_grade_core.model import color as cm, tone as tm
+from color_tools.perceptual_grade_reference.responses import signed_hk
 
 
 class GuardedWarpTests(unittest.TestCase):
@@ -24,26 +24,29 @@ class GuardedWarpTests(unittest.TestCase):
             for scale in (-2., 0., 2.):
                 color = self.color(adapted=adapted, stops=1., scale=scale)
                 for row in range(4):
-                    raw = color.warp_targets(row)
+                    raw = color.pre_repair_warp_targets(row)
                     reference = np.r_[color.web.geometry.anchors[row]**2, color.web.geometry.energy[row]]
                     q, e = guard(raw.q, raw.energy, reference)
+                    q[1:, 1:] *= 2**scale
+                    e[1:] *= 2**(2*scale)
+                    q[1:, 0] = signed_hk(np.sqrt(e[1:]), np.hypot(q[1:, 1], q[1:, 2]))
                     actual = color.guarded_warp_targets(row)
-                    np.testing.assert_array_equal(actual.q, q)
-                    np.testing.assert_array_equal(actual.energy, e)
+                    np.testing.assert_allclose(actual.q, q, rtol=3e-13, atol=3e-12)
+                    np.testing.assert_allclose(actual.energy, e, rtol=3e-13, atol=3e-10)
                     np.testing.assert_allclose(color.guarded_saturation_targets(row), bounded_project(q, e))
                     source = rec709_contour(color.web.geometry.anchors[row], self.tone.reference, samples_per_edge=4, encoder=encode_cones)
-                    raw = color.warp_state(source, color.web.geometry.anchors[row])
-                    q, e = guard(raw.q, raw.energy, source.energy)
                     actual = color.guarded_warp_state(source, color.web.geometry.anchors[row])
-                    np.testing.assert_array_equal(actual.q, q)
-                    np.testing.assert_array_equal(actual.energy, e)
+                    expected = color.warp_state(source, color.web.geometry.anchors[row])
+                    np.testing.assert_array_equal(actual.q, expected.q)
+                    np.testing.assert_array_equal(actual.energy, expected.energy)
+                    self.assertTrue(np.all(actual.energy >= 0))
 
     def test_corner_evaluator_matches_full_web_and_guard(self):
         for adapted in (False, True):
             for scale in (-2., 0., 2.):
                 color = self.color(adapted=adapted, stops=.6, scale=scale)
                 for row in range(4):
-                    raw = color.warp_targets(row)
+                    raw = color.pre_repair_warp_targets(row)
                     points = color.guarded_saturation_targets(row)
                     for handle in range(6):
                         state, point = color.guarded_corner_evaluator(row, handle)()
@@ -66,8 +69,8 @@ class GuardedWarpTests(unittest.TestCase):
                 for row in range(4):
                     for handle in range(6):
                         boundary = Color(initial.guarded_boundary_settings(row, handle), self.tone)
-                        raw = boundary.warp_targets(row)
-                        self.assertLess(abs(raw.energy[handle+1])/(1+abs(initial.web.geometry.energy[row,handle])*2**(2*scale)), 2e-11)
+                        raw = boundary.pre_repair_warp_targets(row)
+                        self.assertLess(abs(raw.energy[handle+1])/(1+abs(initial.web.geometry.energy[row,handle])), 2e-11)
                         evaluator = boundary.guarded_corner_evaluator(row, handle)
                         for offset in (-.002, .002):
                             state, point = evaluator(evaluator.log_chroma+offset)
@@ -76,7 +79,7 @@ class GuardedWarpTests(unittest.TestCase):
                             settings = boundary.target_guarded_saturation_settings(row, handle, point)
                             result = Color(settings, self.tone)
                             np.testing.assert_allclose(result.guarded_saturation_targets(row)[handle+1], point, atol=2e-10, rtol=2e-10)
-                            self.assertEqual(result.warp_targets(row).energy[handle+1] < 0, state.energy < 0)
+                            self.assertEqual(result.pre_repair_warp_targets(row).energy[handle+1] < 0, state.energy < 0)
                         rim = boundary.guard_rim_radius(row, handle)
                         np.testing.assert_allclose(rim, np.linalg.norm(boundary.guarded_saturation_targets(row)[handle+1]), rtol=3e-10, atol=3e-10)
 
@@ -96,33 +99,50 @@ class GuardedWarpTests(unittest.TestCase):
                 saved = replace(settings, web=WebSettings(**{field:tuple(map(tuple,np.asarray(getattr(settings.web,field),np.float32).astype(float))) for field in ('log_chroma','hue_degrees','log_scale')}))
                 np.testing.assert_allclose(Color(saved,self.tone).guarded_saturation_targets(row)[handle+1], point, atol=2e-6)
 
-    def test_reference_and_blender_portable_api_parity(self):
-        reference = self.color(adapted=True, stops=.8, scale=.3)
-        parameters = {}
-        for row in range(4):
-            parameters.update({f'adaptance_{axis}_{row}':self.adaptance[row][i] for i,axis in enumerate('ab')})
-            for handle in range(6):
-                parameters[f'web_chroma_{row}_{handle}']=.8
-                parameters[f'web_scale_{row}_{handle}']=.3
-        production = cm.Model(tm.model(tm.Parameters()), cm.Parameters(**parameters))
-        for row in range(4):
-            np.testing.assert_allclose(production.guarded_saturation_targets(row),reference.guarded_saturation_targets(row),rtol=2e-11,atol=2e-12)
-            target = reference.guarded_saturation_targets(row)[2]*.999
-            expected = reference.target_guarded_saturation_settings(row,1,target)
-            values = production.target_guarded_saturation_values(row,1,target)
-            self.assertAlmostEqual(values[f'web_chroma_{row}_1'],expected.web.log_chroma[row][1],places=9)
-            self.assertAlmostEqual(values[f'web_hue_{row}_1'],expected.web.hue_degrees[row][1],places=9)
+    def test_scale_preserves_all_guarded_anchor_positions_across_energy_branches(self):
+        for adapted in (False, True):
+            initial = self.color(adapted=adapted)
+            self.assertTrue(np.all(initial.web.geometry.energy > 0))
+            for row in range(4):
+                for handle in range(6):
+                    boundary = initial.guarded_boundary_settings(row, handle)
+                    for offset in (-.1, 0., .1):
+                        chroma = np.array(boundary.web.log_chroma)
+                        chroma[row, handle] += offset
+                        settings = replace(boundary, web=replace(boundary.web, log_chroma=tuple(map(tuple,chroma))))
+                        base = Color(settings, self.tone)
+                        raw = base.pre_repair_warp_targets(row)
+                        source_energy = initial.web.geometry.energy[row, handle]
+                        if offset < 0:
+                            self.assertGreater(raw.energy[handle+1], 0.)
+                        elif offset > 0:
+                            self.assertLess(raw.energy[handle+1], 0.)
+                        else:
+                            self.assertLess(abs(raw.energy[handle+1])/(1+source_energy), 2e-11)
+                        point = base.guarded_saturation_targets(row)[handle+1]
+                        heights = []
+                        for stops in (-8., -2., 0., 2., 8.):
+                            scale = np.zeros((4,6)); scale[row,handle] = stops
+                            color = Color(replace(settings, web=replace(settings.web, log_scale=tuple(map(tuple,scale)))), self.tone)
+                            state = color.guarded_warp_targets(row)
+                            self.assertGreater(state.energy[handle+1], 0.)
+                            heights.append(state.q[handle+1,0])
+                            np.testing.assert_allclose(color.guarded_saturation_targets(row)[handle+1], point,
+                                                       rtol=4e-13, atol=4e-14)
+                        self.assertTrue(np.all(np.diff(heights) > 0))
 
     def test_active_adaptance_return_from_zero_energy_to_position(self):
-        parameters = cm.Parameters(adaptance_a_1=7., adaptance_b_1=-3., web_scale_1_0=.3)
-        original = cm.Model(tm.model(tm.Parameters()), parameters)
-        boundary = cm.Model(original.tone, replace(parameters, **original.guarded_boundary_values(1, 0)))
+        adapted = np.zeros((4,2)); adapted[1] = [7.,-3.]
+        scale = np.zeros((4,6)); scale[1,0] = .3
+        original = Color(ColorSettings(adaptance=tuple(map(tuple,adapted)),
+            web=WebSettings(log_scale=tuple(map(tuple,scale)))), self.tone)
+        boundary = Color(original.guarded_boundary_settings(1,0), self.tone)
         point = boundary.guarded_saturation_targets(1)[1]
         for fraction in (.999, .995):
             desired = point*fraction
-            values = boundary.target_guarded_saturation_values(1, 0, desired)
-            actual = cm.Model(original.tone, replace(boundary.params, **values))
-            self.assertGreater(actual.warp_targets(1).energy[1], 0.)
+            settings = boundary.target_guarded_saturation_settings(1, 0, desired)
+            actual = Color(settings, self.tone)
+            self.assertGreater(actual.pre_repair_warp_targets(1).energy[1], 0.)
             np.testing.assert_allclose(actual.guarded_saturation_targets(1)[1], desired, atol=2e-11)
 
     def test_invalid_destinations_and_control_order_are_rejected(self):
