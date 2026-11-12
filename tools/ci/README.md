@@ -62,9 +62,9 @@ including generic build rules and proof subtargets. Ordinary shared source,
 resource, and toolchain dependencies may still build as prerequisites for
 next-blender; their own validation targets are not run.
 
-CI uses the `ci` stage of [the Debian runtime](../../remote_execution/docker/Dockerfile)
-with local execution in a disposable checkout, without requiring private
-NativeLink services. The CI container allows 65,536 open files for concurrent
+CI uses its [Debian runtime](Dockerfile)
+with local execution in a disposable checkout, without requiring a remote
+execution service. The CI container allows 65,536 open files for concurrent
 processes. Its helper requires `CI_DISPOSABLE_CHECKOUT=1` and a `CI_CACHE_DIR`
 outside the checkout; it changes that checkout's managed `.buckconfig` block to
 local execution. Do not invoke it in an active development checkout.

@@ -1,4 +1,4 @@
-"""Buck2 NativeLink executors, configured by the root Buck configuration."""
+"""Buck2 remote execution rules, configured by the root Buck configuration."""
 
 load("@prelude//cfg/exec_platform:marker.bzl", "get_exec_platform_marker")
 
@@ -11,7 +11,10 @@ def remote_enabled():
 def platform_properties():
     image = read_root_config("remote_execution", "worker_image", "unconfigured")
     if remote_enabled() and not image.startswith("sha256:"):
-        fail("NativeLink needs remote_execution.worker_image set to the built Docker image ID; run remote_execution/re up")
+        fail(
+            "Set remote_execution.worker_image to the immutable identity of the " +
+            "configured Linux remote worker."
+        )
     return {
         "OSFamily": "linux",
         "ISA": "x86-64",
@@ -26,7 +29,7 @@ def test_profiles():
         return {}
     return {"remote": {
         "capabilities": platform_properties(),
-        "use_case": "perceptual-grade",
+        "use_case": "shared-linux",
         "local_enabled": False,
         "remote_cache_enabled": True,
     }}
@@ -45,7 +48,7 @@ def _platform_impl(ctx):
             remote_enabled = True,
             remote_cache_enabled = True,
             remote_execution_properties = ctx.attrs.properties,
-            remote_execution_use_case = "perceptual-grade",
+            remote_execution_use_case = "shared-linux",
             remote_output_paths = "output_paths",
             allow_cache_uploads = False,
         ),
@@ -56,7 +59,7 @@ def _platform_impl(ctx):
         PlatformInfo(label = str(label), configuration = configuration),
     ]
 
-nativelink_platform = rule(
+remote_execution_platform = rule(
     impl = _platform_impl,
     attrs = {
         "constraints": attrs.list(attrs.dep(providers = [ConfigurationInfo])),
@@ -74,7 +77,7 @@ def _platforms_impl(ctx):
         ),
     ]
 
-nativelink_platforms = rule(
+remote_execution_platforms = rule(
     impl = _platforms_impl,
     attrs = {"platforms": attrs.list(attrs.dep(providers = [ExecutionPlatformInfo]))},
 )

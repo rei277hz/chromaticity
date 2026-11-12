@@ -156,7 +156,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("BUCK_ISOLATION_DIR=ci", run)
             self.assertNotIn("GITHUB_TOKEN", " ".join(run))
             self.assertNotIn("must-not-be-forwarded", " ".join(run))
-            self.assertIn("./remote_execution/re local", run[-5])
+            self.assertIn("tools/ci/select_local.py /workspace", run[-5])
 
 
 if __name__ == "__main__":

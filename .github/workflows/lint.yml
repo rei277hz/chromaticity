@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-buck2
       - name: Select local execution
-        run: ./remote_execution/re local
+        run: python3 tools/ci/select_local.py .
       - name: Enforce the product-only CI selection
         run: python3 tools/ci/check_targets.py
       - run: buck2 uquery //products/perceptual-grade-next-blender/...

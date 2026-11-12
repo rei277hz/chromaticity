@@ -3,3 +3,18 @@ sh_binary(
     main = "format_fix.sh",
     visibility = ["PUBLIC"],
 )
+
+python_library(
+    name = "select_local_lib",
+    srcs = ["select_local.py"],
+    base_module = "chromaticity_tools.ci",
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "select_local",
+    srcs = ["test_select_local.py"],
+    base_module = "chromaticity_tools.ci_tests",
+    visibility = ["PUBLIC"],
+    deps = [":select_local_lib"],
+)
