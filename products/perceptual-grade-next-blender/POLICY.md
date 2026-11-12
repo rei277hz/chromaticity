@@ -12,14 +12,16 @@ the active work and immediately authorizes the latest successor. A successful
 superseded result can become a pending preview; an obsolete failure does not
 invalidate the newest demand. Absence is `None`, never an empty signature.
 
-Per-node policy stores ordered Stack Grade IDs, desired and last-applied kernel
-signatures, the current preparation correlation signature, applied quality,
-gesture state, and an optional current error. It decides whether settings need
-preparation, whether Stack changes require reconciliation, whether an async
-receipt may authorize a kernel build, and derives current, preview, pending, or
-error presentation. Blender translates host and runtime receipts into policy
-events and applies only effects the reducer returns. A last-good kernel remains
-visible as an updating preview until replacement;
+Per-node policy stores desired and last-applied kernel signatures, the current
+preparation correlation signature, applied quality, gesture state, and an
+optional current error. The runtime retains ordered Stack Grade IDs and sends
+scalar observations for stack changes and referenced Grade edits. The policy
+decides whether settings need preparation, whether those observations authorize
+reconciliation, whether an async receipt may authorize a kernel build, and
+derives current, preview, pending, or error presentation. Blender translates
+host and runtime receipts into policy events and applies only effects the
+reducer returns. A last-good kernel remains visible as an updating preview until
+replacement;
 when none exists, pending policy allows an identity placeholder. Only an exact
 full-quality current installation is ready for rendering. A current failure
 selects magenta output until a new request. Reducer effects alone authorize
@@ -33,6 +35,8 @@ job outcomes before fallible cleanup, so cleanup failure cannot hide the worker
 error. An incompletely cleaned helper remains owned until an explicit close
 retry succeeds. Queue ordering, payload transfer, and joins retain their existing
 adapter contracts and are not certified by this process-lifecycle proof.
+Helper effects are named scalar authorizations. The runtime translates them
+into the established command order, which runtime tests cover.
 
 Resource policy decides adoption from native observations and sequences disposal
 through subscription fencing, detachment, cache eviction, and fresh eligibility
@@ -63,9 +67,9 @@ allocated identities while invalidating previous observers and callbacks.
 Collection bookkeeping is trusted runtime code, covered by ordinary tests.
 Gesture proofs check scalar decisions using observations from that code: current
 tokens, participation, deferred completion, and undo permission. They do not prove
-list filtering, lookup, order preservation, or iteration. Stack Grade ordering
-remains an input to the node policy's rebuild decision because it affects the
-rendered result.
+list filtering, lookup, order preservation, or iteration. Stack order and
+membership are likewise observed by the runtime; node policy proves how its
+scalar rebuild authorizations are handled.
 
 Effect consumers retain native handles and exception details, execute authorized
 effects, and return observations. Native hit testing, event delivery, resource

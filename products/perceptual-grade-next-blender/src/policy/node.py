@@ -11,7 +11,6 @@ class State:
     applied_quality: Optional[str]
     gesture_active: bool
     error: Optional[str] = None
-    grade_ids: tuple[int, ...] = ()
     desired_preparation_signature: Optional[str] = None
 
 
@@ -32,8 +31,9 @@ class Event:
     signature: Optional[str] = None
     error: Optional[str] = None
     quality: str = "full"
-    grade_ids: tuple[int, ...] = ()
     preparation_signature: Optional[str] = None
+    stack_changed: bool = False
+    grade_referenced: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,6 @@ def new(
     applied_quality: Optional[str] = None,
     gesture_active: bool = False,
     error: Optional[str] = None,
-    grade_ids: tuple[int, ...] = (),
     desired_preparation_signature: Optional[str] = None,
 ) -> State:
     if applied_signature is None:
@@ -75,7 +74,6 @@ def new(
         applied_quality,
         gesture_active,
         error,
-        grade_ids,
         desired_preparation_signature,
     )
 
@@ -117,7 +115,7 @@ def _effects(
 
 
 def _transition(state: State, event: Event) -> tuple[State, Effects]:
-    """Reduce node lifecycle and ordered Grade Stack events."""
+    """Reduce node lifecycle and scalar Grade Stack observations."""
     if event.kind == "dispose":
         return new(), Effects(dispose=True)
 
@@ -125,23 +123,10 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
         return state, _effects(state)
 
     if event.kind == "stack_replace":
-        changed = state.grade_ids != event.grade_ids
-        next_state = State(
-            state.desired_signature,
-            state.applied_signature,
-            state.applied_quality,
-            state.gesture_active,
-            state.error,
-            event.grade_ids,
-            state.desired_preparation_signature,
-        )
-        return next_state, _effects(next_state, rebuild=changed)
+        return state, _effects(state, rebuild=event.stack_changed)
 
     if event.kind == "grade_changed":
-        rebuild = False
-        if len(event.grade_ids) == 1:
-            rebuild = event.grade_ids[0] in state.grade_ids
-        return state, _effects(state, rebuild=rebuild)
+        return state, _effects(state, rebuild=event.grade_referenced)
 
     if event.kind == "gesture_begin":
         next_state = State(
@@ -150,7 +135,6 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
             state.applied_quality,
             True,
             state.error,
-            state.grade_ids,
             state.desired_preparation_signature,
         )
         return next_state, _effects(next_state)
@@ -162,7 +146,6 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
             state.applied_quality,
             False,
             state.error,
-            state.grade_ids,
             state.desired_preparation_signature,
         )
         return next_state, _effects(next_state)
@@ -181,7 +164,6 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
             state.applied_signature if keep_applied else None,
             state.applied_quality if keep_applied else None,
             state.gesture_active,
-            grade_ids=state.grade_ids,
             desired_preparation_signature=preparation_signature,
         )
         prepare = (
@@ -212,7 +194,6 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
                 None,
                 state.gesture_active,
                 event.error,
-                state.grade_ids,
                 state.desired_preparation_signature,
             )
             return next_state, _effects(next_state)
@@ -229,7 +210,6 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
             event.signature,
             event.quality,
             state.gesture_active,
-            grade_ids=state.grade_ids,
             desired_preparation_signature=state.desired_preparation_signature,
         )
         return next_state, _effects(next_state)
@@ -273,7 +253,6 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
             event.signature,
             event.quality,
             state.gesture_active,
-            grade_ids=state.grade_ids,
             desired_preparation_signature=state.desired_preparation_signature,
         )
         return next_state, _effects(next_state)

@@ -28,6 +28,8 @@ class Gesture:
     press_y: int
     undo_owner: Literal["native", "adapter"]
     targets: tuple[Target, ...]
+    auto_key: bool = False
+    keyframe_frame: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -41,13 +43,14 @@ class State:
 class Action:
     kind: Literal[
         "invoke_observer", "schedule_handoff", "schedule_finish", "node_begin",
-        "node_release", "refresh", "forget_node", "clear_registry",
+        "node_release", "refresh", "keyframe", "forget_node", "clear_registry",
         "report_install_failure",
     ]
     window_id: Optional[int] = None
     token: Optional[int] = None
     gesture_token: Optional[int] = None
     node_id: Optional[int] = None
+    frame: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,8 @@ class Event:
     observed: tuple[Target, ...] = ()
     success: bool = False
     latest: Literal["none", "move", "finish"] = "none"
+    auto_key: bool = False
+    frame: Optional[float] = None
 
 
 def new() -> State:
@@ -277,20 +282,25 @@ def request_finish(state: State, window_id: int, token: Optional[int]) -> tuple[
         Action("schedule_finish", window_id, gesture_token=gesture.token),))
 
 
-def finish_actions(after: State, gesture: Gesture, observed: tuple[Target, ...]) -> Effects:
+def finish_actions(after: State, gesture: Gesture,
+                   observed: tuple[Target, ...]) -> Effects:
     actions: tuple[Action, ...] = ()
     changed = False
     for target in gesture.targets:
         target_changed = target.signature != signature_for(observed, target.node_id)
         action = policy.participant_finish(gesture.phase, has_target(observed, target.node_id),
                                            target_changed, active_for(after, target.node_id))
+        if target_changed and gesture.auto_key and gesture.keyframe_frame is not None:
+            actions += (Action("keyframe", gesture_token=gesture.token,
+                               node_id=target.node_id, frame=gesture.keyframe_frame),)
         if action is not None:
             actions += (Action(action, node_id=target.node_id),)
             changed = changed or target_changed
     return Effects(actions, gesture.window_id if policy.manual_undo(gesture.undo_owner, changed) else None)
 
 
-def finish(state: State, window_id: int, token: Optional[int], observed: tuple[Target, ...]) -> tuple[State, Effects]:
+def finish(state: State, window_id: int, token: Optional[int],
+           observed: tuple[Target, ...]) -> tuple[State, Effects]:
     index = gesture_index(state.gestures, window_id)
     if index is None:
         return state, Effects()
@@ -325,7 +335,8 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
     if event.kind in ("window_seen", "observer_install_result", "observer_lost"):
         return _observer_event(state, event)
     if event.kind == "window_gone":
-        updated, effects = finish(state, window, current_gesture(state, window), event.observed)
+        updated, effects = finish(state, window, current_gesture(state, window),
+                                  event.observed)
         return replace(updated, observers=without_observer(updated.observers, window)), effects
     if event.kind == "finish_observed":
         if not policy.observation_allowed(gesture_phase(state, window)):
@@ -339,12 +350,13 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         if not policy.input_allowed(current_observer(state, window), event.token):
             return state, Effects()
         if event.kind == "press":
-            updated, effects = finish(state, window, current_gesture(state, window), event.observed)
+            updated, effects = finish(state, window, current_gesture(state, window),
+                                      event.observed)
             if len(event.targets) == 0:
                 return updated, effects
             token = policy.allocate(updated.serial)
             gesture = Gesture(window, token, "armed", event.x, event.y,
-                              event.undo_owner, event.targets)
+                              event.undo_owner, event.targets, event.auto_key, event.frame)
             updated = replace(updated, serial=token, gestures=updated.gestures + (gesture,))
             actions = effects.actions
             if policy.press_handoff(event.token):

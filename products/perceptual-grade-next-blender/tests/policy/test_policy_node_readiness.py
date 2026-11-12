@@ -205,15 +205,14 @@ class KernelReadinessTests(unittest.TestCase):
         self.assertEqual(effects.prepare_signature, "grade-b")
         self.assertFalse(output_allowed(state))
 
-    def test_request_tracks_preparation_correlation_without_losing_stack_order(self):
-        state = new(grade_ids=(1, 2, 1))
+    def test_request_tracks_preparation_correlation(self):
+        state = new()
         state, effects = self.transition(
             state,
             "request",
             "kernel-a",
             preparation_signature="preparation-a",
         )
-        self.assertEqual(state.grade_ids, (1, 2, 1))
         self.assertEqual(state.desired_preparation_signature, "preparation-a")
         self.assertEqual(effects.prepare_signature, "preparation-a")
 
@@ -278,9 +277,9 @@ class KernelReadinessTests(unittest.TestCase):
             new(),
             new("grade-a", desired_preparation_signature="preparation-a"),
             self.installed(),
-            new("grade-b", "grade-a", "preview", True, grade_ids=(1, 2, 1),
+            new("grade-b", "grade-a", "preview", True,
                 desired_preparation_signature="preparation-b"),
-            new("grade-a", error="installation failed", grade_ids=(1, 2),
+            new("grade-a", error="installation failed",
                 desired_preparation_signature="preparation-a"),
         )
         for state in states:
@@ -295,7 +294,7 @@ class KernelReadinessTests(unittest.TestCase):
 
     def test_correlated_late_receipts_cannot_restore_disposed_demand(self):
         state, _ = step(
-            new("grade-a", "grade-a", "full", True, grade_ids=(1,),
+            new("grade-a", "grade-a", "full", True,
                 desired_preparation_signature="preparation-a"),
             Event("dispose"),
         )

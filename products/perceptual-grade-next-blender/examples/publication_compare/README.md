@@ -17,6 +17,12 @@ The publication adapters consume source-bound policies verified by the
 invariant framework. The example is intended for inspecting and comparing
 publication behavior; it does not include the full Grade color transform.
 
+The Versioned strategy owns its pool policy in `policy/parameter_publication.py`,
+effect consumer in `runtime/parameter_publication.py`, and proof requirements in
+`requirements/parameter_publication.inv` within this example. These components
+provide the example's source-bound proof evidence; only the policy and effect
+consumer ship in the comparison extension.
+
 To capture a comparison session, use F3 in Blender and run **Publication
 Compare: Start Drag Trace** before moving the Exposure slider. Run **Publication
 Compare: Stop Drag Trace** to flush and close the recording. Unregistering the

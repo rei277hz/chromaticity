@@ -77,8 +77,9 @@ class GradeResources:
         return self._serial
 
     def owner(self, node):
-        if node.pg_grade is not None:
-            return node.pg_grade, None
+        grade = getattr(node, "pg_grade", None)
+        if grade is not None:
+            return grade, None
         tree = node.id_data
         if not tree.is_embedded_data:
             return tree, node.name

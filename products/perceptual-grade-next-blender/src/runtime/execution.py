@@ -26,6 +26,63 @@ class HelperError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class _Action:
+    kind: str
+    job_id: Optional[int] = None
+    error: Optional[str] = None
+    stage: Optional[str] = None
+
+
+def _actions_for(effects):
+    """Translate scalar policy authorizations in their established order."""
+    actions = []
+    if effects.clear_deadline:
+        actions.append(_Action("clear_deadline"))
+    if effects.deadline_stage is not None:
+        actions.append(_Action("deadline", stage=effects.deadline_stage))
+    if effects.launch:
+        actions.append(_Action("launch"))
+    if effects.accept:
+        actions.append(_Action("accept"))
+    if effects.pump:
+        actions.append(_Action("pump"))
+
+    publish_kinds = {
+        "preview": "publish_preview",
+        "result": "publish_result",
+        "failure": "publish_failure",
+        "cancelled": "publish_cancelled",
+    }
+    if effects.publish_kind is not None:
+        actions.append(_Action(
+            publish_kinds[effects.publish_kind], effects.publish_id,
+            effects.publish_error,
+        ))
+    if effects.probe_publish_kind is not None:
+        actions.append(_Action(
+            publish_kinds[effects.probe_publish_kind], effects.probe_publish_id,
+            effects.probe_publish_error,
+        ))
+    if effects.dispatch_id is not None:
+        actions.append(_Action("dispatch", effects.dispatch_id))
+    if effects.send_cancel_id is not None:
+        actions.append(_Action("send_cancel", effects.send_cancel_id))
+    if effects.send_shutdown:
+        actions.append(_Action("send_shutdown"))
+    if effects.terminate:
+        actions.append(_Action("terminate"))
+    if effects.kill:
+        actions.append(_Action("kill"))
+    if effects.queue_kind == "fail":
+        actions.append(_Action("fail_queued", error=effects.queue_error))
+    elif effects.queue_kind == "cancel":
+        actions.append(_Action("cancel_queued"))
+    if effects.cleanup:
+        actions.append(_Action("cleanup"))
+    return tuple(actions)
+
+
 @dataclass
 class _Job:
     identity: int
@@ -249,7 +306,7 @@ class HelperRuntime:
 
     def _transition(self, event):
         self.state, effects = helper_policy.step(self.state, event)
-        for action in effects.actions:
+        for action in _actions_for(effects):
             self._apply(action)
 
     def _apply(self, action):

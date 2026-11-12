@@ -47,6 +47,14 @@ class PublicationGateTests(unittest.TestCase):
         bpy, running, manager = self.host(**kwargs)
         return self.module.PublicationGate(bpy), running, manager
 
+    def publish(self, ticket, signature="grade-frame"):
+        event = self.module.render_preflight.Event(
+            "published", ticket.render_identity, ticket.scene_identity,
+            ticket.frame, ticket.subframe, ticket.generation,
+            signature=signature, published_signature=signature,
+        )
+        self.assertEqual(ticket.resolve(event).action, "release")
+
     def test_admits_one_nonreentrant_main_thread_commit(self):
         gate, _running, _manager = self.gate()
         self.assertFalse(gate.blocked())
@@ -88,10 +96,25 @@ class PublicationGateTests(unittest.TestCase):
     def test_unmatched_finish_does_not_release_another_evaluation(self):
         gate, _running, _manager = self.gate()
         gate.evaluation_started("compositor", 11)
+        self.assertTrue(gate.evaluation_active("compositor", 11))
+        self.assertFalse(gate.evaluation_active("compositor", 12))
+        self.assertFalse(gate.evaluation_active("render", 11))
         gate.evaluation_finished("compositor", 12)
         self.assertTrue(gate.blocked())
+        self.assertTrue(gate.evaluation_active("compositor", 11))
         gate.evaluation_finished("compositor", 11)
+        self.assertFalse(gate.evaluation_active("compositor", 11))
         self.assertFalse(gate.blocked())
+
+    def test_evaluation_active_waits_for_every_matching_receipt(self):
+        gate, _running, _manager = self.gate()
+        gate.evaluation_started("render", 11)
+        gate.evaluation_started("render", 11)
+        self.assertTrue(gate.evaluation_active("render", 11))
+        gate.evaluation_finished("render", 11)
+        self.assertTrue(gate.evaluation_active("render", 11))
+        gate.evaluation_finished("render", 11)
+        self.assertFalse(gate.evaluation_active("render", 11))
 
     def test_commit_rechecks_jobs_after_initial_admission(self):
         observations = iter((False, True, False))
@@ -247,6 +270,9 @@ class PublicationGateTests(unittest.TestCase):
             gate.reset()
         self.assertEqual(gate.progress_state.epoch, epoch)
         running.clear()
+        with self.assertRaisesRegex(self.module.PublicationDeferred, "active evaluation"):
+            gate.reset()
+        gate.evaluation_finished("compositor", 11, successful=True)
         gate.reset()
         self.assertIsNone(gate.progress_state.epoch)
         self.assertIsNone(gate.current_compositor())
@@ -306,7 +332,7 @@ class PublicationGateTests(unittest.TestCase):
         results = []
 
         def callback():
-            ticket = gate.request_render_preflight(17)
+            ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
             tickets.append(ticket)
             submitted.set()
             self._wait(ticket, results)
@@ -323,6 +349,7 @@ class PublicationGateTests(unittest.TestCase):
             self.assertFalse(ticket._finished.is_set())
             self.assertFalse(gate.quiescent())
             self.assertTrue(gate.retirement_allowed())
+            self.publish(ticket)
         worker.join(5)
 
         self.assertFalse(worker.is_alive())
@@ -335,7 +362,7 @@ class PublicationGateTests(unittest.TestCase):
     def test_retirement_needs_entered_preflight_and_retains_reader_exclusions(self):
         gate, running, manager = self.gate(jobs=("RENDER",), locked=True)
         gate.evaluation_started("render", 17)
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         self.assertFalse(gate.retirement_allowed())
         self.assertIs(gate.take_render_preflight(), ticket)
         self.assertFalse(gate.retirement_allowed())
@@ -350,6 +377,7 @@ class PublicationGateTests(unittest.TestCase):
             self.assertFalse(gate.retirement_allowed())
             gate.evaluation_finished("compositor", 11)
             self.assertTrue(gate.retirement_allowed())
+            self.publish(ticket)
         self.assertFalse(gate.retirement_allowed())
         gate.evaluation_finished("render", 17)
         running.clear()
@@ -369,8 +397,8 @@ class PublicationGateTests(unittest.TestCase):
     def test_wrong_ticket_cannot_complete_or_release_active_ticket(self):
         gate, running, _manager = self.gate(jobs=("RENDER",))
         gate.evaluation_started("render", 17)
-        first = gate.request_render_preflight(17)
-        second = gate.request_render_preflight(17)
+        first = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
+        second = gate.request_render_preflight(17, 17, 2, float(0.0).hex())
         self.assertIs(gate.take_render_preflight(), first)
 
         with self.assertRaisesRegex(self.module.PublicationDeferred, "not active"):
@@ -381,11 +409,11 @@ class PublicationGateTests(unittest.TestCase):
         self.assertFalse(second._finished.is_set())
         self.assertIsNone(gate.take_render_preflight())
         with gate.render_preflight(first):
-            pass
+            self.publish(first)
         self.assertTrue(first._finished.is_set())
         self.assertIs(gate.take_render_preflight(), second)
         with gate.render_preflight(second):
-            pass
+            self.publish(second)
         self.assertTrue(second._finished.is_set())
         gate.evaluation_finished("render", 17)
         running.clear()
@@ -393,7 +421,7 @@ class PublicationGateTests(unittest.TestCase):
     def test_preflight_rejects_another_render_job_or_identity(self):
         gate, running, _manager = self.gate(jobs=("RENDER", "RENDER_PREVIEW"))
         gate.evaluation_started("render", 17)
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         self.assertIs(gate.take_render_preflight(), ticket)
         with self.assertRaisesRegex(self.module.PublicationDeferred, "one expected"):
             with gate.render_preflight(ticket):
@@ -405,8 +433,11 @@ class PublicationGateTests(unittest.TestCase):
 
         gate, running, _manager = self.gate(jobs=("RENDER",))
         gate.evaluation_started("render", 17)
-        with self.assertRaises(self.module.PublicationDeferred):
-            gate.request_render_preflight(99)
+        ticket = gate.request_render_preflight(99, 99, 1, float(0.0).hex())
+        self.assertTrue(ticket.failure_authorized)
+        self.assertIs(gate.take_render_preflight(), ticket)
+        self.assertTrue(gate.finish_render_preflight_failure(ticket))
+        self.assertIsInstance(ticket._error, self.module.PublicationDeferred)
         self.assertFalse(gate.has_render_preflight)
         gate.evaluation_finished("render", 17)
         running.clear()
@@ -414,7 +445,7 @@ class PublicationGateTests(unittest.TestCase):
     def test_preflight_failure_wakes_worker_and_lifecycle_reset_cancels_waiter(self):
         gate, running, manager = self.gate(jobs=("RENDER",))
         gate.evaluation_started("render", 17)
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         results = []
         worker = threading.Thread(target=lambda: self._wait(ticket, results))
         worker.start()
@@ -430,7 +461,7 @@ class PublicationGateTests(unittest.TestCase):
         self.assertIsInstance(results[0], self.module.PublicationDeferred)
 
         manager.windows[0].modal_operators.clear()
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         results.clear()
         worker = threading.Thread(target=lambda: self._wait(ticket, results))
         worker.start()
@@ -440,6 +471,7 @@ class PublicationGateTests(unittest.TestCase):
         self.assertFalse(ticket._finished.is_set())
         running.clear()
         manager.is_interface_locked = False
+        gate.evaluation_finished("render", 17)
         gate.reset()
         worker.join(5)
         self.assertFalse(worker.is_alive())
@@ -450,20 +482,42 @@ class PublicationGateTests(unittest.TestCase):
     def test_direct_main_thread_render_uses_scope_without_waiting(self):
         gate, _running, _manager = self.gate()
         gate.evaluation_started("render", 17)
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         self.assertIs(gate.take_render_preflight(), ticket)
         with gate.render_preflight(ticket):
-            pass
+            self.publish(ticket)
         self.assertTrue(ticket._finished.is_set())
         self.assertIsNone(ticket._error)
         with self.assertRaisesRegex(RuntimeError, "main thread cannot wait"):
             ticket.wait()
         gate.evaluation_finished("render", 17)
 
+    def test_terminal_failure_waits_for_host_fail_closed_before_worker_release(self):
+        gate, _running, _manager = self.gate(jobs=("RENDER", "OBJECT_BAKE"))
+        gate.evaluation_started("render", 17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
+        results = []
+        worker = threading.Thread(target=lambda: self._wait(ticket, results))
+        worker.start()
+        self.assertIs(gate.take_render_preflight(), ticket)
+        with self.assertRaisesRegex(self.module.PublicationDeferred, "OBJECT_BAKE"):
+            with gate.render_preflight(ticket, deliver_failure=False):
+                self.fail("a conflicting bake job was admitted")
+        self.assertTrue(ticket.failure_authorized)
+        self.assertFalse(ticket._finished.is_set())
+        self.assertIs(gate._preflight_active, ticket)
+        self.assertTrue(gate.finish_render_preflight_failure(ticket))
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0], self.module.PublicationDeferred)
+        self.assertFalse(gate.has_render_preflight)
+        gate.evaluation_finished("render", 17)
+
     def test_deferred_worker_preflight_keeps_waiter_blocked_until_reader_retires(self):
         gate, running, _manager = self.gate(jobs=("RENDER", "SHADER_COMPILATION"))
         gate.evaluation_started("render", 17)
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         results = []
         worker = threading.Thread(target=lambda: self._wait(ticket, results))
         worker.start()
@@ -476,7 +530,7 @@ class PublicationGateTests(unittest.TestCase):
         running.remove("SHADER_COMPILATION")
         self.assertIs(gate.take_render_preflight(), ticket)
         with gate.render_preflight(ticket, defer=True):
-            pass
+            self.publish(ticket)
         worker.join(5)
         self.assertFalse(worker.is_alive())
         self.assertEqual(results, [None])
@@ -485,21 +539,21 @@ class PublicationGateTests(unittest.TestCase):
     def test_preflight_only_exempts_expected_render_not_compositor_or_failures(self):
         gate, running, manager = self.gate(jobs=("RENDER",), locked=True)
         gate.evaluation_started("render", 17)
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         self.assertIs(gate.take_render_preflight(), ticket)
         with gate.render_preflight(ticket):
-            pass
+            self.publish(ticket)
         self.assertIsNone(ticket._error)
 
         gate.evaluation_started("compositor", 17)
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         self.assertIs(gate.take_render_preflight(), ticket)
         with self.assertRaisesRegex(self.module.PublicationDeferred, "Another native"):
             with gate.render_preflight(ticket):
                 self.fail("render preflight exempted an overlapping compositor")
         gate.evaluation_finished("compositor", 17)
 
-        ticket = gate.request_render_preflight(17)
+        ticket = gate.request_render_preflight(17, 17, 1, float(0.0).hex())
         self.assertIs(gate.take_render_preflight(), ticket)
         failure = ValueError("exact preparation failed")
         results = []

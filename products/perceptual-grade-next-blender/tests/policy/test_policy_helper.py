@@ -9,10 +9,6 @@ def transition(state, kind, **values):
     return policy.step(state, policy.Event(kind, state.generation, **values))
 
 
-def kinds(effects):
-    return tuple(action.kind for action in effects.actions)
-
-
 class HelperPolicyTests(unittest.TestCase):
     def probing(self):
         state, _effects = policy.step(policy.new(), policy.Event("launch", 1, job_id=1))
@@ -30,7 +26,8 @@ class HelperPolicyTests(unittest.TestCase):
                                             transport="channel")
                 self.assertEqual(state.phase, "stopping")
                 self.assertFalse(policy.admitting(state))
-                self.assertEqual(kinds(effects), ("deadline", "send_shutdown"))
+                self.assertEqual(effects.deadline_stage, "stopping")
+                self.assertTrue(effects.send_shutdown)
                 late = transition(state, "probe_result", job_id=1, success=True)
                 self.assertEqual(late, (state, policy.Effects()))
                 self.assertEqual(transition(state, "submit", job_id=2),
@@ -41,20 +38,29 @@ class HelperPolicyTests(unittest.TestCase):
         state, effects = transition(state, "cancel", job_id=1)
         self.assertEqual(state.phase, "terminating")
         self.assertEqual(state.probe_id, 1)
-        self.assertEqual(kinds(effects), ("deadline", "terminate"))
+        self.assertEqual(effects.deadline_stage, "terminating")
+        self.assertTrue(effects.terminate)
         state, effects = transition(state, "exited", exit_code=-15, error="signal")
         self.assertEqual(state.phase, "retiring")
-        self.assertEqual(kinds(effects),
-                         ("clear_deadline", "publish_cancelled", "cancel_queued", "cleanup"))
+        self.assertTrue(effects.clear_deadline)
+        self.assertIsNone(effects.publish_kind)
+        self.assertEqual(effects.probe_publish_kind, "cancelled")
+        self.assertEqual(effects.probe_publish_id, 1)
+        self.assertEqual(effects.queue_kind, "cancel")
+        self.assertTrue(effects.cleanup)
         self.assertIsNone(state.probe_id)
 
     def test_failure_is_published_before_cleanup_and_cannot_be_republished(self):
         state, _ = transition(self.ready(), "submit", job_id=2)
         state, _ = transition(state, "failure", error="worker failed")
         state, effects = transition(state, "exited", error="signal", exit_code=-15)
-        self.assertEqual(kinds(effects),
-                         ("clear_deadline", "publish_failure", "fail_queued", "cleanup"))
-        self.assertEqual(effects.actions[1].error, "worker failed")
+        self.assertTrue(effects.clear_deadline)
+        self.assertEqual(effects.publish_kind, "failure")
+        self.assertEqual(effects.publish_id, 2)
+        self.assertEqual(effects.publish_error, "worker failed")
+        self.assertEqual(effects.queue_kind, "fail")
+        self.assertEqual(effects.queue_error, "worker failed")
+        self.assertTrue(effects.cleanup)
         self.assertEqual(transition(state, "exited"), (state, policy.Effects()))
         state, effects = transition(state, "cleanup_result", error="unlink failed")
         self.assertEqual(state.phase, "retiring")
@@ -63,7 +69,7 @@ class HelperPolicyTests(unittest.TestCase):
         self.assertEqual(transition(state, "poll", transport="channel"),
                          (state, policy.Effects()))
         state, effects = transition(state, "shutdown")
-        self.assertEqual(kinds(effects), ("cleanup",))
+        self.assertTrue(effects.cleanup)
         state, effects = transition(state, "cleanup_result", success=True)
         self.assertEqual(state.phase, "closed")
         self.assertEqual(state.error, "worker failed")
@@ -74,10 +80,12 @@ class HelperPolicyTests(unittest.TestCase):
         state, _ = transition(self.ready(), "submit", job_id=2)
         cancelled, effects = transition(state, "cancel", job_id=2)
         self.assertEqual(cancelled, state)
-        self.assertEqual(kinds(effects), ("send_cancel",))
+        self.assertEqual(effects.send_cancel_id, 2)
         state, effects = transition(cancelled, "cancelled", job_id=2, next_id=3)
         self.assertEqual(state.active_id, 3)
-        self.assertEqual(kinds(effects), ("publish_cancelled", "dispatch"))
+        self.assertEqual(effects.publish_kind, "cancelled")
+        self.assertEqual(effects.publish_id, 2)
+        self.assertEqual(effects.dispatch_id, 3)
 
     def test_terminal_phases_never_poll_any_transport(self):
         for phase in ("retiring", "failed", "closed"):
@@ -94,13 +102,15 @@ class HelperPolicyTests(unittest.TestCase):
                          (state, policy.Effects()))
         state, effects = transition(state, "timeout", stage="stopping")
         self.assertEqual(state.phase, "terminating")
-        self.assertEqual(kinds(effects), ("deadline", "terminate"))
+        self.assertEqual(effects.deadline_stage, "terminating")
+        self.assertTrue(effects.terminate)
         state, effects = transition(state, "timeout", stage="terminating")
         self.assertEqual(state.phase, "killing")
-        self.assertEqual(kinds(effects), ("deadline", "kill"))
+        self.assertEqual(effects.deadline_stage, "killing")
+        self.assertTrue(effects.kill)
         state, effects = transition(state, "timeout", stage="killing")
         self.assertEqual(state.phase, "unretired")
-        self.assertEqual(kinds(effects), ("clear_deadline",))
+        self.assertTrue(effects.clear_deadline)
         self.assertIsNotNone(policy.close_problem(state))
         self.assertEqual(transition(state, "shutdown"), (state, policy.Effects()))
 
@@ -114,7 +124,8 @@ class HelperPolicyTests(unittest.TestCase):
     def test_successful_hello_ends_startup_deadline(self):
         state, _ = policy.step(policy.new(), policy.Event("launch", 1, job_id=1))
         state, effects = transition(state, "hello")
-        self.assertEqual(kinds(effects), ("clear_deadline", "dispatch"))
+        self.assertTrue(effects.clear_deadline)
+        self.assertEqual(effects.dispatch_id, 1)
         self.assertEqual(transition(state, "timeout", stage="starting"),
                          (state, policy.Effects()))
 

@@ -56,9 +56,11 @@ try:
     status_node = SimpleNamespace(get=lambda key: {
         nodes._NODE_PENDING: "status.showing_last_good",
         nodes._NODE_ERROR: True,
+        nodes._NODE_ANIMATION_ERROR: True,
     }.get(key))
     assert nodes._pending_message(status_node) == "正在更新 - 显示上一个有效结果"
     assert nodes._kernel_error_text(status_node) == "调色输出为洋红色"
+    assert nodes._animation_error_text(status_node) == "无法创建动画关键帧"
 
     view.use_translate_interface = False
     view.use_translate_tooltips = True
@@ -71,6 +73,7 @@ try:
     ) == "曝光量以档为单位。+1 会使线性 RGB 数值加倍。"
     assert nodes._pending_message(status_node) == "Updating - showing last-good result"
     assert nodes._kernel_error_text(status_node) == "Grade output is magenta"
+    assert nodes._animation_error_text(status_node) == "Could not create an animation keyframe"
 finally:
     view.language = old_language
     view.use_translate_interface = old_interface

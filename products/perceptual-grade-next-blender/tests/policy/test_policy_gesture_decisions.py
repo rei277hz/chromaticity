@@ -46,6 +46,19 @@ class GestureDecisionTests(unittest.TestCase):
             self.assertIsNone(effects.undo_window)
             permission.assert_called_once_with("adapter", True)
 
+    def test_changed_auto_key_target_authorizes_keyframe_effect(self):
+        state, _ = runtime.step(runtime.new(), runtime.Event(
+            "press", window_id=1, undo_owner="native", auto_key=True,
+            frame=6.25, targets=(runtime.Target(10, "before"),)))
+        token = runtime.current_gesture(state, 1)
+        _state, effects = runtime.step(state, runtime.Event(
+            "finish", window_id=1, gesture_token=token, auto_key=False,
+            observed=(runtime.Target(10, "after"),)))
+        self.assertEqual(effects.actions, (
+            runtime.Action("keyframe", gesture_token=token, node_id=10, frame=6.25),
+            runtime.Action("refresh", node_id=10),
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
