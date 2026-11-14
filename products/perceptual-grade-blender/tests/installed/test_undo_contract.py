@@ -36,7 +36,7 @@ class NativeUndoContractTests(unittest.TestCase):
 
     def test_handler_exceptions_do_not_veto_native_replacement(self):
         report = self.probe('failure')
-        self.assertEqual(report['version'], [5, 2, 2])
+        self.assertEqual(report['version'], [5, 3, 0])
         self.assertEqual(report['result'], ['FINISHED'])
         self.assertEqual(report['events'], [
             ['before', 2], ['pre_failed', 2], ['pre_next', 2],

@@ -1,5 +1,7 @@
 # Next Blender policy machines
 
+<a id="next-policy.overview"></a>
+
 This chapter documents the policy layer in `products/perceptual-grade-next-blender`.
 That product is a separate generation from the historical extension described by
 the other development chapters. The policies are deliberately host-free Python:
@@ -22,6 +24,8 @@ the state transition testable while making the side-effect boundary explicit.
 <p class="figure-caption">Grade settings remain authoritative. Runtime observations enter a pure reducer; only its effects authorize adapter operations, and receipts return as events. The parameter/image transactions are comparison examples, while compositor callbacks also use the production gate.</p>
 
 ## What a policy stores
+
+<a id="next-policy.contract"></a>
 
 The design goal is to store independent facts and derive readiness from them.
 The simplification candidates below identify places where the implementation
@@ -49,16 +53,40 @@ under their stated assumptions. It does not prove Blender's native observations,
 affinity, worker implementation, or collection bookkeeping. The runtime tests
 and installed Blender tests cover those adapter premises.
 
-Read an edge as **event or receipt / requested effect**. A box containing
-`a -> b -> c` compresses successive states to keep the print figure legible;
-each operation still produces its own receipt. A slash between phase names
-groups alternatives with the same outgoing decisions. These are drawings of
-the current implementation, not proposed atomic operations or merged phases.
-The prose describes conditional entry points and less common transitions.
-Callout codes such as **B1** refer to the simplification discussion beside
-that figure.
+Read an edge as **event or receipt [condition] / requested effect**; the condition
+and effect are omitted when unnecessary. Each box represents one phase, or one
+configuration of facts for a policy that has no phase field. Phase labels match
+the implementation; configuration labels describe derived states rather than
+additional stored flags. Sequential phases always have separate boxes.
+`running` and `desired` abbreviate preparation signatures; `current` and
+`pending` in the observer figure abbreviate tokens. The join's `pending` count
+is derived from its three child flags, not stored as another counter. For
+synchronous transactions, `success` and `failed` abbreviate operation receipts.
+Entering a synchronous operation phase requests its namesake effect; those
+repeated effect names are omitted from edges. A semicolon separates alternative
+events. The helper's operation effects are described in its lifecycle section.
+
+A **double border** marks an absorbing state: later events cannot leave it.
+Some policies name that phase `terminal`; others retain names such as `released`
+or `closed`. Finality does not imply success. The publication transactions share
+their `terminal` phase between successful and failed paths, and resource
+retirement can finish without deleting anything. Ordinary states such as `idle`,
+node `error`, and helper `failed` can still transition and have a single border.
+The policy/effect-consumer overview above depicts data flow rather than states.
+
+The figures emphasize lifecycle decisions; the prose describes correlation
+checks, unchanged-state receipts, and less common transitions. Explanatory
+notes and the numbered simplification candidates stay outside the boxes.
+
+The sequence diagrams below follow those decisions through their effect
+consumers and Blender operations. Time runs downward. `opt` encloses optional
+work, `loop` repeated work, `alt` alternative paths, and `par` concurrent work.
+The frames describe control flow rather than additional stored states. Related
+policies share a sequence when they participate in the same interaction.
 
 ## Preparation: latest demand, one worker
+
+<a id="next-policy.preparation"></a>
 
 `src/policy/preparation.py` is used by `src/runtime/preparation.py`. Its state is
 just `desired_signature` and `running_signature`. A request always replaces the
@@ -84,6 +112,8 @@ slot before the executor function returns.
 
 ### The three-child join
 
+<a id="next-policy.preparation-join"></a>
+
 `src/policy/preparation_join.py` is the aggregate barrier used by
 `src/runtime/grade_preparation.py`. `new(signature)` marks `linear`, `tone`, and
 `boundary` pending. Each matching component receipt clears one bit. The final
@@ -93,6 +123,10 @@ returned only at that final point. Stale and duplicate receipts do nothing.
 ![The three-component preparation join](../assets/illustrations/next-policy/01b-preparation-join.svg)
 
 <p class="figure-caption">All three physical children retire before aggregate completion, including after an error. The runtime already wraps the receives in a shielded `asyncio.gather`; that is a scheduling fence in addition to this reducer's decision.</p>
+
+![Preparation join workflow](../assets/illustrations/next-policy/01b-preparation-join-sequence.svg)
+
+<p class="figure-caption">Each worker sends a component receipt to the join. `par` permits any completion order; the final distinct receipt authorizes assembly. Cancellation still waits for every physical worker through the shielded group.</p>
 
 The preparer launches all three functions before awaiting any one of them. It
 then assembles the `PreparedGrade` only after the join authorizes completion,
@@ -108,6 +142,8 @@ shielding, and leaves proof evidence for those properties. The current reducer
 is verbose, but its contract is easy to audit independently of asyncio.
 
 ## Node output policy
+
+<a id="next-policy.node-output"></a>
 
 `src/policy/node.py` is the per-node decision layer. The runtime creates and
 updates it from `nodes.py` and consumes its effects in `_consume_effects`. The
@@ -132,6 +168,24 @@ the fail-closed output. A later request clears that error and starts again;
 `recovery_result` can also clear it when recovery installs a full result for
 the current non-`None` signature.
 
+The build consumer instantiates a native tree from the product's generated
+`node_templates.blend` library and binds the prepared parameter banks or Stack
+LUT. Its runtime index identifies the complete Shader/Compositor variant,
+working space, LUT size, resource slots, and expected structure. The same Buck
+target supplies the installed product and installed tests. Canonical graph
+emitters remain in the repository's build-only `tools/template_build` package;
+they are absent from the extension ZIP. The Stack helper likewise reads the
+generated `grade_stack.glsl` resource instead of emitting the shared equations
+at runtime.
+
+Template loading introduces no independent policy machine. Append, binding,
+validation, and cleanup execute only as consumers of existing installation,
+bank-publication, and resource-retirement effects. A missing or incompatible
+template is an installation failure and follows the existing visible-error
+path. The asset contains topology and static data; Grade settings and prepared
+payloads remain authoritative. File load and render preflight keep their
+existing reconciliation obligations.
+
 The preparation signature identifies shared prepared Grade data; the desired
 kernel signature can additionally identify the node's graph context. A current
 preparation receipt must match both correlations. A superseded successful
@@ -154,6 +208,10 @@ release a frame with this error or with merely pending/preview output.
 
 <p class="figure-caption">Presentation is derived from authoritative demand and installation facts. A stale receipt cannot replace a current result, and a preview is never render-ready.</p>
 
+![Preparation and node output workflow](../assets/illustrations/next-policy/01-preparation-node-sequence.svg)
+
+<p class="figure-caption">Preparation owns the worker slot, while the node owns presentation. A, B, and C name settings versions; preparation and kernel signatures still have their separate correlations. This trace runs outside a gesture, so an obsolete A cannot replace the retained Z preview. A preview receipt does not retire A. Current C is instantiated from the bundled native template and installed through existing publication effects. Preparation, template, binding, or installation failure selects visible magenta output with alpha preserved.</p>
+
 `stack_replace` and `grade_changed` are scalar observations. They may authorize
 reconciliation, but they do not themselves change the node's kernel state. The
 runtime owns ordered Stack membership and Grade lookup; this proof does not
@@ -167,6 +225,8 @@ not evidence of redundant stored state. Keep reconciliation behind an effect
 consumer, including on these state-preserving transitions.
 
 ## Helper process lifecycle
+
+<a id="next-policy.helper"></a>
 
 `src/policy/helper.py` governs one helper process and one physical work slot.
 `runtime/execution.py` translates its effects into process and transport
@@ -184,14 +244,21 @@ receipt that the work has stopped.
 
 <p class="figure-caption">Shutdown escalates from a channel shutdown request to terminate, kill, and an explicitly unretired condition. Physical exit settles work before cleanup is attempted.</p>
 
+![Helper process workflow](../assets/illustrations/next-policy/03-helper-sequence.svg)
+
+<p class="figure-caption">The process and transport perform only operations requested by helper effects. Cancellation leaves active work owned until its final receipt or physical exit. Shutdown deadlines control escalation; cleanup begins only after exit and completes through its own receipt.</p>
+
 Failure or timeout moves a live process toward termination. A channel shutdown
 uses `stopping`; a process without that transport uses `terminating`. Terminate
 and kill timeouts lead to `unretired`, which keeps ownership visible rather than
 pretending cleanup succeeded. After physical exit, the policy publishes job and
 probe outcomes, queues cancellation or failure, and enters `retiring`. Cleanup
 may be retried; only a successful cleanup receipt reaches `closed` or `failed`.
+Cleanup failure itself requests no new work; a later `shutdown` event requests
+another cleanup attempt. `failed` can still become `closed` on shutdown, so
+only `closed` has the absorbing-state border.
 
-| Observation | Decision that the compact figure abbreviates |
+| Observation | Additional runtime detail |
 |---|---|
 | Shutdown during starting, probing, or ready | Enter `stopping` when a channel exists; otherwise `terminating`. Failure enters `terminating` directly. |
 | Cancel the startup probe | Withdraw startup and shut down; a late successful probe cannot grant readiness. |
@@ -214,6 +281,8 @@ keep the generation fence; otherwise an old helper can publish into a new one.
 
 ## Production bank publication
 
+<a id="next-policy.bank-publication"></a>
+
 `src/policy/bank_publication.py` is the active production publication path. The
 parameter-image code in `nodes.py` constructs two packed image banks, while
 `runtime/bank_publication.py` consumes the reducer's effects. The inactive bank
@@ -221,9 +290,20 @@ is staged and checked before the selector changes. Selection is read back, then
 delivery publishes the resource and dispatches installation results to all
 affected node records.
 
+When a required Grade tree is missing or structurally damaged, the admitted
+stage/repair consumer appends the matching bundled template and binds its two
+parameter-image slots before returning a clean staging receipt. Ordinary edits
+retain the existing graph and bank identities. Template append is an operation
+inside the existing effect, not a new state or permission that bypasses the
+publication gate.
+
 ![Production two-bank publication](../assets/illustrations/next-policy/04-bank-publication.svg)
 
 <p class="figure-caption">An invalid active bank first closes output, then repairs both banks. A selection or delivery failure restores the old selector before failing closed.</p>
+
+![Bank publication workflow](../assets/illustrations/next-policy/04-bank-publication-sequence.svg)
+
+<p class="figure-caption">The consumer writes the packed banks, appends and binds a native template when the graph needs replacement, reads back the selector, and dispatches installation receipts to Blender nodes. Alternative frames distinguish ordinary staging and repair. A failed selector change or delivery restores the old selector before bounded failure-output closure retries.</p>
 
 The admission facts require two distinct valid bank indices and an admitted
 publication context. If the active bank is invalid, `repair_gate` first waits
@@ -233,6 +313,11 @@ delivery receipt enters `restore_selector`; the old bank and graph bindings are
 restored before the final failure output is attempted. The runtime bounds failed
 closure retries and reports `indeterminate` if it cannot establish a reliable
 output.
+
+Both successful delivery and a successful `closed` receipt in `fail` reach the
+same `terminal` phase. The reducer does not store separate success and failure
+end states. A failed closure receipt remains in `fail` and requests another
+closure attempt; it has not reached `terminal`.
 
 **Simplification candidates B1 and B2.** `stage` and `repair_stage` have the same
 receipt and outgoing transitions, so one phase could carry a `repair` effect
@@ -247,9 +332,12 @@ restoration, and fail-closed retry bound.
 The repository contains a publication comparison example under
 `examples/publication_compare`. Its policies are useful design experiments,
 but they are not one sequential production pipeline. Production uses the
-two-bank transaction above and the save-packing helpers described below.
+two-bank transaction above, the save-packing helpers described below, and the
+separate Bake transaction later in this chapter.
 
 ### Immutable parameter-image transaction
+
+<a id="next-policy.parameter-publication"></a>
 
 `examples/publication_compare/policy/parameter_publication.py` models a fresh
 immutable image: stage, snapshot, bind, commit, activate, deliver, then retire.
@@ -268,7 +356,13 @@ not extra phases of the binding transaction.
 
 <p class="figure-caption">This strategy keeps the current and candidate versions separate through binding and activation. Every restoration component is attempted after a failed transaction.</p>
 
+![Immutable parameter publication workflow](../assets/illustrations/next-policy/05-parameter-publication-sequence.svg)
+
+<p class="figure-caption">This comparison-only sequence follows one fresh immutable candidate. Each operation returns a receipt before the next action is authorized. Failed binding through delivery enters restoration; every restoration component is attempted even if an earlier component fails.</p>
+
 ### Shared-image transaction
+
+<a id="next-policy.image-publication"></a>
 
 `src/policy/image_publication.py` is also exercised by the comparison example.
 It snapshots an existing image, uploads and packs when the snapshot is not
@@ -281,12 +375,21 @@ failure, and failed delivery, go directly to failure and retirement. Production
 save handling instead calls
 `request_save_packing()` and `finish_save_packing()` for a generated dirty
 parameter image. Those helpers do not claim a new publication.
+Bake production does not call this reducer: it uses `policy/bake.py`,
+`ImageSnapshot`, and the admitted `PublicationGate.commit()` transaction
+described below.
 
 ![Shared-image publication and restoration](../assets/illustrations/next-policy/05b-image-publication.svg)
 
 <p class="figure-caption">The shared-image strategy can skip upload and packing when the captured image is already matching and clean. Its rollback still cannot make stale output current.</p>
 
+![Shared image publication workflow](../assets/illustrations/next-policy/05b-image-publication-sequence.svg)
+
+<p class="figure-caption">This comparison-only sequence changes one existing image. The clean-snapshot branch skips upload and packing. Restore-metadata is reached only after restore-upload and restore-pack succeed; failed restoration goes directly to visible failure and retirement.</p>
+
 ### Compositor supersession
+
+<a id="next-policy.compositor-publication"></a>
 
 `src/policy/compositor_publication.py` protects a compositor snapshot with a
 positive scene ID and epoch. It is used in production by `PublicationGate` for
@@ -302,7 +405,145 @@ Old epochs, other scenes, cancellation, and non-quiescent reset are ignored.
 
 <p class="figure-caption">The production gate uses the callback and reset transitions; the live admission/supersession flow is comparison-only. Protection prevents a second live swap until a later evaluation completes.</p>
 
+![Compositor supersession workflow](../assets/illustrations/next-policy/05c-compositor-publication-sequence.svg)
+
+<p class="figure-caption">Live admission and fresh-image binding belong to the comparison example. Production also delivers evaluation-finished and reset observations to the policy. An older epoch, a different scene, or an unsuccessful completion leaves protection in place.</p>
+
+## Bake requests and managed output
+
+<a id="next-policy.bake"></a>
+
+Bake is a separate production transaction for the shared Grade and Grade Stack
+nodes. Per-Node Grade nodes deliberately have no bake controls: their purpose is
+animated, key-framed adjustment, so turning those values into a static image
+would discard the workflow they represent. Shader and Compositor Grade/Stack
+nodes use the same policy and manager, while each node owns a private wrapper
+around its live kernel and its own baked-output selector.
+
+`src/policy/bake.py` stores only the request phase, an optional request
+signature and generation, and an optional error. A present generation is
+positive; signature and generation are both absent in `idle` and `terminal`.
+The request path is:
+`idle -> queued -> running -> ready -> publishing -> activating -> terminal`.
+`cancelling` is entered when a running helper must be withdrawn. A request is
+accepted only with a non-empty signature, a positive generation, an admitted
+queue slot, and no other request for that node. `can_enqueue()` is a stateless
+admission predicate: queued, running, and deferred-publication requests together
+are bounded at eight. The manager snapshots the route and scene at click time,
+then dispatches requests through one serialized helper lane.
+
+Every helper completion, publication receipt, and activation receipt must match
+both signature and generation. Uncorrelated reducer events leave state unchanged
+and request no effects. A successful completion whose route has changed is
+discarded, and a queued result is retired without touching the image. Changes
+during a helper run request cancellation; load, undo, and frame lifecycle
+events withdraw all accepted work. Publication and activation begin only inside
+an admitted host gate. If the gate is busy, the ready artifact remains in a
+deferred publication queue and is retried later. Once image publication has
+started, the transaction owns the gate through activation or rollback, so a
+partially committed image cannot be observed as current. Activation failure
+restores the captured image and metadata in the same scope before the node is
+returned to live output. Running cancellation retains helper ownership until
+its final receipt or physical shutdown; a failed helper close retains ownership
+and its error for retry. Terminal retirement removes the job and temporary
+snapshot files. `terminal` is absorbing and does not itself imply success.
+
+`output_policy()` is derived from the node's Use Bake setting, the desired
+signature, the artifact signature, image validity, and any live-kernel error; it
+is not another stored mode flag. Use Bake can be disabled while retaining the
+managed Image binding. A stale artifact automatically selects the live Grade or
+Stack result. An invalid managed image or an unrecoverable live kernel selects
+the visible error path and clears baked selection rather than rendering stale
+pixels. When a shared Image is selected by several Grade nodes, a successful
+rebake updates the Image once and synchronizes every reader; rollback likewise
+fans out to all readers.
+
+![Bake request and publication policy](../assets/illustrations/next-policy/09-bake.svg)
+
+<p class="figure-caption">A stale or cancelled request is retired before publication. Publication admission, image commit, activation, and rollback are one fenced transaction; derived output policy falls back to live output when the signature no longer matches.</p>
+
+![Bake request workflow](../assets/illustrations/next-policy/09-bake-sequence.svg)
+
+<p class="figure-caption">The click-time route snapshot enters the single helper lane. The helper receipt is checked again before the gate commits a managed float Image, activates the requesting node, and synchronizes shared readers. A changed signature before publication discards the artifact; a publication or activation error restores the ImageSnapshot.</p>
+
+### Route selection and source constraints
+
+`src/runtime/bake_routes.py` discovers the effective upstream graph and supplies
+a cheap observation signature plus a full semantic signature that remains stable
+across save/load. It resolves the exact graph owner and nested group occurrence,
+rejecting ambiguous occurrences. It preserves
+the legacy distinction between Image and UV bakes:
+
+* An Image bake evaluates one output pixel per texel of a single ordinary still
+  Image source through a pointwise graph. It uses
+  the source image dimensions and rejects linked source coordinates, UDIM/tiled
+  images, sequences or movies, multiview/multilayer sources, unsupported
+  projections, and feedback where the destination Image is also an input.
+* A UV bake is selected for a material graph with multiple image inputs, linked
+  source coordinates, surface-dependent inputs, or an existing UV-domain
+  destination. It requires Cycles, an active render UV
+  map in the 0-1 tile, finite non-degenerate faces, bounded non-overlap, the
+  selected material slot, and a render-visible mesh in the selected scene.
+  Alembic and mesh-cache geometry, topology-changing modifiers, unsupported
+  UV/deformation modifiers, hidden render meshes, and world UV routes are
+  rejected explicitly. Dimensions and overlap work are bounded by the pixel
+  and comparison budgets.
+* A Compositor bake uses the compositor graph and its native output route. It
+  cannot write a UV-domain destination. Unsupported compositor sources and
+  scene/render observations become part of the signature or block the route
+  before a helper is started. Shader to RGB, movie-clip, and mask sources are
+  rejected explicitly.
+
+The full signature includes graph and Grade settings, source file and sidecar
+identity, effective source pixels, scene/render state, and (for UV routes)
+mesh attributes, color attributes, weights, corner normals, smoothing/sharp
+edges, auto-smooth settings, active color metadata, UV geometry, and material
+slot. Unsupported attribute data fails closed. The cheaper observation
+signature is used for UI reconciliation; only the full signature can authorize
+publication.
+
+### Native evaluation and wrapper graph
+
+`src/runtime/bake_worker.py` opens an isolated `.blend` snapshot, restores float
+Image sidecars, and evaluates the native Blender graph. A Shader Grade bake
+captures RGB and alpha in independent native passes through the Grade helper
+Image nodes. A Grade Stack bake evaluates the complete node tree containing its
+65^3 LUT; it does not run a Python approximation of the LUT. Compositor bakes
+use a native compositor output/File Output EXR path. The worker returns a
+checksummed artifact receipt only after dimensions, channels, finite pixels,
+and the expected route identity have been verified.
+
+`src/runtime/bake_graph.py` instantiates a private wrapper template for each Grade or Stack node
+that uses baking. Authoritative Grade settings still determine the embedded
+live kernel; the wrapper holds only the node's derived selection and reader.
+A managed Image
+reader and a live/baked selector sit beside it, with independent Color and
+Alpha selectors in Shader graphs. Shader wrappers expose an optional Vector
+input used only by baked sampling; when it is unlinked, the reader uses the
+captured bake UV map, or the active render UV map for an Image bake. Compositor
+wrappers use the compositor switch. Copies have private wrappers and selectors;
+shared Grade nodes continue to share their live Grade kernel, and the managed
+Image may also be shared. Updating the live kernel preserves the wrapper's
+outer socket identities and its per-node Image binding.
+
+### Managed Image publication
+
+Bake publication uses the bake reducer's admitted transaction, `ImageSnapshot`
+capture/restore helpers, and `PublicationGate.commit()`. It is intentionally
+separate from the comparison-only `src/policy/image_publication.py` reducer and
+its `run_image_publication()`/`snapshot_commit()` helpers. The destination is a
+managed packed float RGBA Image with bake metadata, dimensions, domain, UV map,
+and artifact signature. A new destination is installed only after the artifact
+receipt is valid; an existing shared destination is captured before pixels,
+colorspace, alpha mode, precision, and metadata are changed. Any failure in
+packing, metadata, activation, or signature admission restores that snapshot
+and synchronizes all readers. A successful rollback returns the initiating node
+to live output with a visible bake error. Failed restoration invalidates the
+managed Image and closes affected readers with visible failure output.
+
 ## Resource adoption and retirement
+
+<a id="next-policy.resources"></a>
 
 `src/policy/resources.py` contains two related decisions. `may_adopt()` is a
 predicate, not a state machine: owner, node, space, completeness, image
@@ -320,6 +561,10 @@ observation before native removal.
 ![Resource adoption and retirement](../assets/illustrations/next-policy/06-resources.svg)
 
 <p class="figure-caption">Adoption is a conjunction predicate. Deletion is a separate receipt sequence with a fresh zero-user and protection check.</p>
+
+![Resource retirement workflow](../assets/illustrations/next-policy/06-resources-sequence.svg)
+
+<p class="figure-caption">Disposal optionally adds the fencing and detachment prefix to retirement. The consumer obtains native facts again after eviction, so the original zero-user observation cannot by itself authorize native deletion.</p>
 
 **Simplification candidate R1.** The `disposal` and `retirement` entry paths
 already share the suffix beginning at `observe`. Their two initial phases exist
@@ -339,14 +584,17 @@ release, and undo permission.
 
 ### Observer installation
 
+<a id="next-policy.observer"></a>
+
 The observer state has `current_token` and `pending_token`, plus a monotonically
 allocated serial. The first window observation invokes an installation. During a
 replacement, the current observer remains admitted while the new token is
 pending. Only an installation receipt for that pending token can promote it;
 failure leaves the current observer. A lost current observer may leave a
 pending replacement alive. Reset invalidates callbacks but preserves the serial.
-The compact pending box covers both first installation and replacement; losing
-`A` while `B` is pending leaves that box with `current=None`. Reset always clears
+The figure separates pending installation with and without a current observer;
+losing the current observer while a replacement is pending moves between those
+configurations. Reset always clears
 both tokens, including from pending. Native input must match the current token;
 an explicit adapter event with token `None` remains allowed. Handoff also checks
 the captured gesture token and its armed/active phase. After installation, the
@@ -357,6 +605,8 @@ coordinator replays the latest move/finish or requests handoff for a newer gestu
 <p class="figure-caption">A stale installation or loss receipt has no authority. The current observer stays usable until the pending native installation succeeds.</p>
 
 ### Gesture participation
+
+<a id="next-policy.gesture"></a>
 
 The coordinator stores `armed`, `active`, and deferred finishing phases for each
 gesture, together with its participating node targets. Movement of at least
@@ -373,7 +623,13 @@ manual undo is allowed only for an adapter-owned changed gesture.
 
 <p class="figure-caption">The policy checks scalar token and phase facts. The runtime remains responsible for collection order, lookup, target filtering, and native event delivery.</p>
 
+![Observer and gesture workflow](../assets/illustrations/next-policy/07-gesture-sequence.svg)
+
+<p class="figure-caption">Observer acknowledgement precedes token promotion. Movement activates participants; finishing waits until the native widget has applied its final value. The coordinator releases a node only when its final active participant finishes, with optional auto-keying and adapter-owned undo handled by its effects.</p>
+
 ## Render preflight
+
+<a id="next-policy.render-preflight"></a>
 
 `src/policy/render_preflight.py` protects the render boundary. A ticket starts in
 `waiting` with a render identity, scene identity, frame, subframe, and
@@ -391,6 +647,10 @@ policy assumptions must establish any stronger signature format rule.
 ![Render preflight authorization](../assets/illustrations/next-policy/08-render-preflight.svg)
 
 <p class="figure-caption">The gate queues and wakes the waiting thread, but the reducer authorizes release only for an exact published signature. A mismatch fails closed.</p>
+
+![Render preflight workflow](../assets/illustrations/next-policy/08-render-preflight-sequence.svg)
+
+<p class="figure-caption">The render thread waits while Blender's main thread reads the exact frame and reconciles its Grade kernels. Admission can retry before reconciliation begins. An exact publication releases the ticket; a failure applies visible error output before delivering the failed ticket.</p>
 
 **Simplification candidate P1.** `RenderPreflightTicket` currently repeats the
 identity fields already held in its policy state so that cross-thread callers
@@ -422,6 +682,11 @@ behavior. For example:
 * `requirements/render_preflight.inv` proves exact release correlation and
   stale-generation handling. It does not prove that Blender's scene snapshot
   is correct.
+* `requirements/bake.inv` proves bounded admission, signature/generation
+  fencing, stale-result discard, cancellation, publication/activation rollback,
+  and the derived live/baked/error output policy. `runtime/bake_manager.py`,
+  `bake_routes.py`, and `bake_worker.py` supply the native snapshot, route, and
+  Blender evaluation contracts that the reducer intentionally does not model.
 
 Some named requirements make the review points especially concrete. The
 preparation queue properties are `running_request_only_replaces_latest_demand`,
@@ -443,6 +708,18 @@ preparation queue properties are `running_request_only_replaces_latest_demand`,
 render release uses `release_requires_correlated_exact_publication` and
 `stale_generation_cannot_release_or_fail_current_ticket`. These are the
 concrete contracts behind the diagrams and the simplification notes above.
+Bake uses `request_requires_admission_and_valid_identity`,
+`completion_requires_exact_identity_and_current_signature`,
+`publication_requires_admission_and_current_signature`,
+`publication_failure_authorizes_rollback`,
+`activation_failure_authorizes_rollback`, and
+`stale_bake_automatically_uses_live_output`. These properties establish the
+policy's authorization boundary; native snapshot correctness and rollback
+success remain adapter premises. The `request_runs_and_publishes` and
+`failed_request_retires_without_publishing` witnesses exercise successful and
+failed request paths. Mutations remove generation matching, current-signature
+matching, or stale-output fallback to check that the corresponding properties
+detect each weakened fence.
 
 ## Follow one edit through the layer
 
@@ -471,7 +748,8 @@ data, and one correlates a node's installable graph and rendered output.
 
 This chapter's diagrams link to authored D2 in the repository's
 [`docs/book/diagrams`](https://github.com/rei277hz/chromaticity/tree/main/products/perceptual-grade-book/docs/book/diagrams)
-directory. The generated figure hashes and renderer pin are recorded in the
+directory. All figures use the pinned D2 distribution's ELK layout engine.
+The generated figure hashes, layout flags, and renderer pin are recorded in the
 [diagram provenance manifest](../downloads/provenance/next-policy-diagrams.json).
 The links below open the implementation, formal requirements, and runtime
 effect consumer. The parameter-image policy is in the comparison example; the
@@ -488,6 +766,7 @@ other listed policies are in the product's `src/policy` package.
 * Resource lifecycle: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/resources.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/resources.inv) · [consumers](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/resource_lifecycle.py) and [Grade resources](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/grade_resources.py).
 * Gesture coordination: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/gesture.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/gesture.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/gesture_coordinator.py).
 * Render preflight: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/render_preflight.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/render_preflight.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/publication.py), resolved from `nodes.py`.
+* Bake requests: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/bake.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/bake.inv) · [manager](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_manager.py) · [routes](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_routes.py) · [worker](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_worker.py) · [wrapper graph](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_graph.py).
 
 Regenerate the diagram assets and both English reading formats from the
 repository root with the declared Buck2 targets:
@@ -496,12 +775,12 @@ repository root with the declared Buck2 targets:
 buck2 build --remote-only //products/perceptual-grade-book/diagrams:assets
 buck2 build --remote-only \
   '//products/perceptual-grade-book:site[html]' \
-  '//products/perceptual-grade-book:book[pdf]' \
-  '//products/perceptual-grade-book:book[epub]'
+  '//products/perceptual-grade-book:technical-report[pdf]' \
+  '//products/perceptual-grade-book:technical-report[epub]'
 ```
 
 The site target includes the English and Simplified Chinese editions; the policy
-chapter and its 13 generated SVGs appear only in English. The diagram source
+chapter and its 25 generated SVGs appear only in English. The diagram source
 files, D2 archive, renderer adapter, and figure manifest are declared Buck2
 inputs, so the first command is reproducible without a system D2 installation.
 
@@ -509,6 +788,7 @@ Build and run the product policy evidence with Buck2's remote execution:
 
 ```sh
 buck2 build //products/perceptual-grade-next-blender:verify_policies --remote-only
+buck2 build //products/perceptual-grade-next-blender:proof_bake --remote-only
 buck2 test //products/perceptual-grade-next-blender/tests:policy_verification --remote-only
 buck2 test //products/perceptual-grade-next-blender/tests:policy_preparation \
   //products/perceptual-grade-next-blender/tests:policy_preparation_join \
@@ -520,6 +800,10 @@ buck2 test //products/perceptual-grade-next-blender/tests:policy_preparation \
   //products/perceptual-grade-next-blender/tests:policy_bank_publication \
   //products/perceptual-grade-next-blender/tests:policy_gesture \
   //products/perceptual-grade-next-blender/tests:policy_render_preflight --remote-only
+buck2 test //products/perceptual-grade-next-blender/tests:policy_bake \
+  //products/perceptual-grade-next-blender/tests:bake_manager_runtime \
+  //products/perceptual-grade-next-blender/tests:runtime_bake_routes \
+  //products/perceptual-grade-next-blender/tests:bake_installed --remote-only
 ```
 
 These checks are deliberately scoped to `products/perceptual-grade-next-blender`.

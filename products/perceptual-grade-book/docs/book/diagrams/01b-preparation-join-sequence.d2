@@ -1,0 +1,37 @@
+shape: sequence_diagram
+
+runtime: "Grade preparer"
+workers: "Executor children"
+join: "Preparation join"
+
+runtime -> join: "new(signature)"
+par three independent children: {
+  runtime -> workers: "submit linear, tone, boundary"
+}
+opt caller cancelled while children run: {
+  runtime -> runtime: "keep awaiting shielded group"
+}
+loop each child physically retires: {
+  workers -> runtime: "component, value, error"
+  runtime -> join: "Event(signature, component, error)"
+  join -> join: "clear matching pending bit"
+  opt first error: { join -> join: "retain first error" }
+}
+join -> runtime: "completion_signature + first error"
+alt aggregate outcome: {
+  success: "success; caller still waiting" {
+    runtime -> workers: "assemble parameter atlas"
+    workers -> runtime: "parameters"
+    runtime -> runtime: "return complete PreparedGrade"
+  }
+  failure: "child failed or caller cancelled" {
+    runtime -> runtime: "raise after all children retire"
+  }
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

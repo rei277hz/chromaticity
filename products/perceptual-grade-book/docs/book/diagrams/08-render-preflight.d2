@@ -1,9 +1,15 @@
 direction: down
-waiting: "waiting [P1]"
+waiting: "waiting"
+released: "released" {
+  style.double-border: true
+}
+failed: "failed" {
+  style.double-border: true
+}
 
-waiting -> released: "match"
-waiting -> failed: "mismatch"
+waiting -> released: "match\n/ release"
+waiting -> failed: "failure or\nmismatch\n/ fail"
 waiting -> waiting: "stale generation"
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

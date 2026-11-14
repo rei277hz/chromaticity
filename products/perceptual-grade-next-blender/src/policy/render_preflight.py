@@ -1,5 +1,7 @@
 """Authorize a render frame only after its exact Grade signature is published."""
 
+# pg-book: technical-report/en#next-policy.render-preflight
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 

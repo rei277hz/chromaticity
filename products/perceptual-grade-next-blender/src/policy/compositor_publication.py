@@ -1,5 +1,7 @@
 """Permit one live supersession, then protect a later compositor result."""
 
+# pg-book: technical-report/en#next-policy.compositor-publication
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 

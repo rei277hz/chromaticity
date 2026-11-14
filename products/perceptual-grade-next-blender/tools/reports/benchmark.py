@@ -17,7 +17,7 @@ import numpy as np
 
 from color_tools.kernel import prepare
 from color_tools.kernel.boundary import prepare_boundary
-from color_tools.kernel.graph import Graph, BuiltGrade, build_group, count_nodes
+from color_tools.template_build.graph import Graph, BuiltGrade, build_group, count_nodes
 from . import cases, full_cases
 from .evaluate import evidence_hashes
 

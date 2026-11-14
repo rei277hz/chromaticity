@@ -1,5 +1,7 @@
 """Per-node Grade lifecycle, stack membership, and output policy."""
 
+# pg-book: technical-report/en#next-policy.node-output
+
 from dataclasses import dataclass, replace
 from typing import Literal, Optional
 

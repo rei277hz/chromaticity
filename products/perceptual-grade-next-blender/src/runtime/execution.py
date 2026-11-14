@@ -1,5 +1,7 @@
 """GPU-only helper process ownership with nonblocking, ordered joins."""
 
+# pg-book: technical-report/en#next-policy.helper
+
 from concurrent.futures import CancelledError, InvalidStateError
 from dataclasses import dataclass
 from itertools import count
@@ -542,13 +544,14 @@ class HelperRuntime:
             job.pending_value = value
             job.pending_files = files
             if job.probe:
+                expected_backend = {"NODE_TREE"} if self.role == "bake" else {"GPU"}
                 valid = (isinstance(value, dict) and value.get("conformance") is True
-                         and value.get("backend") == "GPU")
+                         and value.get("backend") in expected_backend)
                 next_id = self._next_queued() if valid else None
                 self._transition(helper_policy.Event(
                     "probe_result", generation=self.state.generation,
                     job_id=identity, success=valid,
-                    error=None if valid else "GPU helper probe failed conformance",
+                    error=None if valid else "Helper probe failed conformance",
                     next_id=next_id,
                 ))
             else:

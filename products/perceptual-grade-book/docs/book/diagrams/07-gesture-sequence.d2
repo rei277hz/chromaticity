@@ -1,0 +1,39 @@
+shape: sequence_diagram
+
+blender: "Blender UI / nodes"
+consumer: "Gesture consumer"
+coordinator: "Coordinator + scalar policy"
+
+observer: "loop [first observation or valid gesture handoff]" {
+  consumer -> coordinator: "window_seen / handoff_due"
+  coordinator -> consumer: "invoke_observer(token)"
+  consumer -> blender: "install native observer"
+  blender -> consumer: "installation receipt"
+  consumer -> coordinator: "observer_install_result(token)"
+}
+movement: "loop [press, then native moves]" {
+  blender -> consumer: "press / move"
+  consumer -> coordinator: "press / move; test threshold"
+  opt first movement of at least 3 px: {
+    coordinator -> consumer: "node_begin / refresh"
+    consumer -> blender: "apply authorized node action"
+  }
+}
+blender -> consumer: "finish_requested"
+consumer -> coordinator: "finish_requested"
+coordinator -> consumer: "schedule_finish"
+consumer -> blender: "schedule observation after final native value"
+blender -> consumer: "timer with final target observations"
+consumer -> coordinator: "finish_observed(targets)"
+coordinator -> consumer: "node actions + optional undo_window"
+consumer -> blender: "apply authorized actions"
+opt changed adapter-owned gesture: {
+  consumer -> blender: "push authorized undo_window checkpoint"
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

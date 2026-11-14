@@ -1,6 +1,6 @@
-# Handbook asset producers
+# Book asset producers
 
-These build-only producers regenerate the maintained Perceptual Grade handbook's
+These build-only producers regenerate the maintained Perceptual Grade books'
 figures, photographs, screenshots, animations, icon files, and runtime diagrams.
 Their original source was adapted on 2026-11-04 from 1.23.2's `tools/docs`,
 `tools/assets`, and model/localization modules. Original paths and SHA-256 values
@@ -27,15 +27,16 @@ for the historical Concentration and LUT illustrations, and recorded benchmark
 inputs remain historical. Each figure declares its scope in `figures.json`;
 the data manifest records the current reference and legacy source hashes.
 The producer computes model samples in Python and renders 11 plots
-as SVG with the pinned XeLaTeX, PGFPlots, and dvisvgm toolchain. The shared axis
-labels remain English in both book editions. Four archived LUT plots are redrawn
+as SVG with the pinned XeLaTeX, PGFPlots, and dvisvgm toolchain. The plots appear
+in the English Technical Report, with the same SVGs used for its site, PDF, and
+EPUB editions. Four archived LUT plots are redrawn
 from recorded rankings, scores, and axes; the domain-128 finalist errors retain
 the report's eight-decimal precision, and two comparison axes are reconstructed
 from the published sampling formulas. Original report archives remain unchanged.
 The `:figures_data` action prepares the numeric tables and figure definitions;
 `:figures` renders the SVGs. The publication's `downloads/chart-sources.zip`
 contains the chart sources and plotted data. Candidate key fragments accompany
-the historical figures in both editions.
+the historical figures in the report.
 
 Edit numerical samples and plot definitions in `figures.py`, recorded-study
 extraction in `historical_figures.py`, and shared typography in `plot-style.tex`.
@@ -57,7 +58,8 @@ buck2 test --remote-only //products/perceptual-grade-book/generators:tests
 buck2 test --remote-only //products/perceptual-grade-book/generators:historical_figures_test //products/perceptual-grade-book/generators/latex:tests
 ```
 
-`:assets` is a tree relative to the assembled book. Individual public targets are
+`:assets` is a tree relative to an assembled mdBook root; assembly shares its
+resources between both books. Individual public targets are
 `:figures`, `:photos`, `:screenshots`, `:demos`, `:intro`, `:favicon`,
 `:ab_background`, and `:locus`. Their named outputs include required media and
 provenance. Generated files belong in Buck outputs; do not copy them into source.

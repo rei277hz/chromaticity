@@ -4,7 +4,7 @@ from pathlib import Path
 import hashlib
 import unittest
 
-from color_tools.kernel.persistent import _PersistentGraph
+from color_tools.template_build.persistent import _PersistentGraph
 from . import test_color_stages as stages
 
 

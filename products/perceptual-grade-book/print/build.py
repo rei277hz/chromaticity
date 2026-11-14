@@ -1,4 +1,4 @@
-"""Build bilingual PDF and EPUB editions from the existing mdBook output."""
+"""Build the declared manual or technical-report PDF and EPUB editions."""
 
 import argparse
 import copy
@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tomllib
 import xml.etree.ElementTree as ET
+from urllib.parse import quote, unquote
 
 # Importing the renderer loads its declared native runtime before WeasyPrint.
 from pg_book_print.pdf import render_pdf
@@ -27,7 +28,10 @@ EPUB_NS = "http://www.idpf.org/2007/ops"
 OPF_NS = "http://www.idpf.org/2007/opf"
 DC_NS = "http://purl.org/dc/elements/1.1/"
 CONTAINER_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
-LANGUAGES = ("en", "zh-Hans")
+PUBLICATIONS = {
+    "user-manual": ("manual", ("en", "zh-Hans")),
+    "technical-report": ("technical", ("en",)),
+}
 FIXED_DATE = "1980-01-01T00:00:00Z"
 
 
@@ -57,7 +61,7 @@ def _copy_tree(source, destination):
             shutil.copyfile(path, target)
 
 
-def _prepare_pdf_fonts(work_dir, source_dir):
+def _prepare_pdf_fonts(work_dir, source_dir, languages):
     """Keep each PDF face in one file; web shards can collide in PDF font IDs."""
     from fontTools.ttLib import TTFont
     from fontTools.varLib.instancer import instantiateVariableFont
@@ -96,7 +100,7 @@ def _prepare_pdf_fonts(work_dir, source_dir):
     (noto_root / "index.css").write_text("\n".join(noto_rules) + "\n", encoding="utf-8")
 
     stylesheets = {}
-    for language in LANGUAGES:
+    for language in languages:
         imports = ['@import url("tinos/index.css");']
         font_stack = '"Tinos", serif'
         mono_stack = '"Roboto Mono", "Tinos", monospace'
@@ -152,10 +156,10 @@ def _rewrite_epub_links(node, current_name, id_to_file):
             if not value:
                 continue
             if value.startswith("#"):
-                fragment = value[1:]
+                fragment = unquote(value[1:])
                 target = id_to_file.get(fragment)
                 if target and target != current_name:
-                    element.set(attr, target + "#" + fragment)
+                    element.set(attr, target + "#" + quote(fragment, safe="-._~"))
             elif value.startswith("media/"):
                 element.set(attr, "../" + value)
 
@@ -237,7 +241,10 @@ def _build_epub(document, book_root, work_dir, destination, metadata):
     front_node = source_root.xpath("//div[contains(concat(' ', normalize-space(@class), ' '), ' front-matter ')]")[0]
     toc_node = source_root.xpath("//nav[contains(concat(' ', normalize-space(@class), ' '), ' toc ')]")[0]
     figure_nodes = source_root.xpath("//nav[contains(concat(' ', normalize-space(@class), ' '), ' figure-list ')]")
-    front_children = [front_node, toc_node, *figure_nodes]
+    epub_front = copy.deepcopy(front_node)
+    for cover in epub_front.xpath("./section[contains(concat(' ', normalize-space(@class), ' '), ' cover ')]"):
+        cover.getparent().remove(cover)
+    front_children = [epub_front, toc_node, *figure_nodes]
     front_path = text_dir / "front.xhtml"
 
     part_files = {}
@@ -295,7 +302,7 @@ def _build_epub(document, book_root, work_dir, destination, metadata):
 
     def add_nav_link(parent, href, label):
         item = etree.SubElement(parent, f"{{{XHTML_NS}}}li")
-        etree.SubElement(item, f"{{{XHTML_NS}}}a", attrib={"href": href}).text = label
+        etree.SubElement(item, f"{{{XHTML_NS}}}a", attrib={"href": "text/" + href}).text = label
         return item
 
     for chapter in document.chapters:
@@ -352,10 +359,23 @@ def _build_epub(document, book_root, work_dir, destination, metadata):
         relative = path.relative_to(epub).as_posix()
         item_id = "item-" + hashlib.sha256(relative.encode()).hexdigest()[:16]
         item_ids[relative] = item_id
-        properties = "nav" if relative == "nav.xhtml" else "cover-image" if relative == "media/cover.png" else None
-        attributes = {"id": item_id, "href": relative, "media-type": _media_type(path)}
+        properties = []
+        if relative == "nav.xhtml":
+            properties.append("nav")
+        elif relative == "media/cover.png":
+            properties.append("cover-image")
+        media_type = _media_type(path)
+        if media_type == "application/xhtml+xml":
+            root = ET.parse(path).getroot()
+            for property_name, namespace, tag in (
+                ("mathml", "http://www.w3.org/1998/Math/MathML", "math"),
+                ("svg", "http://www.w3.org/2000/svg", "svg"),
+            ):
+                if any(True for _ in root.iter(f"{{{namespace}}}{tag}")):
+                    properties.append(property_name)
+        attributes = {"id": item_id, "href": relative, "media-type": media_type}
         if properties:
-            attributes["properties"] = properties
+            attributes["properties"] = " ".join(properties)
         etree.SubElement(manifest_node, f"{{{OPF_NS}}}item", attrib=attributes)
     spine = etree.SubElement(opf, f"{{{OPF_NS}}}spine")
     for name in spine_filenames:
@@ -375,6 +395,10 @@ def _version_checks(node, versions):
 
 
 def build(args):
+    languages = tuple(args.languages)
+    expected_prefix, expected_languages = PUBLICATIONS[args.publication]
+    if args.site_prefix != expected_prefix or languages != expected_languages:
+        raise ValueError(f"Unexpected edition selection for {args.publication}")
     site_root = args.site.resolve()
     book_root = args.book.resolve()
     output = args.output_dir.resolve()
@@ -403,9 +427,9 @@ def build(args):
     license_dir.mkdir()
 
     docs = {}
-    for language in LANGUAGES:
+    for language in languages:
         edition_work = work / language
-        front = args.front_matter / (language + "/front-matter.html")
+        front = args.front_matter / args.publication / language / "front-matter.html"
         doc = build_document(
             site_root=site_root,
             book_root=book_root,
@@ -421,12 +445,14 @@ def build(args):
             font_sans=args.font_sans,
             font_mono=args.font_mono,
             theme_dir=args.theme,
+            site_prefix=args.site_prefix,
         )
         docs[language] = doc
 
     pdf_font_stylesheets, pdf_font_licenses = _prepare_pdf_fonts(
         work,
         args.pdf_fonts,
+        languages,
     )
 
     license_sources = {
@@ -444,7 +470,7 @@ def build(args):
         if not source.is_file():
             raise ValueError(f"Missing PDF font license notice: {source}")
         shutil.copyfile(source, pdf_dir / "licenses" / name)
-    for language in LANGUAGES:
+    for language in languages:
         (work / language / "licenses").mkdir(parents=True, exist_ok=True)
         for path in license_dir.iterdir():
             shutil.copyfile(path, work / language / "licenses" / path.name)
@@ -452,8 +478,8 @@ def build(args):
     edition_manifests = {}
     site_document = json.loads(site_manifest.read_text(encoding="utf-8"))
     for language, doc in docs.items():
-        pdf_path = pdf_dir / f"perceptual-grade-{language}.pdf"
-        epub_path = epub_dir / f"perceptual-grade-{language}.epub"
+        pdf_path = pdf_dir / f"{args.publication}-{language}.pdf"
+        epub_path = epub_dir / f"{args.publication}-{language}.epub"
         render_pdf(
             doc.book_html,
             pdf_path,
@@ -465,7 +491,7 @@ def build(args):
             pdf_stylesheet=pdf_font_stylesheets[language],
         )
         identifier = "urn:sha256:" + hashlib.sha256(
-            (language + "\n" + "\n".join(chapter["path"] for chapter in doc.chapters)).encode()
+            (args.publication + "\n" + language + "\n" + "\n".join(chapter["path"] for chapter in doc.chapters)).encode()
         ).hexdigest()
         _build_epub(
             doc,
@@ -493,7 +519,10 @@ def build(args):
     work.replace(document_output)
     manifest = {
         "schema": 1,
-        "build_target": "root//products/perceptual-grade-book:book",
+        "build_target": "root//products/perceptual-grade-book:" + args.publication,
+        "publication": args.publication,
+        "site_prefix": args.site_prefix,
+        "book_files": inventory(book_root),
         "invocation": "buck2" if os.environ.get("PG_BUCK_ACTION") == "1" else "authoring-preview",
         "site_manifest_sha256": digest(site_manifest),
         "site_files": site_document["site_files"],
@@ -511,7 +540,7 @@ def build(args):
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    print(f"WeasyPrint {weasyprint.__version__}: built PDF and EPUB editions for {', '.join(LANGUAGES)}")
+    print(f"WeasyPrint {weasyprint.__version__}: built {args.publication} PDF and EPUB editions for {', '.join(languages)}")
 
 
 def main():
@@ -522,6 +551,9 @@ def main():
         "pdf-fonts", "node", "math-renderer", "versions", "native-runtime", "output-dir",
     ):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--publication", choices=PUBLICATIONS, required=True)
+    parser.add_argument("--site-prefix", choices=("manual", "technical"), required=True)
+    parser.add_argument("--language", dest="languages", choices=("en", "zh-Hans"), action="append", required=True)
     args = parser.parse_args()
     build(args)
 

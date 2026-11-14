@@ -1,5 +1,7 @@
 """Execute only resource operations authorized by the retirement policy."""
 
+# pg-book: technical-report/en#next-policy.resources
+
 from ..policy import resources as policy
 
 

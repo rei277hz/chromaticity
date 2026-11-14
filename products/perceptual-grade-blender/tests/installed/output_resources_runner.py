@@ -21,7 +21,7 @@ import numpy as np
 
 def main(repository, destination):
     repository, destination = Path(repository).resolve(), Path(destination)
-    assert not bpy.app.background and tuple(bpy.app.version) == (5, 2, 2)
+    assert not bpy.app.background and tuple(bpy.app.version) in {(5, 2, 4), (5, 3, 0)}
     faulthandler.enable(all_threads=True)
     bpy.context.preferences.view.show_splash = False
     bpy.context.preferences.edit.use_global_undo = True

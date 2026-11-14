@@ -18,7 +18,7 @@ import numpy as np
 
 
 def main(repository, project, report_path, kind, cut, mode, descriptor, library):
-    assert tuple(bpy.app.version) == (5, 2, 2), bpy.app.version
+    assert tuple(bpy.app.version) in {(5, 2, 4), (5, 3, 0)}, bpy.app.version
     assert kind in ('shader', 'compositor') and mode in ('overwrite', 'resume')
     repository = Path(repository).resolve()
     bpy.context.preferences.system.gpu_backend = 'OPENGL'

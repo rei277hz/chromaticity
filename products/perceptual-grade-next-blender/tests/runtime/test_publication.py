@@ -79,6 +79,32 @@ class PublicationGateTests(unittest.TestCase):
                 gate, _running, _manager = self.gate(modal=(operator,))
                 self.assertIn("bake operation", gate.reason())
 
+    def test_graph_reconciliation_joins_publication_but_defers_during_render(self):
+        gate, _running, _manager = self.gate()
+        with gate.commit():
+            with gate.graph_commit():
+                self.assertTrue(gate.blocked())
+        gate.evaluation_started("render", 17)
+        with self.assertRaises(self.module.PublicationDeferred):
+            with gate.graph_commit():
+                self.fail("Graph mutation raced an active render")
+        ticket = gate.request_render_preflight(17, 17, 1, "0x0.0p+0")
+        self.assertIs(gate.take_render_preflight(), ticket)
+        with gate.render_preflight(ticket):
+            with gate.graph_commit():
+                self.publish(ticket)
+        gate.evaluation_finished("render", 17)
+        with gate.graph_commit():
+            pass
+
+    def test_graph_reconciliation_cannot_join_a_compositor_snapshot(self):
+        gate, _running, _manager = self.gate(jobs=("COMPOSITE",))
+        gate.evaluation_started("compositor", 11)
+        with gate.snapshot_commit(11):
+            with self.assertRaises(self.module.PublicationDeferred):
+                with gate.graph_commit():
+                    self.fail("Graph mutation joined a compositor snapshot")
+
     def test_callback_and_paired_evaluation_fence_image_writes(self):
         gate, _running, _manager = self.gate()
         gate.evaluation_started("render", 17)

@@ -4,7 +4,10 @@ load("//products/perceptual-grade-book/print:rules.bzl", "book_exports")
 
 source_tree(
     name = "docs",
-    srcs = {path.removeprefix("docs/"): path for path in glob(["docs/**"])},
+    srcs = {
+        path.removeprefix("docs/"): path
+        for path in glob(["docs/**"], exclude = ["docs/book/src/assets/icons/*.png"])
+    },
     visibility = ["PUBLIC"],
 )
 
@@ -38,11 +41,6 @@ source_tree(
             "book_intro_recording",
             "docs/media/intro/",
             ["docs/media/intro/*.mp4"],
-        ),
-        (
-            "book_icons",
-            "docs/book/src/assets/icons/",
-            ["docs/book/src/assets/icons/*.png"],
         ),
     ]
 ]
@@ -108,6 +106,7 @@ python_library(
         ("assemble_tool", "assemble"),
         ("site_tool", "site"),
         ("archive_tool", "deploy"),
+        ("book_refs_tool", "book_refs"),
     ]
 ]
 
@@ -129,7 +128,10 @@ generate(
         "--manifest",
         "$(location :historical_manifest)",
     ],
-    outputs = {},
+    outputs = {
+        "user-manual": "user-manual",
+        "technical-report": "technical-report",
+    },
     tool = ":assemble_tool",
     visibility = ["PUBLIC"],
 )
@@ -144,10 +146,54 @@ documentation(
     visibility = ["PUBLIC"],
 )
 
+generate(
+    name = "book_refs",
+    args = [
+        "--docs", "$(location :docs)",
+        "--site", "$(location :site[html])",
+        "--sources", "$(location //products/perceptual-grade-next-blender:book_reference_sources)",
+    ],
+    outputs = {
+        "json": "book-refs.json",
+        "text": "book-refs.txt",
+    },
+    tool = ":book_refs_tool",
+    visibility = ["PUBLIC"],
+)
+
 book_exports(
-    name = "book",
+    name = "user-manual",
     site = ":site[html]",
-    book = ":book_inputs",
+    book = ":book_inputs[user-manual]",
+    publication = "user-manual",
+    site_prefix = "manual",
+    languages = ["en", "zh-Hans"],
+    front_matter = "//products/perceptual-grade-book/print:front_matter",
+    theme = "//products/perceptual-grade-book/print:theme",
+    katex_js = "//third_party/book:katex_script",
+    katex_css = "//third_party/book:katex_stylesheet",
+    katex_package = "//products/perceptual-grade-book/print:katex_package",
+    font_sans = "//third_party/book:pontano_sans_normal",
+    font_mono = "//third_party/book:roboto_mono_normal",
+    font_sans_license = "//third_party/book:pontano_sans_license",
+    font_mono_license = "//third_party/book:roboto_mono_license",
+    noto_package = "//products/perceptual-grade-book/print:noto_sans_sc_package",
+    pdf_fonts = "//products/perceptual-grade-book/print:pdf_fonts",
+    node = "//tools/web-build:node[binary]",
+    math_renderer = "//products/perceptual-grade-book/print:math_renderer",
+    versions = "//products/perceptual-grade-book/print:versions",
+    native_runtime = "//products/perceptual-grade-book/print:native_runtime",
+    tool = "//products/perceptual-grade-book/print:builder",
+    visibility = ["PUBLIC"],
+)
+
+book_exports(
+    name = "technical-report",
+    site = ":site[html]",
+    book = ":book_inputs[technical-report]",
+    publication = "technical-report",
+    site_prefix = "technical",
+    languages = ["en"],
     front_matter = "//products/perceptual-grade-book/print:front_matter",
     theme = "//products/perceptual-grade-book/print:theme",
     katex_js = "//third_party/book:katex_script",

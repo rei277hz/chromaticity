@@ -1,20 +1,20 @@
 direction: down
 
-pending: "pending\nno kernel"
-preview: "preview\nlast-good kernel"
-current: "current\nfull + matching"
-error: "error\nno applied kernel"
+pending: "pending"
+preview: "preview"
+current: "current"
+error: "error"
 
-pending -> preview: "preview install"
-pending -> current: "matching full install"
-preview -> current: "matching full install"
-current -> preview: "new demand"
-preview -> preview: "new demand"
-pending -> error: "current error"
-preview -> error: "current error"
-current -> error: "current error"
-error -> pending: "new request"
-error -> current: "full recovery"
+pending -> preview: "install [preview]"
+pending -> current: "install\n[full, matching]"
+preview -> current: "install\n[full, matching]"
+current -> preview: "request [new demand]"
+preview -> preview: "request\n[new demand]"
+pending -> error: "receipt\n[current\nerror]"
+preview -> error: "receipt\n[current\nerror]"
+current -> error: "receipt\n[current\nerror]"
+error -> pending: "request"
+error -> current: "recovery\n[full, matching]"
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

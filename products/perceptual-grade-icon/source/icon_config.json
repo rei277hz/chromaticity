@@ -1,0 +1,33 @@
+{
+  "title": "Perceptual Grade Three-stage Fan",
+  "blender_version": "5.3.0",
+  "sizes": [16, 32, 48, 64, 180, 192, 256, 512],
+  "background_srgb_hex": "#141c18",
+  "texture_size": 2048,
+  "cycles_samples": 256,
+  "cycles_seed": 0,
+  "camera": {
+    "location": [1.9, -4.3, 7.2],
+    "target": [0.0, 0.0, 0.12],
+    "ortho_scale": 2.9282145500183105
+  },
+  "shell": {
+    "hue_segments": 256,
+    "radial_segments": 64,
+    "bevel_segments": 12,
+    "thickness": 0.065,
+    "shoulder_radius": 0.973,
+    "form_scale": 1.75,
+    "rotation_degrees": 65.0
+  },
+  "stages": [
+    {"name": "Correction | Neutral Shell", "offset": [-0.29, 0.28, 0.0], "material": "neutral"},
+    {"name": "Tone | Neutral Lightness Shell", "offset": [0.0, 0.0, 0.08], "material": "tone"},
+    {"name": "Color | modCAM16 Spectral Shell", "offset": [0.29, -0.28, 0.16], "material": "spectral"}
+  ],
+  "lights": [
+    {"name": "Key", "location": [-3.0, -4.0, 6.0], "size": 4.5, "power": 180.0},
+    {"name": "Fill", "location": [4.0, -1.0, 4.0], "size": 5.0, "power": 65.0},
+    {"name": "Rim", "location": [0.0, 4.0, 5.0], "size": 3.0, "power": 100.0}
+  ]
+}

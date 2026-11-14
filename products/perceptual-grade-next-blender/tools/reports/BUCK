@@ -2,6 +2,21 @@ load("//build_defs:artifacts.bzl", "generate")
 
 TOOL_PREFIX = ""
 
+python_library(
+    name = "template_fixture_sources",
+    srcs = {
+        "native.py": "native.py",
+        "cases.py": "cases.py",
+    },
+    base_module = "tools.perceptual_grade.reports",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender:template_build",
+        "//third_party:numpy",
+    ],
+)
+
 EVALUATION_SOURCES = {
     path[len(TOOL_PREFIX):]: path
     for path in glob([TOOL_PREFIX + "*.py"])
@@ -29,6 +44,7 @@ python_library(
         "//libraries/perceptual-grade-reference:model_code",
         "//products/perceptual-grade-next-blender:boundary_support_sources",
         "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender:template_build",
         "//third_party:bpy",
         "//third_party:numpy",
     ],

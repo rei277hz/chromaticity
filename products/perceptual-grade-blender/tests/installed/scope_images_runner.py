@@ -77,7 +77,7 @@ def main(repository,destination):
     report=dict(passed=False,build=bpy.app.build_hash.decode(),frames=[])
     name='bl_ext.pg_scope_images.perceptual_grade'
     try:
-        assert not bpy.app.background and tuple(bpy.app.version)==(5,2,2)
+        assert not bpy.app.background and tuple(bpy.app.version) in {(5, 2, 4), (5, 3, 0)}
         bpy.context.preferences.extensions.repos.new(name='Scope Image acceptance',
             module='pg_scope_images',custom_directory=str(repository))
         errors=[];addon=addon_utils.enable(name,default_set=False,handle_error=errors.append)

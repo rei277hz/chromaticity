@@ -1,6 +1,9 @@
 """Execute an image transaction and retain its native restoration snapshot."""
 
+# pg-book: technical-report/en#next-policy.image-publication
+
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
@@ -38,13 +41,29 @@ def write_metadata(entries):
 class ImageSnapshot:
     pixels: object
     metadata: tuple
+    colorspace: Optional[str] = None
+    alpha_mode: Optional[str] = None
+    half_precision: Optional[bool] = None
 
     @classmethod
     def capture(cls, image, metadata):
         pixels = np.empty(len(image.pixels), dtype=np.float32)
         image.pixels.foreach_get(pixels)
         previous = tuple((owner, key, owner.get(key)) for owner, key, _value in metadata)
-        return cls(pixels, previous)
+        colorspace = getattr(getattr(image, "colorspace_settings", None), "name", None)
+        alpha_mode = getattr(image, "alpha_mode", None)
+        half_precision = getattr(image, "use_half_precision", None)
+        return cls(pixels, previous, colorspace, alpha_mode, half_precision)
+
+    def restore_properties(self, image):
+        colorspace = getattr(getattr(image, "colorspace_settings", None), "name", None)
+        if self.colorspace is not None and colorspace != self.colorspace:
+            image.colorspace_settings.name = self.colorspace
+        if self.alpha_mode is not None and getattr(image, "alpha_mode", None) != self.alpha_mode:
+            image.alpha_mode = self.alpha_mode
+        if (self.half_precision is not None
+                and getattr(image, "use_half_precision", None) != self.half_precision):
+            image.use_half_precision = self.half_precision
 
 
 def run_image_publication(operations):

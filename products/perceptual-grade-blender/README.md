@@ -28,8 +28,9 @@ buck2 test //products/perceptual-grade-blender/tests/installed:standalone
 Install the resulting `perceptual_grade.zip` through Blender's **Install from
 Disk**. This product and [HDR Color Picker](../hdr-color-picker-blender/README.md)
 can be enabled together; compare preserved Grade and Next in separate Blender
-profiles/processes. Native tests use pinned Blender 5.2.2. Buck downloads its
-pinned dependencies and generates numerical resources without sibling source
+profiles/processes. Installed acceptance runs on stable Blender 5.3.0 and LTS
+Blender 5.2.4; the `bpy` test wheel uses 5.3.0. Buck downloads pinned
+dependencies and generates numerical resources without sibling source
 repositories.
 
 When replacing an installation that uses the old `_vendor` package layout,

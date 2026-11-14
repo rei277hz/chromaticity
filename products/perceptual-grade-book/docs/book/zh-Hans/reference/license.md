@@ -43,7 +43,7 @@ ZIP 不另外包含 MIT/Apache 许可证文本或 `NOTICE.md`，清单声明为
 `LICENSE` 中标明，以符合
 [Blender Extensions 的许可证要求](https://extensions.blender.org/terms-of-service/)。
 此授权不会改变第三方数据、参考插图、字体及其他署名材料的许可；这些材料仍保留原有条款与署名。
-详见[致谢与参考文献](credits.md)及其[英文完整说明](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/docs/book/src/reference/credits.md)。
+详见[致谢与参考文献](credits.md)。
 
 本手册在持续更新的同时保留历史版本下载。提供的
 [日期为 2026-11-01 的 Perceptual Grade 1.23.2 开发版 ZIP](../downloads/perceptual_grade-v1.23.2-20261101.zip)

@@ -1,21 +1,42 @@
 direction: down
 
-snapshot: "idle -> prepare\n-> snapshot"
-update: "upload -> pack"
-commit: "commit -> deliver"
-restore: "restore_upload\n-> restore_pack\n-> restore_metadata"
+idle: "idle"
+prepare: "prepare"
+snapshot: "snapshot"
+upload: "upload"
+pack: "pack"
+commit: "commit"
+deliver: "deliver"
+restore_upload: "restore_upload"
+restore_pack: "restore_pack"
+restore_metadata: "restore_metadata"
 fail: "fail"
-finish: "retire -> terminal"
-snapshot -> update: "not matching / not clean"
-snapshot -> commit: "matching and clean"
-snapshot -> fail: "failure"
-update -> commit: "success + clean"
-update -> restore: "failure / unclean"
-commit -> restore: "commit fails"
-commit -> finish: "delivery succeeds"
-commit -> fail: "delivery fails"
-restore -> fail: "complete; stop on failure"
-fail -> finish
+retire: "retire"
+terminal: "terminal" {
+  style.double-border: true
+}
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+idle -> prepare: "begin"
+prepare -> snapshot: "success"
+prepare -> fail: "failed"
+snapshot -> commit: "success, matching, clean"
+snapshot -> upload: "success, mismatch or unclean"
+snapshot -> fail: "failed"
+upload -> pack: "success"
+upload -> restore_upload: "failed"
+pack -> commit: "success, clean"
+pack -> restore_upload: "failed or unclean"
+commit -> deliver: "success"
+commit -> restore_upload: "failed"
+deliver -> retire: "success"
+deliver -> fail: "failed"
+restore_upload -> restore_pack: "success"
+restore_upload -> fail: "failed"
+restore_pack -> restore_metadata: "success, clean"
+restore_pack -> fail: "failed or unclean"
+restore_metadata -> fail: "receipt"
+fail -> retire: "receipt"
+retire -> terminal: "receipt"
+
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

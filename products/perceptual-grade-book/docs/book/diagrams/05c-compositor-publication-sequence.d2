@@ -1,0 +1,37 @@
+shape: sequence_diagram
+
+consumer: "Comparison consumer"
+gate: "Publication gate + policy"
+blender: "Blender compositor"
+
+blender -> gate: "observe scene and epoch"
+consumer -> gate: "snapshot_commit; admit(eligible)"
+gate -> consumer: "publish_epoch authorizes binding"
+consumer -> blender: "bind fresh immutable image"
+blender -> consumer: "binding succeeded"
+consumer -> gate: "superseded(scene, epoch)"
+opt second live swap attempted: {
+  consumer -> gate: "snapshot_commit; admit"
+  gate -> consumer: "no publish_epoch; PublicationDeferred"
+}
+loop old, other-scene, or unsuccessful callbacks: {
+  blender -> gate: "finished"
+  gate -> gate: "keep protection; no effects"
+}
+alt protection cleared: {
+  finished: "same scene; later successful evaluation" {
+    blender -> gate: "finished(newer epoch, successful)"
+    gate -> gate: "unprotected state; no effects"
+  }
+  reset: "quiescent lifecycle reset" {
+    consumer -> gate: "reset(quiescent)"
+    gate -> gate: "unprotected state; no effects"
+  }
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

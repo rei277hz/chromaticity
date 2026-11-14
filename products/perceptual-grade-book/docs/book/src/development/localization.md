@@ -34,12 +34,22 @@ Build-time Babel validates message IDs and formatting placeholders and generates
 To add a new message, add the same ID to every locale, use that ID in the implementation, and regenerate the CSV. Control IDs and binding metadata are in `src/blender/localization/`; DCTL labels and tooltips reference those same IDs from `src/dctl/ui-spec.json`.
 
 
-## Translate the handbook
+## Translate the User Manual
 
-English chapters live in docs/book/src. Simplified Chinese chapters live in docs/book/zh-Hans with the same relative filenames, except for the explicitly English-only `development/next-policies.md` chapter about Perceptual Grade Next. Their SUMMARY.md files describe matching chapter order with that one exception; translate titles and content without changing the remaining page correspondence. Chinese pages currently contain only their translated title.
+English manual chapters live in `docs/book/src/README.md`, `guide/`, and
+`reference/`. Simplified Chinese chapters live in `docs/book/zh-Hans` with the
+same relative filenames. Their SUMMARY.md files describe matching chapter
+order; translate titles and full content without changing page correspondence.
+The Technical Report contains the English theory and development chapters and
+its own introduction and SUMMARY under `docs/book/src/report/`. It is currently
+English-only; Chinese technical translations have been discarded.
 
 Shared illustrations, recordings and downloads remain declared once. A translated chapter uses the same relative asset paths as its English counterpart. Run the documentation build and check the language menu, links and equations in both versions. The menu keeps the current page and remembers the chosen language.
 
-The root landing page checks the saved choice first, then the browser’s language list, and uses English when no supported locale matches. Explicit English or Chinese page URLs stay in their requested language. The search index covers every part within that language.
+The root landing page offers both books. The manual's `manual/index.html`
+checks the saved choice first, then the browser’s language list, and uses
+English when no supported locale matches. Explicit manual language URLs stay
+in their requested language. The report has no Chinese language choice. Each
+search index covers only the chapters of its own book and language.
 
 Chinese search matches phrases directly in the stored titles and text, because the pinned mdBook search index uses an English stemmer. English retains mdBook’s normal search. Both clients search all parts of their own edition.

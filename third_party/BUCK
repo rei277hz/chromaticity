@@ -9,12 +9,14 @@ alias(
 )
 
 # Native installed-extension acceptance uses Blender's own Python and launcher,
-# independently of the bpy wheel used by the fast integration suites.
+# independently of the bpy wheel used by the fast integration suites. The
+# unversioned target is the current regular-test host; versioned targets below
+# are retained for installed compatibility coverage.
 http_file(
     name = "blender_linux_archive",
-    out = "blender-5.2.2-linux-x64.tar.xz",
-    sha256 = "84098912789dc450e95697c4184fb8a90acbe5111c2ba4aede3fecb57806a168",
-    urls = ["https://download.blender.org/release/Blender5.2/blender-5.2.2-linux-x64.tar.xz"],
+    out = "blender-5.3.0-linux-x64.tar.xz",
+    sha256 = "dacb8264197a3f7fda6001285a5a506fc97ee943881261c2c3bd63c882f22e05",
+    urls = ["https://download.blender.org/release/Blender5.3/blender-5.3.0-linux-x64.tar.xz"],
     visibility = ["PUBLIC"],
 )
 
@@ -35,16 +37,16 @@ generate(
     visibility = ["PUBLIC"],
 )
 
-# Official Blender5.2/blender-5.2.2.sha256, verified against two release mirrors.
+# Hash from the official Blender5.3/blender-5.3.0.sha256 release file.
 http_file(
     name = "blender_macos_archive",
-    out = "blender-5.2.2-macos-arm64.dmg",
-    sha256 = "dc4125399b8bfefe283cc1624d6cfc7809d1cac20ace51072127eb371f31f210",
+    out = "blender-5.3.0-macos-arm64.dmg",
+    sha256 = "2d802b54766741e612cead50b03ebbc8eb64dadc71eda932573d256b8a784720",
     target_compatible_with = [
         "prelude//os:macos",
         "prelude//cpu:arm64",
     ],
-    urls = ["https://download.blender.org/release/Blender5.2/blender-5.2.2-macos-arm64.dmg"],
+    urls = ["https://download.blender.org/release/Blender5.3/blender-5.3.0-macos-arm64.dmg"],
     visibility = ["PUBLIC"],
 )
 
@@ -68,6 +70,64 @@ alias(
     actual = select({
         "prelude//os:linux": ":blender_linux",
         "prelude//os:macos": ":blender_macos",
+    }),
+    visibility = ["PUBLIC"],
+)
+
+# Blender 5.2.4 remains an installed-test compatibility host while regular
+# tests use the current 5.3.0 target above. Hashes come from the official
+# Blender5.2/blender-5.2.4.sha256 release file.
+http_file(
+    name = "blender_524_linux_archive",
+    out = "blender-5.2.4-linux-x64.tar.xz",
+    sha256 = "2fd14c50987426897ba60237ee996edf2b4151f4b1a72a460ca20be58c1d2d86",
+    urls = ["https://download.blender.org/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz"],
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "blender_524_linux",
+    args = [
+        "--archive",
+        "$(location :blender_524_linux_archive)",
+    ],
+    outputs = {"binary": "blender"},
+    tool = ":unpack_blender",
+    visibility = ["PUBLIC"],
+)
+
+http_file(
+    name = "blender_524_macos_archive",
+    out = "blender-5.2.4-macos-arm64.dmg",
+    sha256 = "e73d564f97061b2496ccc5a0bd738937d2d3d0acae23621a00bbc7534dfd135f",
+    target_compatible_with = [
+        "prelude//os:macos",
+        "prelude//cpu:arm64",
+    ],
+    urls = ["https://download.blender.org/release/Blender5.2/blender-5.2.4-macos-arm64.dmg"],
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "blender_524_macos",
+    args = [
+        "--archive",
+        "$(location :blender_524_macos_archive)",
+    ],
+    outputs = {"binary": "Blender.app/Contents/MacOS/Blender"},
+    target_compatible_with = [
+        "prelude//os:macos",
+        "prelude//cpu:arm64",
+    ],
+    tool = ":unpack_blender",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "blender_native_lts",
+    actual = select({
+        "prelude//os:linux": ":blender_524_linux",
+        "prelude//os:macos": ":blender_524_macos",
     }),
     visibility = ["PUBLIC"],
 )
@@ -453,16 +513,16 @@ WHEELS = {
     },
     "bpy": {
         "url": select({
-            "prelude//os:linux": "https://files.pythonhosted.org/packages/e0/a7/a26dc1a04934445b1f549969dee2ad3313d4ee1df5205c166df0e336a9ae/bpy-5.2.2-cp313-cp313-manylinux_2_28_x86_64.whl",
-            "prelude//os:macos": "https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
+            "prelude//os:linux": "https://files.pythonhosted.org/packages/a1/15/b54ab677660ca4bf957de2787f6ea394d3e1f275bb3587accffefadb7fe8/bpy-5.3.0-cp313-cp313-manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "https://files.pythonhosted.org/packages/fe/6d/4ebf0e7c2630232ffe8a6cb5eca6377858b6e65c3861a1169bf44a8a61b4/bpy-5.3.0-cp313-cp313-macosx_13_0_arm64.whl",
         }),
         "sha256": select({
-            "prelude//os:linux": "3dfd1a9e7a5aec0f0fe95a1b01d10cd66e212b16ea38b77d132159dc9a666d45",
-            "prelude//os:macos": "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7",
+            "prelude//os:linux": "5850cd39369e4cd8c67ed067d39ec1e57426103ddc709436e13209b56665c6a0",
+            "prelude//os:macos": "75f306ce22e7f020021bee53810343bd21d8fbd8e48c060bcbf3b7dfb61caac5",
         }),
         "filename": select({
-            "prelude//os:linux": "bpy-5.2.2-cp313-cp313-manylinux_2_28_x86_64.whl",
-            "prelude//os:macos": "bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
+            "prelude//os:linux": "bpy-5.3.0-cp313-cp313-manylinux_2_28_x86_64.whl",
+            "prelude//os:macos": "bpy-5.3.0-cp313-cp313-macosx_13_0_arm64.whl",
         }),
         "dependencies": [
             "cattrs",

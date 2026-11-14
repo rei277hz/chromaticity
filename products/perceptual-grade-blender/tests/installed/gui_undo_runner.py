@@ -27,7 +27,7 @@ def main(repository, report_path, cycles='50', blend=None, selected_node='Grade'
     report_path = Path(report_path)
     cycles = int(cycles)
     assert cycles >= 2 and not bpy.app.background
-    assert tuple(bpy.app.version) == (5, 2, 2), bpy.app.version
+    assert tuple(bpy.app.version) in {(5, 2, 4), (5, 3, 0)}, bpy.app.version
     faulthandler.enable(all_threads=True)
     bpy.context.preferences.view.show_splash = False
     bpy.context.preferences.system.gpu_backend = 'METAL' if sys.platform == 'darwin' else 'OPENGL'

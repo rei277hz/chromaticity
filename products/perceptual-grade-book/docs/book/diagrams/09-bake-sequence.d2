@@ -1,0 +1,62 @@
+shape: sequence_diagram
+
+manager: "Bake manager"
+policy: "Bake policy"
+helper: "Native Blender helper"
+host: "Publication gate + Blender"
+
+manager -> host: "require current kernels;\nfreeze scene and image pixels"
+manager -> policy: "request(signature, generation, admitted)"
+policy -> manager: "enqueue; reserve this node"
+manager -> policy: "start when the helper slot is free"
+policy -> manager: "start"
+manager -> helper: "submit immutable snapshot"
+helper -> helper: "evaluate native Grade\nor Stack LUT trees"
+opt source changes or cancellation: {
+  manager -> policy: "invalidate or close"
+  policy -> manager: "cancel; retain running ownership"
+  manager -> helper: "request cancellation"
+}
+helper -> manager: "final artifact receipt, failure, or cancellation"
+manager -> policy: "completed / cancelled;\nvalidate identity and current inputs"
+alt completion: {
+  obsolete: "stale, cancelled, or failed" {
+    policy -> manager: "discard / retire; no image publication"
+    manager -> manager: "release files\nand reservation"
+  }
+  current: "successful and current" {
+    policy -> manager: "ready; retain artifact"
+    loop publication deferred: {
+      manager -> host: "enter commit scope"
+      host -> manager: "defer; retry on a later poll"
+    }
+    manager -> host: "enter admitted commit scope"
+    manager -> policy: "publish(admitted, current signature)"
+    policy -> manager: "publish"
+    manager -> host: "snapshot destination;\nupload, pack, commit metadata"
+    host -> manager: "publication receipt"
+    manager -> policy: "published(receipt, current signature)"
+    opt publication succeeded and remains current: {
+      policy -> manager: "activate"
+      manager -> host: "select baked output;\nsynchronize shared readers"
+      host -> manager: "activation receipt"
+      manager -> policy: "activated(receipt, current signature)"
+    }
+    opt activation succeeded and remains current: {
+      policy -> manager: "retire"
+    }
+    opt publication or activation failed or became stale: {
+      policy -> manager: "rollback"
+      manager -> host: "restore image and metadata;\nfail closed if restoration fails"
+    }
+    manager -> manager: "retire files and reservation\nafter the terminal effect"
+    manager -> host: "leave the same commit scope"
+  }
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

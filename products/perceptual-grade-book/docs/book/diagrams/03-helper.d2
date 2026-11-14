@@ -1,19 +1,45 @@
 direction: down
 
-startup: "stopped -> starting [J3]\nlaunch -> hello\n-> probing"
-ready: "ready\nmatching probe succeeded"
-closing: "stopping -> terminating\ntimeout -> killing\ntimeout -> unretired"
-retiring: "retiring\nexit settles jobs; cleanup"
-done: "closed if close requested\notherwise failed"
-startup -> ready: "probe success"
-startup -> closing: "failure / shutdown"
-ready -> ready: "submit / preview / result"
-ready -> closing: "failure / shutdown"
-startup -> retiring: "physical exit / stopped shutdown"
-ready -> retiring: "physical exit"
-closing -> retiring: "physical exit"
-retiring -> retiring: "cleanup failure / retry"
-retiring -> done: "cleanup success"
+stopped: "stopped"
+starting: "starting"
+probing: "probing"
+ready: "ready"
+stopping: "stopping"
+terminating: "terminating"
+killing: "killing"
+unretired: "unretired"
+retiring: "retiring"
+failed: "failed"
+closed: "closed" {
+  style.double-border: true
+}
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+stopped -> starting: "launch"
+starting -> probing: "hello"
+probing -> ready: "probe succeeds"
+starting -> stopping: "shutdown\n[channel]"
+starting -> terminating: "failure; timeout;\nshutdown\n[no channel]"
+probing -> stopping: "shutdown\n[channel]"
+probing -> terminating: "failure;\nprobe fails;\nshutdown\n[no\nchannel]"
+ready -> stopping: "shutdown\n[channel]"
+ready -> terminating: "failure; shutdown\n[no channel]"
+stopping -> terminating: "failure or timeout"
+terminating -> killing: "timeout"
+killing -> unretired: "timeout"
+
+stopped -> retiring: "shutdown"
+starting -> retiring: "exited"
+probing -> retiring: "exited"
+ready -> retiring: "exited"
+stopping -> retiring: "exited"
+terminating -> retiring: "exited"
+unretired -> retiring: "exited"
+killing -> retiring: "exited"
+retiring -> retiring: "cleanup fails"
+retiring -> retiring: "shutdown / cleanup"
+retiring -> failed: "cleanup succeeds\n[!close_requested]"
+retiring -> closed: "cleanup succeeds\n[close_requested]"
+failed -> closed: "shutdown"
+
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

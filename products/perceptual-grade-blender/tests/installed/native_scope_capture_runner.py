@@ -15,7 +15,7 @@ import numpy as np
 def main(repository, report_path):
     repository, report_path = Path(repository).resolve(), Path(report_path)
     package = repository / 'perceptual_grade'
-    assert tuple(bpy.app.version) == (5, 2, 2), bpy.app.version
+    assert tuple(bpy.app.version) in {(5, 2, 4), (5, 3, 0)}, bpy.app.version
     native_binary = Path(bpy.app.binary_path).resolve()
     bpy.context.preferences.system.gpu_backend = 'METAL' if sys.platform == 'darwin' else 'OPENGL'
     bpy.context.preferences.extensions.repos.new(name='PG native scope acceptance',

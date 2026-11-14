@@ -30,7 +30,7 @@ GPU 或 CPU 指的是生成这张表的方法。
 着色器源代码由 Blender 自身 GPU API 编译。第一次使用可能等待驱动编译，随后编辑复用
 同一程序。温态计算分成有限批次；设备标记的反向顶点在发布前通过完整 CPU 变换重新
 求值。GPU 使用 float32，CPU 使用 float64，反向容差不同，因此 GPU 表有独立诊断，
-不保证与 CPU 顶点逐位相同。参见[验证与工作站测量](../development/testing.md#已安装-gpu-烘焙1230)。
+不保证与 CPU 顶点逐位相同。参见[验证与工作站测量](../development/testing.md#installed-gpu-baking-1230)。
 
 GPU 计算在绘图上下文运行。如果保存或渲染要求的表尚未完成，会用 CPU 完成；
 已经安装且匹配参数的 GPU 表直接复用。扩展不需要额外 GPU 包或预编译扩展二进制。
@@ -60,4 +60,4 @@ GPU 计算在绘图上下文运行。如果保存或渲染要求的表尚未完�
 
 堆栈先安装 33³ LUT，快速更新节点输出和示波器；编辑稳定后复用所有预览顶点，细化至 65³。连续修改合并为后续预览请求。示波器与原生节点输出始终使用同一已安装 LUT。最终渲染及正常保存要求最新参数的 65³ 结果。首个预览完成前节点直通，示波器等待。调度与精度细节见堆栈指南。
 
-参见[反向调色与调色堆栈](inverse-stack.md)、[求值与插值](../theory/lut.md)和[测试](../development/testing.md)。
+参见[反向调色与调色堆栈](inverse-stack.md)、[求值与插值](../theory/lut.md)和[渲染方法测量](../development/testing.md#measure-render-methods)。

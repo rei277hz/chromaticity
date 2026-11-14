@@ -1,5 +1,7 @@
 """Scalar gesture permissions; collection bookkeeping belongs to the runtime."""
 
+# pg-book: technical-report/en#next-policy.gesture
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -60,6 +62,7 @@ def handoff_allowed(current_token: Optional[int], captured_token: Optional[int],
             and phase in ("armed", "active"))
 
 
+# pg-book: technical-report/en#next-policy.observer
 def step(state: State, event: Event) -> tuple[State, Effects]:
     if event.kind == "reset":
         return State(state.serial), Effects(clear_registry=True)

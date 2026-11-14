@@ -698,8 +698,9 @@ Session leases prevent another Blender instance from reclaiming live files.
 After an abandoned session, loading validates saved output manifests and repairs
 invalid outputs from saved settings. This cannot recover unsaved edits.
 
-`buck2 test //products/perceptual-grade-blender/tests/installed:standalone` tests the assembled extension ZIP in
-checksum-pinned native Blender 5.2.2 on Linux x64 or macOS ARM64, including child
+`buck2 test --remote-only //products/perceptual-grade-blender/tests/installed:standalone` tests the assembled extension ZIP in
+checksum-pinned native Blender 5.3.0 on Linux x64 or macOS ARM64, with the
+installed LTS sibling covering Blender 5.2.4, including child
 processes, CPU/GPU conformance, cold/warm blue Warp timings and a GPU-only retry
 probe. The macOS distribution is copied from its pinned DMG through an owned,
 read-only temporary mount. `buck2 test //products/perceptual-grade-blender/tests/gpu/macos:metal` runs the shared

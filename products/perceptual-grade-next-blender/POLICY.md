@@ -2,7 +2,7 @@
 
 The product-owned `policy` package owns Grade preparation scheduling, per-node
 output decisions, helper lifecycle, generated-resource retirement, image
-publication, and gesture coordination. These host-free policies use the Invariant
+publication, bake scheduling, and gesture coordination. These host-free policies use the Invariant
 verifier. Packaging requires source-bound evidence for every policy module;
 proof evidence remains a build artifact outside the runtime package.
 
@@ -27,6 +27,14 @@ full-quality current installation is ready for rendering. A current failure
 selects magenta output until a new request. Reducer effects alone authorize
 preparation, reconciliation, result delivery, graph installation, and
 presentation.
+
+Native template instantiation is part of those existing graph-installation and
+bank-staging effects. The consumer appends a schema-checked bundled tree, binds
+the authoritative parameter banks or Stack LUT, and reports installation only
+after the complete result is valid. The loader has no independent scheduling or
+publication authority and introduces no policy machine. Missing, corrupt, or
+incompatible assets return through the current failure receipt; they never
+silently retain stale output or fall back to a runtime graph emitter.
 
 Helper policy owns startup/probe admission, transport polling, shutdown
 escalation, and cleanup receipts. Cancelling the startup probe withdraws startup;
@@ -55,6 +63,22 @@ after metadata commits and before reporting successful installation. Invalidatio
 failure follows the same source-wide failure path; the policy's failed-delivery
 contract covers this receipt. Graph-link replacement and publication-gate
 admission retain their separate adapter contracts.
+
+Bake policy bounds accepted requests and authorizes enqueue, helper start,
+cancellation, publication, activation, rollback, and retirement. A signature and
+generation fence every completion; publication and activation also recheck the
+current source signature. A deferred publication retains its finished artifact
+until admission is available, while an edit discards it. The runtime serializes
+helper work and keeps snapshot files alive until physical cancellation completes.
+Publication, activation, and rollback share one gate admission. These host
+transactions and native pixel evaluation are covered by runtime and installed
+tests; the proof covers the policy's scalar authorizations.
+
+Baked output selection retains the Image binding when returning to live output.
+A changed source signature disables Use Bake, and a live Grade failure overrides
+the baked branch. Each node keeps its own live-input signature, so rebaking a
+shared managed Image updates all readers without claiming that their independent
+Grade settings produced those pixels.
 
 Gesture policy decides observer admission, handoff, participation, deferred
 completion, and undo permission. Its runtime coordinator stores the per-window

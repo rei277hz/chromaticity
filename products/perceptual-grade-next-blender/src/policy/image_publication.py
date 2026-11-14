@@ -1,5 +1,7 @@
 """Synchronous shared-image publication, durability, and restoration decisions."""
 
+# pg-book: technical-report/en#next-policy.image-publication
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 

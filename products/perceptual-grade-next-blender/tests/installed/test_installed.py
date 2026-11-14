@@ -1,5 +1,4 @@
 from importlib.resources import files
-import json
 import math
 import os
 from pathlib import Path
@@ -11,61 +10,21 @@ import unittest
 import zipfile
 
 from .gui_support import configure_software_graphics
-
-
-_TIMING_SECTIONS = (
-    "extension startup",
-    "node and ownership setup",
-    "parameter and save/load recovery",
-    "Stack builds and gestures",
-    "concurrency and failure recovery",
-    "undo and teardown",
+from .timing import (
+    TIMING_SECTIONS,
+    add_harness_timings,
+    format_timing_report,
+    read_report,
+    write_report,
 )
 
 
-def _read_timing_report(path):
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _add_harness_timings(data, *, setup_seconds, process_seconds, total_seconds):
-    timings = data.get("timings")
-    if not isinstance(timings, dict):
-        return None
-    runner_seconds = timings.get("runner_seconds", 0.0)
-    timings.update({
-        "harness_setup_seconds": round(setup_seconds, 6),
-        "blender_process_seconds": round(process_seconds, 6),
-        "blender_startup_shutdown_seconds": round(
-            max(0.0, process_seconds - runner_seconds), 6,
-        ),
-        "test_total_seconds": round(total_seconds, 6),
-    })
-    return timings
-
-
-def _format_timing_report(timings):
-    if timings is None:
-        return "No timing report was produced by Blender."
-    lines = ["Installed test timings (seconds):"]
-    for section in timings.get("sections", ()):
-        lines.append(f"  {section['name']}: {section['seconds']:.3f}")
-    for name in (
-        "runner_seconds", "blender_startup_shutdown_seconds",
-        "blender_process_seconds", "harness_setup_seconds", "test_total_seconds",
-    ):
-        if name in timings:
-            lines.append(f"  {name}: {timings[name]:.3f}")
-    return "\n".join(lines)
+_BLENDER_TIMEOUT_SECONDS = 540
 
 
 class InstalledExtensionTests(unittest.TestCase):
     def test_extension_hooks_in_blender_background(self):
-        test_started = time.perf_counter()
+        test_started = time.monotonic()
         resources = files("tests.perceptual_grade_blender")
         blender_name = ("Blender.app/Contents/MacOS/Blender" if sys.platform == "darwin"
                         else "blender")
@@ -87,8 +46,8 @@ class InstalledExtensionTests(unittest.TestCase):
                        PYTHONDONTWRITEBYTECODE="1")
             configure_software_graphics(resources, root, env)
             report = root / "report.json"
-            setup_seconds = time.perf_counter() - test_started
-            process_started = time.perf_counter()
+            setup_seconds = time.monotonic() - test_started
+            process_started = time.monotonic()
             command = [
                 str(blender), "--background", "--factory-startup", "--disable-autoexec",
                 "--python-exit-code", "1", "--python", str(runner), "--",
@@ -99,50 +58,62 @@ class InstalledExtensionTests(unittest.TestCase):
                     command,
                     # Exercise fixed-graph parameter updates, resource ownership,
                     # save/load recovery, and failures in one Blender lifecycle.
-                    cwd=root, env=env, capture_output=True, text=True, timeout=600,
+                    # Leave time for timeout diagnostics within Buck's 600s limit.
+                    cwd=root, env=env, capture_output=True, text=True,
+                    timeout=_BLENDER_TIMEOUT_SECONDS,
                 )
             except subprocess.TimeoutExpired as error:
-                process_seconds = time.perf_counter() - process_started
-                data = _read_timing_report(report)
-                timings = (_add_harness_timings(
+                observed = time.monotonic()
+                process_seconds = observed - process_started
+                data = read_report(report)
+                timings = add_harness_timings(
                     data,
                     setup_seconds=setup_seconds,
                     process_seconds=process_seconds,
-                    total_seconds=time.perf_counter() - test_started,
-                ) if data is not None else None)
+                    total_seconds=observed - test_started,
+                    observed_monotonic=observed,
+                    interrupted=True,
+                )
+                if data is not None:
+                    write_report(report, data)
                 output = "\n".join(
                     part.decode(errors="replace") if isinstance(part, bytes) else part or ""
                     for part in (error.stdout, error.stderr)
                 )
                 self.fail(
-                    "Blender installed-extension test timed out after 600 seconds\n"
-                    + output + "\n" + _format_timing_report(timings)
+                    f"Blender installed-extension test timed out after {_BLENDER_TIMEOUT_SECONDS} seconds\n"
+                    + output + "\n" + format_timing_report(timings)
                 )
 
-            process_seconds = time.perf_counter() - process_started
-            data = _read_timing_report(report)
-            timings = (_add_harness_timings(
+            observed = time.monotonic()
+            process_seconds = observed - process_started
+            data = read_report(report)
+            timings = add_harness_timings(
                 data,
                 setup_seconds=setup_seconds,
                 process_seconds=process_seconds,
-                total_seconds=time.perf_counter() - test_started,
-            ) if data is not None else None)
+                total_seconds=observed - test_started,
+                observed_monotonic=observed,
+                interrupted=True,
+            )
             if data is not None:
-                report.write_text(json.dumps(data))
-            timing_summary = _format_timing_report(timings)
+                write_report(report, data)
+            timing_summary = format_timing_report(timings)
             print(timing_summary, flush=True)
             output = result.stdout + "\n" + result.stderr
             self.assertEqual(
                 result.returncode, 0, output + "\n" + timing_summary,
             )
             self.assertTrue(report.is_file(), output)
-            data = json.loads(report.read_text())
+            data = read_report(report)
+            self.assertIsNotNone(data, output + "\n" + timing_summary)
             self.assertFalse(data["registered"])
-            self.assertEqual(data["blender"], [5, 2, 2])
+            self.assertIn(data["blender"], ([5, 2, 4], [5, 3, 0]))
             self.assertEqual(data["timings"]["unit"], "seconds")
             self.assertTrue(data["timings"]["complete"])
             sections = data["timings"]["sections"]
-            self.assertEqual(tuple(item["name"] for item in sections), _TIMING_SECTIONS)
+            self.assertEqual(tuple(item["name"] for item in sections), TIMING_SECTIONS)
+            self.assertTrue(all(item["status"] == "complete" for item in sections))
             section_seconds = tuple(item["seconds"] for item in sections)
             self.assertTrue(all(
                 isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
@@ -150,6 +121,12 @@ class InstalledExtensionTests(unittest.TestCase):
             ), section_seconds)
             self.assertAlmostEqual(
                 sum(section_seconds), data["timings"]["runner_seconds"], delta=0.05,
+            )
+            self.assertAlmostEqual(
+                data["timings"]["blender_pre_runner_seconds"]
+                + data["timings"]["runner_seconds"]
+                + data["timings"]["blender_post_runner_seconds"],
+                data["timings"]["blender_process_seconds"], delta=0.05,
             )
             self.assertGreaterEqual(
                 data["timings"]["blender_process_seconds"],
@@ -160,6 +137,14 @@ class InstalledExtensionTests(unittest.TestCase):
                 data["timings"]["harness_setup_seconds"]
                 + data["timings"]["blender_process_seconds"],
             )
+            operations = data["timings"]["operations"]
+            self.assertTrue(operations)
+            self.assertTrue(all(
+                item["status"] in {"complete", "error"}
+                and item["seconds"] >= 0 and item["callsite"]
+                and item["finished_monotonic"] is not None
+                for item in operations
+            ), operations)
 
 
 if __name__ == "__main__":

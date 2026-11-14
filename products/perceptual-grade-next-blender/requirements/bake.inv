@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {
+    "request_identity_is_complete": "(state.signature is None) == (state.generation is None)",
+    "request_generation_is_positive": "state.generation is None or state.generation > 0",
+    "request_signature_is_nonempty": "state.signature is None or state.signature != ''",
+    "idle_has_no_request": "state.phase != 'idle' or state.signature is None",
+    "terminal_has_no_request": "state.phase != 'terminal' or state.signature is None"
+  },
+  "properties": [
+    {
+      "name": "request_requires_admission_and_valid_identity",
+      "variables": {
+        "signature": "Optional[str]",
+        "generation": "Optional[int]",
+        "admitted": "bool"
+      },
+      "lets": {
+        "transition": "step(new(), Event('request', signature, generation, admitted=admitted))"
+      },
+      "assert": "transition[1].action != 'enqueue' or (admitted and signature is not None and signature != '' and generation is not None and generation >= 1)"
+    },
+    {
+      "name": "queue_is_bounded_and_serial_per_node",
+      "variables": {
+        "count": "int",
+        "busy": "bool",
+        "admitted": "bool"
+      },
+      "assert": "can_enqueue(count, busy, admitted) == (0 <= count < 8 and not busy and admitted)"
+    },
+    {
+      "name": "start_requires_exact_request_generation",
+      "variables": {},
+      "lets": {
+        "queued": "step(new(), Event('request', 'a', 1, admitted=True))",
+        "stale": "step(queued[0], Event('start', 'a', 2, admitted=True))"
+      },
+      "assert": "stale == (queued[0], Effects())"
+    },
+    {
+      "name": "completion_requires_exact_identity_and_current_signature",
+      "variables": {},
+      "lets": {
+        "queued": "step(new(), Event('request', 'a', 1, admitted=True))",
+        "running": "step(queued[0], Event('start', 'a', 1, admitted=True))",
+        "stale": "step(running[0], Event('completed', 'a', 1, current_signature='b', successful=True))"
+      },
+      "assert": "stale[0].phase == 'terminal' and stale[1].action == 'discard'"
+    },
+    {
+      "name": "publication_requires_admission_and_current_signature",
+      "variables": {},
+      "lets": {
+        "ready": "State('ready', 'a', 1)",
+        "denied": "step(ready, Event('publish', 'a', 1, current_signature='a', admitted=False))",
+        "stale": "step(ready, Event('publish', 'a', 1, current_signature='b', admitted=True))"
+      },
+      "assert": "denied == (ready, Effects()) and stale[0].phase == 'terminal' and stale[1].action == 'discard'"
+    },
+    {
+      "name": "publication_failure_authorizes_rollback",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('publishing', 'a', 1), Event('published', 'a', 1, current_signature='a', successful=False, error='upload failed'))"
+      },
+      "assert": "transition[0].phase == 'terminal' and transition[1].action == 'rollback' and transition[1].error == 'upload failed'"
+    },
+    {
+      "name": "activation_failure_authorizes_rollback",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('activating', 'a', 1), Event('activated', 'a', 1, current_signature='a', successful=False, error='activation failed'))"
+      },
+      "assert": "transition[0].phase == 'terminal' and transition[1].action == 'rollback' and transition[1].error == 'activation failed'"
+    },
+    {
+      "name": "input_change_cancels_running_request",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('running', 'a', 1), Event('invalidate', 'a', 1, current_signature='b'))"
+      },
+      "assert": "transition[0].phase == 'cancelling' and transition[1].action == 'cancel' and transition[1].generation == 1"
+    },
+    {
+      "name": "input_change_discards_queued_result",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('queued', 'a', 1), Event('invalidate', 'a', 1, current_signature='b'))"
+      },
+      "assert": "transition[0].phase == 'terminal' and transition[1].action == 'discard'"
+    },
+    {
+      "name": "terminal_receipts_are_inert",
+      "variables": {},
+      "lets": {
+        "transition": "step(State('terminal'), Event('completed', 'a', 1, current_signature='a', successful=True))"
+      },
+      "assert": "transition == (State('terminal'), Effects())"
+    },
+    {
+      "name": "stale_bake_automatically_uses_live_output",
+      "variables": {
+        "use_bake": "bool"
+      },
+      "lets": {
+        "output": "output_policy(use_bake, 'new', 'old', True)"
+      },
+      "assert": "output.mode == 'live' and not output.use_bake and output.error is None"
+    },
+    {
+      "name": "invalid_selected_image_fails_closed",
+      "variables": {},
+      "lets": {
+        "output": "output_policy(True, 'a', 'a', False)"
+      },
+      "assert": "output.mode == 'error' and not output.use_bake and output.error is not None"
+    },
+    {
+      "name": "live_failure_overrides_baked_output",
+      "variables": {
+        "artifact_valid": "bool"
+      },
+      "lets": {
+        "output": "output_policy(True, 'a', 'a', artifact_valid, 'kernel lost')"
+      },
+      "assert": "output.mode == 'error' and not output.use_bake and output.error == 'kernel lost'"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "request_runs_and_publishes",
+      "variables": {},
+      "lets": {
+        "queued": "step(new(), Event('request', 'a', 1, admitted=True))",
+        "running": "step(queued[0], Event('start', 'a', 1, admitted=True))",
+        "ready": "step(running[0], Event('completed', 'a', 1, current_signature='a', successful=True))",
+        "publishing": "step(ready[0], Event('publish', 'a', 1, current_signature='a', admitted=True))",
+        "activating": "step(publishing[0], Event('published', 'a', 1, current_signature='a', successful=True))",
+        "done": "step(activating[0], Event('activated', 'a', 1, current_signature='a', successful=True))"
+      },
+      "assert": "queued[1].action == 'enqueue' and running[1].action == 'start' and ready[0].phase == 'ready' and publishing[1].action == 'publish' and activating[0].phase == 'activating' and activating[1].action == 'activate' and done[0].phase == 'terminal' and done[1].action == 'retire'"
+    },
+    {
+      "name": "failed_request_retires_without_publishing",
+      "variables": {},
+      "lets": {
+        "failed": "step(State('running', 'a', 1), Event('completed', 'a', 1, successful=False, error='worker failed'))"
+      },
+      "assert": "failed[0].phase == 'terminal' and failed[1].action == 'retire' and failed[1].error == 'worker failed'"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "accept_start_from_another_generation",
+      "function": "_matches",
+      "target": "event.generation == state.generation",
+      "replacement": "True",
+      "detects": [
+        "property.start_requires_exact_request_generation"
+      ]
+    },
+    {
+      "name": "publish_stale_capture",
+      "function": "_current",
+      "target": "event.current_signature == state.signature",
+      "replacement": "True",
+      "detects": [
+        "property.completion_requires_exact_identity_and_current_signature"
+      ]
+    },
+    {
+      "name": "keep_stale_bake_selected",
+      "function": "output_policy",
+      "target": "desired_signature != artifact_signature",
+      "replacement": "False",
+      "detects": [
+        "property.stale_bake_automatically_uses_live_output"
+      ]
+    }
+  ]
+}

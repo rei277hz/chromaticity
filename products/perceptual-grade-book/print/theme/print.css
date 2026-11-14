@@ -36,7 +36,7 @@
   }
 }
 
-@page :blank {
+@page body:blank {
   @top-left { content: none; }
   @bottom-right { content: none; }
 }
@@ -85,7 +85,7 @@ body.book {
 }
 .cover .series,
 .cover .edition { color: var(--book-cover-accent); font-size: 9pt; font-weight: 700; }
-.cover h1 { max-width: 135mm; margin: 0; font-size: 34pt; line-height: 1.12; }
+.cover h1 { max-width: 150mm; margin: 0; font-size: 30pt; line-height: 1.12; }
 .cover .cover-rule { width: 32mm; height: 1.2mm; margin-top: 12mm; background: var(--book-accent); }
 .cover .version { color: var(--book-cover-muted); font-size: 11pt; }
 
@@ -127,6 +127,10 @@ body.book {
     color: var(--book-muted);
     font: 500 9pt/1 var(--book-font-sans);
   }
+}
+@page :blank {
+  @top-left { content: none; }
+  @bottom-right { content: none; }
 }
 .part { break-before: right; }
 .part-title {

@@ -1,5 +1,7 @@
 """Consume immutable parameter-publication effects; never restore old pixels."""
 
+# pg-book: technical-report/en#next-policy.parameter-publication
+
 from ..policy import parameter_publication as policy
 
 

@@ -1,5 +1,7 @@
 """Adoption and synchronous retirement of generated host resources."""
 
+# pg-book: technical-report/en#next-policy.resources
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 

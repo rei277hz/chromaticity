@@ -6,10 +6,7 @@ load(":rules.bzl", "chart_preview")
 
 source_tree(
     name = "front_matter",
-    srcs = {
-        "en/front-matter.html": "front-matter/en/front-matter.html",
-        "zh-Hans/front-matter.html": "front-matter/zh-Hans/front-matter.html",
-    },
+    srcs = {path.removeprefix("front-matter/"): path for path in glob(["front-matter/**/*.html"])},
     visibility = ["PUBLIC"],
 )
 
@@ -145,6 +142,7 @@ python_binary(
     name = "native_unpack",
     main_module = "pg_book_print.unpack_native",
     deps = [":native_unpack_support"],
+    visibility = ["PUBLIC"],
 )
 
 generate(
@@ -209,7 +207,11 @@ python_binary(
 
 generate(
     name = "review",
-    args = ["--pdf-dir", "$(location //products/perceptual-grade-book:book[pdf])"],
+    args = [
+        "--pdf-dir", "$(location //products/perceptual-grade-book:user-manual[pdf])",
+        "--publication", "user-manual",
+        "--language", "zh-Hans",
+    ],
     outputs = {"manifest": "review.json"},
     tool = ":review_tool",
     visibility = ["PUBLIC"],
@@ -218,7 +220,8 @@ generate(
 generate(
     name = "policy_review",
     args = [
-        "--pdf-dir", "$(location //products/perceptual-grade-book:book[pdf])",
+        "--pdf-dir", "$(location //products/perceptual-grade-book:technical-report[pdf])",
+        "--publication", "technical-report",
         "--language", "en",
         "--chapter", "Next Blender policy machines",
     ],
@@ -230,14 +233,15 @@ generate(
 generate(
     name = "chart_review",
     args = [
-        "--pdf-dir", "$(location //products/perceptual-grade-book:book[pdf])",
-        "--documents", "$(location //products/perceptual-grade-book:book[documents])",
+        "--pdf-dir", "$(location //products/perceptual-grade-book:technical-report[pdf])",
+        "--documents", "$(location //products/perceptual-grade-book:technical-report[documents])",
+        "--publication", "technical-report",
+        "--language", "en",
         "--charts",
     ],
     outputs = {
         "manifest": "review.json",
         "en": "en/review.json",
-        "zh-Hans": "zh-Hans/review.json",
     },
     tool = ":review_tool",
     visibility = ["PUBLIC"],
@@ -248,16 +252,20 @@ python_test(
     srcs = ["print_test.py"],
     base_module = "tests.pg_book_print",
     resources = {
-        "book": "//products/perceptual-grade-book:book_inputs",
+        "books": "//products/perceptual-grade-book:book_inputs",
         "site": "//products/perceptual-grade-book:site[html]",
         "site-manifest.json": "//products/perceptual-grade-book:site[manifest]",
+        "policy-figures.json": "//products/perceptual-grade-book/diagrams:manifest",
         "site.zip": "//products/perceptual-grade-book:archive[zip]",
-        "site-baseline.json": "site-baseline.json",
         "theme": ":theme",
-        "documents": "//products/perceptual-grade-book:book[documents]",
-        "pdf": "//products/perceptual-grade-book:book[pdf]",
-        "epub": "//products/perceptual-grade-book:book[epub]",
-        "print-manifest.json": "//products/perceptual-grade-book:book[manifest]",
+        "user-manual/documents": "//products/perceptual-grade-book:user-manual[documents]",
+        "user-manual/pdf": "//products/perceptual-grade-book:user-manual[pdf]",
+        "user-manual/epub": "//products/perceptual-grade-book:user-manual[epub]",
+        "user-manual/print-manifest.json": "//products/perceptual-grade-book:user-manual[manifest]",
+        "technical-report/documents": "//products/perceptual-grade-book:technical-report[documents]",
+        "technical-report/pdf": "//products/perceptual-grade-book:technical-report[pdf]",
+        "technical-report/epub": "//products/perceptual-grade-book:technical-report[epub]",
+        "technical-report/print-manifest.json": "//products/perceptual-grade-book:technical-report[manifest]",
     },
     deps = [":support", ":pikepdf", ":pypdf", ":weasyprint", "//third_party:pillow", "//third_party:fonttools", ":native_runtime"],
     env = {

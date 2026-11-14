@@ -99,7 +99,7 @@ class BankedResourceTests(unittest.TestCase):
             "grade_banked_resources_test.runtime.grade_resources"
         )
         cls.stage2 = importlib.import_module(
-            "grade_banked_resources_test.kernel.stage2_graph"
+            "grade_banked_resources_test.kernel.stage2_bindings"
         )
         cls.schema = importlib.import_module(
             "grade_banked_resources_test.kernel.stage2_parameters"

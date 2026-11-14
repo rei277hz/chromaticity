@@ -1,5 +1,7 @@
 """Authorize one complete Grade only after its three preparations retire."""
 
+# pg-book: technical-report/en#next-policy.preparation-join
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 

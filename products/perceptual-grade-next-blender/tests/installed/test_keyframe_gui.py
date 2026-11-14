@@ -74,6 +74,11 @@ class KeyframeGuiTests(unittest.TestCase):
                     self.assertEqual(case["deleted_fields"], ["exposure", "fit"], details)
                     self.assertEqual(case["auto_key_frames"], [1, 3, 5], details)
                     self.assertEqual(case["channel_count"], 2, details)
+                    self.assertEqual(case["ownership_conversions"],
+                                     ["NODE", "DATABLOCK"], details)
+                    self.assertEqual(case["converted_values"],
+                                     {"exposure": 1.25, "fit": .125}, details)
+                    self.assertTrue(case["conversion_undo_redo"], details)
 
 
 if __name__ == "__main__":

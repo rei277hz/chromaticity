@@ -3,7 +3,7 @@ from unittest import TestCase, main, mock
 import numpy as np
 import bpy
 from color_tools.kernel import prepare, ToneSettings
-from color_tools.kernel.graph import (
+from color_tools.template_build.graph import (
     Graph, BuiltGrade, build_group, count_nodes,
 )
 from tools.perceptual_grade.reports import cases, oracle

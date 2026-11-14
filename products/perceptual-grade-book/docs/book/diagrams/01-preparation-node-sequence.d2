@@ -1,0 +1,49 @@
+shape: sequence_diagram
+
+consumer: "Runtime consumer"
+policies: "Node + preparation policies"
+worker: "Worker"
+blender: "Blender"
+
+requests: "loop [request A, then B and C while A runs]" {
+  consumer -> policies: "node.request; preparation.request"
+  policies -> consumer: "retain Z preview; prepare only if idle"
+  opt worker slot available: {
+    consumer -> worker: "start authorized preparation"
+  }
+}
+opt preview before final: {
+  worker -> consumer: "preview A"
+  consumer -> policies: "preparation_preview A"
+  policies -> consumer: "preview_signature=A; retain worker"
+}
+completion: "loop [final A starts C; final C permits build]" {
+  worker -> consumer: "final result"
+  consumer -> policies: "preparation_result; permitted node receipt"
+  policies -> consumer: "prepare C / build C / current error"
+  opt latest successor authorized: {
+    consumer -> worker: "start C after A retires"
+  }
+}
+alt current outcome: {
+  success: "preparation and installation succeed" {
+    consumer -> blender: "append template; bind current payload"
+    blender -> consumer: "complete validated candidate"
+    consumer -> blender: "install C through publication effects"
+    blender -> consumer: "installation receipt"
+    consumer -> policies: "node.installation_result C"
+    policies -> consumer: "output_mode=current"
+    consumer -> blender: "present C as current"
+  }
+  failure: "preparation, template, binding, or installation fails" {
+    policies -> consumer: "output_mode=error"
+    consumer -> blender: "magenta; preserve alpha"
+  }
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

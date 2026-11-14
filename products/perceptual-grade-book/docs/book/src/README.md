@@ -1,23 +1,17 @@
 # Introduction
 
-> **A maintained handbook:** this book aims to keep up with the latest Perceptual
-> Grade. [Understanding the model](theory/structure.md) follows the current
-> analytic reference in `libraries/perceptual-grade-reference`. Some material
-> still lags: the usage guide, host recordings, and much of the runtime
-> engineering text describe 1.23.2. Downloads and recorded measurements retain
-> their original version. The English-only [Next Blender policy machines](development/next-policies.md)
-> chapter follows Next's current policies; Next has not yet implemented Warp.
-> The model, implementation, and historical sections identify their own scope.
+> **A maintained handbook:** this publication aims to keep up with the latest
+> Perceptual Grade. Its User Manual describes the 1.23.2 interface and workflow;
+> those instructions, host recordings, and much of the runtime engineering text
+> still lag behind the current reference. Downloads and measurements retain
+> their original version and scope. Chapters identify the product or model they
+> describe.
 
-[rei277hz/perceptual-grade](https://github.com/rei277hz/perceptual-grade) is the
-downstream code snapshot, currently containing the preserved Perceptual Grade
-v1.23.2 code from the 2026-11-01 build, not Perceptual Grade Next. It accepts
-[issues](https://github.com/rei277hz/perceptual-grade/issues),
-but does not accept pull requests. Submit pull requests to the development
-repository, [rei277hz/chromaticity](https://github.com/rei277hz/chromaticity/pulls).
-See [Contributing](development/contributing.md) for the repository roles.
-
-Perceptual Grade connects white balance, a custom tone curve, and selective color adjustments in three stages. Blender implementations provide nodes for Shading and Compositing; the retained DCTL runs in DaVinci Resolve. Their available controls and Stage 3 policies differ from the latest reference, so the implementation profile matters when reproducing a grade.
+Perceptual Grade connects white balance, a custom tone curve, and selective
+color adjustments in three stages. Blender implementations provide nodes for
+Shading and Compositing; the retained DCTL runs in DaVinci Resolve. Their
+available controls and Stage 3 policies differ from the latest reference, so
+check the implementation profile when reproducing a grade.
 
 <figure class="grade-demo"><img src="assets/intro/match-three-images.webp" data-still="assets/intro/match-three-images-still.webp" alt="Matching three differently lit images" loading="eager"><figcaption>Match three differently lit images. The supplied recording is a replaceable demonstration placeholder.</figcaption></figure>
 
@@ -36,13 +30,17 @@ Perceptual Grade connects white balance, a custom tone curve, and selective colo
 The download is a Perceptual Grade 1.23.2 development build dated 2026-11-01.
 It packages the preserved Perceptual Grade implementation, not Perceptual Grade
 Next, and replaces the original extension download. Installation and the
-everyday workflow below retain the 1.23.2 interface and have not been updated for
-Next or the current reference's Warp controls.
+everyday workflow below retain the 1.23.2 interface; they have not been updated
+for Next or the current reference's Warp controls.
 
-Start with [installation](guide/install.md), then [grade in three stages](guide/workflow.md). Choose your white and color directions in **Linear**, place important scene tones in **Tone**, and refine lightness, chroma, adaptance and hue in **Color**.
+Start with [installation](guide/install.md), then [grade in three
+stages](guide/workflow.md). Choose your white and color directions in
+**Linear**, place important scene tones in **Tone**, and refine lightness,
+chroma, adaptance, and hue in **Color**. The [Technical
+Report](https://rei277hz.github.io/perceptual-grade/technical/en/index.html)
+covers the current analytical model, its calculations, and the engineering
+behind the implementations.
 
-The handbook explains everyday use first. [Understanding the model](theory/structure.md) then follows the calculations and their numerical illustrations. Developers can start with [architecture](development/architecture.md), [building and testing](development/building.md), or [contributing](development/contributing.md).
-
-The 1.23.2 guide includes Hue Concentration, Adaptance Strength and Fit, and global low-chroma and high-chroma Hue coefficients. The current reference uses six hue handles across four tonal rows, selective cone Adaptance driven by neutral destinations, H–K repair, and then a common positive Scale of achromatic lightness and chroma. Saved settings are not reinterpreted between profiles. The [Color chapter](theory/color.md) explains the current stage and labels the retained controls separately.
-
-The supplied downloads are packaged with this book through Buck2. See the [credits](reference/credits.md) for the appearance-model papers and implementation references, and the [license](reference/license.md) for licensing.
+See the [credits](reference/credits.md) for appearance-model papers and
+implementation references, and the [license](reference/license.md) for
+licensing.

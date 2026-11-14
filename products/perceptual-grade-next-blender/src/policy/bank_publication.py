@@ -1,5 +1,7 @@
 """Decision policy for fixed two-bank helper-image publication."""
 
+# pg-book: technical-report/en#next-policy.bank-publication
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 

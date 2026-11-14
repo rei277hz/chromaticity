@@ -1,5 +1,7 @@
 """Bounded immutable-image allocation and reversible binding transactions."""
 
+# pg-book: technical-report/en#next-policy.parameter-publication
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 

@@ -16,7 +16,7 @@ import numpy as np
 def main(repository, report_path):
     repository, report_path = Path(repository).resolve(), Path(report_path)
     assert not bpy.app.background
-    assert tuple(bpy.app.version) == (5, 2, 2), bpy.app.version
+    assert tuple(bpy.app.version) in {(5, 2, 4), (5, 3, 0)}, bpy.app.version
     bpy.context.preferences.view.show_splash = False
     bpy.context.preferences.extensions.repos.new(
         name='PG output reader acceptance', module='pg_reader', custom_directory=str(repository))

@@ -1,14 +1,25 @@
 direction: down
 
-pending: "pending\n3 children"
-partial: "partial [J1]\nfirst error kept"
-complete: "complete\nno error"
-failed: "complete\nerror delivered"
+three: "pending=3\nerror=None"
+two_ok: "pending=2\nerror=None"
+two_error: "pending=2\nerror!=None"
+one_ok: "pending=1\nerror=None"
+one_error: "pending=1\nerror!=None"
+complete: "pending=0\nerror=None" {
+  style.double-border: true
+}
+failed: "pending=0\nerror!=None" {
+  style.double-border: true
+}
 
-pending -> partial: "first receipt"
-partial -> partial: "next distinct receipt"
-partial -> complete: "last receipt; success"
-partial -> failed: "last receipt; error"
+three -> two_ok: "receipt [no error]"
+three -> two_error: "receipt [error]"
+two_ok -> one_ok: "receipt [no error]"
+two_ok -> one_error: "receipt\n[error]"
+two_error -> one_error: "receipt\n[pending child]"
+one_ok -> complete: "receipt\n[no error]\n/ completion"
+one_ok -> failed: "receipt [error]\n/ completion\n+ error"
+one_error -> failed: "receipt\n[pending child]\n/ completion\n+ error"
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

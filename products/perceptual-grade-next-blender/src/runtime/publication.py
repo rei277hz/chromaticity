@@ -1,5 +1,7 @@
 """Narrow host admission for publishing prepared Grade image data."""
 
+# pg-book: technical-report/en#next-policy.render-preflight
+
 from contextlib import contextmanager
 from collections import deque
 from dataclasses import dataclass, field, replace
@@ -88,6 +90,7 @@ class RenderPreflightTicket:
             raise self._error
 
 
+# pg-book: technical-report/en#next-policy.compositor-publication
 class PublicationGate:
     """Observe a small set of Blender activities around main-thread writes.
 
@@ -403,6 +406,25 @@ class PublicationGate:
 
     def blocked(self) -> bool:
         return self.reason() is not None
+
+    @contextmanager
+    def graph_commit(self):
+        """Compose graph reconciliation with an admitted foreground scope.
+
+        Normal publication and render preflight may invoke nested graph
+        consumers. A compositor snapshot scope may only bind fresh images,
+        so it never admits this broader native graph mutation.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            raise PublicationDeferred("Graph reconciliation requires Blender's main thread")
+        with self._lock:
+            composing = (self._committing and self._snapshot_active is None
+                         and not self._callbacks)
+        if composing:
+            yield
+        else:
+            with self.commit():
+                yield
 
     @contextmanager
     def commit(self):

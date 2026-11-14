@@ -2,15 +2,82 @@
 
 This chapter preserves the original 1.23.2 source layout and build commands. For
 the maintained monorepo targets, editable sources, generated resources, and
-deployment ZIP, see the [current handbook build guide](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/README.md).
+deployment ZIP, see the [current book build guide](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/README.md).
 The current build regenerates derived media from source and keeps historical
 release downloads as verified attachments.
 
-The handbook is an mdBook with declared Buck2 inputs for chapters, recordings, screenshots, numerical figures and runtime assets. Reader scripts and generated media are local; KaTeX equations and the text and code fonts load from pinned CDN resources. Introduction uses the local WebP demonstration. The Bilibili player proof of concept remains commented out in its Markdown source until a real video is ready. Validation retains the exact player URL allowlist for future use.
+The User Manual and Technical Report are independent mdBooks with declared Buck2 inputs for chapters, recordings, screenshots, numerical figures and runtime assets. Reader scripts and generated media are local; KaTeX equations and the text and code fonts load from pinned CDN resources. The User Manual introduction uses the local WebP demonstration. The Bilibili player proof of concept remains commented out in its Markdown source until a real video is ready. Validation retains the exact player URL allowlist for future use.
 
 ## Edit and build
 
-Edit English chapters in docs/book/src and register their paths in SUMMARY.md. Mirror the hierarchy in docs/book/zh-Hans; its title-only pages are explicit required sources, never generated English fallbacks. The Next Blender policy-machines chapter is the declared English-only exception because it documents a separate product generation. Keep reader instructions in guide, calculations in theory and maintenance here. Use Markdown chapter links, `$$` display equations and `\( ... \)` inline TeX.
+The maintained publication now contains two books. The User Manual uses
+`docs/book/src/README.md`, `guide/`, and `reference/`, with matching Simplified
+Chinese chapters under `docs/book/zh-Hans`. Their `SUMMARY.md` files must keep
+the same chapter paths and order. The English-only Technical Report uses
+`theory/`, `development/`, shared `reference/`, and its own introduction and
+`SUMMARY.md` under `docs/book/src/report/`. Chinese technical chapters have been
+discarded. Keep reader instructions in the manual and model calculations and
+maintenance guidance in the report. Use Markdown chapter links, `$$` display
+equations and `\( ... \)` inline TeX.
+
+Assembly projects these sources into independent mdBook roots. The combined
+site serves the manual at `manual/en/` and `manual/zh-Hans/`, and the report at
+`technical/en/`, with a book chooser at the root. Shared assets and downloads
+remain at the site root. Chapter links across the books are resolved within
+that deployment; print editions link to the corresponding published web page.
+Build `//products/perceptual-grade-book:archive[zip]` for the single site ZIP,
+or `:user-manual[pdf]`, `:user-manual[epub]`, `:technical-report[pdf]`, and
+`:technical-report[epub]` in that package for the six print files. Run build
+and test commands through Buck2 with `--remote-only`.
+
+### Code references to the books
+
+Code comments can point to a stable section without copying a filename or a
+heading slug. Use the exact form below; the book and language are part of the
+reference, and the identifier is declared by an explicit anchor immediately
+after the Markdown heading:
+
+```python
+# pg-book: technical-report/en#next-policy.node-output
+```
+
+```markdown
+## Node output policy
+
+<a id="next-policy.node-output"></a>
+```
+
+The resolver reads Python comments with the Python tokenizer, so the same text
+inside a string or docstring is ignored. It indexes only chapters listed by the
+edition's `SUMMARY.md`, checks that each identifier is unique, and then checks
+the generated HTML contains exactly one matching ID. A chapter can move or its
+heading can be renamed while the reference remains valid as long as the
+explicit identifier stays with the section. Identifiers are unique within a
+book and language. Supported editions are `technical-report/en`,
+`user-manual/en`, and `user-manual/zh-Hans`.
+
+Build the reference report with:
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-book:book_refs --show-output
+```
+
+The output directory contains `book-refs.json` and `book-refs.txt`. They locate
+the source comment, original Markdown heading, generated site page, published
+URL, and local preview URL. Missing or duplicate anchors and malformed comments
+fail the build. The declared input covers Next Blender Python sources and the
+comparison publication example; add markers at the policy and effect-consumer
+contracts that need navigation. Both reports are build artifacts.
+
+To follow the local URLs, serve the same generated site:
+
+```sh
+buck2 run --remote-only //products/perceptual-grade-book:preview -- --port 8080
+```
+
+### Historical build commands
+
+The commands below describe the original repository:
 
 ``` sh
 buck2 build //:docs_site '//:docs_deploy[zip]' --show-full-output
@@ -18,9 +85,9 @@ buck2 run //:docs_preview -- --port 8080
 buck2 test //:build_inputs //:documentation_intro //:documentation_fonts //:documentation_favicon //:documentation_demos //:documentation_inputs //:documentation_site
 ```
 
-The Light and Dark themes adapt the ACES documentation’s typography, neutral surfaces and gold accent. Auto follows system appearance. The full-width title bar sits above both the sidebar and the reading column. The contents stop at chapters and sections; page headings are excluded. Each language has one combined sidebar and a search index covering all parts, with chapter numbers restarting at each part. Previous/next page buttons are removed.
+The Light and Dark themes adapt the ACES documentation’s typography, neutral surfaces and gold accent. Auto follows system appearance. The full-width title bar sits above both the sidebar and the reading column. The contents stop at chapters and sections; page headings are excluded. Each book and language edition has its own sidebar and search index, with chapter numbers restarting at each part. Previous/next page buttons are removed.
 
-The CSS and reader controls live in docs/book/theme. The builder runs tools/docs/parts.py through mdBook’s preprocessor protocol before rendering, so the dynamic and no-JavaScript contents have identical numbering. Changing SUMMARY.md updates the hierarchy; a third nesting level fails instead of adding more detailed navigation.
+The CSS and reader controls live in docs/book/theme. The maintained builder runs `tools/parts.py` through mdBook’s preprocessor protocol before rendering, so the dynamic and no-JavaScript contents have identical numbering. Changing either book's SUMMARY.md updates its hierarchy; a third nesting level fails instead of adding more detailed navigation.
 
 ### CDN typography
 
@@ -35,7 +102,7 @@ buck2 test //:documentation_fonts //:documentation_site //:build_inputs
 
 ## Require complete sources
 
-The checked inventory in build_defs/source_inventory.bzl lists every authored source, including MOVs, screenshot PNGs, appearance artwork, icon PNGs, catalogs, model code, fixtures, build definitions and locks. Buck2 checks its source collections against that inventory; missing or unregistered files fail. Pinned downloads require their declared hashes and have no local substitute. All generators run in clean output directories and must produce every declared output; fixture capture, extension packaging, release packaging and site packaging reject incomplete inputs.
+The checked inventory in build_defs/source_inventory.bzl lists every authored source, including MOVs, screenshot PNGs, appearance artwork, catalogs, model code, fixtures, build definitions and locks. The separate `products/perceptual-grade-icon` package owns the authored icon configuration and Blender generator; its `:icons` target supplies the sixteen rendered PNGs to the book. Buck2 checks its source collections against that inventory; missing or unregistered files fail. Pinned downloads require their declared hashes and have no local substitute. All generators run in clean output directories and must produce every declared output; fixture capture, extension packaging, release packaging and site packaging reject incomplete inputs.
 
 Catalog and translation-review actions require every catalog, binding and source module, then check the generated MO files and CSV. Native diagram assets require the pinned model and CMF dependencies. DCTL generation and C++ validation require every fragment, UI specification, catalog and harness source.
 
@@ -56,11 +123,11 @@ The build never refreshes this inventory automatically and never generates a sub
 
 ## Replace the icons
 
-The authored PNGs in docs/book/src/assets/icons contain transparent and opaque artwork at 16, 32, 48, 64, 180, 192, 256 and 512 pixels. Keep every filename and native dimension when replacing them. The icon action requires all sixteen files and never resizes them.
+The icon product generates transparent and opaque artwork at 16, 32, 48, 64, 180, 192, 256 and 512 pixels by rendering each requested size in Blender. Keep every filename and native dimension when changing its authored configuration. The book consumes `//products/perceptual-grade-icon:icons`; it does not keep a second authored icon set.
 
 The ICO contains the original transparent PNG payloads at 16, 32, 48, 64 and 256 pixels. The title uses the 32px artwork and the 64px render for high-density displays. The 180px opaque image is copied byte-for-byte to apple-touch-icon.png. The web manifest uses the supplied transparent 192px and 512px images for ordinary Android icons.
 
-The separate 512px maskable tile centers the opaque 256px render at its native size on a solid background sampled from that render's corner. Its entire 256px square fits inside the guaranteed central safe circle. This is padding and placement, with no resolution resampling. The generated manifest declares only this separate variant as maskable. These icons do not add offline caching or a service worker.
+The icon generator produces the transparent and opaque variants directly. The book's favicon packager embeds the transparent 16, 32, 48, 64 and 256px PNG bytes in the ICO and copies the native 180, 192 and 512px platform images. It creates the separate 512px maskable tile by placing the opaque 256px render on a padded background; the generated manifest declares only this separate variant as maskable. These icons do not add offline caching or a service worker.
 
 ``` sh
 buck2 build //:book_favicon '//:docs_deploy[zip]' --show-full-output
@@ -167,8 +234,8 @@ The runtime flowchart is authored as assets/illustrations/runtime-flow.svg and h
 
 The two published modCAM16 reference images are ordinary source PNGs under docs/book/src/assets/illustrations. Replace them directly and update captions and attribution when choosing final artwork. Their origin and hashes are recorded in docs/data/appearance-references.json. They have no drawing generator.
 
-The `//products/perceptual-grade-book/generators:figures` target uses the current reference for the linear basis, Tone, coefficient weights, drivers, and H–K repair. Concentration and the archived LUT examples use the isolated 1.23.2 model; benchmarks and LUT-study comparisons retain their recorded inputs. Each figure declares its scope in `figures.json`, and provenance includes the reference and legacy source hashes. Python supplies the numerical samples to pinned XeLaTeX/PGFPlots, which emits static SVGs for the website, PDF and EPUB. Axis labels remain English in both editions; captions and alt text are localized. Four book-facing LUT-study figures are redrawn from recorded data. The domain-128 finalist errors retain the report's eight-decimal precision, and two placement axes are reconstructed from the documented formulas; the downloadable report archives remain unchanged. The `//products/perceptual-grade-book/generators:photos` target generates preserved-release and historical-guard comparisons from the five sampled EXR/PQ fixtures. Historical recorded measurements remain explicitly identified inside Bounded H–K guard; regenerated comparison sheets are distinct.
+The `//products/perceptual-grade-book/generators:figures` target uses the current reference for the linear basis, Tone, coefficient weights, drivers, and H–K repair. Concentration and the archived LUT examples use the isolated 1.23.2 model; benchmarks and LUT-study comparisons retain their recorded inputs. Each figure declares its scope in `figures.json`, and provenance includes the reference and legacy source hashes. Python supplies the numerical samples to pinned XeLaTeX/PGFPlots, which emits static SVGs for the English Technical Report's website, PDF and EPUB editions. Four book-facing LUT-study figures are redrawn from recorded data. The domain-128 finalist errors retain the report's eight-decimal precision, and two placement axes are reconstructed from the documented formulas; the downloadable report archives remain unchanged. The `//products/perceptual-grade-book/generators:photos` target generates preserved-release and historical-guard comparisons from the five sampled EXR/PQ fixtures. Historical recorded measurements remain explicitly identified inside Bounded H–K guard; regenerated comparison sheets are distinct.
 
-Each producer records input/output hashes. Source or data changes invalidate the corresponding Buck2 action; docs_inputs collects the declared outputs. The site manifest inventories all shipped files, including local mathematical fonts and media, plus the pinned CDN typography manifest.
+Each producer records input/output hashes. Source or data changes invalidate the corresponding Buck2 action; `//products/perceptual-grade-book:book_inputs` collects and projects the declared outputs into both book trees. The combined site manifest inventories all shipped files, including local media and pinned CDN resource manifests. Browser font and KaTeX payloads remain on the CDN; print editions package their required fonts separately.
 
 [Download the chart sources and plotted data](../downloads/chart-sources.zip) to inspect the numerical inputs, figure definitions and provenance used by the current vector renderer. Candidate keys beside the historical LUT plots map their compact labels to complete grid names.

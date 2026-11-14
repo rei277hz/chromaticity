@@ -1,6 +1,6 @@
 # HDR Color Picker
 
-A Blender 5.2 extension for choosing Grease Pencil Draw Color Attribute colors
+A Blender 5.2-and-later extension for choosing Grease Pencil Draw Color Attribute colors
 with the legacy browser modCAM16-HK-UCS model. It can run independently or beside
 Perceptual Grade. The extensions share build inputs and have separate installed
 packages, native arenas, helpers, caches and registration lifecycles.
@@ -74,10 +74,10 @@ buck2 test //products/hdr-color-picker-blender/tests:native
 buck2 test //products/hdr-color-picker-blender/tests:viewport
 ```
 
-Native tests use pinned Blender 5.2.2, install both ZIPs into a disposable
-repository and exercise the real Blender GPU, native display conversion, brush
-writes, CPU worker dispatch and independent extension lifecycles. Linux uses a
-private software GPU display.
+Installed acceptance runs on stable Blender 5.3.0 and LTS Blender 5.2.4. Both
+hosts install the ZIPs into a disposable repository and exercise the real
+Blender GPU, native display conversion, brush writes, CPU worker dispatch and
+independent extension lifecycles. Linux uses a private software GPU display.
 macOS/Metal, physical HDR displays and manual painting acceptance remain open.
 Framework policies are handwritten Python checked against owner-local `.inv`
 requirements by the shared verifier. Packaging requires proofs for the shipped

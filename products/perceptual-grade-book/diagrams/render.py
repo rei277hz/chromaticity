@@ -1,6 +1,7 @@
 """Render the authored Next policy diagrams with the declared D2 distribution."""
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -10,16 +11,33 @@ import subprocess
 import tarfile
 import tempfile
 from xml.etree import ElementTree as ET
+from xml.sax.saxutils import escape
 
 
 SVG = "http://www.w3.org/2000/svg"
 D2_VERSION = "0.9.0"
-FLAGS = ["--layout", "dagre", "--theme", "0", "--scale", "1", "--pad", "24",
+FLAGS = ["--layout", "elk", "--elk-nodeNodeBetweenLayers", "40",
+         "--elk-edgeNodeBetweenLayers", "30", "--theme", "0", "--scale", "1", "--pad", "24",
          "--sketch=false", "--animate-interval", "0", "--bundle=false"]
 
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+@contextmanager
+def browser_environment(native_runtime, fonts):
+    # Chromium still needs an initialized platform font catalog when every SVG
+    # label uses an embedded font. An empty host catalog can reject valid font
+    # data. This catalog is pinned and separate from the SVG's checked fonts.
+    with tempfile.TemporaryDirectory(prefix="pg-diagram-fontconfig-") as temporary:
+        config = Path(temporary) / "fonts.conf"
+        config.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">'
+                          '<fontconfig><dir>' + escape(str(fonts.resolve())) + '</dir>'
+                          '<cachedir>' + escape(temporary) + '</cachedir></fontconfig>')
+        yield dict(os.environ,
+                   LD_LIBRARY_PATH=str(native_runtime.resolve() / "usr/lib/x86_64-linux-gnu"),
+                   FONTCONFIG_FILE=str(config))
 
 
 def accessible_svg(path, figure):
@@ -60,7 +78,7 @@ def accessible_svg(path, figure):
     path.write_text(text, encoding="utf-8")
 
 
-def render(archive, sources, manifest_path, output):
+def render(archive, sources, manifest_path, output, node, chromium, npm, label_checker, native_runtime, fonts):
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
         raise ValueError("Diagram output directory must be empty")
@@ -96,6 +114,19 @@ def render(archive, sources, manifest_path, output):
             if rendered.returncode:
                 raise RuntimeError(f'D2 failed for {figure["id"]}: {rendered.stderr}')
             accessible_svg(result, figure)
+    with browser_environment(native_runtime, fonts) as browser_env:
+        checked = subprocess.run([
+            str(node.resolve()), str(label_checker.resolve()),
+            "--chromium", str(chromium.resolve() / "chrome"),
+            "--node-modules", str(npm.resolve() / "node_modules"),
+            "--svg-dir", str(images.resolve()), "--manifest", str(manifest_path.resolve()),
+        ], capture_output=True, text=True, env=browser_env)
+    if checked.returncode:
+        raise RuntimeError(checked.stderr)
+    label_check = json.loads(checked.stdout)
+    label_check["checker_sha256"] = digest(label_checker)
+    label_check["native_runtime_manifest_sha256"] = digest(native_runtime / "native_runtime_manifest.json")
+    label_check["platform_fonts"] = {path.name: digest(path) for path in sorted(fonts.glob("*.ttf"))}
     provenance = {
         "schema": 1,
         "invocation": "buck2" if os.environ.get("PG_BUCK_ACTION") == "1" else "authoring-preview",
@@ -103,6 +134,7 @@ def render(archive, sources, manifest_path, output):
         "inputs": {f"docs/book/diagrams/{name}": digest(sources / name) for name in sorted(expected)},
         "figure_manifest_sha256": digest(manifest_path),
         "renderer_adapter_sha256": digest(Path(__file__)),
+        "label_check": label_check,
         "outputs": {f"assets/illustrations/next-policy/{path.name}": digest(path) for path in sorted(images.glob("*.svg"))},
     }
     report = output / "src/downloads/provenance/next-policy-diagrams.json"
@@ -112,10 +144,11 @@ def render(archive, sources, manifest_path, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("archive", "sources", "manifest", "output-dir"):
+    for name in ("archive", "sources", "manifest", "output-dir", "node", "chromium", "npm", "label-checker", "native-runtime", "fonts"):
         parser.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
-    render(args.archive, args.sources, args.manifest, args.output_dir)
+    render(args.archive, args.sources, args.manifest, args.output_dir,
+           args.node, args.chromium, args.npm, args.label_checker, args.native_runtime, args.fonts)
 
 
 if __name__ == "__main__":

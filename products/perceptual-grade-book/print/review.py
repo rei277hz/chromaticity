@@ -11,7 +11,7 @@ import pypdfium2 as pdfium
 from lxml import html
 
 
-REGRESSION_PHRASE = "参数纹理使用稳定容量"
+REGRESSION_PHRASE = "选择工作白点"
 CHARTS = {
     "linear-basis", "tone-curves", "tone-saturation", "color-tone-weights",
     "color-drivers", "color-hue-concentration", "guard-boundary", "guard-energy",
@@ -61,7 +61,7 @@ def chart_pages(reader, document_path, language):
             raise ValueError(f"PDF chart destination has no page: {name}")
         pages.setdefault(page, []).append({"chart": name, "figure_id": identifier})
         found.add(name)
-    expected = CHARTS - ({"render-benchmark"} if language == "zh-Hans" else set())
+    expected = CHARTS
     if found != expected:
         raise ValueError(f"Chart review inventory differs: missing={sorted(expected - found)}, extra={sorted(found - expected)}")
     return pages
@@ -85,7 +85,7 @@ def render_review(pdf_path, output_dir, language="zh-Hans", chapter=None, docume
                     selected.add(index + 1)
     elif chapter is not None:
         matching_pages = chapter_pages(reader, chapter)
-        selected = matching_pages
+        selected = {0} | matching_pages
     else:
         texts = [page.extract_text() or "" for page in reader.pages]
         matching_pages = [
@@ -141,19 +141,24 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdf-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--publication", choices=("user-manual", "technical-report"), required=True)
     parser.add_argument("--language", choices=("en", "zh-Hans"), default="zh-Hans")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--chapter")
-    selection.add_argument("--charts", action="store_true", help="Review every chart in both language editions")
+    selection.add_argument("--charts", action="store_true", help="Review every technical-report chart")
     parser.add_argument("--documents", type=Path, help="Prepared print documents used to locate chart figure anchors")
     args = parser.parse_args()
+    if args.publication == "technical-report" and args.language != "en":
+        parser.error("The technical report is English-only")
     if args.charts:
+        if args.publication != "technical-report":
+            parser.error("--charts selects the technical report")
         if args.documents is None:
             parser.error("--charts requires --documents")
         reviews = {}
-        for language in ("en", "zh-Hans"):
+        for language in ("en",):
             review = render_review(
-                args.pdf_dir / f"perceptual-grade-{language}.pdf", args.output_dir / language,
+                args.pdf_dir / f"{args.publication}-{language}.pdf", args.output_dir / language,
                 language, document_path=args.documents / language / "book.html",
             )
             reviews[language] = {
@@ -167,7 +172,7 @@ def main():
             encoding="utf-8",
         )
     else:
-        render_review(args.pdf_dir / f"perceptual-grade-{args.language}.pdf", args.output_dir,
+        render_review(args.pdf_dir / f"{args.publication}-{args.language}.pdf", args.output_dir,
                       args.language, args.chapter)
 
 

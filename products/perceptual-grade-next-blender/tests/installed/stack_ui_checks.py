@@ -60,6 +60,9 @@ class Layout:
     def column(self, **_kwargs):
         return Layout(self)
 
+    def box(self):
+        return Layout(self)
+
     def prop(self, owner, name, **_kwargs):
         key = (owner.as_pointer(), name)
         self.properties.append(key)

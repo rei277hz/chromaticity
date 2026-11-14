@@ -1,11 +1,11 @@
 direction: down
 
-open: "Unprotected\nscene=None; epoch=None"
-protected: "Protected\nscene + epoch"
-open -> open: "eligible admit / publish epoch"
-open -> protected: "eligible superseded"
-protected -> open: "later success; same scene\nor quiescent reset"
-protected -> protected: "old / unrelated / failed"
+open: "scene_id=None\nepoch=None"
+protected: "scene_id=S\nepoch=E"
+open -> open: "admit [eligible]\n/ publish epoch"
+open -> protected: "superseded\n[eligible]"
+protected -> open: "finished\n[success, same scene,\nlater epoch]"
+protected -> open: "reset [quiescent]"
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

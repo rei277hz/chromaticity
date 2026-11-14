@@ -1,0 +1,38 @@
+shape: sequence_diagram
+
+consumer: "Comparison consumer"
+policy: "Parameter policy"
+blender: "Blender images / bindings"
+
+consumer -> policy: "new(); step(Event())"
+transaction: "loop [stage, snapshot, bind, commit, activate, deliver]\nstop on the first failure" {
+  policy -> consumer: "next action effect"
+  consumer -> blender: "apply authorized image or binding operation"
+  blender -> consumer: "operation receipt or error"
+  consumer -> policy: "Event(failed, clean)"
+}
+opt failure from bind through deliver: {
+  restore: "loop [restore_bindings, restore_metadata, restore_resource]\nattempt every component, even after an error" {
+    policy -> consumer: "restoration action"
+    consumer -> blender: "attempt restoration"
+    blender -> consumer: "operation receipt or error"
+    consumer -> policy: "Event(failed); continue restoration"
+  }
+}
+opt failure path: {
+  policy -> consumer: "fail"
+  consumer -> blender: "deliver visible failure output"
+  blender -> consumer: "failure-operation receipt"
+  consumer -> policy: "Event(failed)"
+}
+policy -> consumer: "retire"
+consumer -> blender: "retire eligible image versions"
+blender -> consumer: "retirement receipt"
+consumer -> policy: "Event(failed); reach terminal"
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

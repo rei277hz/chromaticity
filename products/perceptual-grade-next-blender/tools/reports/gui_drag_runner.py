@@ -93,8 +93,8 @@ def main(argv=None):
     from color_tools.kernel import prepare
     from color_tools.kernel.boundary import prepare_boundary
     from color_tools.kernel.prepare import prepare_update
-    from color_tools.kernel.persistent import build_persistent
-    from color_tools.kernel.graph import count_nodes
+    from color_tools.template_build.persistent import build_persistent
+    from color_tools.template_build.graph import count_nodes
     from color_tools.kernel import color_prepare, tables
     from tools.perceptual_grade.reports import cases, oracle
     from tools.perceptual_grade.reports.native import NativeFixture

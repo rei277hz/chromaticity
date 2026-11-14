@@ -13,7 +13,7 @@ from blender_build import unpack_blender
 class DistributionTests(unittest.TestCase):
     def test_linux_distribution_preserves_executable_and_relative_links(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);source=root/'blender-5.2.2';source.mkdir()
+            root=Path(directory);source=root/'blender-5.3.0';source.mkdir()
             binary=source/'blender';binary.write_text('native');binary.chmod(0o755)
             (source/'link').symlink_to('blender')
             archive=root/'blender.tar.xz'

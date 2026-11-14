@@ -83,7 +83,7 @@ class NativeFixture:
     def __init__(self, prepared, values, context='compositor', *, engine='CYCLES', device='CPU',
                  precision='FULL', threads=None, builder=None):
         import bpy
-        from color_tools.kernel.graph import build_group
+        from color_tools.template_build.graph import build_group
         initialization_start = time.perf_counter()
         self.bpy = bpy
         self.values = np.asarray(values,dtype=np.float32)

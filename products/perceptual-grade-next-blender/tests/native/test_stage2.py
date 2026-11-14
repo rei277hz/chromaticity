@@ -10,8 +10,8 @@ import numpy as np
 
 from color_tools.kernel import ColorSettings, LinearSettings, ToneSettings, prepare, prepare_tone
 from color_tools.kernel.boundary import prepare_boundary
-from color_tools.kernel.graph import build_group
-from color_tools.kernel.stage2_graph import build_stage2_group
+from color_tools.template_build.graph import build_group
+from color_tools.template_build.stage2_graph import build_stage2_group
 from tools.perceptual_grade.reports import cases, oracle
 from tools.perceptual_grade.reports.native import NativeFixture
 
@@ -110,7 +110,7 @@ class Stage2Tests(unittest.TestCase):
             with self.subTest(tone=tone):
                 prepared = complete_prepared(linear, tone)
                 builder = partial(build_stage2_group, diagnostics=True)
-                with patch("color_tools.kernel.stage2_graph.compositor_stage2_output_guard",
+                with patch("color_tools.template_build.stage2_graph.compositor_stage2_output_guard",
                            side_effect=energy_guard):
                     baseline = NativeFixture(prepared, values, "compositor", builder=builder)
                 try:

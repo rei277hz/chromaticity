@@ -1,5 +1,7 @@
 """Async orchestration of bounded, latest-only value preparation."""
 
+# pg-book: technical-report/en#next-policy.preparation
+
 import asyncio
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout

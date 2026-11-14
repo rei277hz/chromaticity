@@ -6,7 +6,7 @@ The CPU accuracy target remains the required acceptance target.
 """
 import argparse
 from functools import partial
-from color_tools.kernel.graph import build_group
+from color_tools.template_build.graph import build_group
 from contextlib import contextmanager
 from dataclasses import asdict
 import hashlib

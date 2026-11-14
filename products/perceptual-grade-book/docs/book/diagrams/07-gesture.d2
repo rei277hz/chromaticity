@@ -1,16 +1,21 @@
 direction: down
 
-none: "No observer\ncurrent=None"
-current: "Current A\npending=None"
-pending: "Pending B\ncurrent=A or None"
-next: "Current B\npending=None"
-none -> pending: "window seen / invoke B"
-current -> pending: "handoff / invoke B"
-pending -> next: "B installed successfully"
-pending -> current: "B fails/lost; A retained"
-pending -> none: "B fails/lost; no A"
-current -> none: "A lost / reset"
-next -> none: "lost / reset"
+none: "current=None\npending=None"
+current: "current!=None\npending=None"
+pending: "current=None\npending!=None"
+replacing: "current!=None\npending!=None"
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+none -> pending: "window / invoke"
+current -> replacing: "handoff [eligible] / invoke"
+pending -> current: "installed [success]"
+replacing -> current: "installed [success]"
+pending -> none: "installed [failure];\nlost [pending]"
+replacing -> current: "installed [failure];\nlost [pending]"
+replacing -> pending: "lost [current]"
+current -> none: "lost [current]"
+pending -> none: "reset / clear"
+replacing -> none: "reset / clear"
+current -> none: "reset / clear"
+
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

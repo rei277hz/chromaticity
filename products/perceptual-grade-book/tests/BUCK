@@ -7,13 +7,16 @@ python_test(
         "docs": "//products/perceptual-grade-book:docs",
         "historical": "//products/perceptual-grade-book:historical",
         "historical-manifest.json": "//products/perceptual-grade-book:historical_manifest",
+        # Both assembled mdBook roots are checked against their authored inputs.
         "book-inputs": "//products/perceptual-grade-book:book_inputs",
         "generated-assets": "//products/perceptual-grade-book/generators:assets",
         "diagram-assets": "//products/perceptual-grade-book/diagrams:assets",
+        "policy-figures.json": "//products/perceptual-grade-book/diagrams:manifest",
         "cdn-assets": "//products/perceptual-grade-book/cdn:assets",
         "data-downloads": "//products/perceptual-grade-book:data_downloads",
         "tool-pins.bzl": "//products/perceptual-grade-book:tool_pins",
         "rust-versions.json": "//third_party/rust/tools:versions",
+        # The one publication contains /manual/{en,zh-Hans} and /technical/en.
         "site": "//products/perceptual-grade-book:site[html]",
         "site-manifest.json": "//products/perceptual-grade-book:site[manifest]",
         "site.zip": "//products/perceptual-grade-book:archive[zip]",
@@ -28,4 +31,20 @@ python_test(
     base_module = "tests.perceptual_grade_book_publish",
     labels = ["docs"],
     deps = ["//products/perceptual-grade-book:build_support"],
+)
+
+python_test(
+    name = "book_refs",
+    srcs = ["test_book_refs.py"],
+    base_module = "tests.perceptual_grade_book_refs",
+    labels = ["docs"],
+    deps = ["//products/perceptual-grade-book:build_support"],
+)
+
+python_test(
+    name = "book_refs_integration",
+    srcs = ["test_book_refs_integration.py"],
+    base_module = "tests.perceptual_grade_book_refs",
+    labels = ["docs"],
+    resources = {"book-refs.json": "//products/perceptual-grade-book:book_refs[json]"},
 )

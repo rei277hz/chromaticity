@@ -17,7 +17,7 @@ import numpy as np
 
 from color_tools.kernel import prepare
 from color_tools.kernel.boundary import prepare_boundary
-from color_tools.kernel.persistent import build_persistent
+from color_tools.template_build.persistent import build_persistent
 from . import cases, full_cases, oracle, current_texture_candidates as candidates
 from .evaluate import assess, evidence_hashes
 from .hdr_metrics import HDRDisplay

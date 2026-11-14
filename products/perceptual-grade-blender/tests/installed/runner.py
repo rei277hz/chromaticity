@@ -27,7 +27,7 @@ def main(repository, report_path):
     package = repository / 'perceptual_grade'
     expected_binary = Path(bpy.app.binary_path).resolve()
     assert expected_binary.is_file(), 'Acceptance requires native standalone Blender'
-    assert tuple(bpy.app.version) == (5, 2, 2), bpy.app.version
+    assert tuple(bpy.app.version) in {(5, 2, 4), (5, 3, 0)}, bpy.app.version
     native_backend='METAL' if sys.platform=='darwin' else 'OPENGL'
     bpy.context.preferences.system.gpu_backend = native_backend
     bpy.context.preferences.extensions.repos.new(

@@ -1,16 +1,39 @@
 direction: down
 
-start: "idle -> stage -> snapshot"
-transaction: "bind -> commit\n-> activate -> deliver"
-restore: "restore_bindings\n-> restore_metadata\n-> restore_resource"
+idle: "idle"
+stage: "stage"
+snapshot: "snapshot"
+bind: "bind"
+commit: "commit"
+activate: "activate"
+deliver: "deliver"
+restore_bindings: "restore_bindings"
+restore_metadata: "restore_metadata"
+restore_resource: "restore_resource"
 fail: "fail"
-finish: "retire -> terminal"
-start -> transaction: "clean stage; snapshot succeeds"
-start -> fail: "failure"
-transaction -> finish: "all succeed"
-transaction -> restore: "any failure"
-restore -> fail: "all restores attempted"
-fail -> finish
+retire: "retire"
+terminal: "terminal" {
+  style.double-border: true
+}
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+idle -> stage: "begin"
+stage -> snapshot: "success, clean"
+stage -> fail: "failed or unclean"
+snapshot -> bind: "success"
+snapshot -> fail: "failed"
+bind -> commit: "success"
+bind -> restore_bindings: "failed"
+commit -> activate: "success"
+commit -> restore_bindings: "failed"
+activate -> deliver: "success"
+activate -> restore_bindings: "failed"
+deliver -> retire: "success"
+deliver -> restore_bindings: "failed"
+restore_bindings -> restore_metadata: "receipt"
+restore_metadata -> restore_resource: "receipt"
+restore_resource -> fail: "receipt"
+fail -> retire: "receipt"
+retire -> terminal: "receipt"
+
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

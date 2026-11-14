@@ -1,7 +1,8 @@
 """Native Blender forward grading, with host-independent static preparation.
 
-Import ``graph`` explicitly inside Blender for node construction. Importing this
-package never imports bpy, reference equations, old Grade runtime, or UI code.
+Runtime node construction is provided by :mod:`node_templates`; the graph
+emitters live in the build-only template generator. Importing this package
+never imports bpy, reference equations, old Grade runtime, or UI code.
 """
 from .settings import LinearSettings, ToneSettings, ColorSettings, WebSettings, Settings
 from .prepare import (PreparedGrade, PreparedLinear, PreparedTone,
