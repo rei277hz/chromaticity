@@ -20,7 +20,7 @@ import numpy as np
 
 def main(repository, destination):
     repository, destination = Path(repository).resolve(), Path(destination)
-    assert not bpy.app.background and tuple(bpy.app.version) == (5, 2, 2)
+    assert not bpy.app.background and tuple(bpy.app.version) in {(5, 2, 4), (5, 3, 0)}
     bpy.context.preferences.view.show_splash = False
     bpy.context.preferences.system.gpu_backend = 'METAL' if sys.platform == 'darwin' else 'OPENGL'
     bpy.context.preferences.filepaths.save_modified_images = 'ASK'

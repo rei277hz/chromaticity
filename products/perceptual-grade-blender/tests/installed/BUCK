@@ -385,3 +385,332 @@ python_test(
         "prelude//os:macos": SCOPE_IMAGES_RESOURCES,
     }),
 )
+
+SHADER_BAKE_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "shader_bake_runner.py": "shader_bake_runner.py",
+    "gui_display.py": ":gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+COMPOSITOR_BAKE_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "compositor_bake_runner.py": "compositor_bake_runner.py",
+    "gui_display.py": ":gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+GUI_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "gui_undo_runner.py": "gui_undo_runner.py",
+} | {"blender": "//third_party:blender_native_lts"}
+
+GIZMO_CONTEXT_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "gizmo_context_runner.py": "gizmo_context_runner.py",
+    "gui_display.py": ":gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+SCOPE_PLAYBACK_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "scope_playback_runner.py": "scope_playback_runner.py",
+    "gui_display.py": ":gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+OUTPUT_READER_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "output_reader_runner.py": "output_reader_runner.py",
+    "gui_display.py": ":gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+OUTPUT_RESOURCES_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "output_resources_runner.py": "output_resources_runner.py",
+    "gui_display.py": ":gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+NATIVE_SAVE_IMAGES_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "native_save_images_runner.py": "native_save_images_runner.py",
+    "gui_display.py": ":gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+SCOPE_IMAGES_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "scope_images_runner.py": "scope_images_runner.py",
+    "gui_display.py": ":gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+# Installed compatibility coverage on Blender 5.2.4.
+python_test(
+    name = "standalone_lts",
+    srcs = ["test_standalone.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+    ],
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native_lts",
+            "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+            "runner.py": "runner.py",
+            "bpy_abi": "//third_party:bpy_native_abi_linux",
+            "xvfb": "//third_party:xvfb_software_linux",
+            "gui_display.py": ":gui_display_source",
+        },
+        "DEFAULT": {
+            "blender": "//third_party:blender_native_lts",
+            "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+            "runner.py": "runner.py",
+        },
+    }),
+    deps = [":linux_runtime"],
+)
+
+python_test(
+    name = "native_scope_capture_lts",
+    srcs = ["test_native_scope_capture.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "native",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native_lts",
+            "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+            "native_scope_capture_runner.py": "native_scope_capture_runner.py",
+            "bpy_abi": "//third_party:bpy_native_abi_linux",
+            "xvfb": "//third_party:xvfb_software_linux",
+            "gui_display.py": ":gui_display_source",
+        },
+        "DEFAULT": {
+            "blender": "//third_party:blender_native_lts",
+            "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+            "native_scope_capture_runner.py": "native_scope_capture_runner.py",
+        },
+    }),
+    deps = [":linux_runtime"],
+)
+
+python_test(
+    name = "shader_bake_lts",
+    srcs = ["test_shader_bake.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "native",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": SHADER_BAKE_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": SHADER_BAKE_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "compositor_bake_lts",
+    srcs = ["test_compositor_bake.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "native",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": COMPOSITOR_BAKE_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": COMPOSITOR_BAKE_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "crash_lts",
+    srcs = ["test_crash.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+    ],
+    resources = {
+        "blender": "//third_party:blender_524_linux",
+        "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+        "crash_runner.py": "crash_runner.py",
+        "bpy_abi": "//third_party:bpy_native_abi_linux",
+        "xvfb": "//third_party:xvfb_software_linux",
+        "gui_display.py": ":gui_display_source",
+    },
+    target_compatible_with = ["prelude//os:linux"],
+    deps = [":linux_runtime"],
+)
+
+python_test(
+    name = "native_copy_crash_lts",
+    srcs = ["test_native_copy.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "native",
+        "acceptance",
+    ],
+    resources = {
+        "blender": "//third_party:blender_524_linux",
+        "extension.zip": "//products/perceptual-grade-blender:extension[zip]",
+        "crash_runner.py": "crash_runner.py",
+        "native_copy_runner.py": "native_copy_runner.py",
+        "native_copy_kill.so": ":native_copy_kill[shared]",
+        "bpy_abi": "//third_party:bpy_native_abi_linux",
+        "xvfb": "//third_party:xvfb_software_linux",
+        "gui_display.py": ":gui_display_source",
+    },
+    target_compatible_with = ["prelude//os:linux"],
+    deps = [":linux_runtime"],
+)
+
+python_test(
+    name = "gui_undo_lts",
+    srcs = ["test_gui_undo.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": GUI_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": GUI_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "scope_playback_lts",
+    srcs = ["test_scope_playback.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "native",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": SCOPE_PLAYBACK_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": SCOPE_PLAYBACK_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "gizmo_context_lts",
+    srcs = ["test_gizmo_context.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": GIZMO_CONTEXT_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": GIZMO_CONTEXT_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "gui_undo_probe_lts",
+    srcs = ["test_gui_undo_probe.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "diagnostic",
+    ],
+    resources = select({
+        "prelude//os:linux": GUI_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": GUI_RESOURCES_LTS,
+    }),
+    deps = [":gui_undo_cases"],
+)
+
+python_test(
+    name = "output_reader_lts",
+    srcs = ["test_output_reader.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "native",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": OUTPUT_READER_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": OUTPUT_READER_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "output_resources_lts",
+    srcs = ["test_output_resources.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "native",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": OUTPUT_RESOURCES_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": OUTPUT_RESOURCES_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "native_save_images_lts",
+    srcs = ["test_native_save_images.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "native",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": NATIVE_SAVE_IMAGES_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": NATIVE_SAVE_IMAGES_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "scope_images_lts",
+    srcs = ["test_scope_images.py"],
+    base_module = "tests.installed",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "native",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": SCOPE_IMAGES_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": SCOPE_IMAGES_RESOURCES_LTS,
+    }),
+)

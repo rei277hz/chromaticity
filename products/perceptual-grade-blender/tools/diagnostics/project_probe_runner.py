@@ -249,7 +249,7 @@ def main(repository,report_path,blend_path):
     name='bl_ext.pg_probe.perceptual_grade';enabled=False
     original=project.stat();report.data['original_stat']=dict(size=original.st_size,mtime_ns=original.st_mtime_ns)
     try:
-        if tuple(bpy.app.version)!=(5,2,2):raise RuntimeError('The probe requires native Blender 5.2.2')
+        if tuple(bpy.app.version)!=(5,3,0):raise RuntimeError('The probe requires native Blender 5.3.0')
         if not bpy.app.binary_path or not bpy.app.background:raise RuntimeError('The probe requires native background Blender')
         bpy.context.preferences.filepaths.use_scripts_auto_execute=False
         report.phase('raw.open.begin')

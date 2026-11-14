@@ -63,3 +63,54 @@ python_test(
         "prelude//os:macos": VIEWPORT_RESOURCES,
     }),
 )
+
+NATIVE_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "hdr_color_picker.zip": "//products/hdr-color-picker-blender:extension[zip]",
+    "perceptual_grade.zip": "//products/perceptual-grade-blender:extension[zip]",
+    "native_runner.py": "native_runner.py",
+    "gui_runner.py": "gui_runner.py",
+    "test_display_blender.py": "test_display_blender.py",
+    "test_gpu_blender.py": "test_gpu_blender.py",
+    "test_integration_blender.py": "test_integration_blender.py",
+    "gui_display.py": "//products/perceptual-grade-blender/tests/installed:gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+VIEWPORT_RESOURCES_LTS = {
+    "blender": "//third_party:blender_native",
+    "hdr_color_picker.zip": "//products/hdr-color-picker-blender:extension[zip]",
+    "viewport_runner.py": "viewport_runner.py",
+    "gui_display.py": "//products/perceptual-grade-blender/tests/installed:gui_display_source",
+} | {"blender": "//third_party:blender_native_lts"}
+
+# Installed compatibility coverage on Blender 5.2.4.
+python_test(
+    name = "native_lts",
+    srcs = ["test_native.py"],
+    base_module = "tests.hdr_picker",
+    labels = [
+        "gpu",
+        "installed",
+        "native",
+    ],
+    resources = select({
+        "prelude//os:linux": NATIVE_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": NATIVE_RESOURCES_LTS,
+    }),
+)
+
+python_test(
+    name = "viewport_lts",
+    srcs = ["test_viewport.py"],
+    base_module = "tests.hdr_picker",
+    labels = [
+        "gpu",
+        "installed",
+        "gui",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": VIEWPORT_RESOURCES_LTS | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": VIEWPORT_RESOURCES_LTS,
+    }),
+)

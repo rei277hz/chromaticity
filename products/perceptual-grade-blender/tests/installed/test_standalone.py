@@ -48,7 +48,7 @@ class InstalledExtensionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, details)
             self.assertTrue(report.exists(), details)
             data = json.loads(report.read_text())
-            self.assertEqual(data['blender'], [5, 2, 2])
+            self.assertIn(data['blender'], ([5, 2, 4], [5, 3, 0]))
             self.assertEqual(set(data['roles']), {'linear', 'bulk', 'gpu'})
             self.assertEqual(data['gpu_backend'], 'GPU')
             self.assertEqual(data['native_backend'],'METAL' if sys.platform=='darwin' else 'OPENGL')
