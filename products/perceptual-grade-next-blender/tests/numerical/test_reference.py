@@ -1,7 +1,9 @@
 """Independent curve/settings comparison, separate from native transport."""
 from dataclasses import asdict, replace
+import importlib
 import json
 import unittest
+from unittest.mock import patch
 import numpy as np
 from color_tools.kernel import prepare, LinearSettings, ToneSettings
 from color_tools.kernel.tables import build_table, audit_tone
@@ -84,6 +86,51 @@ class ReferenceTests(unittest.TestCase):
             self.assertTrue(np.any(~result['valid']))
             self.assertTrue(np.isfinite(result['tone'].q).all())
             self.assertTrue(np.isfinite(result['rgb']).all())
+
+    def test_full_oracle_applies_one_hk_guard_after_scale(self):
+        _, linear, tone, color = next(row for row in full_cases.grades()
+                                     if row[0] == 'all_active')
+        events = []
+        references = []
+        model_constructor = model.Model
+        color_apply = grading.Color.apply_state
+        hk_module = importlib.import_module(
+            'color_tools.perceptual_grade_core.model.hk_guard')
+        cube_module = importlib.import_module(
+            'color_tools.perceptual_grade_reference.cube_guard')
+        hk_guard = hk_module.guard
+        cube_guard = cube_module.guard
+
+        def construct(*args, **kwargs):
+            reference = model_constructor(*args, **kwargs)
+            references.append(reference)
+            return reference
+
+        def apply_color(reference, state):
+            result = color_apply(reference, state)
+            events.append('color_after_scale')
+            return result
+
+        def apply_hk(*args, **kwargs):
+            events.append('hk')
+            return hk_guard(*args, **kwargs)
+
+        def apply_cube(*args, **kwargs):
+            events.append('cube')
+            return cube_guard(*args, **kwargs)
+
+        with patch.object(oracle.model, 'Model', side_effect=construct), \
+                patch.object(grading.Color, 'apply_state', apply_color), \
+                patch.object(hk_module, 'guard', side_effect=apply_hk), \
+                patch.object(cube_module, 'guard', side_effect=apply_cube):
+            result = oracle.evaluate_full(full_cases.rgba(count=64)[:, :3], linear, tone, color,
+                                          'Linear Rec.709')
+
+        self.assertEqual(len(references), 1)
+        self.assertFalse(references[0].hk_guard)
+        self.assertFalse(references[0].color.hk_guard)
+        self.assertEqual(events, ['color_after_scale', 'hk', 'cube'])
+        self.assertTrue(result['guarded'])
 
 
 if __name__ == '__main__':

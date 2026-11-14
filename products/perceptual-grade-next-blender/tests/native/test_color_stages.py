@@ -119,7 +119,8 @@ class ColorStageTests(unittest.TestCase):
         color = replace(color, web=replace(color.web, hue_degrees=((rotation,)*6,)*4))
         prepared = with_toe_cells(prepare(linear, tone, color=color), 524288)
         reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                  grading.Tone(grading.ToneSettings(**asdict(tone))))
+                                  grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                  hk_guard=False)
         anchors = prepared.color.anchors
         heights = np.unique(np.r_[0., anchors, (anchors[:-1]+anchors[1:])/2,
                                   prepared.color.high*1.25]).astype(np.float32)
@@ -197,7 +198,8 @@ class ColorStageTests(unittest.TestCase):
             prepared = prepare(tone=tone, color=color)
             source = oracle.evaluate(values[:, :3], prepared.linear.settings, tone, prepared.space)['tone']
             reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))))
+                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      hk_guard=False)
             if isolated:
                 inputs = np.column_stack((source.q, source.ja*abs(source.ja))).astype(np.float32)
                 source = State(inputs[:, :3].astype(float), inputs[:, 3].astype(float))
@@ -239,7 +241,8 @@ class ColorStageTests(unittest.TestCase):
         prepared = prepare(tone=tone, color=color)
         composed_source = oracle.evaluate(values[:, :3], prepared.linear.settings, tone, prepared.space)['tone']
         reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                  grading.Tone(grading.ToneSettings(**asdict(tone))))
+                                  grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                  hk_guard=False)
         for isolated, context in ((isolated, context) for isolated in (False, True)
                                   for context in ('shader', 'compositor')):
             with self.subTest(context=context, isolated=isolated):
@@ -295,7 +298,8 @@ class ColorStageTests(unittest.TestCase):
             inputs[-4:, 3] = ja*ja
             source = State(inputs[:, :3].astype(float), inputs[:, 3].astype(float))
             reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))))
+                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      hk_guard=False)
             expected = reference.apply_state(source)
             for context in ('shader', 'compositor'):
                 fixture = NativeFixture(prepared, inputs, context,
@@ -328,7 +332,8 @@ class ColorStageTests(unittest.TestCase):
             source = oracle.evaluate(full_cases.rgba(count=256)[:, :3], linear, tone, prepared.space)['tone']
             source = State(source.q, source.ja*abs(source.ja))
             reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))))
+                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      hk_guard=False)
             for stage, source, expected, frozen, expected_scale in local_color_frames(reference, source):
                 active = {'terms': prepared.color.lightness_active or prepared.color.chroma_active,
                           'web': prepared.color.web_active, 'adaptance': prepared.color.adaptance_active,

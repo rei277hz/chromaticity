@@ -818,6 +818,9 @@ class PreparationRuntime:
                 )
         while self._tasks:
             await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+            # A completed task can remain registered until its done callback
+            # runs; gathering it again is already complete and would not yield.
+            await asyncio.sleep(0)
         if self._jobs:
             await asyncio.gather(*tuple(self._jobs.values()), return_exceptions=True)
         with self._lock:

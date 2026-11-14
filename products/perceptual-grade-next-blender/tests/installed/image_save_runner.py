@@ -25,18 +25,19 @@ assert addon_utils.enable(
 assert not errors, errors
 assert not bpy.app.background
 bpy.context.preferences.filepaths.save_modified_images = "ASK"
+bpy.context.preferences.view.show_splash = False
+bpy.ops.wm.save_userpref()
 
 
 def reconcile():
-    nodes._render_init(bpy.context.scene)
-    try:
-        nodes._render_pre(bpy.context.scene)
-    finally:
-        nodes._render_finished(bpy.context.scene)
+    # These fake-user fixtures are outside the active scene's render roots.
+    # The synchronous drain admits publication through its own quiescent gate.
+    failures = nodes._refresh_nodes(users)
+    return failures + nodes._drain_preparations(users)
 
 
 def parameter_banks(node):
-    tree = node.node_tree
+    tree = nodes._kernel_for_node(node)
     missing = tuple(key for key in nodes.PARAMETER_BANK_BINDINGS if key not in tree)
     assert not missing, (node.name, tree.name, missing,
                          nodes._node_stores.get(node.as_pointer()),
@@ -63,7 +64,8 @@ def parameter_banks(node):
 
 
 def parameter_image(node):
-    return parameter_banks(node)[node.node_tree[nodes.PARAMETER_ACTIVE_BANK]]
+    kernel = nodes._kernel_for_node(node)
+    return parameter_banks(node)[kernel[nodes.PARAMETER_ACTIVE_BANK]]
 
 
 def assert_clean_shared_image(users):
@@ -94,7 +96,7 @@ reconcile()
 image = assert_clean_shared_image(users)
 authoritative_pixels = np.asarray(image.pixels[:], dtype=np.float32)
 original_banks = parameter_banks(shader)
-original_active = shader.node_tree[nodes.PARAMETER_ACTIVE_BANK]
+original_active = nodes._kernel_for_node(shader)[nodes.PARAMETER_ACTIVE_BANK]
 
 # A dirty active bank is not a valid last-good result. Reconciliation restores
 # the exact authoritative parameter snapshot and keeps selector metadata aligned.
@@ -104,10 +106,11 @@ assert damaged.is_dirty
 reconcile()
 repaired = assert_clean_shared_image(users)
 np.testing.assert_array_equal(repaired.pixels[:], authoritative_pixels)
-assert len({node.node_tree[nodes.PARAMETER_ACTIVE_BANK] for node in users}) == 1
+assert len({nodes._kernel_for_node(node)[nodes.PARAMETER_ACTIVE_BANK]
+            for node in users}) == 1
 assert all(nodes.node_policy.output_allowed(nodes._node_stores[node.as_pointer()]["state"])
            for node in users)
-assert all(node.node_tree.get(nodes.PARAMETER_SIGNATURE)
+assert all(nodes._kernel_for_node(node).get(nodes.PARAMETER_SIGNATURE)
            == nodes._preparation_signature(
                nodes._grade_settings(grade, nodes._working_space()),
                nodes._working_space(),
@@ -135,7 +138,7 @@ for node in users:
     state = nodes._node_stores[node.as_pointer()]["state"]
     assert not nodes.node_policy.output_allowed(state)
     assert node.get(nodes._NODE_ERROR)
-    assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+    assert nodes._kernel_for_node(node).get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
 reconcile()
 repaired = assert_clean_shared_image(users)
 np.testing.assert_array_equal(repaired.pixels[:], authoritative_pixels)
@@ -145,18 +148,18 @@ for node in users:
     assert not node.get(nodes._NODE_ERROR)
 original_banks = parameter_banks(shader)
 original_bank_pointers = tuple(image.as_pointer() for image in original_banks)
-original_active = shader.node_tree[nodes.PARAMETER_ACTIVE_BANK]
-original_kernels = tuple(node.node_tree.as_pointer() for node in users)
+original_active = nodes._kernel_for_node(shader)[nodes.PARAMETER_ACTIVE_BANK]
+original_kernels = tuple(nodes._kernel_for_node(node).as_pointer() for node in users)
 
 for exposure in (0.25, 0.5, 0.75):
     grade.pg_linear.exposure = exposure
     reconcile()
     image = assert_clean_shared_image(users)
     assert tuple(item.as_pointer() for item in parameter_banks(shader)) == original_bank_pointers
-    active = shader.node_tree[nodes.PARAMETER_ACTIVE_BANK]
+    active = nodes._kernel_for_node(shader)[nodes.PARAMETER_ACTIVE_BANK]
     assert active == 1 - original_active
     original_active = active
-    assert tuple(node.node_tree.as_pointer() for node in users) == original_kernels
+    assert tuple(nodes._kernel_for_node(node).as_pointer() for node in users) == original_kernels
     assert not bpy.ops.image.save_all_modified.poll()
 
 filename = report_path.parent / "grade-images.blend"
@@ -170,7 +173,7 @@ saved_pixels = np.asarray(image.pixels[:], dtype=np.float32)
 saved_banks = parameter_banks(shader)
 saved_bank_names = tuple(bank.name for bank in saved_banks)
 saved_bank_pixels = tuple(np.asarray(bank.pixels[:], dtype=np.float32) for bank in saved_banks)
-saved_active_bank = shader.node_tree[nodes.PARAMETER_ACTIVE_BANK]
+saved_active_bank = nodes._kernel_for_node(shader)[nodes.PARAMETER_ACTIVE_BANK]
 grade_name = grade.name
 material_name = material.name
 shader_name = shader.name
@@ -194,7 +197,7 @@ assert tuple(bank.name for bank in restored_banks) == saved_bank_names
 assert all(not bank.is_dirty and bank.packed_file is not None for bank in restored_banks)
 for bank, pixels in zip(restored_banks, saved_bank_pixels):
     np.testing.assert_array_equal(bank.pixels[:], pixels)
-assert shader.node_tree[nodes.PARAMETER_ACTIVE_BANK] == saved_active_bank
+assert nodes._kernel_for_node(shader)[nodes.PARAMETER_ACTIVE_BANK] == saved_active_bank
 assert parameter_image(shader) == parameter_image(compositor)
 np.testing.assert_array_equal(parameter_image(shader).pixels[:], saved_pixels)
 assert grade.pg_linear.exposure == 0.8125
@@ -214,7 +217,7 @@ for fail_invalidation in (False, True):
     )
     previous_signature = image.get(nodes.PARAMETER_SIGNATURE)
     previous_pixels = np.asarray(image.pixels[:], dtype=np.float32)
-    previous_kernels = tuple(node.node_tree.as_pointer() for node in users)
+    previous_kernels = tuple(nodes._kernel_for_node(node).as_pointer() for node in users)
     tag_attempts, installation_receipts, invalidation_errors = [], [], []
 
     def observing_invalidation(candidate):
@@ -222,7 +225,7 @@ for fail_invalidation in (False, True):
         assert candidate.as_pointer() != image.as_pointer()
         assert candidate in previous_banks
         assert signature != previous_signature
-        assert all(node.node_tree.get(nodes.PARAMETER_SIGNATURE) == signature
+        assert all(nodes._kernel_for_node(node).get(nodes.PARAMETER_SIGNATURE) == signature
                    for node in users)
         assert all(parameter_image(node) == candidate for node in users)
         assert all(parameter_banks(node) == previous_banks for node in users)
@@ -266,7 +269,7 @@ for fail_invalidation in (False, True):
             state = nodes._node_stores[node.as_pointer()]["state"]
             assert not nodes.node_policy.output_allowed(state)
             assert node.get(nodes._NODE_ERROR)
-            assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+            assert nodes._kernel_for_node(node).get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
         image.use_fake_user = False
         del image
         reconcile()
@@ -274,7 +277,7 @@ for fail_invalidation in (False, True):
     else:
         assert not invalidation_errors, invalidation_errors
         assert set(installation_receipts) == {node.as_pointer() for node in users}
-        assert tuple(node.node_tree.as_pointer() for node in users) == previous_kernels
+        assert tuple(nodes._kernel_for_node(node).as_pointer() for node in users) == previous_kernels
         assert_clean_shared_image(users)
         image.use_fake_user = False
         del image
@@ -332,7 +335,7 @@ for fail_count, silent in ((1, False), (1, True)):
         state = nodes._node_stores[node.as_pointer()]["state"]
         assert not nodes.node_policy.output_allowed(state)
         assert node.get(nodes._NODE_ERROR)
-        assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+        assert nodes._kernel_for_node(node).get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
     packing_results.append({
         "failures": fail_count, "silent": silent, "rollback_clean": not image.is_dirty,
     })
@@ -413,7 +416,7 @@ assert retirement_attempts
 assert set(presented) == {node.as_pointer() for node in users}
 for node in users:
     assert not nodes.node_policy.output_allowed(nodes._node_stores[node.as_pointer()]["state"])
-    assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+    assert nodes._kernel_for_node(node).get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
 image.use_fake_user = False
 bpy.data.images.remove(image)
 del image
@@ -467,7 +470,7 @@ assert returned_diagnostics == [
 assert set(returned_presented) == {node.as_pointer() for node in users}
 for node in users:
     assert not nodes.node_policy.output_allowed(nodes._node_stores[node.as_pointer()]["state"])
-    assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+    assert nodes._kernel_for_node(node).get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
 image.use_fake_user = False
 bpy.data.images.remove(image)
 del image
@@ -476,9 +479,12 @@ assert_clean_shared_image(users)
 
 # A failed retirement of the previous, unused kernel is reported while the
 # replacement remains current for both users of the successfully updated image.
-current_shader_kernel = shader.node_tree
+current_shader_kernel = nodes._kernel_for_node(shader)
 previous_kernel = current_shader_kernel.copy()
-shader.node_tree = previous_kernel
+if nodes._bake_wrapper(shader) is not None:
+    nodes.bake_graph.replace_live(shader, previous_kernel)
+else:
+    shader.node_tree = previous_kernel
 replacement_failures = []
 replacement_retirements = []
 
@@ -508,7 +514,7 @@ assert replacement_retirements == [previous_kernel.as_pointer()], replacement_re
 assert [message for error in replacement_failures for message in diagnostic_messages(error)] == [
     "previous kernel retirement failed"], replacement_failures
 assert previous_kernel.users == 0
-assert shader.node_tree == current_shader_kernel
+assert nodes._kernel_for_node(shader) == current_shader_kernel
 assert_clean_shared_image(users)
 assert not original_retirement((previous_kernel,))
 del previous_kernel, current_shader_kernel
@@ -524,32 +530,60 @@ assert image.get(nodes.PARAMETER_SIGNATURE) == fallback_signature
 assert_clean_shared_image(users)
 del image
 
-# Saving the addon must leave Blender's protection for real user images intact.
-user_image = bpy.data.images.new("Unsaved user painting", width=1, height=1)
-user_image.pixels[:] = (0.25, 0.5, 0.75, 1.0)
-assert user_image.is_dirty
-nodes._save_pre(None)
-assert user_image.is_dirty and user_image.packed_file is None
-assert bpy.ops.image.save_all_modified.poll()
-window = next(window for manager in bpy.data.window_managers for window in manager.windows)
-with bpy.context.temp_override(window=window):
-    user_save_result = bpy.ops.wm.save_mainfile(
-        "INVOKE_DEFAULT", show_save_modified_images_dialog=True,
-    )
-assert user_save_result == {"INTERFACE"}, user_save_result
-assert user_image.is_dirty
-assert user_image.packed_file is None
+def quit_after_dialog():
+    print("PG_IMAGE_SAVE: requesting Blender shutdown", flush=True)
+    window = bpy.context.window
+    assert window is not None
+    with bpy.context.temp_override(window=window):
+        result = bpy.ops.wm.quit_blender("EXEC_DEFAULT")
+        print(f"PG_IMAGE_SAVE: quit returned {result}", flush=True)
+        assert result == {"FINISHED"}
+        # Quit schedules a window event handler; wake it in the isolated display.
+        window.event_simulate(type="MOUSEMOVE", value="NOTHING", x=640, y=480)
+        print("PG_IMAGE_SAVE: shutdown event queued", flush=True)
+    return None
 
-report_path.write_text(json.dumps({
-    "passed": True,
-    "grade_save": sorted(save_result),
-    "user_image_save": sorted(user_save_result),
-    "packing_failures": packing_results,
-    "transaction_diagnostics": transaction_diagnostics,
-    "save_fallback_repacked": True,
-    "replacement_retirement_reported": True,
-    "returned_presenter_reported": True,
-    "serialized_pixels_exact": True,
-    "invalidation_order_and_failure_checked": True,
-}, indent=2))
-bpy.ops.wm.quit_blender("EXEC_DEFAULT")
+
+def finish_after_dialog():
+    assert user_image.is_dirty
+    assert user_image.packed_file is None
+    report_path.write_text(json.dumps({
+        "passed": True,
+        "grade_save": sorted(save_result),
+        "user_image_save": sorted(user_save_result),
+        "packing_failures": packing_results,
+        "transaction_diagnostics": transaction_diagnostics,
+        "save_fallback_repacked": True,
+        "replacement_retirement_reported": True,
+        "returned_presenter_reported": True,
+        "serialized_pixels_exact": True,
+        "invalidation_order_and_failure_checked": True,
+    }, indent=2))
+    bpy.app.timers.register(quit_after_dialog, first_interval=0.1)
+    return None
+
+
+def open_save_dialog():
+    global user_image, user_save_result
+    # Leave the dialog in the event loop long enough to verify that user data
+    # remains unsaved, then close it before requesting Blender shutdown.
+    user_image = bpy.data.images.new("Unsaved user painting", width=1, height=1)
+    user_image.pixels[:] = (0.25, 0.5, 0.75, 1.0)
+    assert user_image.is_dirty
+    nodes._save_pre(None)
+    assert user_image.is_dirty and user_image.packed_file is None
+    assert bpy.ops.image.save_all_modified.poll()
+    window = next(window for manager in bpy.data.window_managers for window in manager.windows)
+    with bpy.context.temp_override(window=window):
+        user_save_result = bpy.ops.wm.save_mainfile(
+            "INVOKE_DEFAULT", show_save_modified_images_dialog=True,
+        )
+    assert user_save_result == {"INTERFACE"}, user_save_result
+    assert user_image.is_dirty and user_image.packed_file is None
+    window.event_simulate(type="ESC", value="PRESS", x=640, y=480)
+    window.event_simulate(type="ESC", value="RELEASE", x=640, y=480)
+    bpy.app.timers.register(finish_after_dialog, first_interval=0.1)
+    return None
+
+
+bpy.app.timers.register(open_save_dialog, first_interval=0.1)

@@ -5,6 +5,7 @@ import importlib
 import json
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 
 import bpy
@@ -25,6 +26,8 @@ assert addon_utils.enable(
 assert not errors, errors
 
 bpy.context.preferences.edit.use_global_undo = True
+bpy.context.preferences.view.show_splash = False
+bpy.ops.wm.save_userpref()
 window = bpy.context.window
 assert window is not None
 window_key = window.as_pointer()
@@ -133,10 +136,47 @@ third_undo = snapshot()
 assert third_undo == {"grade": "present", "exposure": 0.0}, third_undo
 
 assert push_results == [True, True, True], push_results
-report_path.write_text(json.dumps({
-    "passed": True,
-    "baseline": baseline,
-    "push_results": push_results,
-    "undo_states": [first_undo, second_undo, third_undo],
-}, indent=2))
-bpy.ops.wm.quit_blender("EXEC_DEFAULT")
+
+
+reconcile_deadline = time.monotonic() + 30
+
+
+def finish_after_undo_reconcile():
+    # Undo recovery and preparation need event-loop time before shutdown.
+    reconcile_pending = bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
+    state = nodes._record_for(current_node())["state"]
+    ready = nodes.node_policy.output_allowed(state)
+    if reconcile_pending or not ready:
+        if time.monotonic() < reconcile_deadline:
+            return 0.02
+    report = {
+        "passed": not reconcile_pending and ready,
+        "baseline": baseline,
+        "push_results": push_results,
+        "undo_states": [first_undo, second_undo, third_undo],
+        "reconcile_pending": reconcile_pending,
+        "node_state": {
+            "desired_signature": state.desired_signature,
+            "applied_signature": state.applied_signature,
+            "applied_quality": state.applied_quality,
+            "error": state.error,
+        },
+    }
+    if not report["passed"]:
+        report["failure"] = "Undo recovery did not produce a current full-quality kernel"
+    report_path.write_text(json.dumps(report, indent=2))
+    print("PG_GESTURE_UNDO: requesting Blender shutdown", flush=True)
+    window = bpy.context.window
+    assert window is not None
+    with bpy.context.temp_override(window=window):
+        result = bpy.ops.wm.quit_blender("EXEC_DEFAULT")
+        print(f"PG_GESTURE_UNDO: quit returned {result}", flush=True)
+        assert result == {"FINISHED"}
+        # Quit schedules a window event handler. Supply an event in the
+        # isolated display, where no physical pointer movement wakes it.
+        window.event_simulate(type="MOUSEMOVE", value="NOTHING", x=640, y=480)
+        print("PG_GESTURE_UNDO: shutdown event queued", flush=True)
+    return None
+
+
+bpy.app.timers.register(finish_after_undo_reconcile, first_interval=0.1)
