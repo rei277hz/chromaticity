@@ -24,6 +24,9 @@
 - Run builds, tests, proofs, and other executable validation only through Buck2 with remote execution (`--remote-only`). Do not run test modules, build scripts, proof scripts, or other validation directly from the local shell.
 - A local formatter is permitted only when formatting a specifically identified code range is necessary; keep it scoped to `products/perceptual-grade-next-blender`.
 - Non-Buck2 build and validation scripts are strictly forbidden. Configure or deploy a compatible remote execution environment as needed, then use Buck2 for the actual build and validation work.
+- Fetch external dependencies through Buck-managed client/daemon download actions such as `http_file`/`ctx.actions.download_file`. Verify pinned checksums before supplying artifacts to remote actions through CAS.
+- Remote execution workers must not require external Internet access. Do not move downloads into ordinary `ctx.actions.run` commands or enable worker DNS/Internet access to make builds pass. Mirror fallback must preserve the client/daemon download boundary; if the pinned Buck API cannot express it, report that limitation instead of bypassing the boundary.
+- Do not use `local_only=True` as a substitute for Buck-managed downloads. Under `--remote-only`, Buck rejects actions that cannot execute remotely; there is no per-rule local-execution exception.
 
 # Contributing with Sapling
 
