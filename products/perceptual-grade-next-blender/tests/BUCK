@@ -1459,6 +1459,33 @@ python_test(
 )
 
 python_test(
+    name = "bake_workspace_installed",
+    srcs = [
+        "installed/gui_support.py",
+        "installed/test_bake_workspace.py",
+    ],
+    base_module = "tests.perceptual_grade_blender",
+    labels = [
+        "installed",
+        "gpu",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "bake_workspace_runner.py": "installed/bake_workspace_runner.py",
+            "xvfb": "//third_party:xvfb_software_linux",
+        },
+        "prelude//os:macos": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "bake_workspace_runner.py": "installed/bake_workspace_runner.py",
+        },
+    }),
+)
+
+python_test(
     name = "render_layers_schedule_gui_lts",
     srcs = [
         "installed/gui_support.py",

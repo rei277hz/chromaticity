@@ -37,6 +37,7 @@ def generate(packages, output_dir):
     from color_tools.kernel.prepare import prepare, prepare_tone
     from color_tools.kernel.settings import SPACES, ToneSettings
     from color_tools.kernel.stage2_bindings import PARAMETER_BANK_BINDINGS, PARAMETER_IMAGE
+    from color_tools.kernel.node_templates import SCHEMA as TEMPLATE_MANIFEST_SCHEMA
     from color_tools.template_build.lut_shader_emitter import grade_source
     from color_tools.template_build.metadata import describe_template, tag_template
     from color_tools.template_build.stack_graph import build_stack_group
@@ -133,7 +134,7 @@ def generate(packages, output_dir):
     bpy.data.libraries.write(str(blend_path), roots, path_remap="NONE",
                              fake_user=True, compress=True)
     manifest = {
-        "schema": 1,
+        "schema": TEMPLATE_MANIFEST_SCHEMA,
         "blender_version": list(bpy.app.version),
         "blend_sha256": _sha256(blend_path),
         "shader_sha256": _sha256(shader_path),
