@@ -2,8 +2,9 @@ name: Next Blender build and badges
 
 on:
   push:
-    branches-ignore: [ci-status]
+    branches: [main]
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
