@@ -1,0 +1,14 @@
+{
+  "ignore_dirs": [
+    ".git",
+    ".sl",
+    "buck-out",
+    "__pycache__",
+    "node_modules",
+    "target",
+    "dist",
+    ".vite",
+    "third_party/rust/.cargo",
+    "third_party/rust/vendor"
+  ]
+}

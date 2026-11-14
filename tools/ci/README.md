@@ -2,8 +2,11 @@
 
 CI checks only `products/perceptual-grade-next-blender`, including its policy
 proofs. [Lint](../../.github/workflows/lint.yml) and
-[Build and badges](../../.github/workflows/build.yml) run automatically on pushes
-and pull requests. Both use the local
+[Build and badges](../../.github/workflows/build.yml) run for pull requests
+targeting `main` and for pushes to `main`. Topic-branch commits are checked in
+the pull request context instead of running the same workflows again on push;
+commits reaching `main` receive a post-merge run, which can publish the badges.
+Both workflows use the local
 `setup-buck2` composite action, which installs a checksum-verified standalone
 Buck2 binary and retains its bundled prelude. Release `2026-10-15` contains the
 existing `2026-10-14-9a1876786f32806f6b65fc51f4c1c3077efc38a5` binary.

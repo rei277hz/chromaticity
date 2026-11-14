@@ -59,6 +59,17 @@ class NodeTemplateTests(unittest.TestCase):
         self.assert_local(instance)
         return banks
 
+    def set_working_space(self, space):
+        if bpy.data.colorspace.working_space != space:
+            result = bpy.ops.wm.set_working_color_space(working_space=space)
+            self.assertEqual(result, {"FINISHED"})
+        self.assertEqual(bpy.data.colorspace.working_space, space)
+
+    @staticmethod
+    def color_socket(socket):
+        return (getattr(socket, "type", None) == "RGBA"
+                or getattr(socket, "bl_idname", None) == "NodeSocketColor")
+
     def test_manifest_covers_every_product_variant(self):
         expected = {
             f"grade:{tree_type}:{space}" for tree_type in TREE_TYPES for space in SPACES
@@ -69,6 +80,84 @@ class NodeTemplateTests(unittest.TestCase):
         manifest, records = node_templates.load_manifest()
         self.assertEqual(set(manifest["variants"]), expected)
         self.assertEqual(set(records), expected)
+
+    def test_templates_accept_the_actual_working_space(self):
+        """Blender converts color defaults while appending a library."""
+        for space in SPACES:
+            with self.subTest(space=space):
+                self.set_working_space(space)
+                grade = {}
+                stack = {}
+                wrappers = {}
+                try:
+                    for tree_type in TREE_TYPES:
+                        grade[tree_type] = node_templates.instantiate_grade(
+                            complete_prepared(space), tree_type,
+                        )
+                        stack[tree_type] = node_templates.instantiate_stack(
+                            stack_prepared(space, 33), tree_type,
+                        )
+                        wrappers[tree_type] = node_templates.TemplateInstance(
+                            node_templates.instantiate_wrapper(
+                                tree_type, grade[tree_type].tree,
+                            )
+                        )
+                finally:
+                    for instance in wrappers.values():
+                        instance.dispose()
+                    for instance in stack.values():
+                        instance.dispose()
+                    for instance in grade.values():
+                        instance.dispose()
+
+    def test_receipt_uses_effective_defaults(self):
+        prepared = complete_prepared()
+        instance = node_templates.instantiate_grade(prepared, "ShaderNodeTree")
+        try:
+            tree = instance.tree
+            baseline = node_templates.structure_digest(tree)
+            converted = next(
+                socket for node in tree.nodes for socket in node.inputs
+                if self.color_socket(socket) and (
+                    socket.is_linked or getattr(socket, "is_inactive", False)
+                )
+            )
+            original_color = tuple(converted.default_value)
+            converted.default_value = (0.123, 0.234, 0.345, 1.0)
+            self.assertEqual(node_templates.structure_digest(tree), baseline)
+            converted.default_value = original_color
+
+            effective = next(
+                socket for node in tree.nodes for socket in node.inputs
+                if getattr(socket, "type", None) == "VALUE"
+                and not socket.is_linked
+                and not getattr(socket, "is_inactive", False)
+                and hasattr(socket, "default_value")
+            )
+            original_value = effective.default_value
+            if isinstance(original_value, (tuple, list)):
+                mutated = tuple(float(value) + 0.125 for value in original_value)
+            else:
+                mutated = float(original_value) + 0.125
+            effective.default_value = mutated
+            self.assertNotEqual(node_templates.structure_digest(tree), baseline)
+            effective.default_value = original_value
+
+            color_input = next(
+                item for item in tree.interface.items_tree
+                if item.item_type == "SOCKET"
+                and item.in_out == "INPUT"
+                and item.name == "Color"
+            )
+            original_color_input = tuple(color_input.default_value)
+            color_input.default_value = (0.125, 0.0, 0.0, 1.0)
+            with self.assertRaisesRegex(
+                    node_templates.TemplateAssetError,
+                    "working-space-sensitive color input"):
+                node_templates.structure_digest(tree)
+            color_input.default_value = original_color_input
+        finally:
+            instance.dispose()
 
     def test_missing_and_corrupt_bundled_assets_fail_without_allocating_native_ids(self):
         prepared = complete_prepared()
