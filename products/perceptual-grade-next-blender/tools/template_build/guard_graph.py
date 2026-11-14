@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from functools import cached_property
 import math
-from .boundary import P, INVERSE, prepare_boundary
+from ..kernel.boundary import P, INVERSE, prepare_boundary
 
 
 @dataclass(frozen=True)

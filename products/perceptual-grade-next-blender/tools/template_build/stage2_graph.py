@@ -4,29 +4,18 @@ from types import SimpleNamespace
 
 from .graph import Graph, BuiltGrade, TREE_TYPES, count_nodes
 from .guard_graph import compositor_stage2_output_guard
-from .stage2_parameters import (
+from ..kernel.stage2_parameters import (
     MATRIX_RED_SLOT, MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT,
     TONE_SCALARS_SLOT, TONE_DOMAIN_SLOT, PARAMETER_CONTENT_SIGNATURE,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, parameter_content_signature,
     parameter_image_matches, prepare_parameters,
 )
-
-
-PARAMETER_IMAGE = "_perceptual_grade_parameter_schema"
-PARAMETER_BANK_BINDINGS = (
-    "_perceptual_grade_parameter_bank_0",
-    "_perceptual_grade_parameter_bank_1",
+from ..kernel.stage2_bindings import (
+    PARAMETER_IMAGE, PARAMETER_BANK_BINDINGS, PARAMETER_BINDING,
+    PARAMETER_ACTIVE_BANK, PARAMETER_GENERATION, PARAMETER_SELECTOR,
+    PARAMETER_SAMPLE_SELECTOR, PARAMETER_SAMPLE_ID, PARAMETER_SAMPLE_KIND,
+    PARAMETER_SAMPLE_BANK, PARAMETER_READER, PARAMETER_READER_BANK,
 )
-PARAMETER_BINDING = PARAMETER_BANK_BINDINGS[0]
-PARAMETER_ACTIVE_BANK = "_perceptual_grade_parameter_active_bank"
-PARAMETER_GENERATION = "_perceptual_grade_parameter_generation"
-PARAMETER_SELECTOR = "_perceptual_grade_parameter_selector"
-PARAMETER_SAMPLE_SELECTOR = "_perceptual_grade_parameter_sample_selector"
-PARAMETER_SAMPLE_ID = "_perceptual_grade_parameter_sample_id"
-PARAMETER_SAMPLE_KIND = "_perceptual_grade_parameter_sample_kind"
-PARAMETER_SAMPLE_BANK = "_perceptual_grade_parameter_sample_bank"
-PARAMETER_READER = "_perceptual_grade_parameter_reader"
-PARAMETER_READER_BANK = "_perceptual_grade_parameter_reader_bank"
 
 
 class ParameterBindings:

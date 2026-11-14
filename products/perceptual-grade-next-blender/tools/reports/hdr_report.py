@@ -96,7 +96,7 @@ def _graph_builder(graph_builder):
     if graph_builder == 'specialized':
         return None
     if graph_builder == 'persistent':
-        from color_tools.kernel.persistent import build_persistent
+        from color_tools.template_build.persistent import build_persistent
         return build_persistent
     raise ValueError('Unsupported graph builder; choose specialized or persistent')
 

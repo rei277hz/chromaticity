@@ -26,8 +26,8 @@ policy state.
 The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
-A Grade builds its complete Linear/Tone graph once per working space and tree
-type. Ordinary adjustments publish complete 512 × 1 RGBA32F parameter data
+A Grade appends its complete Linear/Tone graph from the bundled native template
+library once per working space and tree type. Ordinary adjustments publish complete 512 × 1 RGBA32F parameter data
 (8 KiB) through two fixed helper images shared by every Shader and Compositor
 node using that Grade. The inactive bank is packed and checked inside an admitted
 publication scope; only then does the selector switch to it. Bank identities
@@ -87,6 +87,43 @@ error and magenta output with alpha preserved. File load, working-space changes,
 and Grade reassignment fence obsolete source subscriptions and reconcile kernels.
 Shutdown withdraws pending demand and waits for active physical work to retire.
 
+## Baking Grade Output
+
+Shared Grade and Grade Stack nodes expose a Bake control in both Shader and
+Compositor trees. A bake captures the current native node-tree result into a
+managed packed 32-bit float RGBA Image and switches the node to that reader.
+Use Bake can be disabled at any time without unbinding the Image; changing the
+authoritative Grade or Stack settings returns the node to live output until a
+new bake is published. A managed Image may be selected by multiple nodes, so a
+rebake updates every reader of that Image.
+
+Shader bakes retain the legacy route distinction. A pointwise graph with one
+still Image source uses the Image route and evaluates one output pixel per
+source texel. Linked coordinates, surface-dependent nodes, or multiple source
+Images use the UV route and require a Cycles mesh with one non-overlapping UV
+map. Compositor bakes use native compositor evaluation and retain its output
+image domain.
+The Shader Vector input controls only baked sampling. When unlinked, it uses
+the recorded bake UV map (or the active render UV map for Image bakes).
+Grade parameters are evaluated through the native Grade helper-image tree, and
+Grade Stack parameters through its complete 65^3 LUT tree; per-node animated
+Grade nodes intentionally have no Bake control.
+
+Bake rejects UDIM/tiled Images, movie or sequence sources, multiview or
+multilayer data, Shader to RGB, movie-clip and mask inputs, linked or animated
+cache/Alembic geometry, missing UVs, degenerate or overlapping UV islands,
+unsupported group occurrences, and dimensions outside the bounded pixel
+budget. Apply unsupported modifiers before a UV bake, including Array, Mirror,
+Subdivision, Geometry Nodes, Armature, Curve, Lattice, and Displace. The supported
+unapplied modifiers are Cast, Corrective Smooth, Laplacian Smooth, Normal Edit,
+Simple Deform, Smooth, Warp, Wave, and Weighted Normal. Requests are serialized through one
+helper lane and capture a frozen click-time snapshot; an edit, frame change, or
+invalidated source discards the in-flight result rather than publishing stale pixels.
+
+The Technical Report documents the [bake request policy and native evaluation
+contracts](../perceptual-grade-book/docs/book/src/development/next-policies.md#next-policy.bake),
+including queue bounds, signature fencing, publication admission, and rollback.
+
 ## Animated Grades
 
 Add a regular Grade node, then right-click it and choose **Convert to Node-Owned
@@ -130,11 +167,12 @@ stops.
 The installed motion-blur test compares animated Grade with a static copy made
 from the same fractional output time. It checks both Shader and Compositor Grade
 while confirming that scene motion still produces visible blur. It runs on each
-available EEVEE or Cycles engine. The pinned Blender 5.2.2 test artifact
-currently exposes EEVEE only; Cycles coverage remains outstanding:
+available EEVEE or Cycles engine. Stable Blender 5.3.0 and LTS Blender 5.2.4
+installed targets currently expose EEVEE only; Cycles coverage remains
+outstanding:
 
 ```sh
-buck2 test --remote-only //products/perceptual-grade-next-blender/tests:installed_motion_blur_conformance
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:installed_motion_blur_conformance //products/perceptual-grade-next-blender/tests:installed_motion_blur_conformance_lts
 ```
 
 The publication comparison example provides F3 drag recording for comparing
@@ -242,6 +280,29 @@ The extension ZIP uses `src/__init__.py` directly as its root entrypoint and
 places the product's `nodes.py` beside it. Product-owned state-machine policies
 are packaged under `policy/`; shared library dependencies remain separate
 root-level packages in the archive.
+
+The `node_templates` Buck target runs the canonical emitters in pinned Blender
+5.2.4 and produces `kernel/node_templates.blend`, its runtime index
+`kernel/node_templates.json`, and `kernel/grade_stack.glsl`. The library covers
+Shader and Compositor Grade kernels in every supported working space, Stack
+kernels for both 33³ and 65³ LUTs, and the private bake wrappers. Node-owned
+Grades use the same Grade templates with independent parameter banks.
+Authoritative parameter banks, Stack LUT pixels, live kernels, and bake Images
+are bound only after a template is appended. Missing or incompatible assets
+produce a visible error and the existing alpha-preserving magenta output.
+
+The installed product and installed tests consume those exact generated
+resources. The long graph emitters live under `tools/template_build/` and are
+available only to build tools and native emitter tests; they are absent from
+the extension ZIP. The runtime keeps numerical preparation, resource loading,
+binding, and existing publication policies. Template instantiation executes
+inside the existing authorized publication effects and adds no policy machine.
+
+Build the shared template artifact with:
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-next-blender:node_templates
+```
 
 Build the package and run the installed smoke test with:
 

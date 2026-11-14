@@ -308,7 +308,7 @@ import Blender. Construct graphs only inside the supported Blender host:
 from color_tools.kernel import (
     LinearSettings, ToneSettings, ColorSettings, WebSettings, prepare,
 )
-from color_tools.kernel.graph import build_group
+from color_tools.template_build.graph import build_group
 
 prepared = prepare(
     LinearSettings(exposure=.7),
@@ -326,7 +326,7 @@ optional Color path present, including currently bypassed fields:
 ```python
 from dataclasses import replace
 from color_tools.kernel import Settings, prepare_update
-from color_tools.kernel.persistent import build_persistent
+from color_tools.template_build.persistent import build_persistent
 
 settings = Settings()
 prepared = prepare(full_fields=True)

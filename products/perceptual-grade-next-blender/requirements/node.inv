@@ -2,7 +2,9 @@
   "version": 1,
   "state": "State",
   "event": "Event",
-  "initializers": ["new"],
+  "initializers": [
+    "new"
+  ],
   "step": "step",
   "invariants": {
     "optional_signatures_are_nonempty": "(state.desired_signature is None or state.desired_signature != '') and (state.applied_signature is None or state.applied_signature != '')",
@@ -111,7 +113,10 @@
   "properties": [
     {
       "name": "full_quality_is_required_for_current_output",
-      "variables": {"state": "State", "event": "Event"},
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
       "assume": [
         "state.desired_signature is None or state.desired_signature != ''",
         "state.applied_signature is None or state.applied_signature != ''",
@@ -126,54 +131,73 @@
         "event.kind != 'request' or event.signature is not None or event.preparation_signature is None",
         "event.quality in ('preview', 'full')"
       ],
-      "lets": {"transition": "step(state, event)"},
+      "lets": {
+        "transition": "step(state, event)"
+      },
       "assert": "transition[1].output_mode != 'current' or output_allowed(transition[0])"
     },
     {
       "name": "request_without_gesture_retains_last_good_output",
       "variables": {},
-      "lets": {"changed": "step(new('a', 'a'), Event('request', 'b'))"},
+      "lets": {
+        "changed": "step(new('a', 'a'), Event('request', 'b'))"
+      },
       "assert": "changed[0].desired_signature == 'b' and changed[0].applied_signature == 'a' and changed[1].output_mode == 'preview' and changed[1].prepare_signature == 'b' and not output_allowed(changed[0])"
     },
     {
       "name": "gesture_release_retains_last_good_output",
       "variables": {},
-      "lets": {"released": "step(State('b', 'a', 'full', True), Event('gesture_release'))"},
+      "lets": {
+        "released": "step(State('b', 'a', 'full', True), Event('gesture_release'))"
+      },
       "assert": "released[0].applied_signature == 'a' and not released[0].gesture_active and released[1].output_mode == 'preview' and not output_allowed(released[0])"
     },
     {
       "name": "matching_preview_survives_release",
       "variables": {},
-      "lets": {"released": "step(State('a', 'a', 'preview', True), Event('gesture_release'))"},
+      "lets": {
+        "released": "step(State('a', 'a', 'preview', True), Event('gesture_release'))"
+      },
       "assert": "released[0].applied_signature == 'a' and released[0].applied_quality == 'preview' and released[1].output_mode == 'preview' and not output_allowed(released[0])"
     },
     {
       "name": "stale_completion_requires_gesture",
       "variables": {},
-      "lets": {"late": "step(new('b'), Event('installation_result', 'a', quality='preview'))"},
+      "lets": {
+        "late": "step(new('b'), Event('installation_result', 'a', quality='preview'))"
+      },
       "assert": "late[0] == new('b') and late[1].build_signature is None and late[1].output_mode == 'pending'"
     },
     {
       "name": "stale_full_result_updates_drag_preview",
       "variables": {},
-      "lets": {"installed": "step(new('b', gesture_active=True), Event('installation_result', 'a'))"},
+      "lets": {
+        "installed": "step(new('b', gesture_active=True), Event('installation_result', 'a'))"
+      },
       "assert": "installed[0].applied_signature == 'a' and installed[0].applied_quality == 'full' and installed[1].output_mode == 'preview' and not output_allowed(installed[0])"
     },
     {
       "name": "late_lower_quality_never_replaces_full_quality",
       "variables": {},
-      "lets": {"prepared": "step(new('a', 'a', 'full', True), Event('preparation_result', 'a', quality='preview'))"},
+      "lets": {
+        "prepared": "step(new('a', 'a', 'full', True), Event('preparation_result', 'a', quality='preview'))"
+      },
       "assert": "prepared[0].applied_quality == 'full' and prepared[1].build_signature is None and prepared[1].output_mode == 'current'"
     },
     {
       "name": "current_failure_clears_applied_output",
       "variables": {},
-      "lets": {"failed": "step(new('a', 'a'), Event('installation_result', 'a', 'failed'))"},
+      "lets": {
+        "failed": "step(new('a', 'a'), Event('installation_result', 'a', 'failed'))"
+      },
       "assert": "failed[0].applied_signature is None and failed[0].error == 'failed' and failed[1].output_mode == 'error'"
     },
     {
       "name": "recovery_requires_current_full_installation",
-      "variables": {"state": "State", "event": "Event"},
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
       "assume": [
         "state.desired_signature is None or state.desired_signature != ''",
         "state.applied_signature is None or state.applied_signature != ''",
@@ -188,18 +212,25 @@
         "event.kind != 'request' or event.signature is not None or event.preparation_signature is None",
         "event.quality in ('preview', 'full')"
       ],
-      "lets": {"transition": "step(state, event)"},
+      "lets": {
+        "transition": "step(state, event)"
+      },
       "assert": "(transition[1].output_mode != 'current' or output_allowed(state) or (event.kind == 'request' and state.error is None and event.signature == state.applied_signature and state.applied_quality == 'full') or (event.kind == 'installation_result' and state.error is None and event.signature == state.desired_signature and event.quality == 'full' and transition[0].applied_signature == event.signature) or (state.error is not None and event.kind == 'recovery_result' and event.signature == state.desired_signature and event.quality == 'full' and transition[0].applied_signature == event.signature)) and (event.kind != 'recovery_result' or transition[0] == state or (event.error is not None and (event.signature is None or event.signature == state.desired_signature) and transition[0].error == event.error and transition[0].applied_signature is None) or (state.error is not None and event.signature == state.desired_signature and event.quality == 'full' and transition[0].applied_signature == event.signature) or (state.error is None and transition[0] == state))"
     },
     {
       "name": "return_to_applied_settings_updates_preparation_demand",
       "variables": {},
-      "lets": {"returned": "step(State('b', 'a', 'full', True), Event('request', 'a'))"},
+      "lets": {
+        "returned": "step(State('b', 'a', 'full', True), Event('request', 'a'))"
+      },
       "assert": "returned[1].output_mode == 'current' and returned[1].prepare_signature == 'a' and returned[1].build_signature is None"
     },
     {
       "name": "stack_replacement_uses_runtime_observation",
-      "variables": {"state": "State", "event": "Event"},
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
       "assume": [
         "state.desired_signature is None or state.desired_signature != ''",
         "state.applied_signature is None or state.applied_signature != ''",
@@ -215,12 +246,17 @@
         "event.quality in ('preview', 'full')",
         "event.kind == 'stack_replace'"
       ],
-      "lets": {"transition": "step(state, event)"},
+      "lets": {
+        "transition": "step(state, event)"
+      },
       "assert": "transition[0] == state and transition[1].rebuild == event.stack_changed"
     },
     {
       "name": "grade_edit_uses_runtime_observation",
-      "variables": {"state": "State", "event": "Event"},
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
       "assume": [
         "state.desired_signature is None or state.desired_signature != ''",
         "state.applied_signature is None or state.applied_signature != ''",
@@ -236,43 +272,57 @@
         "event.quality in ('preview', 'full')",
         "event.kind == 'grade_changed'"
       ],
-      "lets": {"transition": "step(state, event)"},
+      "lets": {
+        "transition": "step(state, event)"
+      },
       "assert": "transition[0] == state and transition[1].rebuild == event.grade_referenced"
     },
     {
       "name": "kernel_match_does_not_override_preparation_correlation",
       "variables": {},
-      "lets": {"mismatched": "step(State('kernel-a', None, None, False, None, 'prep-a'), Event('preparation_result', 'kernel-a', preparation_signature='prep-old'))"},
+      "lets": {
+        "mismatched": "step(State('kernel-a', None, None, False, None, 'prep-a'), Event('preparation_result', 'kernel-a', preparation_signature='prep-old'))"
+      },
       "assert": "mismatched[0].desired_signature == 'kernel-a' and mismatched[0].applied_signature is None and mismatched[1].build_signature is None"
     },
     {
       "name": "preparation_failure_requires_current_preparation_signature",
       "variables": {},
-      "lets": {"late": "step(State('kernel-a', None, None, False, None, 'prep-a'), Event('preparation_result', error='late', preparation_signature='prep-old'))"},
+      "lets": {
+        "late": "step(State('kernel-a', None, None, False, None, 'prep-a'), Event('preparation_result', error='late', preparation_signature='prep-old'))"
+      },
       "assert": "late[0].error is None and late[0].desired_preparation_signature == 'prep-a' and late[1].output_mode == 'pending'"
     },
     {
       "name": "disposal_clears_node_lifecycle",
       "variables": {},
-      "lets": {"disposed": "step(new('b', 'a', 'preview', True, desired_preparation_signature='prep-b'), Event('dispose'))"},
+      "lets": {
+        "disposed": "step(new('b', 'a', 'preview', True, desired_preparation_signature='prep-b'), Event('dispose'))"
+      },
       "assert": "disposed[0] == new() and not output_allowed(disposed[0])"
     },
     {
       "name": "disposal_authorizes_cleanup_without_presentation",
       "variables": {},
-      "lets": {"disposed": "step(new('a', error='failed', desired_preparation_signature='prep-a'), Event('dispose'))"},
+      "lets": {
+        "disposed": "step(new('a', error='failed', desired_preparation_signature='prep-a'), Event('dispose'))"
+      },
       "assert": "disposed[1] == Effects(dispose=True)"
     },
     {
       "name": "disposal_is_idempotent",
       "variables": {},
-      "lets": {"disposed": "step(new('a', 'a'), Event('dispose'))"},
+      "lets": {
+        "disposed": "step(new('a', 'a'), Event('dispose'))"
+      },
       "assert": "disposed[0] == new() and disposed[1].dispose"
     },
     {
       "name": "disposed_demand_rejects_correlated_late_receipts",
       "variables": {},
-      "lets": {"late": "step(new(), Event('installation_result', 'a'))"},
+      "lets": {
+        "late": "step(new(), Event('installation_result', 'a'))"
+      },
       "assert": "late[0] == new() and not output_allowed(late[0]) and late[1].build_signature is None and late[1].output_mode == 'pending'"
     }
   ],
@@ -283,14 +333,18 @@
       "function": "_transition",
       "target": "not recovery_signature_current",
       "replacement": "False",
-      "detects": ["property.recovery_requires_current_full_installation"]
+      "detects": [
+        "property.recovery_requires_current_full_installation"
+      ]
     },
     {
       "name": "stack_replacement_ignores_runtime_observation",
       "function": "_transition",
       "target": "event.stack_changed",
       "replacement": "False",
-      "detects": ["property.stack_replacement_uses_runtime_observation"]
+      "detects": [
+        "property.stack_replacement_uses_runtime_observation"
+      ]
     }
   ]
 }

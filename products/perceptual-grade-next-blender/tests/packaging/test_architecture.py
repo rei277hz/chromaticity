@@ -13,8 +13,17 @@ import unittest
 ROOT = Path(__file__).parent.parent
 FORBIDDEN = frozenset({'perceptual_grade_reference', 'perceptual_grade_core',
                       'perceptual_grade_blender', 'perceptual_grade_next_blender',
-                      'invariant'})
+                      'invariant', 'template_build'})
 NATIVE = frozenset({'bpy', 'gpu', 'gpu_extras', 'blf', 'mathutils'})
+EMITTERS = frozenset({
+    'graph.py', 'color_graph.py', 'guard_graph.py', 'stage2_graph.py',
+    'persistent.py', 'lut_graph.py', 'stack_graph.py', 'wrapper_graph.py',
+    'lut_shader_emitter.py',
+})
+KERNEL_RESOURCES = frozenset({
+    'output_boundary.npz', 'node_templates.blend', 'node_templates.json',
+    'grade_stack.glsl',
+})
 
 
 class RejectNativeImports(importlib.abc.MetaPathFinder):
@@ -34,8 +43,10 @@ class ArchitectureTests(unittest.TestCase):
         sources=ROOT/'component_sources'
         actual={str(path.relative_to(sources)) for path in sources.rglob('*.py')}
         self.assertEqual(actual,{path for path in component['files'] if path.endswith('.py')})
-        self.assertEqual(set(component['files'])-actual,{'output_boundary.npz'})
-        self.assertTrue((ROOT/'component_bundle'/'kernel'/'output_boundary.npz').is_file())
+        self.assertFalse(actual.intersection(EMITTERS))
+        self.assertEqual(set(component['files'])-actual,KERNEL_RESOURCES)
+        for resource in KERNEL_RESOURCES:
+            self.assertTrue((ROOT/'component_bundle'/'kernel'/resource).is_file(),resource)
         for filename in sources.rglob('*.py'):
             module=ast.parse(filename.read_text())
             relative=filename.relative_to(sources)
@@ -58,7 +69,7 @@ class ArchitectureTests(unittest.TestCase):
                     continue
                 for name in modules:
                     self.assertFalse(FORBIDDEN.intersection(name.split('.')),(filename,name))
-                    if filename.name not in {'graph.py', 'persistent.py', 'stage2_graph.py'}:
+                    if filename.name != 'node_templates.py':
                         self.assertNotIn(name.split('.')[0],NATIVE,filename)
                     self.assertFalse(name.startswith('color_tools.'),(filename,name))
 
@@ -74,8 +85,8 @@ class ArchitectureTests(unittest.TestCase):
         sys.meta_path.insert(0,guard)
         try:
             api=importlib.import_module(namespace+'.kernel')
-            graph=importlib.import_module(namespace+'.kernel.graph')
-            persistent=importlib.import_module(namespace+'.kernel.persistent')
+            templates=importlib.import_module(namespace+'.kernel.node_templates')
+            importlib.import_module(namespace+'.kernel.stage2_bindings')
             prepared=api.prepare(tone=api.ToneSettings(input_nits=(0.,8.,40.,235.,1150.)))
             boundary=importlib.import_module(namespace+'.kernel.boundary')
             geometry=boundary.prepare_boundary(prepared.fl,prepared.aw,prepared.gamma)
@@ -83,8 +94,9 @@ class ArchitectureTests(unittest.TestCase):
             self.assertFalse(geometry.pixels.flags.writeable)
             self.assertEqual(prepared.space,'Linear Rec.709')
             self.assertEqual(prepared.table.cells,256)
-            self.assertTrue(callable(graph.build_group))
-            self.assertTrue(callable(persistent.build_persistent))
+            self.assertTrue(callable(templates.instantiate_grade))
+            self.assertTrue(callable(templates.instantiate_stack))
+            self.assertTrue(callable(templates.instantiate_wrapper))
             self.assertFalse(NATIVE.intersection(set(sys.modules)-before))
             self.assertFalse(FORBIDDEN.intersection({name.split('.')[0] for name in set(sys.modules)-before}))
         finally:

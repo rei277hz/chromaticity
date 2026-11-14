@@ -6,7 +6,7 @@ import numpy as np
 def _builder(pixels, dimensions):
     def build(prepared, tree_type):
         import bpy
-        from color_tools.kernel.graph import Graph, BuiltGrade, count_nodes
+        from color_tools.template_build.graph import Graph, BuiltGrade, count_nodes
         tree = bpy.data.node_groups.new('Parameter sampler regression', tree_type)
         graph = Graph(tree, prepared)
         for name, direction, kind in (

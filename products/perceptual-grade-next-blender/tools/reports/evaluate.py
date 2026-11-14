@@ -1,7 +1,7 @@
 """Generate reproducible reference/native accuracy and cost reports."""
 import argparse
 from functools import partial
-from color_tools.kernel.graph import build_group
+from color_tools.template_build.graph import build_group
 from dataclasses import asdict, replace
 import hashlib
 import importlib
@@ -20,16 +20,16 @@ def evidence_hashes():
         'color_tools.kernel',
         'color_tools.color_core.linear',
         'color_tools.color_core.modcam16',
-        'color_tools.kernel.graph',
+        'color_tools.template_build.graph',
         'color_tools.kernel.prepare',
         'color_tools.kernel.tables',
         'color_tools.kernel.settings',
         'color_tools.kernel.color_prepare',
-        'color_tools.kernel.color_graph',
+        'color_tools.template_build.color_graph',
         'color_tools.kernel.boundary',
-        'color_tools.kernel.guard_graph',
+        'color_tools.template_build.guard_graph',
         'color_tools.kernel.layouts',
-        'color_tools.kernel.persistent',
+        'color_tools.template_build.persistent',
         *(__package__+'.'+name for name in ('cases','full_cases','oracle','native','evaluate','full_evaluate',
                                           'gpu_report','gpu_sampling','gpu_guards','guard_cases','audit_fields','gate_policy')),
     )]

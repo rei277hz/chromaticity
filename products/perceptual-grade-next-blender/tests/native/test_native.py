@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import bpy
 from color_tools.kernel import prepare, LinearSettings, ToneSettings
-from color_tools.kernel.graph import build_group
+from color_tools.template_build.graph import build_group
 raw_group = partial(build_group, export=False)
 from tools.perceptual_grade.reports import cases, oracle
 from tools.perceptual_grade.reports.native import NativeFixture

@@ -6,6 +6,7 @@ from functools import partial
 from itertools import count
 import hashlib
 import json
+from pathlib import Path
 import threading
 from uuid import uuid4
 
@@ -29,9 +30,13 @@ from .kernel import (
     prepare_linear,
     project_source_white_component,
 )
-from .kernel.graph import Graph
-from .kernel.stage2_graph import (
-    build_stage2_group, PARAMETER_IMAGE, PARAMETER_BANK_BINDINGS,
+from .kernel.node_templates import (
+    instantiate_grade,
+    instantiate_stack,
+    validate_stack_instance,
+)
+from .kernel.stage2_bindings import (
+    PARAMETER_IMAGE, PARAMETER_BANK_BINDINGS,
     PARAMETER_ACTIVE_BANK, PARAMETER_GENERATION, PARAMETER_SELECTOR,
     PARAMETER_SAMPLE_SELECTOR, PARAMETER_SAMPLE_ID, PARAMETER_SAMPLE_KIND,
     PARAMETER_SAMPLE_BANK,
@@ -42,9 +47,6 @@ from .kernel.stage2_parameters import (
     PARAMETER_CONTENT_SIGNATURE, parameter_content_signature,
     parameter_image_matches,
 )
-from .kernel.lut import (
-    append_lut_lookup,
-)
 from .lut_gpu import PreparedStack as _PreparedStack
 from .lut_helper import StackHelperBackend
 from .kernel.settings import D65, SPACES
@@ -53,6 +55,7 @@ from .kernel.tone_ui import (
     clamp_tone_anchor,
 )
 from .policy import node as node_policy
+from .policy import bake as bake_policy
 from .policy import render_preflight as render_preflight_policy
 from .runtime import gesture_coordinator as gesture_policy
 from .runtime.preparation import PreparationRuntime
@@ -67,8 +70,11 @@ from .runtime.resource_lifecycle import run_resource_lifecycle
 from .runtime.node_conversion_animation import NodeAnimationConversion
 from .runtime.stack_observations import grade_is_referenced, stack_changed
 from .runtime.image_publication import (
-    pack_image_for_save, write_metadata,
+    ImageSnapshot, pack_image_for_save, write_metadata,
 )
+from .runtime import bake_graph
+from .runtime.bake_manager import BakeManager
+from .runtime import bake_routes
 from .runtime.bank_publication import run_bank_publication
 from . import localization
 
@@ -110,6 +116,7 @@ _node_reset_pending = False
 _preparation_runtime = None
 _grade_preparer = None
 _grade_resources = None
+_bake_manager = None
 _preparation_sources = {}
 _gesture_state = gesture_policy.new()
 _gesture_node_serial = count(1)
@@ -131,6 +138,19 @@ _NODE_ERROR_REASON = "_perceptual_grade_kernel_error_reason"
 _NODE_PENDING = "_perceptual_grade_kernel_pending"
 _NODE_ANIMATION_ERROR = "_perceptual_grade_animation_error"
 _CONVERSION_BACKUP = "_perceptual_grade_conversion_backup"
+_BAKE_SCHEMA = 1
+_BAKE_IMAGE_SCHEMA = "_pg_next_bake_schema"
+_BAKE_DOMAIN = "_pg_next_bake_domain"
+_BAKE_SIGNATURE = "_pg_next_bake_signature"
+_BAKE_OPERATION = "_pg_next_bake_operation"
+_BAKE_WIDTH = "_pg_next_bake_width"
+_BAKE_HEIGHT = "_pg_next_bake_height"
+_BAKE_ERROR = "_pg_next_bake_error"
+_BAKE_CONTEXT = "_pg_next_bake_context"
+_BAKE_NODE_SIGNATURE = "_pg_next_bake_node_signature"
+_bake_mode_updates = set()
+_bake_observations = {}
+_bake_data_revision = 0
 _render_validated_scenes = set()
 _LINEAR_FIELDS = (
     "exposure",
@@ -177,6 +197,576 @@ def _is_stack_node(node):
 
 def _is_output_node(node):
     return _is_grade_node(node) or _is_stack_node(node)
+
+
+# pg-book: technical-report/en#next-policy.bake
+def _bake_image_poll(_node, image):
+    if image is None:
+        return True
+    try:
+        return (image.library is None and image.get(_BAKE_IMAGE_SCHEMA) == _BAKE_SCHEMA
+                and image.source in {"FILE", "GENERATED"} and image.is_float
+                and image.packed_file is not None and not image.is_dirty
+                and image.get(_BAKE_DOMAIN) in {"EMPTY", "IMAGE", "UV", "COMPOSITOR"})
+    except (AttributeError, ReferenceError, RuntimeError):
+        return False
+
+
+def _live_kernel(node):
+    return bake_graph.live_tree(getattr(node, "node_tree", None))
+
+
+def _kernel_for_node(node):
+    return _live_kernel(node) if bake_graph.eligible(node) else getattr(node, "node_tree", None)
+
+
+def _bake_wrapper(node):
+    tree = getattr(node, "node_tree", None)
+    return tree if tree is not None and tree.get(bake_graph.WRAPPER) else None
+
+
+def _ensure_bake_wrapper(node):
+    wrapper = _bake_wrapper(node)
+    if wrapper is not None and bake_graph.structure_valid(wrapper):
+        return wrapper
+    kernel = _live_kernel(node)
+    if kernel is None:
+        raise RuntimeError("Grade output is not ready for baking")
+    replacement = bake_graph.build(node, kernel, retire=_retire_template_resource)
+    try:
+        _replace_node_kernel(node, replacement)
+    except BaseException:
+        _retire_template_resource("group", replacement)
+        raise
+    if wrapper is not None:
+        _retire_kernels((wrapper,))
+    return replacement
+
+
+def _synchronize_bake_output(node, *, use_bake):
+    if use_bake or _bake_wrapper(node) is not None:
+        _ensure_bake_wrapper(node)
+        bake_graph.synchronize(node, use_bake=use_bake)
+
+
+def _ensure_bake_timer():
+    """Keep the foreground bake queue alive after an idle timer retires."""
+    if _bake_manager is None or _bake_manager.closed:
+        return
+    try:
+        if not bpy.app.timers.is_registered(_bake_tick):
+            bpy.app.timers.register(_bake_tick, first_interval=0.02,
+                                    persistent=True)
+    except (AttributeError, RuntimeError, TypeError):
+        return
+
+
+def _bake_image_valid(node):
+    return bake_graph.image_valid(node, getattr(node, "pg_bake_image", None))
+
+
+def _set_bake_mode(node, enabled, *, reconcile=True):
+    signature = node.get(_BAKE_NODE_SIGNATURE)
+    record = _node_stores.get(node.as_pointer())
+    policy = bake_policy.output_policy(
+        bool(enabled), signature, signature, _bake_image_valid(node),
+        None if record is None else record["state"].error,
+    )
+    enabled = policy.use_bake
+    pointer = node.as_pointer()
+    _bake_mode_updates.add(pointer)
+    try:
+        node.pg_use_bake = enabled
+    finally:
+        _bake_mode_updates.discard(pointer)
+    if not reconcile:
+        return enabled
+    try:
+        with _grade_resources.gate.graph_commit():
+            _synchronize_bake_output(node, use_bake=enabled)
+    except PublicationDeferred:
+        _ensure_bake_timer()
+    return enabled
+
+
+def _bake_image_metadata(image, route, result):
+    return (
+        (image, _BAKE_IMAGE_SCHEMA, _BAKE_SCHEMA),
+        (image, _BAKE_DOMAIN, str(route.get("domain", "COMPOSITOR"))),
+        (image, _BAKE_SIGNATURE, str(result.get(
+            "artifact_signature", route.get("source_signature", route.get("signature", ""))))),
+        (image, _BAKE_OPERATION, str(uuid4().hex)),
+        (image, _BAKE_WIDTH, int(result["width"])),
+        (image, _BAKE_HEIGHT, int(result["height"])),
+        (image, "_pg_next_bake_uv_map", route.get("uv_map")),
+        (image, "_pg_next_bake_interpolation", "Linear"),
+        (image, "_pg_next_bake_extension", "REPEAT"),
+    )
+
+
+def _publish_bake(entry, result, error):
+    """Consume the bake publish effect inside the manager's admitted scope."""
+    node = entry["node"]
+    if error is not None:
+        raise error
+    route = entry["inputs"]["route"]
+    if result.get("signature") != route.get("signature"):
+        raise RuntimeError("Bake helper returned pixels for different inputs")
+    path = Path(result["path"]).resolve()
+    if not path.is_relative_to(entry["root"].resolve()):
+        raise RuntimeError("Bake artifact is outside its request directory")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != result.get("sha256"):
+        raise RuntimeError("Bake artifact checksum did not match its receipt")
+    width, height = int(result["width"]), int(result["height"])
+    if min(width, height) < 1 or width * height * 16 > bake_routes.MAX_PIXEL_BYTES:
+        raise RuntimeError("Bake artifact dimensions exceed the pixel budget")
+    source = bpy.data.images.load(str(path), check_existing=False)
+    created = False
+    image = None
+    try:
+        source.colorspace_settings.name = "Non-Color"
+        source.alpha_mode = "CHANNEL_PACKED"
+        if tuple(source.size) != (width, height) or source.channels != 4 or not source.is_float:
+            raise RuntimeError("Bake artifact is not the expected float RGBA image")
+        values = np.empty(width * height * 4, dtype=np.float32)
+        source.pixels.foreach_get(values)
+        if not np.isfinite(values).all():
+            raise RuntimeError("Bake artifact contains nonfinite pixels")
+        image = node.pg_bake_image
+        created = image is None
+        if not created and not bake_graph.image_allowed(node, image):
+            raise RuntimeError("Bake destination is not a managed float Image")
+        if created:
+            image = bpy.data.images.new(
+                "Perceptual Grade Bake", width, height, alpha=True, float_buffer=True,
+            )
+        entry["bake_image"] = image
+        entry["bake_created_image"] = created
+        metadata = _bake_image_metadata(image, route, result)
+        entry["bake_old_size"] = tuple(image.size)
+        entry["bake_snapshot"] = None if created else ImageSnapshot.capture(image, metadata)
+        if tuple(image.size) != (width, height):
+            image.scale(width, height)
+        image.colorspace_settings.name = "Non-Color"
+        image.alpha_mode = "CHANNEL_PACKED"
+        if hasattr(image, "use_half_precision"):
+            image.use_half_precision = False
+        image.pixels.foreach_set(values)
+        image.update()
+        image.pack()
+        if image.packed_file is None or image.is_dirty:
+            raise RuntimeError("Bake Image could not be packed")
+        write_metadata(metadata)
+        image.update()
+        if created:
+            node.pg_bake_image = image
+    finally:
+        bpy.data.images.remove(source, do_unlink=True)
+
+
+def _bake_activate(entry, result):
+    node = entry["node"]
+    image = getattr(node, "pg_bake_image", None)
+    if image is None or image.get(_BAKE_SIGNATURE) != result.get("artifact_signature", entry["inputs"]["route"].get("source_signature")):
+        raise RuntimeError("Bake Image changed before activation")
+    if _bake_wrapper(node) is None:
+        _ensure_bake_wrapper(node)
+    route = entry["inputs"]["route"]
+    node[_BAKE_CONTEXT] = json.dumps(_bake_context(route), separators=(",", ":"))
+    node[_BAKE_NODE_SIGNATURE] = _bake_route(node, _bake_context(route))["signature"]
+    _remember_bake_observation(node)
+    _set_bake_mode(node, True)
+    if not node.pg_use_bake:
+        raise RuntimeError("Bake output could not be activated")
+    write_metadata(((node, _BAKE_ERROR, None),))
+    _tag_bake_readers(image)
+    _ensure_bake_timer()
+
+
+def _tag_bake_readers(image):
+    for reader in _all_grade_nodes():
+        if bake_routes.is_bake_target(reader) and reader.pg_bake_image == image:
+            _synchronize_bake_output(reader, use_bake=reader.pg_use_bake)
+            reader.id_data.update_tag()
+            if reader.node_tree is not None:
+                reader.node_tree.update_tag()
+
+
+def _bake_rollback(entry, _result, error):
+    image = entry.get("bake_image")
+    snapshot = entry.get("bake_snapshot")
+    node = entry.get("node")
+    try:
+        if image is None:
+            return
+        if entry.get("bake_created_image"):
+            if node is not None:
+                _set_bake_mode(node, False)
+            if node is not None and getattr(node, "pg_bake_image", None) == image:
+                node.pg_bake_image = None
+            if image.users == 0:
+                bpy.data.images.remove(image, do_unlink=True)
+            return
+        if snapshot is not None:
+            old_size = entry.get("bake_old_size", tuple(image.size))
+            if tuple(image.size) != tuple(old_size):
+                image.scale(*old_size)
+            snapshot.restore_properties(image)
+            image.pixels.foreach_set(snapshot.pixels)
+            image.update()
+            image.pack()
+            if image.packed_file is None or image.is_dirty:
+                raise RuntimeError("Restored Bake Image could not be packed")
+            write_metadata(snapshot.metadata)
+            image.update()
+            _tag_bake_readers(image)
+        if node is not None:
+            node[_BAKE_ERROR] = str(error)
+            _set_bake_mode(node, False)
+    except Exception as rollback_error:
+        if image is not None:
+            write_metadata(((image, _BAKE_IMAGE_SCHEMA, None),))
+            readers = tuple(candidate for candidate in _all_grade_nodes()
+                            if bake_routes.is_bake_target(candidate)
+                            and candidate.pg_bake_image == image)
+            _block_nodes(readers, rollback_error)
+        raise ExceptionGroup("Bake Image rollback failed", [error, rollback_error])
+
+
+def _bake_tick():
+    global _bake_manager
+    if _bake_manager is None:
+        return None
+    try:
+        pending = _bake_manager.poll()
+    except Exception as error:
+        print("Perceptual Grade Bake failed:", error)
+        pending = bool(_bake_manager.queue or _bake_manager.active)
+    if not pending and _bake_manager.closed and _bake_manager.backend_closed:
+        _bake_manager = None
+        return None
+    baked_nodes = tuple(node for node in _all_grade_nodes()
+                        if bake_routes.is_bake_target(node)
+                        and (getattr(node, "pg_use_bake", False)
+                             or _bake_wrapper(node) is not None))
+    if baked_nodes:
+        _reconcile_bake_outputs(baked_nodes, exact=False)
+    return 0.02 if pending else (0.5 if baked_nodes else None)
+
+
+def _bake_failure(entry, error):
+    try:
+        node = entry["node"]
+        node[_BAKE_ERROR] = str(error)
+        _set_bake_mode(node, False)
+    except (AttributeError, ReferenceError, RuntimeError):
+        return
+
+
+def _bake_current_signature(node, _route):
+    try:
+        return _bake_route(node, _route).get("signature")
+    except (bake_routes.RouteBlocked, AttributeError, ReferenceError,
+            RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _remember_bake_observation(node):
+    observation = bake_routes.observe(node, _stored_bake_context(node))
+    _bake_observations[node.as_pointer()] = (
+        observation.get("signature"), _bake_data_revision,
+    )
+
+
+def _bake_observed_signature(node, context):
+    observation = bake_routes.observe(node, context)
+    observed = observation.get("signature")
+    previous = _bake_observations.get(node.as_pointer())
+    if (observed is not None and previous == (observed, _bake_data_revision)):
+        return node.get(_BAKE_NODE_SIGNATURE)
+    current = _bake_current_signature(node, context or {})
+    if current is not None and current == node.get(_BAKE_NODE_SIGNATURE):
+        _bake_observations[node.as_pointer()] = (observed, _bake_data_revision)
+    return current
+
+
+def _bake_route(node, context):
+    context = context or _stored_bake_context(node)
+    route = bake_routes.describe(node, context)
+    if route.get("width") is None or route.get("height") is None:
+        route["width"] = int(node.pg_bake_width)
+        route["height"] = int(node.pg_bake_height)
+    route["source_signature"] = route["signature"]
+    route["artifact_signature"] = route["source_signature"]
+    return route
+
+
+def _bake_context(route):
+    return {key: route.get(key) for key in (
+        "scene", "owner_kind", "owner_name", "group_path", "object_name",
+    )}
+
+
+def _stored_bake_context(node):
+    value = node.get(_BAKE_CONTEXT)
+    if not value:
+        return None
+    try:
+        context = json.loads(value)
+        if isinstance(context, dict):
+            context["group_path"] = tuple(context.get("group_path") or ())
+            return context
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _prepare_bake_kernels(node, route):
+    """Require every native Grade kernel captured by the route to be current."""
+    candidates = [node]
+    locators = {
+        (str(item.get("tree_name", "")), str(item.get("tree_type", "")),
+         str(item.get("node_name", "")))
+        for item in route.get("upstream", ())
+    }
+    if locators:
+        candidates.extend(
+            candidate for candidate in _all_grade_nodes()
+            if (str(getattr(candidate.id_data, "name", "")),
+                str(getattr(candidate.id_data, "bl_idname", "")),
+                str(getattr(candidate, "name", ""))) in locators
+        )
+    unique = {}
+    for candidate in candidates:
+        try:
+            unique[candidate.as_pointer()] = candidate
+        except (AttributeError, ReferenceError, RuntimeError):
+            continue
+    candidates = tuple(unique.values())
+    failures = _refresh_nodes(candidates)
+    if failures:
+        raise RuntimeError("Bake requires current Grade kernels: "
+                           + "; ".join(str(error) for _nodes, error in failures))
+    failures = _drain_preparations(candidates)
+    if failures:
+        raise RuntimeError("Bake Grade preparation failed: "
+                           + "; ".join(str(error) for _nodes, error in failures))
+    for candidate in candidates:
+        record = _node_stores.get(candidate.as_pointer())
+        if record is None:
+            raise RuntimeError("Bake source Grade has no preparation record")
+        state = record["state"]
+        kernel = _kernel_for_node(candidate)
+        if (state.error is not None or state.applied_quality != "full"
+                or state.applied_signature != state.desired_signature
+                or not _kernel_is_current(kernel, candidate.id_data.bl_idname,
+                                          state.desired_signature, "full",
+                                          stack=_is_stack_node(candidate))):
+            raise RuntimeError("Bake source Grade kernel is not current")
+
+
+def _bake_request(node, context):
+    if _bake_manager is None:
+        raise RuntimeError("Bake manager is unavailable")
+    with _grade_resources.gate.commit():
+        _set_bake_mode(node, False)
+        _reconcile_bake_outputs()
+        route = _bake_route(node, context)
+    _prepare_bake_kernels(node, route)
+    with _grade_resources.gate.commit():
+        if _bake_wrapper(node) is None:
+            _ensure_bake_wrapper(node)
+        node[_BAKE_CONTEXT] = json.dumps(_bake_context(route), separators=(",", ":"))
+        write_metadata(((node, _BAKE_ERROR, None),))
+        generation = _bake_manager.request(
+            node, route, _publish_bake, _bake_current_signature,
+            activate_callback=_bake_activate, rollback_callback=_bake_rollback,
+            failure_callback=_bake_failure,
+            publication_context=_grade_resources.gate.commit,
+        )
+    _ensure_bake_timer()
+    return generation
+
+
+def _bake_image_changed(node, _context):
+    if node.as_pointer() in _bake_mode_updates:
+        return
+    _set_bake_mode(node, False)
+    _bake_observations.pop(node.as_pointer(), None)
+    write_metadata(((node, _BAKE_NODE_SIGNATURE, None),))
+    if _bake_manager is not None:
+        _bake_manager.invalidate(node, None)
+
+
+def _bake_use_changed(node, _context):
+    if node.as_pointer() in _bake_mode_updates:
+        return
+    try:
+        if node.pg_use_bake:
+            route = _bake_route(node, _context)
+            if not _bake_image_valid(node):
+                raise RuntimeError("Select a valid packed float Bake Image")
+            image_domain = node.pg_bake_image.get(_BAKE_DOMAIN)
+            if (image_domain == "UV") != (route.get("domain") == "UV"):
+                raise RuntimeError("Selected Bake Image belongs to a different bake route")
+            previous_signature = node.get(_BAKE_NODE_SIGNATURE)
+            if previous_signature is not None and previous_signature != route["signature"]:
+                raise RuntimeError("Bake inputs changed; bake again to use this Image")
+            node[_BAKE_CONTEXT] = json.dumps(_bake_context(route), separators=(",", ":"))
+            node[_BAKE_NODE_SIGNATURE] = route["signature"]
+            _remember_bake_observation(node)
+            _set_bake_mode(node, True)
+            _ensure_bake_timer()
+        else:
+            _set_bake_mode(node, False)
+    except Exception as error:
+        node[_BAKE_ERROR] = str(error)
+        _set_bake_mode(node, False)
+
+
+def _bake_dimension_changed(node, _context):
+    if node.as_pointer() in _bake_mode_updates:
+        return
+    if _bake_manager is not None:
+        try:
+            _bake_manager.invalidate(node, None)
+        except Exception:
+            _set_bake_mode(node, False)
+    if getattr(node, "pg_use_bake", False):
+        _reconcile_bake_outputs((node,))
+    _ensure_bake_timer()
+
+
+def _invalidate_bake(node):
+    if _bake_manager is None or not bake_routes.is_bake_target(node):
+        return
+    if (not getattr(node, "pg_use_bake", False)
+            and _bake_manager._node_key(node) not in _bake_manager.jobs):
+        return
+    try:
+        current = _bake_current_signature(node, _stored_bake_context(node) or {})
+    except Exception:
+        current = None
+    _bake_manager.invalidate(node, current)
+
+
+def _draw_bake_controls(node, context, layout):
+    if not (_is_shared_grade_node(node) or _is_stack_node(node)):
+        return
+    if hasattr(layout, "separator"):
+        layout.separator()
+    layout.context_pointer_set("pg_bake_node", node)
+    box = layout.box()
+    box.label(text=localization.tr("label.bake"), icon="RENDER_STILL")
+    image_row = box.row(align=True)
+    image_row.prop(node, "pg_bake_image", text="")
+    image_row.operator(PG_OT_unlink_bake_image.bl_idname, text="", icon="X")
+    status = bake_routes.observe(node, context)
+    if status["state"] == "ready":
+        route = status["route"]
+        box.label(text=localization.tr("status.bake_route") + ": " + str(route["domain"]))
+        if route["domain"] == "UV" and node.pg_bake_image is None:
+            dimensions = box.row(align=True)
+            dimensions.prop(node, "pg_bake_width")
+            dimensions.prop(node, "pg_bake_height")
+    else:
+        box.label(text=str(status["detail"]), icon="ERROR")
+    row = box.row(align=True)
+    busy = (_bake_manager is not None
+            and _bake_manager._node_key(node) in _bake_manager.jobs)
+    action = row.row(align=True)
+    action.enabled = busy or status["state"] == "ready"
+    op = action.operator("perceptual_grade.bake", text=localization.tr("label.bake"),
+                      icon="CANCEL" if busy else "RENDER_STILL")
+    op.node_pointer = str(node.as_pointer())
+    op.tree_pointer = str(node.id_data.as_pointer())
+    op.cancel = busy
+    row.prop(node, "pg_use_bake", toggle=True)
+    if node.get(_BAKE_ERROR):
+        box.label(text=str(node.get(_BAKE_ERROR)), icon="ERROR")
+
+
+def _reconcile_bake_outputs(nodes=None, *, exact=True):
+    if _grade_resources is None:
+        return
+    try:
+        with _grade_resources.gate.graph_commit():
+            _reconcile_bake_outputs_in_scope(nodes, exact=exact)
+    except PublicationDeferred:
+        _ensure_bake_timer()
+
+
+def _reconcile_bake_outputs_in_scope(nodes=None, *, exact=True):
+    nodes = tuple(_all_grade_nodes()) if nodes is None else tuple(nodes)
+    for node in nodes:
+        if not bake_routes.is_bake_target(node):
+            continue
+        using_bake = bool(getattr(node, "pg_use_bake", False))
+        has_job = (_bake_manager is not None
+                   and _bake_manager._node_key(node) in _bake_manager.jobs)
+        if not using_bake and not has_job:
+            try:
+                _synchronize_bake_output(node, use_bake=False)
+            except Exception as error:
+                record = _record_for(node)
+                _dispatch(node, node_policy.Event(
+                    "installation_result", record["state"].desired_signature, str(error)))
+            continue
+        context = _stored_bake_context(node)
+        current = (_bake_current_signature(node, context or {}) if exact or has_job
+                   else _bake_observed_signature(node, context))
+        if _bake_manager is not None:
+            _bake_manager.invalidate(node, current)
+        if not using_bake:
+            continue
+        record = _node_stores.get(node.as_pointer())
+        output = bake_policy.output_policy(
+            using_bake, current, node.get(_BAKE_NODE_SIGNATURE),
+            _bake_image_valid(node),
+            None if record is None else record["state"].error,
+        )
+        if output.mode == "error":
+            try:
+                record = _record_for(node)
+                node[_BAKE_ERROR] = output.error
+                _dispatch(node, node_policy.Event(
+                    "installation_result", record["state"].desired_signature, output.error))
+            except Exception as error:
+                print("Perceptual Grade Bake output failed closed:", error)
+            continue
+        if output.mode == "live":
+            _set_bake_mode(node, False)
+            continue
+        try:
+            _synchronize_bake_output(node, use_bake=True)
+        except Exception as error:
+            record = _record_for(node)
+            _dispatch(node, node_policy.Event(
+                "installation_result", record["state"].desired_signature, str(error)))
+
+
+def _bake_node_from_context(context, node_pointer="", tree_pointer=""):
+    node = getattr(context, "pg_bake_node", None)
+    if bake_routes.is_bake_target(node):
+        return node
+    try:
+        node_key = int(node_pointer)
+        tree_key = int(tree_pointer)
+    except (TypeError, ValueError):
+        node_key = tree_key = 0
+    for candidate in _all_grade_nodes():
+        try:
+            if (candidate.as_pointer() == node_key
+                    and candidate.id_data.as_pointer() == tree_key):
+                return candidate
+        except (AttributeError, ReferenceError, RuntimeError):
+            continue
+    node = _node_from_context(context)
+    return node if bake_routes.is_bake_target(node) else None
 
 
 def _holder(settings):
@@ -360,11 +950,32 @@ def _preparation_signature(settings, working_space):
     return _signature("grade-preparation", _snapshot_values(settings), working_space)
 
 
+def _retire_template_resource(kind, resource):
+    """Retire an unpublished template candidate through resource effects."""
+    def observe():
+        try:
+            return {"live": bool(resource.as_pointer()), "owned": True,
+                    "users": resource.users, "protected": resource.use_fake_user}
+        except ReferenceError:
+            return {"live": False}
+
+    def remove():
+        collection = bpy.data.images if kind == "image" else bpy.data.node_groups
+        collection.remove(resource, do_unlink=False)
+
+    failures = run_resource_lifecycle({
+        "observe": observe, "evict": lambda: None, "recheck": observe,
+        "remove": remove,
+    })
+    if failures:
+        raise ExceptionGroup("Could not retire template candidate", list(failures))
+
+
 def _kernel(tree_type, prepared, working_space, signature, parameter_images=None,
             active_bank=0, generation=0):
-    built = build_stage2_group(
+    built = instantiate_grade(
         prepared, tree_type, parameter_images=parameter_images,
-        active_bank=active_bank, generation=generation,
+        active_bank=active_bank, generation=generation, retire=_retire_template_resource,
     )
     tree = built.tree
     try:
@@ -389,48 +1000,10 @@ def _stack_signature(settings, working_space):
 
 
 def _stack_kernel(tree_type, prepared, signature, quality):
-    if tree_type not in (SHADER_TREE, COMPOSITOR_TREE):
-        raise ValueError("Grade Stack nodes require a Shader or Compositor tree")
-    tree = bpy.data.node_groups.new(
-        localization.tr("datablock.stack"), tree_type
-    )
-    graph = Graph(tree, None)
+    built = instantiate_stack(prepared, tree_type, retire=_retire_template_resource)
+    tree = built.tree
     try:
-        color_input = tree.interface.new_socket(
-            name="Color", in_out="INPUT", socket_type="NodeSocketColor"
-        )
-        color_output = tree.interface.new_socket(
-            name="Color", in_out="OUTPUT", socket_type="NodeSocketColor"
-        )
-        alpha_input = alpha_output = None
-        if tree_type == SHADER_TREE:
-            alpha_input = tree.interface.new_socket(
-                name="Alpha", in_out="INPUT", socket_type="NodeSocketFloat"
-            )
-            alpha_input.default_value = 1.0
-            alpha_output = tree.interface.new_socket(
-                name="Alpha", in_out="OUTPUT", socket_type="NodeSocketFloat"
-            )
-
-        source = tree.nodes.new("NodeGroupInput")
-        output = tree.nodes.new("NodeGroupOutput")
-        output.is_active_output = True
-        transformed = append_lut_lookup(
-            graph, prepared.cube, source.outputs[color_input.name]
-        )
-        if tree_type == SHADER_TREE:
-            graph.connect(transformed, output.inputs[color_output.name])
-            graph.connect(source.outputs[alpha_input.name], output.inputs[alpha_output.name])
-        else:
-            separate = graph.node("CompositorNodeSeparateColor")
-            separate.mode = "RGB"
-            graph.connect(source.outputs[color_input.name], separate.inputs["Image"])
-            restore = graph.node("CompositorNodeSetAlpha")
-            restore.inputs["Type"].default_value = "Replace Alpha"
-            graph.connect(transformed, restore.inputs["Image"])
-            graph.connect(separate.outputs["Alpha"], restore.inputs["Alpha"])
-            graph.connect(restore.outputs["Image"], output.inputs[color_output.name])
-
+        tree.name = localization.tr("datablock.stack")
         tree[_KERNEL_KIND] = _KERNEL_SCHEMA
         tree["_perceptual_grade_stack_kernel"] = True
         tree[_KERNEL_SIGNATURE] = signature
@@ -438,21 +1011,20 @@ def _stack_kernel(tree_type, prepared, signature, quality):
         tree["_perceptual_grade_tree_type"] = tree_type
         tree["_perceptual_grade_working_space"] = prepared.space
         tree["_perceptual_grade_lut_signature"] = prepared.cube.signature
-        for image in graph.images:
+        for image in built.images:
             image["_perceptual_grade_stack_image"] = signature
     except BaseException:
-        bpy.data.node_groups.remove(tree, do_unlink=True)
-        for image in graph.images:
-            if image.users == 0:
-                bpy.data.images.remove(image)
+        built.dispose(unlink=True)
         raise
     return tree
 
 
-def _error_kernel(tree_type):
+def _error_kernel(tree_type, *, vector=False):
     if tree_type not in (SHADER_TREE, COMPOSITOR_TREE):
         raise ValueError("Grade nodes require a Shader or Compositor tree")
     name = "Perceptual Grade Error " + ("Shader" if tree_type == SHADER_TREE else "Compositor")
+    if vector:
+        name += " Vector"
     tree = bpy.data.node_groups.get(name)
     if tree is not None and tree.get(_ERROR_KERNEL_KIND) == _KERNEL_SCHEMA:
         return tree
@@ -473,6 +1045,9 @@ def _error_kernel(tree_type):
             alpha_output = tree.interface.new_socket(
                 name="Alpha", in_out="OUTPUT", socket_type="NodeSocketFloat"
             )
+            if vector:
+                tree.interface.new_socket(
+                    name="Vector", in_out="INPUT", socket_type="NodeSocketVector")
 
         source = tree.nodes.new("NodeGroupInput")
         output = tree.nodes.new("NodeGroupOutput")
@@ -499,12 +1074,14 @@ def _error_kernel(tree_type):
     return tree
 
 
-def _identity_kernel(tree_type):
+def _identity_kernel(tree_type, *, vector=False):
     if tree_type not in (SHADER_TREE, COMPOSITOR_TREE):
         raise ValueError("Grade nodes require a Shader or Compositor tree")
     name = "Perceptual Grade Pending " + (
         "Shader" if tree_type == SHADER_TREE else "Compositor"
     )
+    if vector:
+        name += " Vector"
     tree = bpy.data.node_groups.get(name)
     if (tree is not None
             and tree.get(_IDENTITY_KERNEL_KIND) == _KERNEL_SCHEMA
@@ -532,6 +1109,9 @@ def _identity_kernel(tree_type):
                 name="Alpha", in_out="OUTPUT", socket_type="NodeSocketFloat"
             )
             tree.links.new(source.outputs[alpha_input.name], output.inputs[alpha_output.name])
+            if vector:
+                tree.interface.new_socket(
+                    name="Vector", in_out="INPUT", socket_type="NodeSocketVector")
         tree[_IDENTITY_KERNEL_KIND] = _KERNEL_SCHEMA
         tree["_perceptual_grade_tree_type"] = tree_type
     except BaseException:
@@ -556,15 +1136,23 @@ def _settings_for_node(node, working_space=None):
 def _kernel_is_current(kernel, tree_type, signature, quality="full", stack=None,
                        *, validate_graph=True):
     try:
+        if tree_type in (SHADER_TREE, COMPOSITOR_TREE):
+            kernel = bake_graph.live_tree(kernel)
         if kernel is None or kernel.get(_KERNEL_KIND) != _KERNEL_SCHEMA:
             return False
         if (kernel.get("_perceptual_grade_tree_type") != tree_type
                 or kernel.get(_KERNEL_SIGNATURE) != signature
                 or kernel.get(_KERNEL_QUALITY, "full") != quality):
             return False
-        if stack is not None and bool(kernel.get("_perceptual_grade_stack_kernel")) != stack:
+        is_stack_kernel = bool(kernel.get("_perceptual_grade_stack_kernel"))
+        if stack is not None and is_stack_kernel != stack:
             return False
-        if not kernel.get("_perceptual_grade_stack_kernel"):
+        if is_stack_kernel:
+            # Stack topology and its packed atlas are derived assets.  A
+            # matching policy signature alone must not adopt a damaged or
+            # legacy graph as current.
+            return validate_stack_instance(kernel)
+        if not is_stack_kernel:
             if validate_graph:
                 valid = _parameter_kernel_valid(kernel)
             else:
@@ -886,13 +1474,36 @@ def _restore_node_connections(node, snapshot):
             raise RuntimeError("Kernel replacement changed multi-input link order")
 
 
-def _replace_node_kernel(node, kernel):
+def _replace_node_kernel(node, kernel, *, emergency=False):
     snapshot = _kernel_snapshot(node)
     previous = snapshot["kernel"]
     if previous == kernel:
-        return previous
+        return _live_kernel(node) if bake_graph.eligible(node) else previous
+    previous_live = bake_graph.live_tree(previous) if bake_graph.eligible(node) else previous
+    candidate = kernel
+    if not emergency and bake_graph.eligible(node) and not (
+            getattr(kernel, "get", lambda *_args: False)(bake_graph.WRAPPER)):
+        if previous is not None and previous.get(bake_graph.WRAPPER):
+            if bake_graph.structure_valid(previous):
+                try:
+                    bake_graph.replace_live(node, kernel)
+                    bake_graph.synchronize(node, use_bake=bool(getattr(node, "pg_use_bake", False)))
+                except Exception:
+                    bake_graph.replace_live(node, previous_live)
+                    raise
+                return previous_live
+            candidate = bake_graph.build(node, kernel, retire=_retire_template_resource)
+        elif node.inputs.get("Vector") is not None:
+            # Emergency output preserves the baked sampler's public Vector
+            # socket. Recreate the ordinary wrapper when recovery succeeds.
+            candidate = bake_graph.build(node, kernel, retire=_retire_template_resource)
+        # Keep ordinary Grade publication compatible with the existing direct
+        # kernel contract. The private wrapper is installed lazily when a
+        # node actually enters baked mode.
     try:
-        _restore_kernel_snapshot(node, kernel, snapshot)
+        _restore_kernel_snapshot(node, candidate, snapshot)
+        if bake_graph.eligible(node) and candidate.get(bake_graph.WRAPPER):
+            bake_graph.synchronize(node, use_bake=bool(getattr(node, "pg_use_bake", False)))
     except Exception as replacement_error:
         try:
             _restore_kernel_snapshot(node, previous, snapshot)
@@ -901,8 +1512,12 @@ def _replace_node_kernel(node, kernel):
                 "Kernel replacement failed and graph rollback failed: "
                 + str(rollback_error)
             ) from replacement_error
+        if candidate is not kernel:
+            _retire_template_resource("group", candidate)
         raise
-    return previous
+    if candidate is not kernel:
+        _retire_kernels((previous,))
+    return previous_live
 
 
 def _remap_node_snapshot(snapshot, source, replacement):
@@ -920,10 +1535,18 @@ def _remap_node_snapshot(snapshot, source, replacement):
 
 
 def _apply_output_kernel(node, mode):
+    if mode != "current" and bake_graph.eligible(node):
+        # A broken wrapper may have lost its live child. Install the policy's
+        # replacement before reconciling its reader and selector topology.
+        _set_bake_mode(node, False, reconcile=mode not in {"pending", "error"})
     if mode == "pending":
-        _replace_node_kernel(node, _identity_kernel(node.id_data.bl_idname))
+        _replace_node_kernel(node, _identity_kernel(
+            node.id_data.bl_idname, vector=node.inputs.get("Vector") is not None),
+            emergency=True)
     elif mode == "error":
-        _replace_node_kernel(node, _error_kernel(node.id_data.bl_idname))
+        _replace_node_kernel(node, _error_kernel(
+            node.id_data.bl_idname, vector=node.inputs.get("Vector") is not None),
+            emergency=True)
 
 
 def _apply_output_effect(node, effects):
@@ -931,6 +1554,7 @@ def _apply_output_effect(node, effects):
         return
     failures = []
     previous = getattr(node, "node_tree", None)
+    previous_live = bake_graph.live_tree(previous)
     for operation, args in (
         (_apply_output_presentation, (node, effects.output_mode, effects.error)),
         (_apply_output_kernel, (node, effects.output_mode)),
@@ -942,6 +1566,8 @@ def _apply_output_effect(node, effects):
     current = getattr(node, "node_tree", None)
     if previous != current:
         _retire_kernels((previous,))
+    elif previous_live != bake_graph.live_tree(current):
+        _retire_kernels((previous_live,))
     if failures:
         detail = "; ".join(str(failure) for failure in failures)
         raise RuntimeError("Could not apply Grade output policy: " + detail) from failures[0]
@@ -972,6 +1598,7 @@ def _release_source(source):
 def _kernel_belongs_to_node(node, kernel):
     if _is_stack_node(node):
         return True
+    kernel = bake_graph.live_tree(kernel)
     if kernel is None:
         return False
     owner, owner_node = _grade_resources.owner(node)
@@ -995,7 +1622,7 @@ def _record_for(node, desired_signature=None, source=None):
 
     applied_signature = None
     applied_quality = None
-    kernel = getattr(node, "node_tree", None)
+    kernel = _kernel_for_node(node)
     kernel_quality = kernel.get(_KERNEL_QUALITY, "full") if kernel is not None else "full"
     # This is an adoption boundary, not the hot existing-record lookup above.
     # Validate the full reader set once before treating a persisted graph as
@@ -1037,6 +1664,7 @@ def _ensure_timer():
         bpy.app.timers.register(_preparation_tick, first_interval=0.0)
 
 
+# pg-book: technical-report/en#next-policy.node-output
 def _consume_effects(node, effects, preparation=None, record=None, defer_build=False):
     if effects.dispose:
         try:
@@ -1148,16 +1776,17 @@ def _request_node(node, working_space, snapshots=None):
     current = True
     if state.applied_signature is not None:
         current = _kernel_is_current(
-            node.node_tree, node.id_data.bl_idname, state.applied_signature,
+            _kernel_for_node(node), node.id_data.bl_idname, state.applied_signature,
             state.applied_quality or "full", stack=_is_stack_node(node),
             validate_graph=needs_compositor_adoption,
         )
     if needs_compositor_adoption and current:
         resource = _grade_resources.resource(node, working_space)
+        live_kernel = _kernel_for_node(node)
         if (resource.generation is not None
-                and tuple(node.node_tree.get(key) for key in PARAMETER_BANK_BINDINGS)
+                and tuple(live_kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
                 == resource.banks
-                and node.node_tree.get(PARAMETER_ACTIVE_BANK) == resource.active_bank):
+                and live_kernel.get(PARAMETER_ACTIVE_BANK) == resource.active_bank):
             # Loaded/undone graphs can already satisfy kernel demand and skip
             # publication entirely. Seed their plain evaluation facts before
             # the request's presentation effect claims the result is current.
@@ -1173,6 +1802,8 @@ def _request_node(node, working_space, snapshots=None):
         (source, preparation_signature, snapshot, working_space, lane,
          lane == "lut" and bool(state.gesture_active)),
     ))
+    if getattr(node, "pg_use_bake", False):
+        _reconcile_bake_outputs((node,))
     return tuple(failures)
 
 
@@ -1299,10 +1930,11 @@ def _tag_compositor_outputs(records):
             if tree_pointer:
                 owners[tree_pointer] = tree
             kernel = node.node_tree
-            if kernel is not None:
-                kernel_pointer = kernel.as_pointer()
-                if kernel_pointer:
-                    kernels[kernel_pointer] = kernel
+            for candidate in (kernel, bake_graph.live_tree(kernel)):
+                if candidate is not None:
+                    kernel_pointer = candidate.as_pointer()
+                    if kernel_pointer:
+                        kernels[kernel_pointer] = candidate
         except (AttributeError, ReferenceError, RuntimeError):
             continue
     if not owners:
@@ -1416,7 +2048,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         old_generation=old_generation, candidate_bank=candidate_bank,
         generation=generation, previous_trees=dict(resource.trees),
         repairing=not active_valid,
-        outer_before=tuple((record["node"], record["node"].node_tree)
+        outer_before=tuple((record["node"], _kernel_for_node(record["node"]))
                            for record in users),
         receipt_before=None, metadata_before=(),
     )
@@ -1534,7 +2166,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
             )
         for node, _previous in context["outer_before"]:
             kernel = kernels[node.id_data.bl_idname]
-            if node.node_tree != kernel:
+            if _kernel_for_node(node) != kernel:
                 _replace_node_kernel(node, kernel)
         selected = {_read_parameter_selector(kernel) for kernel in kernels.values()}
         if selected != {bank} or any(
@@ -1577,7 +2209,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
                 restoration_errors.append(error)
         for node, previous in context["outer_before"]:
             try:
-                if node.node_tree != previous:
+                if _kernel_for_node(node) != previous:
                     _replace_node_kernel(node, previous)
             except Exception as error:
                 restoration_errors.append(error)
@@ -1988,9 +2620,9 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
         return ()
     tree_type = users[0]["node"].id_data.bl_idname
     stack = users[0]["stack"]
-    kernel = next((record["node"].node_tree for record in tuple(_node_stores.values())
+    kernel = next((_kernel_for_node(record["node"]) for record in tuple(_node_stores.values())
                    if record["stack"] == stack and _kernel_is_current(
-                       record["node"].node_tree, tree_type, signature, quality,
+                       _kernel_for_node(record["node"]), tree_type, signature, quality,
                        stack=stack)), None)
     built_kernel = False
     previous_reconciling = _reconciling
@@ -2146,7 +2778,8 @@ def _resource_retirement_operations(resource, *, image=False):
                 return {"live": False}
             owned = (bool(resource.get("_perceptual_grade_stack_image")
                           or resource.get("_perceptual_grade_image")) if image
-                     else resource.get(_KERNEL_KIND) is not None)
+                     else (resource.get(_KERNEL_KIND) is not None
+                           or bool(resource.get(bake_graph.WRAPPER))))
             protected = resource.use_fake_user
             if image:
                 parameter_image = resource.get(PARAMETER_IMAGE) is not None
@@ -2170,7 +2803,12 @@ def _resource_retirement_operations(resource, *, image=False):
 
     def remove():
         collection = bpy.data.images if image else bpy.data.node_groups
+        child = bake_graph.live_tree(resource) if not image and resource.get(bake_graph.WRAPPER) else None
         collection.remove(resource, do_unlink=False)
+        if child is not None:
+            errors = run_resource_lifecycle(_resource_retirement_operations(child))
+            if errors:
+                raise ExceptionGroup("Bake live kernel retirement failed", list(errors))
 
     return {"observe": observe, "evict": evict, "recheck": observe, "remove": remove}
 
@@ -2257,6 +2895,7 @@ def _forget_node(node):
 
 
 def _forget_node_pointer(pointer):
+    _bake_observations.pop(pointer, None)
     record = _node_stores.pop(pointer, None)
     _unindex_output_node(pointer)
     _forget_compositor_node(pointer)
@@ -2353,6 +2992,7 @@ def _reset_node_stores():
     _frame_reconcile_pending = False
     _frame_reconcile_scenes.clear()
     _render_validated_scenes.clear()
+    _bake_observations.clear()
     if _grade_resources is not None:
         # Load/undo invalidates callback identities, but only actual host
         # quiescence permits releasing the retained native image versions.
@@ -2550,6 +3190,7 @@ def _stack_changed(entry, _context):
 
 def _refresh_stack_policy(node):
     _index_output_node(node)
+    _invalidate_bake(node)
     failures = _dispatch_stack_replacement(node)
     if failures:
         print("Perceptual Grade Stack update failed:", failures[-1])
@@ -2868,6 +3509,7 @@ def _invoke_gesture_observer(action):
         _gesture_invocations.pop(action.token, None)
 
 
+# pg-book: technical-report/en#next-policy.gesture
 def _consume_gesture_effects(effects):
     refresh = []
 
@@ -3089,6 +3731,7 @@ def _grade_changed(grade):
             continue
     refresh = []
     for node in users:
+        _invalidate_bake(node)
         armed = _gesture_is_armed(node.as_pointer())
         if not armed:
             refresh.append(node)
@@ -3159,7 +3802,9 @@ def _frame_change_post(scene, *_args):
         _frame_reconcile_scenes[pointer] = scene
         if _frame_reconcile_blocked(pointer):
             return
-        failures = _refresh_nodes(_scene_grade_nodes(scene))
+        nodes = _scene_grade_nodes(scene)
+        failures = _refresh_nodes(nodes)
+        _reconcile_bake_outputs(nodes)
         _frame_reconcile_scenes.pop(pointer, None)
         _frame_reconcile_pending = bool(_frame_reconcile_scenes)
         for nodes, error in failures:
@@ -3223,7 +3868,7 @@ def _ensure_all_kernels(working_space=None):
             record = _node_stores.get(node.as_pointer())
             if (record is not None and not record["stack"]
                     and record["state"].applied_signature is not None
-                    and not _parameter_kernel_valid(node.node_tree)):
+                    and not _parameter_kernel_valid(_kernel_for_node(node))):
                 failures.extend(((node,), error) for error in _dispatch(
                     node, node_policy.Event(
                         "installation_result", record["state"].desired_signature,
@@ -3259,29 +3904,42 @@ def _startup_reconcile_tick():
     _cleanup_conversion_backups()
     _rebuild_output_registry()
     _ensure_all_kernels()
+    _reconcile_bake_outputs()
     return None
+
+
+@persistent
+def _load_pre(_filepath):
+    if _bake_manager is not None:
+        _bake_manager.cancel_all()
 
 
 @persistent
 def _load_post(_filepath):
     try:
+        if _bake_manager is not None:
+            _bake_manager.cancel_all()
         _clear_gestures()
         _cleanup_conversion_backups()
         _reset_node_stores()
         _rebuild_output_registry()
         _ensure_all_kernels()
+        _reconcile_bake_outputs()
     except PublicationDeferred:
         _undo_redo_post()
     except Exception as error:
         print("Perceptual Grade load repair failed:", error)
     finally:
         _ensure_gesture_router_timer()
+        _ensure_bake_timer()
 
 
 @persistent
 def _undo_redo_pre(*_args):
     _clear_gestures()
     try:
+        if _bake_manager is not None:
+            _bake_manager.cancel_all()
         _reset_node_stores()
     except PublicationDeferred:
         # Preserve native-reader pins until the post-undo timer can reset.
@@ -3290,6 +3948,7 @@ def _undo_redo_pre(*_args):
 
 @persistent
 def _undo_redo_post(*_args):
+    _ensure_bake_timer()
     if not bpy.app.timers.is_registered(_undo_redo_reconcile_tick):
         bpy.app.timers.register(_undo_redo_reconcile_tick, first_interval=0.0)
 
@@ -3301,6 +3960,7 @@ def _undo_redo_reconcile_tick():
         _reset_node_stores()
         _rebuild_output_registry()
         _ensure_all_kernels()
+        _reconcile_bake_outputs()
     except PublicationDeferred:
         return 0.02
     except Exception as error:
@@ -3310,6 +3970,7 @@ def _undo_redo_reconcile_tick():
     return None
 
 
+# pg-book: technical-report/en#next-policy.render-preflight
 @persistent
 def _render_pre(scene):
     if _grade_resources is None:
@@ -3374,6 +4035,7 @@ def _service_render_preflight(*, defer=True):
                     # frame's RNA values. Re-assert the exact ticket time on
                     # the main-thread scene before reading animated Grade data.
                     scene.frame_set(ticket.frame, subframe=float.fromhex(ticket.subframe))
+                    _reconcile_bake_outputs(_scene_grade_nodes(scene))
                     nodes, _signatures, signature = _animation_snapshot(scene)
                     failures = []
                     first_frame = ticket.scene_identity not in _render_validated_scenes
@@ -3559,7 +4221,7 @@ def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
         node = record["node"]
         if (not node_policy.output_allowed(state)
                 or not _kernel_is_current(
-                    node.node_tree, node.id_data.bl_idname, state.desired_signature,
+                    _kernel_for_node(node), node.id_data.bl_idname, state.desired_signature,
                     state.applied_quality or "full", stack=record["stack"],
                     validate_graph=False)):
             error = RuntimeError(
@@ -3574,9 +4236,15 @@ def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
 
 @persistent
 def _depsgraph_update_post(_scene, _depsgraph=None):
-    global _last_working_space
+    global _last_working_space, _bake_data_revision
     if _node_reset_pending:
         return
+    # Native dependency updates cover pixel/geometry edits that do not alter
+    # the cheap route descriptor. Render and publication compare full data.
+    if _depsgraph is not None and any(
+            isinstance(update.id, (bpy.types.Image, bpy.types.Mesh, bpy.types.Object))
+            for update in _depsgraph.updates):
+        _bake_data_revision += 1
     try:
         working_space = _working_space()
     except Exception as error:
@@ -3893,19 +4561,46 @@ class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
     bl_width_default = 320
     pg_stack_entries: CollectionProperty(type=PGStackEntry)
     pg_active_index: IntProperty(default=0, min=0, update=_stack_focus_changed)
+    pg_bake_image: PointerProperty(
+        type=bpy.types.Image, name=localization.native("property.bake_image"),
+        description=localization.native("tooltip.bake_image"),
+        poll=_bake_image_poll, update=_bake_image_changed, options=set(),
+    )
+    pg_use_bake: BoolProperty(
+        name=localization.native("property.use_bake"),
+        description=localization.native("tooltip.use_bake"),
+        default=False, update=_bake_use_changed, options=set(),
+    )
+    pg_bake_width: IntProperty(
+        name=localization.native("property.bake_width"),
+        description=localization.native("tooltip.bake_width"),
+        default=bake_routes.DEFAULT_UV_SIZE, min=1, max=bake_routes.MAX_UV_SIZE,
+        update=_bake_dimension_changed, options=set(),
+    )
+    pg_bake_height: IntProperty(
+        name=localization.native("property.bake_height"),
+        description=localization.native("tooltip.bake_height"),
+        default=bake_routes.DEFAULT_UV_SIZE, min=1, max=bake_routes.MAX_UV_SIZE,
+        update=_bake_dimension_changed, options=set(),
+    )
 
     def init(self, _context):
         self["_perceptual_grade_stack"] = 1
         _index_output_node(self)
 
     def copy(self, _source):
+        source = _source
+        if _bake_wrapper(source) is not None and self.node_tree == source.node_tree:
+            self.node_tree = source.node_tree.copy()
         _index_output_node(self)
 
     def draw_buttons(self, context, layout):
         _draw_stack_node(self, context, layout)
+        _draw_bake_controls(self, context, layout)
 
     def draw_buttons_ext(self, context, layout):
         _draw_stack_node(self, context, layout)
+        _draw_bake_controls(self, context, layout)
 
     def free(self):
         _dispose_node(self)
@@ -3918,19 +4613,46 @@ class PGCompositorGradeStack(bpy.types.CompositorNodeCustomGroup):
     bl_width_default = 320
     pg_stack_entries: CollectionProperty(type=PGStackEntry)
     pg_active_index: IntProperty(default=0, min=0, update=_stack_focus_changed)
+    pg_bake_image: PointerProperty(
+        type=bpy.types.Image, name=localization.native("property.bake_image"),
+        description=localization.native("tooltip.bake_image"),
+        poll=_bake_image_poll, update=_bake_image_changed, options=set(),
+    )
+    pg_use_bake: BoolProperty(
+        name=localization.native("property.use_bake"),
+        description=localization.native("tooltip.use_bake"),
+        default=False, update=_bake_use_changed, options=set(),
+    )
+    pg_bake_width: IntProperty(
+        name=localization.native("property.bake_width"),
+        description=localization.native("tooltip.bake_width"),
+        default=bake_routes.DEFAULT_UV_SIZE, min=1, max=bake_routes.MAX_UV_SIZE,
+        update=_bake_dimension_changed, options=set(),
+    )
+    pg_bake_height: IntProperty(
+        name=localization.native("property.bake_height"),
+        description=localization.native("tooltip.bake_height"),
+        default=bake_routes.DEFAULT_UV_SIZE, min=1, max=bake_routes.MAX_UV_SIZE,
+        update=_bake_dimension_changed, options=set(),
+    )
 
     def init(self, _context):
         self["_perceptual_grade_stack"] = 1
         _index_output_node(self)
 
     def copy(self, _source):
+        source = _source
+        if _bake_wrapper(source) is not None and self.node_tree == source.node_tree:
+            self.node_tree = source.node_tree.copy()
         _index_output_node(self)
 
     def draw_buttons(self, context, layout):
         _draw_stack_node(self, context, layout)
+        _draw_bake_controls(self, context, layout)
 
     def draw_buttons_ext(self, context, layout):
         _draw_stack_node(self, context, layout)
+        _draw_bake_controls(self, context, layout)
 
     def free(self):
         _dispose_node(self)
@@ -3944,11 +4666,36 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
     pg_tone: PointerProperty(type=PGToneSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
                               update=_selection_changed)
+    pg_bake_image: PointerProperty(
+        type=bpy.types.Image, name=localization.native("property.bake_image"),
+        description=localization.native("tooltip.bake_image"),
+        poll=_bake_image_poll, update=_bake_image_changed, options=set(),
+    )
+    pg_use_bake: BoolProperty(
+        name=localization.native("property.use_bake"),
+        description=localization.native("tooltip.use_bake"),
+        default=False, update=_bake_use_changed, options=set(),
+    )
+    pg_bake_width: IntProperty(
+        name=localization.native("property.bake_width"),
+        description=localization.native("tooltip.bake_width"),
+        default=bake_routes.DEFAULT_UV_SIZE, min=1, max=bake_routes.MAX_UV_SIZE,
+        update=_bake_dimension_changed, options=set(),
+    )
+    pg_bake_height: IntProperty(
+        name=localization.native("property.bake_height"),
+        description=localization.native("tooltip.bake_height"),
+        default=bake_routes.DEFAULT_UV_SIZE, min=1, max=bake_routes.MAX_UV_SIZE,
+        update=_bake_dimension_changed, options=set(),
+    )
 
     def init(self, _context):
         _index_output_node(self)
 
     def copy(self, _source):
+        source = _source
+        if _bake_wrapper(source) is not None and self.node_tree == source.node_tree:
+            self.node_tree = source.node_tree.copy()
         _index_output_node(self)
 
     def draw_buttons(self, context, layout):
@@ -3956,6 +4703,7 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
         layout.template_ID(self, "pg_grade", new=PG_OT_new_grade.bl_idname,
                            unlink=PG_OT_unlink_grade.bl_idname)
         _draw_node_status(self, layout)
+        _draw_bake_controls(self, context, layout)
 
     def draw_buttons_ext(self, context, layout):
         self.draw_buttons(context, layout)
@@ -3972,11 +4720,36 @@ class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
     pg_tone: PointerProperty(type=PGToneSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
                               update=_selection_changed)
+    pg_bake_image: PointerProperty(
+        type=bpy.types.Image, name=localization.native("property.bake_image"),
+        description=localization.native("tooltip.bake_image"),
+        poll=_bake_image_poll, update=_bake_image_changed, options=set(),
+    )
+    pg_use_bake: BoolProperty(
+        name=localization.native("property.use_bake"),
+        description=localization.native("tooltip.use_bake"),
+        default=False, update=_bake_use_changed, options=set(),
+    )
+    pg_bake_width: IntProperty(
+        name=localization.native("property.bake_width"),
+        description=localization.native("tooltip.bake_width"),
+        default=bake_routes.DEFAULT_UV_SIZE, min=1, max=bake_routes.MAX_UV_SIZE,
+        update=_bake_dimension_changed, options=set(),
+    )
+    pg_bake_height: IntProperty(
+        name=localization.native("property.bake_height"),
+        description=localization.native("tooltip.bake_height"),
+        default=bake_routes.DEFAULT_UV_SIZE, min=1, max=bake_routes.MAX_UV_SIZE,
+        update=_bake_dimension_changed, options=set(),
+    )
 
     def init(self, _context):
         _index_output_node(self)
 
     def copy(self, _source):
+        source = _source
+        if _bake_wrapper(source) is not None and self.node_tree == source.node_tree:
+            self.node_tree = source.node_tree.copy()
         _index_output_node(self)
 
     def draw_buttons(self, context, layout):
@@ -3984,6 +4757,7 @@ class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
         layout.template_ID(self, "pg_grade", new=PG_OT_new_grade.bl_idname,
                            unlink=PG_OT_unlink_grade.bl_idname)
         _draw_node_status(self, layout)
+        _draw_bake_controls(self, context, layout)
 
     def draw_buttons_ext(self, context, layout):
         self.draw_buttons(context, layout)
@@ -4071,6 +4845,70 @@ class PG_OT_new_grade(bpy.types.Operator):
             if grade.users == 0:
                 bpy.data.node_groups.remove(grade)
             raise
+        return {"FINISHED"}
+
+
+class PG_OT_bake(bpy.types.Operator):
+    bl_idname = "perceptual_grade.bake"
+    bl_label = localization.native("operator.bake")
+    bl_description = localization.native("action.bake_description")
+    bl_translation_context = localization.CONTEXT
+    bl_options = {"REGISTER", "UNDO"}
+
+    node_pointer: StringProperty(options={"SKIP_SAVE"})
+    tree_pointer: StringProperty(options={"SKIP_SAVE"})
+    cancel: BoolProperty(default=False, options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        node = _bake_node_from_context(
+            context, getattr(getattr(context, "active_operator", None), "node_pointer", ""),
+            getattr(getattr(context, "active_operator", None), "tree_pointer", ""),
+        )
+        if _bake_manager is None or not bake_routes.is_bake_target(node):
+            return False
+        busy = _bake_manager._node_key(node) in _bake_manager.jobs
+        if busy:
+            return True
+        return bake_routes.observe(node, context)["state"] == "ready"
+
+    def execute(self, context):
+        node = _bake_node_from_context(
+            context,
+            getattr(self, "node_pointer", ""),
+            getattr(self, "tree_pointer", ""),
+        )
+        if _bake_manager is None or not bake_routes.is_bake_target(node):
+            return {"CANCELLED"}
+        try:
+            if bool(getattr(self, "cancel", False)):
+                _bake_manager.invalidate(node, None)
+            else:
+                _bake_request(node, context)
+        except Exception as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class PG_OT_unlink_bake_image(bpy.types.Operator):
+    bl_idname = "perceptual_grade.unlink_bake_image"
+    bl_label = localization.native("operator.unlink_bake_image")
+    bl_description = localization.native("action.unlink_bake_image_description")
+    bl_translation_context = localization.CONTEXT
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return bake_routes.is_bake_target(_bake_node_from_context(context))
+
+    def execute(self, context):
+        node = _bake_node_from_context(context)
+        if not bake_routes.is_bake_target(node):
+            return {"CANCELLED"}
+        _set_bake_mode(node, False)
+        node.pg_bake_image = None
+        write_metadata(((node, _BAKE_NODE_SIGNATURE, None),))
         return {"FINISHED"}
 
 
@@ -4422,7 +5260,7 @@ def _animation_outputs_current(nodes, signatures, *, validate_graph=True):
                 or not node_policy.output_allowed(state)):
             return False, None
         if not _kernel_is_current(
-                node.node_tree, node.id_data.bl_idname, signature, "full",
+                _kernel_for_node(node), node.id_data.bl_idname, signature, "full",
                 stack=_is_stack_node(node), validate_graph=validate_graph):
             return False, "Installed Grade kernel does not match the evaluated frame"
     return True, None
@@ -4528,6 +5366,18 @@ def convert_grade_node(node, target_kind):
         for name in fields
     }
     snapshot = _kernel_snapshot(node)
+    conversion_snapshot = snapshot
+    if target_kind == "NODE" and _bake_wrapper(node) is not None:
+        # Per-Node Grades expose only their live inputs. Keep the complete
+        # source snapshot for rollback, but drop the baked sampler input from
+        # the replacement graph together with its incoming connections.
+        conversion_snapshot = dict(
+            snapshot,
+            values=tuple((key, value) for key, value in snapshot["values"]
+                         if key != "Vector"),
+            links=tuple(link for link in snapshot["links"]
+                        if not (link[2] == node and link[3] == "Vector")),
+        )
     name = node.name
     parent, location = node.parent, tuple(node.location)
     active = tree.nodes.active
@@ -4541,7 +5391,8 @@ def convert_grade_node(node, target_kind):
     presentation["color"] = tuple(node.color)
     custom = {}
     for key, value in node.items():
-        if key.startswith("_perceptual_grade") or key in node.bl_rna.properties:
+        if (key.startswith(("_perceptual_grade", "_pg_next_bake_"))
+                or key in node.bl_rna.properties):
             continue
         if hasattr(value, "to_dict"):
             value = value.to_dict()
@@ -4612,7 +5463,7 @@ def convert_grade_node(node, target_kind):
         if failures:
             raise RuntimeError("Could not finalize converted Grade: "
                                + str(failures[-1][1]))
-        remapped = _remap_node_snapshot(snapshot, node, replacement)
+        remapped = _remap_node_snapshot(conversion_snapshot, node, replacement)
         for link in tuple(tree.links):
             if link.from_node == node or link.to_node == node:
                 tree.links.remove(link)
@@ -4798,6 +5649,7 @@ def draw_context_menu(self, context):
 
 def _register_handlers():
     for collection, callback in (
+        (bpy.app.handlers.load_pre, _load_pre),
         (bpy.app.handlers.load_post, _load_post),
         (bpy.app.handlers.undo_pre, _undo_redo_pre),
         (bpy.app.handlers.redo_pre, _undo_redo_pre),
@@ -4838,7 +5690,7 @@ def _unregister_handlers():
 
 
 def register():
-    global _preparation_runtime, _grade_preparer, _grade_resources
+    global _preparation_runtime, _grade_preparer, _grade_resources, _bake_manager
     classes = (
         PGLinearSettings,
         PGToneSettings,
@@ -4851,6 +5703,8 @@ def register():
         PGShaderGradePerNode,
         PGCompositorGradePerNode,
         PG_OT_new_grade,
+        PG_OT_bake,
+        PG_OT_unlink_bake_image,
         PG_OT_unlink_grade,
         PG_OT_match_white,
         PG_OT_reset_directions,
@@ -4877,6 +5731,10 @@ def register():
             _preparation_runtime.register_polled_lane(
                 "lut", StackHelperBackend(), progressive=True
             )
+        if _bake_manager is None:
+            _bake_manager = BakeManager(bpy)
+        elif _bake_manager.closed and not _bake_manager.backend_closed:
+            raise RuntimeError("Previous Bake helper is still retiring")
         for cls in classes:
             if cls not in _registered_classes:
                 if not cls.is_registered:
@@ -4902,6 +5760,9 @@ def register():
         if not bpy.app.timers.is_registered(_frame_reconcile_tick):
             bpy.app.timers.register(_frame_reconcile_tick, first_interval=0.1,
                                     persistent=True)
+        if not bpy.app.timers.is_registered(_bake_tick):
+            bpy.app.timers.register(_bake_tick, first_interval=0.02,
+                                    persistent=True)
     except Exception as registration_error:
         try:
             unregister()
@@ -4914,11 +5775,15 @@ def register():
 
 
 def unregister():
-    global _preparation_runtime, _grade_preparer, _grade_resources
+    global _preparation_runtime, _grade_preparer, _grade_resources, _bake_manager
     if _grade_resources is not None:
         # Reject a busy shutdown before removing the callbacks that can
         # acknowledge existing readers and make a later retry safe.
         _grade_resources.gate.reset()
+    if _bake_manager is not None:
+        # Retain node classes, callbacks and request ownership when physical
+        # shutdown fails. A later unregister can retry the same helper.
+        _bake_manager.close()
     errors = []
     _clear_gestures()
     try:
@@ -4941,6 +5806,20 @@ def unregister():
             bpy.app.timers.unregister(_frame_reconcile_tick)
     except Exception as exc:
         errors.append(exc)
+    if _bake_manager is not None:
+        if _bake_manager.backend_closed:
+            _bake_manager = None
+            try:
+                if bpy.app.timers.is_registered(_bake_tick):
+                    bpy.app.timers.unregister(_bake_tick)
+            except Exception as exc:
+                errors.append(exc)
+        elif not bpy.app.timers.is_registered(_bake_tick):
+            try:
+                bpy.app.timers.register(_bake_tick, first_interval=0.02,
+                                        persistent=True)
+            except Exception as exc:
+                errors.append(exc)
     try:
         if bpy.app.timers.is_registered(_undo_redo_reconcile_tick):
             bpy.app.timers.unregister(_undo_redo_reconcile_tick)

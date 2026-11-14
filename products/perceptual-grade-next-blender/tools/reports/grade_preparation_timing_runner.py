@@ -20,7 +20,7 @@ def main():
     nodes = importlib.import_module("perceptual_grade.nodes")
     settings_module = importlib.import_module("perceptual_grade.kernel.settings")
     prep_module = importlib.import_module("perceptual_grade.runtime.grade_preparation")
-    graph_module = importlib.import_module("perceptual_grade.kernel.graph")
+    template_module = importlib.import_module("perceptual_grade.kernel.node_templates")
     Settings = settings_module.Settings
     LinearSettings = settings_module.LinearSettings
     ToneSettings = settings_module.ToneSettings
@@ -34,22 +34,21 @@ def main():
         "samples": [],
     }
     preparer = GradePreparer(workers=3)
-    original_upload = graph_module.Graph._packed_image
+    original_upload = template_module._make_image
     active_uploads = None
 
-    def timed_upload(graph, pixels, **kwargs):
-        previous = len(graph.images)
+    def timed_upload(name, pixels, *args, **kwargs):
         started = time.perf_counter()
-        image = original_upload(graph, pixels, **kwargs)
-        if active_uploads is not None and len(graph.images) != previous:
+        image = original_upload(name, pixels, *args, **kwargs)
+        if active_uploads is not None:
             active_uploads.append({
-                "label": kwargs.get("label", "Perceptual Grade coefficients"),
+                "label": name,
                 "shape": list(pixels.shape),
                 "seconds": time.perf_counter() - started,
             })
         return image
 
-    graph_module.Graph._packed_image = timed_upload
+    template_module._make_image = timed_upload
     try:
         for index in range(config["samples"]):
             tone = ToneSettings(fit=0.0 if index == 0 else min(2.0, 0.25 * index))
@@ -95,8 +94,7 @@ def main():
         report["traceback"] = traceback.format_exc()
         raise
     finally:
-        graph_module.Graph._packed_image = original_upload
-        active_uploads = None
+        template_module._make_image = original_upload
         preparer.close()
         report["completed"] = "error" not in report
         report_path.parent.mkdir(parents=True, exist_ok=True)

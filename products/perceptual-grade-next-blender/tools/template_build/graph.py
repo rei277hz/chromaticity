@@ -8,8 +8,8 @@ from functools import cached_property
 import math
 from numbers import Real
 from .color_graph import ColorGraph
-from .layouts import LAYOUT_SCHEMA
-from .color_prepare import _validate_color_schema
+from ..kernel.layouts import LAYOUT_SCHEMA
+from ..kernel.color_prepare import _validate_color_schema
 
 
 FLOAT_MAX = 3.4028234663852886e38
@@ -625,7 +625,7 @@ class Graph(ColorGraph):
 
     def lookup_lut(self, cube, rgb):
         """Sample a baked linear Stack cube and return its native RGB result."""
-        from .lut import append_lut_lookup
+        from .lut_graph import append_lut_lookup
         return append_lut_lookup(self, cube, rgb)
 
     def _sample(self, index):

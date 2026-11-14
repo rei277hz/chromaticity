@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import bpy
 from color_tools.kernel import prepare
-from color_tools.kernel.graph import Graph, BuiltGrade, count_nodes, FLOAT_MAX
+from color_tools.template_build.graph import Graph, BuiltGrade, count_nodes, FLOAT_MAX
 from tools.perceptual_grade.reports.native import NativeFixture
 
 

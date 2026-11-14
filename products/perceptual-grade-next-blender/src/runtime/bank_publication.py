@@ -1,5 +1,7 @@
 """Consume fixed-bank publication effects in their authorized order."""
 
+# pg-book: technical-report/en#next-policy.bank-publication
+
 from dataclasses import dataclass
 from typing import Literal
 

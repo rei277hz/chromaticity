@@ -7,7 +7,7 @@ import numpy as np
 
 from color_tools.kernel import (prepare,prepare_linear,prepare_update,
     LinearSettings,ColorSettings,Settings)
-from color_tools.kernel.persistent import build_persistent
+from color_tools.template_build.persistent import build_persistent
 from color_tools.kernel.boundary import prepare_boundary
 from tools.perceptual_grade.reports import cases,full_cases,oracle
 from tools.perceptual_grade.reports.native import NativeFixture

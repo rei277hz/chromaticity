@@ -14,8 +14,8 @@ from .graph import (Graph, BuiltGrade, AppearanceSockets, DecodeSockets,
                     FLOAT_MAX, TREE_TYPES, _interface, _socket, count_nodes)
 from .color_graph import ColorSockets, INVERSE, TAU, SQRT_HK
 from .guard_graph import hk_guard, output_guard
-from .layouts import LAYOUT_SCHEMA
-from .color_prepare import _validate_color_schema
+from ..kernel.layouts import LAYOUT_SCHEMA
+from ..kernel.color_prepare import _validate_color_schema
 
 
 FIELD_NAMES = ('coefficient_table', 'web_table', 'web_toe_table',

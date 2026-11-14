@@ -532,7 +532,7 @@ class HdrBackendTests(unittest.TestCase):
                                        xvfb=Path('/pinned/xvfb'), threads=12)
 
     def test_persistent_render_receives_the_real_builder(self):
-        from color_tools.kernel.persistent import build_persistent
+        from color_tools.template_build.persistent import build_persistent
         actual = dict(rgb=np.zeros((1, 3)), alpha=np.ones(1), valid=np.ones(1),
                       margin=np.ones(1), saturated=np.zeros(1), stats=dict(expanded_nodes=1500),
                       seconds=.1, readback_seconds=.02)

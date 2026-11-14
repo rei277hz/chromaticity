@@ -2,7 +2,7 @@
 from color_tools.kernel import (
     LinearSettings, ToneSettings, ColorSettings, WebSettings, prepare,
 )
-from color_tools.kernel.graph import build_group
+from color_tools.template_build.graph import build_group
 
 
 def build_example(tree_type='ShaderNodeTree'):

@@ -8,8 +8,8 @@ import bpy
 import numpy as np
 
 from color_tools.kernel import prepare, prepare_linear, ColorSettings, WebSettings
-from color_tools.kernel import graph as graph_module
-from color_tools.kernel.graph import count_nodes, build_group, Graph, BuiltGrade
+from color_tools.template_build import graph as graph_module
+from color_tools.template_build.graph import count_nodes, build_group, Graph, BuiltGrade
 from color_tools.kernel.boundary import prepare_boundary
 from tools.perceptual_grade.reports import cases, full_cases, oracle
 from tools.perceptual_grade.reports.evaluate import assess

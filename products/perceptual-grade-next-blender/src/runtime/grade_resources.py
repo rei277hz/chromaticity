@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from ..kernel.stage2_graph import (
+from ..kernel.stage2_bindings import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_GENERATION,
     PARAMETER_IMAGE, PARAMETER_READER, PARAMETER_READER_BANK,
     PARAMETER_SELECTOR,

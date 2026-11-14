@@ -20,7 +20,7 @@ import numpy as np
 
 from color_tools.kernel import Settings, prepare, prepare_update
 from color_tools.kernel.boundary import prepare_boundary
-from color_tools.kernel.persistent import build_persistent
+from color_tools.template_build.persistent import build_persistent
 from . import full_cases
 from .evaluate import evidence_hashes
 from .native import NativeFixture

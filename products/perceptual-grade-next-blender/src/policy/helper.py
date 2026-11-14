@@ -1,5 +1,7 @@
 """Pure lifecycle decisions for one helper process and its physical work slot."""
 
+# pg-book: technical-report/en#next-policy.helper
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 

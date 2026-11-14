@@ -4,10 +4,10 @@ import numpy as np
 import bpy
 from color_tools.kernel import prepare
 from color_tools.kernel.boundary import prepare_boundary
-from color_tools.kernel.guard_graph import GuardedSockets,hk_guard,output_guard
-from color_tools.kernel import guard_graph
-from color_tools.kernel.color_graph import ColorSockets
-from color_tools.kernel.graph import Graph,BuiltGrade,count_nodes
+from color_tools.template_build.guard_graph import GuardedSockets,hk_guard,output_guard
+from color_tools.template_build import guard_graph
+from color_tools.template_build.color_graph import ColorSockets
+from color_tools.template_build.graph import Graph,BuiltGrade,count_nodes
 from color_tools.perceptual_grade_reference.model import Model
 from color_tools.perceptual_grade_reference.responses import signed_hk
 from color_tools.perceptual_grade_reference.cube_guard import guard as reference_cube

@@ -13,6 +13,15 @@ KERNEL_SOURCES = {
     for path in glob([KERNEL_PREFIX + "**/*.py"])
 }
 
+TEMPLATE_BUILD_PREFIX = "tools/template_build/"
+
+TEMPLATE_BUILD_SOURCES = {
+    path[len(TEMPLATE_BUILD_PREFIX):]: path
+    for path in glob([TEMPLATE_BUILD_PREFIX + "**/*.py"])
+}
+
+KERNEL_RUNTIME_SOURCES = KERNEL_SOURCES
+
 POLICY_PREFIX = PREFIX + "policy/"
 
 POLICY_SOURCES = {
@@ -39,14 +48,26 @@ source_tree(
 )
 
 source_tree(
+    name = "book_reference_sources",
+    srcs = {path: path for path in glob([
+        "src/**/*.py",
+        "tools/build_node_templates.py",
+        "tools/generate_node_templates.py",
+        "tools/template_build/**/*.py",
+        "examples/publication_compare/**/*.py",
+    ])},
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
     name = "kernel_sources",
-    srcs = KERNEL_SOURCES,
+    srcs = KERNEL_RUNTIME_SOURCES,
     visibility = ["PUBLIC"],
 )
 
 component_library(
     name = "kernel_code",
-    srcs = KERNEL_SOURCES,
+    srcs = KERNEL_RUNTIME_SOURCES,
     external_deps = ["//third_party:numpy"],
     package = "kernel",
     visibility = ["PUBLIC"],
@@ -78,12 +99,74 @@ generate(
 )
 
 component_library(
-    name = "kernel_runtime",
+    name = "kernel_preparation",
     srcs = {},
     package = "kernel",
     resources = {"output_boundary.npz": ":boundary_resource[npz]"},
     visibility = ["PUBLIC"],
     deps = [":kernel_code"],
+)
+
+# The canonical graph emitters remain available to the template generator and
+# native numerical tests under a physically separate build-only package. They
+# are never dependencies of the installed bundle.
+component_library(
+    name = "template_build",
+    srcs = TEMPLATE_BUILD_SOURCES,
+    package = "template_build",
+    visibility = ["PUBLIC"],
+    deps = [":kernel_preparation"],
+)
+
+python_library(
+    name = "node_template_generator_sources",
+    srcs = {"pg_template_build/driver.py": "tools/build_node_templates.py"},
+    base_module = "",
+    resources = select({
+        "prelude//os:linux": {
+            "pg_template_build/blender": "//third_party:blender_native_lts",
+            "pg_template_build/generate_node_templates.py": "tools/generate_node_templates.py",
+            "pg_template_build/packages": ":template_build_bundle",
+            "pg_template_build/native-libs": "//third_party:bpy_native_abi_linux",
+        },
+        "DEFAULT": {
+            "pg_template_build/blender": "//third_party:blender_native_lts",
+            "pg_template_build/generate_node_templates.py": "tools/generate_node_templates.py",
+            "pg_template_build/packages": ":template_build_bundle",
+        },
+    }),
+)
+
+python_binary(
+    name = "node_template_generator",
+    main_module = "pg_template_build.driver",
+    deps = [":node_template_generator_sources"],
+)
+
+generate(
+    name = "node_templates",
+    outputs = {
+        "blend": "node_templates.blend",
+        "index": "node_templates.json",
+        "manifest": "node_templates.json",
+        "glsl": "grade_stack.glsl",
+        "report": "report.json",
+    },
+    tool = ":node_template_generator",
+    visibility = ["PUBLIC"],
+)
+
+component_library(
+    name = "kernel_runtime",
+    srcs = {},
+    package = "kernel",
+    resources = {
+        "node_templates.blend": ":node_templates[blend]",
+        "node_templates.json": ":node_templates[manifest]",
+        "grade_stack.glsl": ":node_templates[glsl]",
+    },
+    visibility = ["PUBLIC"],
+    deps = [":kernel_preparation"],
 )
 
 python_library(
@@ -165,6 +248,50 @@ export_file(
 export_file(
     name = "render_preflight_requirements",
     src = "requirements/render_preflight.inv",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "bake_source",
+    src = POLICY_PREFIX + "bake.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "bake_requirements",
+    src = "requirements/bake.inv",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_bake",
+    required_mutations = [
+        "accept_start_from_another_generation",
+        "publish_stale_capture",
+        "keep_stale_bake_selected",
+    ],
+    required_properties = [
+        "request_requires_admission_and_valid_identity",
+        "queue_is_bounded_and_serial_per_node",
+        "start_requires_exact_request_generation",
+        "completion_requires_exact_identity_and_current_signature",
+        "publication_requires_admission_and_current_signature",
+        "publication_failure_authorizes_rollback",
+        "activation_failure_authorizes_rollback",
+        "input_change_cancels_running_request",
+        "input_change_discards_queued_result",
+        "terminal_receipts_are_inert",
+        "stale_bake_automatically_uses_live_output",
+        "invalid_selected_image_fails_closed",
+        "live_failure_overrides_baked_output",
+    ],
+    required_witnesses = [
+        "request_runs_and_publishes",
+        "failed_request_retires_without_publishing",
+    ],
+    requirements = ":bake_requirements",
+    runtime_source = "policy/bake.py",
+    source = ":bake_source",
     visibility = ["PUBLIC"],
 )
 
@@ -482,6 +609,7 @@ invariant_proof(
 )
 
 POLICY_PROOFS = [
+    ":proof_bake",
     ":proof_bank_publication",
     ":proof_compositor_publication",
     ":proof_node",
@@ -524,6 +652,7 @@ extension_tree(
 )
 
 CATALOG_PREFIX = PREFIX + "locales/"
+
 CATALOGS = {
     path[len(CATALOG_PREFIX):-5]: path
     for path in glob([CATALOG_PREFIX + "*.json"])

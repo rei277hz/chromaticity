@@ -3,7 +3,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 import numpy as np
 import bpy
-from color_tools.kernel.graph import Graph, BuiltGrade, count_nodes
+from color_tools.template_build.graph import Graph, BuiltGrade, count_nodes
 from color_tools.perceptual_grade_reference.responses import State, requested_energy, signed_hk
 from .native import _image
 

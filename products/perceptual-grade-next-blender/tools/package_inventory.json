@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "runtime_json": [
+    "kernel/node_templates.json",
     "localization/locales/en.json",
     "localization/locales/zh_HANS.json"
   ]

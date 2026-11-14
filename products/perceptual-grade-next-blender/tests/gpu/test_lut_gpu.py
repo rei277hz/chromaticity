@@ -11,7 +11,7 @@ import gpu
 import numpy as np
 
 from color_tools.kernel import lut
-from color_tools.kernel.stage2_graph import build_stage2_group
+from color_tools.template_build.stage2_graph import build_stage2_group
 from color_tools.kernel.settings import LinearSettings, Settings, ToneSettings
 from color_tools.lut_gpu import StackGPUBackend
 from color_tools.runtime.grade_preparation import GradePreparer

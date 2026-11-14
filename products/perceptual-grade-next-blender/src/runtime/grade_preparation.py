@@ -1,5 +1,7 @@
 """Concurrent, host-free preparation of complete Linear and Tone Grades."""
 
+# pg-book: technical-report/en#next-policy.preparation-join
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace

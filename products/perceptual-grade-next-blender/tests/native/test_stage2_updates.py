@@ -10,7 +10,7 @@ import numpy as np
 
 from color_tools.kernel import ColorSettings, LinearSettings, Settings, ToneSettings, prepare, prepare_tone
 from color_tools.kernel.boundary import prepare_boundary
-from color_tools.kernel.stage2_graph import (
+from color_tools.template_build.stage2_graph import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_IMAGE,
     build_stage2_group,
 )

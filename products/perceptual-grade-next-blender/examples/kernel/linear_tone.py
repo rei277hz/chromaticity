@@ -4,7 +4,7 @@ No active scene, material, compositor, render settings, or user data is replaced
 The returned BuiltGrade owns the new group and its packed coefficient image.
 """
 from color_tools.kernel import LinearSettings, ToneSettings, prepare
-from color_tools.kernel.graph import build_group
+from color_tools.template_build.graph import build_group
 
 
 def build_example(tree_type='ShaderNodeTree'):

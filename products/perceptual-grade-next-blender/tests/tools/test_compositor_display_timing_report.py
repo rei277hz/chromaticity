@@ -75,7 +75,7 @@ def make_report(*, context="compositor", scenario="drag", device="GPU",
     return {
         "schema": 1,
         "completed": True,
-        "environment": {"blender": "5.2.2", "renderer": "llvmpipe"},
+        "environment": {"blender": "5.3.0", "renderer": "llvmpipe"},
         "profile": profile,
         "source_sha256": {"extension": "grade-hash"},
         "sessions": [{"session": 0, "samples": samples, "captures": captures, "drags": drags,

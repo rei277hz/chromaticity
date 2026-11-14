@@ -11,70 +11,34 @@ import tempfile
 import time
 from types import SimpleNamespace
 
-import addon_utils
-import bpy
-import numpy as np
-import _bpy_restrict_state as restricted
-
-
 repository, report = map(Path, sys.argv[sys.argv.index("--") + 1:])
-_RUNNER_STARTED = time.perf_counter()
-_TIMING_SECTIONS = []
-_CURRENT_SECTION = "extension startup"
-_CURRENT_SECTION_STARTED = _RUNNER_STARTED
-_RUNNER_COMPLETED = False
+timing_support = runpy.run_path(str(Path(__file__).with_name("timing.py")))
+_timings = timing_support["TimingRecorder"](
+    report, timing_support["TIMING_SECTIONS"],
+    metadata={"registered": False, "blender": None},
+)
+
+with _timings.operation("Blender Python imports"):
+    import addon_utils
+    import bpy
+    import numpy as np
+    import _bpy_restrict_state as restricted
 
 
-def _write_timing_report():
-    now = time.perf_counter()
-    sections = list(_TIMING_SECTIONS)
-    if _CURRENT_SECTION is not None:
-        sections.append({
-            "name": _CURRENT_SECTION,
-            "seconds": round(now - _CURRENT_SECTION_STARTED, 6),
-        })
+def _timing_metadata():
     nodes_module = globals().get("nodes")
     node_type = getattr(nodes_module, "PGShaderGrade", None)
-    report.write_text(json.dumps({
+    return {
         "registered": bool(getattr(node_type, "is_registered", False)),
         "blender": list(bpy.app.version),
-        "timings": {
-            "unit": "seconds",
-            "runner_seconds": round(now - _RUNNER_STARTED, 6),
-            "sections": sections,
-            "complete": _RUNNER_COMPLETED,
-        },
-    }))
+    }
 
 
-def _start_timing_section(name):
-    global _CURRENT_SECTION, _CURRENT_SECTION_STARTED
-    now = time.perf_counter()
-    _TIMING_SECTIONS.append({
-        "name": _CURRENT_SECTION,
-        "seconds": round(now - _CURRENT_SECTION_STARTED, 6),
-    })
-    _CURRENT_SECTION = name
-    _CURRENT_SECTION_STARTED = now
-    _write_timing_report()
-
-
-def _complete_timing_report():
-    global _CURRENT_SECTION, _RUNNER_COMPLETED
-    if _CURRENT_SECTION is not None:
-        now = time.perf_counter()
-        _TIMING_SECTIONS.append({
-            "name": _CURRENT_SECTION,
-            "seconds": round(now - _CURRENT_SECTION_STARTED, 6),
-        })
-        _CURRENT_SECTION = None
-    _RUNNER_COMPLETED = True
-    _write_timing_report()
+_start_timing_section = _timings.start_section
 
 
 def _write_incomplete_timing_report():
-    if not _RUNNER_COMPLETED:
-        _write_timing_report()
+    _timings.checkpoint(metadata=_timing_metadata())
 
 
 atexit.register(_write_incomplete_timing_report)
@@ -84,20 +48,29 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 
-extension = importlib.import_module("bl_ext.pg_grade_smoke.perceptual_grade")
-nodes = importlib.import_module(
-    "bl_ext.pg_grade_smoke.perceptual_grade.nodes"
-)
-node_library = importlib.import_module(
-    "bl_ext.pg_grade_smoke.perceptual_grade.kernel"
-)
-lut_kernel = importlib.import_module(
-    "bl_ext.pg_grade_smoke.perceptual_grade.kernel.lut"
-)
+with _timings.operation("extension imports"):
+    extension = importlib.import_module("bl_ext.pg_grade_smoke.perceptual_grade")
+    nodes = importlib.import_module(
+        "bl_ext.pg_grade_smoke.perceptual_grade.nodes"
+    )
+    node_library = importlib.import_module(
+        "bl_ext.pg_grade_smoke.perceptual_grade.kernel"
+    )
+    lut_kernel = importlib.import_module(
+        "bl_ext.pg_grade_smoke.perceptual_grade.kernel.lut"
+    )
 initial_scans = []
 original_ensure_all_kernels = nodes._ensure_all_kernels
+for operation_name, attribute in (
+    ("preparation drain", "_drain_preparations"),
+    ("preparation drain in publication scope", "_drain_preparations_in_scope"),
+    ("Grade native tree build", "_kernel"),
+    ("Stack native tree build", "_stack_kernel"),
+):
+    setattr(nodes, attribute, _timings.timed(operation_name)(getattr(nodes, attribute)))
 
 
+@_timings.timed("kernel recovery scan")
 def track_initial_scan(*args, **kwargs):
     assert type(bpy.data).__name__ != "_RestrictData"
     initial_scans.append(None)
@@ -106,9 +79,10 @@ def track_initial_scan(*args, **kwargs):
 
 nodes._ensure_all_kernels = track_initial_scan
 enable_errors = []
-enabled_extension = addon_utils.enable(
-    extension.__name__, default_set=False, handle_error=enable_errors.append
-)
+with _timings.operation("enable extension"):
+    enabled_extension = addon_utils.enable(
+        extension.__name__, default_set=False, handle_error=enable_errors.append
+    )
 assert enabled_extension is extension and not enable_errors, enable_errors
 assert not initial_scans
 assert bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
@@ -126,6 +100,7 @@ with restricted.RestrictBlend():
 assert not initial_scans
 
 
+@_timings.timed("render preflight")
 def reconcile_for_render(scene):
     """Exercise the complete native render lifecycle around the preflight."""
     nodes._render_init(scene)
@@ -133,6 +108,11 @@ def reconcile_for_render(scene):
         nodes._render_pre(scene)
     finally:
         nodes._render_finished(scene)
+
+
+def wait_for_receipt(event, name):
+    with _timings.operation(name):
+        return event.wait(10)
 
 
 def assert_menu_item(tree):
@@ -480,6 +460,7 @@ def release_ui_gesture(nodes, router, context):
 class TestStackBackend:
     """Small deterministic host backend for lifecycle tests without a GPU context."""
 
+    @_timings.timed("synthetic CPU Stack fixture setup")
     def create_job(self, payload, progressive):
         settings, working_space = payload
         matrices = tuple(nodes.prepare_linear(item.linear, working_space).rgb_matrix
@@ -530,8 +511,10 @@ class TestStackJob:
     def advance(self):
         self.step += 1
         if self.progressive and self.step == 1:
-            return "preview", self.make_cube(lut_kernel.PREVIEW_SIZE)
-        return "full", self.make_cube(lut_kernel.SIZE)
+            with _timings.operation("synthetic CPU Stack fixture preview (33)"):
+                return "preview", self.make_cube(lut_kernel.PREVIEW_SIZE)
+        with _timings.operation("synthetic CPU Stack fixture full (65)"):
+            return "full", self.make_cube(lut_kernel.SIZE)
 
     def close(self):
         pass
@@ -541,7 +524,8 @@ nodes.StackHelperBackend = TestStackBackend
 nodes._preparation_runtime._lanes["lut"].host_owner = TestStackBackend()
 
 
-extension.register()
+with _timings.operation("repeat extension registration"):
+    extension.register()
 assert not initial_scans
 assert bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
 assert nodes.PGShaderGrade.is_registered
@@ -780,7 +764,8 @@ bpy.data.node_groups.remove(per_node_compositor_tree)
 bpy.data.node_groups.remove(per_node_tree)
 
 conversion_checks = runpy.run_path(str(Path(__file__).with_name("conversion_checks.py")))
-conversion_checks["run"](nodes, assert_grade_current)
+with _timings.operation("Grade conversion checks"):
+    conversion_checks["run"](nodes, assert_grade_current)
 
 # Static shared datablock values reject keyframe insertion.
 shared_grade = bpy.data.node_groups.new(
@@ -896,7 +881,9 @@ runtime.prepare = record_prepare
 nodes._kernel = record_kernel_build
 nodes._write_grade_parameters = record_parameter_write
 shared_grade.pg_linear.exposure = 1.0
-assert preparation_started.wait(10), "preparation did not start on a worker"
+assert wait_for_receipt(preparation_started, "wait for Grade preparation start"), (
+    "preparation did not start on a worker"
+)
 assert shader_node.pg_linear.exposure == 0.0
 assert compositor_node.pg_linear.exposure == 0.0
 for node in (shader_node, compositor_node):
@@ -1061,18 +1048,20 @@ for corruption in ("unmarked", "misbound", "misbound_tracked"):
 
         nodes._parameter_kernel_valid = track_deep_audit
         try:
-            failures = nodes._ensure_all_kernels()
-            assert not failures, failures
-            failures = nodes._drain_preparations()
-            assert not failures, failures
-            assert corrupt_kernel_pointer in audited_kernels
+            with _timings.operation("corrupt tracked reader recovery"):
+                failures = nodes._ensure_all_kernels()
+                assert not failures, failures
+                failures = nodes._drain_preparations()
+                assert not failures, failures
+                assert corrupt_kernel_pointer in audited_kernels
         finally:
             nodes._parameter_kernel_valid = original_valid
     else:
-        failures = nodes._refresh_nodes((independent_node,))
-        assert not failures, failures
-        failures = nodes._drain_preparations()
-        assert not failures, failures
+        with _timings.operation(f"corrupt {corruption} reader recovery"):
+            failures = nodes._refresh_nodes((independent_node,))
+            assert not failures, failures
+            failures = nodes._drain_preparations()
+            assert not failures, failures
     assert_grade_current(independent_node)
     assert independent_node.node_tree != corrupt_kernel
     corrupt_kernel.use_fake_user = False
@@ -1248,12 +1237,16 @@ saved_local_resources = assert_local_grade_resources(local_grade_identities)
 
 with tempfile.TemporaryDirectory(prefix="perceptual-grade-recovery-") as temp:
     saved_file = Path(temp) / "partial-grade.blend"
-    bpy.ops.wm.save_as_mainfile(filepath=str(saved_file))
-    bpy.ops.wm.open_mainfile(filepath=str(saved_file))
+    with _timings.operation("save blend"):
+        bpy.ops.wm.save_as_mainfile(filepath=str(saved_file))
+    with _timings.operation("open blend"):
+        bpy.ops.wm.open_mainfile(filepath=str(saved_file))
 
-nodes._drain_preparations()
+with _timings.operation("post-load preparation drain"):
+    nodes._drain_preparations()
 
-conversion_checks["check_persistence"](nodes, saved_conversion_fixtures, assert_grade_current)
+with _timings.operation("Grade conversion persistence checks"):
+    conversion_checks["check_persistence"](nodes, saved_conversion_fixtures, assert_grade_current)
 
 shader_tree = bpy.data.node_groups["Grade Shader Test"]
 assert assert_local_grade_resources(local_grade_identities) == saved_local_resources
@@ -1352,9 +1345,10 @@ def fail_first_upload(image, pixels):
 
 
 nodes._write_grade_parameters = fail_first_upload
-shared_grade.pg_linear.exposure = 2.5
-reconcile_for_render(bpy.context.scene)
-nodes._drain_preparations()
+with _timings.operation("failed upload reconciliation"):
+    shared_grade.pg_linear.exposure = 2.5
+    reconcile_for_render(bpy.context.scene)
+    nodes._drain_preparations()
 assert all(node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
            for node in shared_shader_nodes)
 assert all(node.get(nodes._NODE_ERROR) for node in shared_shader_nodes)
@@ -1552,6 +1546,7 @@ class HoldingStackJob:
             self.retired.set()
 
 
+@_timings.timed("wait for Stack receipt")
 def pump_until(event):
     deadline = time.monotonic() + 10
     while not event.is_set() and time.monotonic() < deadline:
@@ -1560,6 +1555,7 @@ def pump_until(event):
     assert event.is_set(), "GPU host lane did not reach the expected receipt"
 
 
+@_timings.timed("wait for latest Stack preview")
 def pump_until_latest_stack_previews():
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
@@ -1679,7 +1675,7 @@ try:
     local_grade.pg_linear.exposure = 0.8125
     assert local_drag_node.pg_grade == local_grade
     assert local_grade.pg_linear.exposure == 0.8125
-    assert local_first_started.wait(10), (
+    assert wait_for_receipt(local_first_started, "wait for local drag preparation"), (
         "first Grade drag preparation did not start; "
         f"record={nodes._node_stores.get(local_drag_node.as_pointer())!r}; "
         f"pending={modal_runtime.pending}; "
@@ -1727,7 +1723,9 @@ try:
     )
 
     release_local_first.set()
-    assert local_latest_started.wait(10), "latest local value was not prepared"
+    assert wait_for_receipt(local_latest_started, "wait for latest local preparation"), (
+        "latest local value was not prepared"
+    )
     nodes._preparation_tick()
     assert local_drag_node.node_tree == local_old_kernel
     assert local_drag_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
@@ -1801,7 +1799,9 @@ try:
         nodes, shader_tree, linked_drag_shader, linked_window
     )
     linked_drag_grade.pg_linear.exposure = 2.125
-    assert linked_started.wait(10), "linked Grade preparation did not start"
+    assert wait_for_receipt(linked_started, "wait for linked Grade preparation"), (
+        "linked Grade preparation did not start"
+    )
     assert linked_exposures == [2.125], linked_exposures
     for node in linked_drag_nodes:
         record = nodes._record_for(node)
@@ -1899,7 +1899,9 @@ try:
     release_ui_gesture(nodes, click_router, click_context)
     click_router = None
     assert click_entry_node.pg_grade == click_grade
-    assert click_started.wait(10), "direct value entry did not start final preparation"
+    assert wait_for_receipt(click_started, "wait for direct-entry preparation"), (
+        "direct value entry did not start final preparation"
+    )
     click_source = nodes._record_for(click_entry_node)["source"]
     assert click_source is click_old_source
     click_state = nodes._record_for(click_entry_node)["state"]
@@ -2002,11 +2004,15 @@ try:
     gesture_token = nodes._begin_gesture(732, stale_node)
     stale_grade.pg_linear.exposure = 0.4375
     nodes._refresh_nodes((stale_node,))
-    assert old_preparation_started.wait(10), "old preparation did not start"
+    assert wait_for_receipt(old_preparation_started, "wait for old preparation"), (
+        "old preparation did not start"
+    )
     for exposure in (0.625, 0.875):
         stale_grade.pg_linear.exposure = exposure
     release_old_preparation.set()
-    assert latest_preparation_started.wait(10), "successor waited for Blender timer"
+    assert wait_for_receipt(latest_preparation_started, "wait for successor preparation"), (
+        "successor waited for Blender timer"
+    )
     nodes._preparation_tick()
     assert preparation_exposures == [0.4375, 0.875], preparation_exposures
     assert stale_node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
@@ -2115,7 +2121,7 @@ async def delay_retired(payload):
 runtime.prepare = delay_retired
 try:
     stale_node.pg_grade = retired_grade
-    assert retired_started.wait(10)
+    assert wait_for_receipt(retired_started, "wait for retiring preparation")
     retired_source = nodes._record_for(stale_node)["source"]
     stale_node.pg_grade = replacement_grade
     assert nodes._record_for(stale_node)["source"] is not retired_source
@@ -2252,7 +2258,8 @@ class AssignmentFailureNode:
         self.use_custom_color = False
         self.color = (0.0, 0.0, 0.0)
         self.pg_grade = failed_assignment_grade
-        self.inputs = []
+        # Match the native socket collection's iterable and named lookup API.
+        self.inputs = {}
 
     def as_pointer(self):
         return self._pointer
@@ -2424,16 +2431,20 @@ assert_grade_current(local_undo_node)
 assert bpy.ops.ed.undo_push(message="Create material Grade datablock") == {"FINISHED"}
 del local_undo_node
 assert bpy.ops.ed.undo.poll()
-assert bpy.ops.ed.undo() == {"FINISHED"}
+with _timings.operation("native undo material Grade"):
+    assert bpy.ops.ed.undo() == {"FINISHED"}
 assert bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
-nodes._undo_redo_reconcile_tick()
-nodes._drain_preparations()
+with _timings.operation("material Grade undo reconciliation"):
+    nodes._undo_redo_reconcile_tick()
+    nodes._drain_preparations()
 assert_local_grade_resources(local_grade_identities)
 assert bpy.ops.ed.redo.poll()
-assert bpy.ops.ed.redo() == {"FINISHED"}
+with _timings.operation("native redo material Grade"):
+    assert bpy.ops.ed.redo() == {"FINISHED"}
 assert bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
-nodes._undo_redo_reconcile_tick()
-nodes._drain_preparations()
+with _timings.operation("material Grade redo reconciliation"):
+    nodes._undo_redo_reconcile_tick()
+    nodes._drain_preparations()
 local_undo_node = bpy.data.materials[first_material_name].node_tree.nodes[first_node_name]
 assert local_undo_node.pg_grade.name == local_undo_grade_name
 assert_grade_current(local_undo_node)
@@ -2469,6 +2480,7 @@ def commit_test_gesture(node, window_key, exposure):
     del settings
 
 
+@_timings.timed("undo reconciliation")
 def reconcile_after_test_undo(node_name):
     node = bpy.data.node_groups[undo_tree_name].nodes[node_name]
     pointer = node.as_pointer()
@@ -2493,7 +2505,8 @@ assert undo_node.pg_grade is not None
 assert bpy.ops.ed.undo_push(message="First Grade gesture") == {"FINISHED"}
 del undo_node, undo_tree
 assert bpy.ops.ed.undo.poll()
-assert bpy.ops.ed.undo() == {"FINISHED"}
+with _timings.operation("native undo gesture"):
+    assert bpy.ops.ed.undo() == {"FINISHED"}
 undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
 assert undo_node.pg_grade is not None
 assert undo_node.pg_grade.name == undo_grade_name
@@ -2511,14 +2524,16 @@ commit_test_gesture(undo_node, 9003, 1.0)
 assert abs(undo_node.pg_grade.pg_linear.exposure - 1.0) < 1e-6
 assert bpy.ops.ed.undo_push(message="Second of two Grade gestures") == {"FINISHED"}
 del undo_node
-assert bpy.ops.ed.undo() == {"FINISHED"}
+with _timings.operation("native undo second gesture"):
+    assert bpy.ops.ed.undo() == {"FINISHED"}
 undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
 assert undo_node.pg_grade is not None
 assert undo_node.pg_grade.name == first_grade_name
 assert abs(undo_node.pg_grade.pg_linear.exposure - 0.625) < 1e-6
 del undo_node
 reconcile_after_test_undo(undo_node_name)
-assert bpy.ops.ed.undo() == {"FINISHED"}
+with _timings.operation("native undo first gesture"):
+    assert bpy.ops.ed.undo() == {"FINISHED"}
 undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
 assert undo_node.pg_grade is not None
 assert undo_node.pg_grade.name == undo_grade_name
@@ -2564,7 +2579,8 @@ bpy.data.node_groups.remove(shader_tree)
 bpy.data.node_groups.remove(compositor_tree)
 bpy.data.materials.remove(material)
 
-addon_utils.disable(extension.__name__, default_set=False)
+with _timings.operation("disable extension"):
+    addon_utils.disable(extension.__name__, default_set=False)
 assert not localization._registered
 assert not nodes.PGShaderGrade.is_registered
 assert not nodes.PGCompositorGrade.is_registered
@@ -2594,9 +2610,10 @@ for handler, callback in (
 
 scans_before_reenable = len(initial_scans)
 enable_errors = []
-enabled_extension = addon_utils.enable(
-    extension.__name__, default_set=False, handle_error=enable_errors.append
-)
+with _timings.operation("re-enable extension"):
+    enabled_extension = addon_utils.enable(
+        extension.__name__, default_set=False, handle_error=enable_errors.append
+    )
 assert enabled_extension is extension and not enable_errors, enable_errors
 assert localization._registered
 assert len(initial_scans) == scans_before_reenable
@@ -2604,9 +2621,10 @@ assert bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
 with restricted.RestrictBlend():
     assert nodes._startup_reconcile_tick() == 0.1
 assert len(initial_scans) == scans_before_reenable
-addon_utils.disable(extension.__name__, default_set=False)
+with _timings.operation("disable re-enabled extension"):
+    addon_utils.disable(extension.__name__, default_set=False)
 assert not localization._registered
 assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
 nodes._ensure_all_kernels = original_ensure_all_kernels
 
-_complete_timing_report()
+_timings.complete(metadata=_timing_metadata())

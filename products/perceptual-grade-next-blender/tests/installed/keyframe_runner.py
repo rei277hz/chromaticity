@@ -216,7 +216,7 @@ def insert_key_from_menu(field, position, frame, value):
     send("RIGHTMOUSE", "PRESS", position)
     send("RIGHTMOUSE", "RELEASE", position)
     yield .2
-    # Pinned Blender 5.2.2 puts Insert Keyframe first for an unkeyed scalar.
+    # The context menu puts Insert Keyframe first for these unkeyed scalars.
     # Activate the actual popup item; neither an I shortcut nor a direct keying
     # operator can stand in for a missing or disabled context-menu command.
     send("HOME", "PRESS", position)
