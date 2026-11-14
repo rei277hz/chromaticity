@@ -82,6 +82,7 @@ class BookTests(unittest.TestCase):
         cls.publication = json.loads((cls.output / 'site-manifest.json').read_text())
         cls.manual = cls.inputs / 'user-manual'
         cls.report = cls.inputs / 'technical-report'
+        cls.policy_figures = json.loads((cls.resources / 'policy-figures.json').read_text())['figures']
         manual_chapters, manual_localized = site.check_language_chapters(cls.manual)
         report_chapters = site.check_chapters(cls.report)
         cls.chapters = {'user-manual': manual_chapters, 'technical-report': report_chapters}
@@ -91,6 +92,7 @@ class BookTests(unittest.TestCase):
     def test_authored_and_generated_inputs_are_assembled(self):
         self.assertEqual(self.manifest['schema'], 1)
         self.assertEqual(inventory(self.historical), self.manifest['files'])
+        self.assertFalse(any((self.book / 'src/assets/icons').glob('*.png')))
         sources = inventory(self.book)
         for root in [*self.assets, self.historical]:
             incoming = inventory(root)
@@ -372,13 +374,22 @@ class BookTests(unittest.TestCase):
         provenance = json.loads((self.output / 'downloads/provenance/next-policy-diagrams.json').read_text())
         self.assertEqual(provenance['renderer']['name'], 'D2')
         self.assertEqual(provenance['renderer']['version'], '0.9.0')
-        expected_names = {
-            '00-policy-layer', '01-preparation', '01b-preparation-join',
-            '02-node', '03-helper', '04-bank-publication',
-            '05-parameter-publication', '05b-image-publication',
-            '05c-compositor-publication', '06-resources', '07-gesture',
-            '07b-gesture-participants', '08-render-preflight',
-        }
+        flags = provenance['renderer']['flags']
+        self.assertEqual(flags[flags.index('--layout') + 1], 'elk')
+        expected_names = {figure['id'] for figure in self.policy_figures}
+        label_check = provenance['label_check']
+        self.assertEqual(label_check['schema'], 1)
+        self.assertEqual(label_check['engine'], 'Chromium')
+        self.assertEqual(label_check['tolerance_svg_units'], 0.5)
+        self.assertRegex(label_check['checker_sha256'], r'^[0-9a-f]{64}$')
+        self.assertTrue(label_check['browser_version'])
+        self.assertTrue(label_check['playwright_version'])
+        self.assertEqual(set(label_check['figures']), expected_names)
+        for name, checked in label_check['figures'].items():
+            with self.subTest(label_geometry=name):
+                self.assertGreater(checked['label_count'], 0)
+                self.assertGreater(checked['embedded_font_count'], 0)
+                self.assertEqual(checked['collision_count'], 0)
         self.assertEqual(set(provenance['outputs']), {
             f'assets/illustrations/next-policy/{name}.svg' for name in expected_names
         })
@@ -404,6 +415,37 @@ class BookTests(unittest.TestCase):
                     element = root.find(svg_namespace + element_name + f'[@id="{label}"]')
                     self.assertIsNotNone(element)
                     self.assertTrue(element.text)
+
+    def test_policy_sources_use_explicit_states_and_elk_conventions(self):
+        diagrams = self.book / 'diagrams'
+        sources = sorted(diagrams.glob('*.d2'))
+        self.assertEqual({path.stem for path in sources},
+                         {figure['id'] for figure in self.policy_figures})
+        for path in sources:
+            text = path.read_text()
+            with self.subTest(diagram=path.name):
+                self.assertNotIn('after confirmed closure', text.lower())
+                for label in re.findall(r':\s*"([^"]*)"', text):
+                    self.assertNotIn('->', label)
+        bank = (diagrams / '04-bank-publication.d2').read_text()
+        self.assertEqual(len(re.findall(r'^terminal:', bank, re.M)), 1)
+        self.assertNotRegex(bank, re.compile(r'^closed:', re.M))
+        self.assertIn('deliver -> terminal', bank)
+        self.assertIn('fail -> terminal', bank)
+        absorbing = {
+            '01b-preparation-join.d2': 2,
+            '03-helper.d2': 1,
+            '04-bank-publication.d2': 1,
+            '05-parameter-publication.d2': 1,
+            '05b-image-publication.d2': 1,
+            '06-resources.d2': 1,
+            '08-render-preflight.d2': 2,
+            '09-bake.d2': 1,
+        }
+        for name, count in absorbing.items():
+            with self.subTest(absorbing=name):
+                self.assertEqual(len(re.findall(r'^\s*style\.double-border: true$',
+                                                (diagrams / name).read_text(), re.M)), count)
 
     def test_numerical_charts_are_accessible_static_vectors(self):
         svg_namespace = '{http://www.w3.org/2000/svg}'
@@ -552,7 +594,12 @@ class BookTests(unittest.TestCase):
         for name, expected in icons['outputs'].items():
             self.assertEqual(sha(self.output / name), expected, name)
         for name, source in icons['sources'].items():
-            self.assertEqual(sha(self.book / 'src/assets/icons' / name), source['sha256'])
+            self.assertEqual(sha(self.output / 'assets/icons' / name), source['sha256'])
+        self.assertEqual(set(icons['sources']), {
+            f'perceptual-grade-{size}-{variant}.png'
+            for size in (16, 32, 48, 64, 180, 192, 256, 512)
+            for variant in ('transparent', 'opaque')
+        })
         webmanifest = json.loads((self.output / 'site.webmanifest').read_text())
         self.assertTrue(any(icon['purpose'] == 'maskable' for icon in webmanifest['icons']))
 

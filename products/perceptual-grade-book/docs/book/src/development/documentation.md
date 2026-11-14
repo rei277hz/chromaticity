@@ -30,6 +30,53 @@ or `:user-manual[pdf]`, `:user-manual[epub]`, `:technical-report[pdf]`, and
 `:technical-report[epub]` in that package for the six print files. Run build
 and test commands through Buck2 with `--remote-only`.
 
+### Code references to the books
+
+Code comments can point to a stable section without copying a filename or a
+heading slug. Use the exact form below; the book and language are part of the
+reference, and the identifier is declared by an explicit anchor immediately
+after the Markdown heading:
+
+```python
+# pg-book: technical-report/en#next-policy.node-output
+```
+
+```markdown
+## Node output policy
+
+<a id="next-policy.node-output"></a>
+```
+
+The resolver reads Python comments with the Python tokenizer, so the same text
+inside a string or docstring is ignored. It indexes only chapters listed by the
+edition's `SUMMARY.md`, checks that each identifier is unique, and then checks
+the generated HTML contains exactly one matching ID. A chapter can move or its
+heading can be renamed while the reference remains valid as long as the
+explicit identifier stays with the section. Identifiers are unique within a
+book and language. Supported editions are `technical-report/en`,
+`user-manual/en`, and `user-manual/zh-Hans`.
+
+Build the reference report with:
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-book:book_refs --show-output
+```
+
+The output directory contains `book-refs.json` and `book-refs.txt`. They locate
+the source comment, original Markdown heading, generated site page, published
+URL, and local preview URL. Missing or duplicate anchors and malformed comments
+fail the build. The declared input covers Next Blender Python sources and the
+comparison publication example; add markers at the policy and effect-consumer
+contracts that need navigation. Both reports are build artifacts.
+
+To follow the local URLs, serve the same generated site:
+
+```sh
+buck2 run --remote-only //products/perceptual-grade-book:preview -- --port 8080
+```
+
+### Historical build commands
+
 The commands below describe the original repository:
 
 ``` sh
@@ -55,7 +102,7 @@ buck2 test //:documentation_fonts //:documentation_site //:build_inputs
 
 ## Require complete sources
 
-The checked inventory in build_defs/source_inventory.bzl lists every authored source, including MOVs, screenshot PNGs, appearance artwork, icon PNGs, catalogs, model code, fixtures, build definitions and locks. Buck2 checks its source collections against that inventory; missing or unregistered files fail. Pinned downloads require their declared hashes and have no local substitute. All generators run in clean output directories and must produce every declared output; fixture capture, extension packaging, release packaging and site packaging reject incomplete inputs.
+The checked inventory in build_defs/source_inventory.bzl lists every authored source, including MOVs, screenshot PNGs, appearance artwork, catalogs, model code, fixtures, build definitions and locks. The separate `products/perceptual-grade-icon` package owns the authored icon configuration and Blender generator; its `:icons` target supplies the sixteen rendered PNGs to the book. Buck2 checks its source collections against that inventory; missing or unregistered files fail. Pinned downloads require their declared hashes and have no local substitute. All generators run in clean output directories and must produce every declared output; fixture capture, extension packaging, release packaging and site packaging reject incomplete inputs.
 
 Catalog and translation-review actions require every catalog, binding and source module, then check the generated MO files and CSV. Native diagram assets require the pinned model and CMF dependencies. DCTL generation and C++ validation require every fragment, UI specification, catalog and harness source.
 
@@ -76,11 +123,11 @@ The build never refreshes this inventory automatically and never generates a sub
 
 ## Replace the icons
 
-The authored PNGs in docs/book/src/assets/icons contain transparent and opaque artwork at 16, 32, 48, 64, 180, 192, 256 and 512 pixels. Keep every filename and native dimension when replacing them. The icon action requires all sixteen files and never resizes them.
+The icon product generates transparent and opaque artwork at 16, 32, 48, 64, 180, 192, 256 and 512 pixels by rendering each requested size in Blender. Keep every filename and native dimension when changing its authored configuration. The book consumes `//products/perceptual-grade-icon:icons`; it does not keep a second authored icon set.
 
 The ICO contains the original transparent PNG payloads at 16, 32, 48, 64 and 256 pixels. The title uses the 32px artwork and the 64px render for high-density displays. The 180px opaque image is copied byte-for-byte to apple-touch-icon.png. The web manifest uses the supplied transparent 192px and 512px images for ordinary Android icons.
 
-The separate 512px maskable tile centers the opaque 256px render at its native size on a solid background sampled from that render's corner. Its entire 256px square fits inside the guaranteed central safe circle. This is padding and placement, with no resolution resampling. The generated manifest declares only this separate variant as maskable. These icons do not add offline caching or a service worker.
+The icon generator produces the transparent and opaque variants directly. The book's favicon packager embeds the transparent 16, 32, 48, 64 and 256px PNG bytes in the ICO and copies the native 180, 192 and 512px platform images. It creates the separate 512px maskable tile by placing the opaque 256px render on a padded background; the generated manifest declares only this separate variant as maskable. These icons do not add offline caching or a service worker.
 
 ``` sh
 buck2 build //:book_favicon '//:docs_deploy[zip]' --show-full-output

@@ -11,6 +11,7 @@ python_test(
         "book-inputs": "//products/perceptual-grade-book:book_inputs",
         "generated-assets": "//products/perceptual-grade-book/generators:assets",
         "diagram-assets": "//products/perceptual-grade-book/diagrams:assets",
+        "policy-figures.json": "//products/perceptual-grade-book/diagrams:manifest",
         "cdn-assets": "//products/perceptual-grade-book/cdn:assets",
         "data-downloads": "//products/perceptual-grade-book:data_downloads",
         "tool-pins.bzl": "//products/perceptual-grade-book:tool_pins",
@@ -30,4 +31,20 @@ python_test(
     base_module = "tests.perceptual_grade_book_publish",
     labels = ["docs"],
     deps = ["//products/perceptual-grade-book:build_support"],
+)
+
+python_test(
+    name = "book_refs",
+    srcs = ["test_book_refs.py"],
+    base_module = "tests.perceptual_grade_book_refs",
+    labels = ["docs"],
+    deps = ["//products/perceptual-grade-book:build_support"],
+)
+
+python_test(
+    name = "book_refs_integration",
+    srcs = ["test_book_refs_integration.py"],
+    base_module = "tests.perceptual_grade_book_refs",
+    labels = ["docs"],
+    resources = {"book-refs.json": "//products/perceptual-grade-book:book_refs[json]"},
 )

@@ -1,14 +1,16 @@
 direction: down
 
-absent: "No gesture"
+absent: "gesture=None"
 armed: "armed"
 active: "active"
-finishing: "finishing_armed\nor finishing_active"
+finishing_armed: "finishing_armed"
+finishing_active: "finishing_active"
 absent -> armed: "press"
-armed -> active: "move >= 3 px\non either axis"
-armed -> finishing: "deferred finish"
-active -> finishing: "deferred finish"
-finishing -> absent: "observe settled settings"
+armed -> active: "move [>= 3 px on either axis]"
+armed -> finishing_armed: "deferred finish"
+active -> finishing_active: "deferred finish"
+finishing_armed -> absent: "observe"
+finishing_active -> absent: "observe"
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

@@ -1,4 +1,25 @@
 load("//products/perceptual-grade-book/generators:rules.bzl", "book_generate")
+load("//build_defs:artifacts.bzl", "generate")
+load("//products/perceptual-grade-book/print:native_packages.bzl", "NATIVE_PACKAGES")
+load(":native_packages.bzl", "BROWSER_PACKAGES")
+
+NATIVE_RUNTIME_PACKAGES = dict(NATIVE_PACKAGES, **BROWSER_PACKAGES)
+
+[http_file(
+    name = "native_" + name + "_archive",
+    out = spec["filename"],
+    sha256 = spec["sha256"],
+    urls = [spec["url"]],
+) for name, spec in NATIVE_RUNTIME_PACKAGES.items()]
+
+generate(
+    name = "native_runtime",
+    args = [arg for name in NATIVE_RUNTIME_PACKAGES for arg in [
+        "--archive", "$(location :native_" + name + "_archive)",
+    ]],
+    outputs = {"libraries": "usr/lib/x86_64-linux-gnu"},
+    tool = "//products/perceptual-grade-book/print:native_unpack",
+)
 
 # D2 embeds its fonts in the SVG. The remote action does not discover a host D2.
 http_file(
@@ -26,6 +47,12 @@ book_generate(
         "--archive", "$(location :d2_archive)",
         "--sources", "$(location //products/perceptual-grade-book:policy_diagram_sources)",
         "--manifest", "$(location :manifest)",
+        "--node", "$(location //tools/web-build:node[binary])",
+        "--chromium", "$(location //tools/web-build:chromium)",
+        "--npm", "$(location //tools/web-build:npm)",
+        "--label-checker", "$(location :label_checker)",
+        "--native-runtime", "$(location :native_runtime)",
+        "--fonts", "$(location //products/perceptual-grade-book/print:pdf_fonts)",
     ],
     outputs = {
         "manifest": "src/downloads/provenance/next-policy-diagrams.json",
@@ -44,6 +71,18 @@ book_generate(
         "07_gesture": "src/assets/illustrations/next-policy/07-gesture.svg",
         "07b_gesture_participants": "src/assets/illustrations/next-policy/07b-gesture-participants.svg",
         "08_render_preflight": "src/assets/illustrations/next-policy/08-render-preflight.svg",
+        "09_bake": "src/assets/illustrations/next-policy/09-bake.svg",
+        "01_preparation_node_sequence": "src/assets/illustrations/next-policy/01-preparation-node-sequence.svg",
+        "01b_preparation_join_sequence": "src/assets/illustrations/next-policy/01b-preparation-join-sequence.svg",
+        "03_helper_sequence": "src/assets/illustrations/next-policy/03-helper-sequence.svg",
+        "04_bank_publication_sequence": "src/assets/illustrations/next-policy/04-bank-publication-sequence.svg",
+        "05_parameter_publication_sequence": "src/assets/illustrations/next-policy/05-parameter-publication-sequence.svg",
+        "05b_image_publication_sequence": "src/assets/illustrations/next-policy/05b-image-publication-sequence.svg",
+        "05c_compositor_publication_sequence": "src/assets/illustrations/next-policy/05c-compositor-publication-sequence.svg",
+        "06_resources_sequence": "src/assets/illustrations/next-policy/06-resources-sequence.svg",
+        "07_gesture_sequence": "src/assets/illustrations/next-policy/07-gesture-sequence.svg",
+        "08_render_preflight_sequence": "src/assets/illustrations/next-policy/08-render-preflight-sequence.svg",
+        "09_bake_sequence": "src/assets/illustrations/next-policy/09-bake-sequence.svg",
     },
     tool = ":renderer",
     visibility = ["PUBLIC"],
@@ -53,4 +92,26 @@ export_file(
     name = "manifest",
     src = "figures.json",
     visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "label_checker",
+    src = "check_labels.mjs",
+)
+
+python_test(
+    name = "label_geometry",
+    srcs = ["test_check_labels.py"],
+    base_module = "pg_book_diagram_tests",
+    labels = ["docs"],
+    deps = [":support"],
+    resources = {
+        "check_labels.mjs": "check_labels.mjs",
+        "test_check_labels.mjs": "test_check_labels.mjs",
+        "node": "//tools/web-build:node",
+        "chromium": "//tools/web-build:chromium",
+        "npm": "//tools/web-build:npm",
+        "native-runtime": ":native_runtime",
+        "fonts": "//products/perceptual-grade-book/print:pdf_fonts",
+    },
 )

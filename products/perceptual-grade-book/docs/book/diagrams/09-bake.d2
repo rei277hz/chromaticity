@@ -1,0 +1,29 @@
+direction: down
+
+idle: "idle"
+queued: "queued"
+running: "running"
+cancelling: "cancelling"
+ready: "ready"
+publishing: "publishing"
+activating: "activating"
+terminal: "terminal" {
+  style.double-border: true
+}
+
+idle -> queued: "request\n[admitted, valid identity]\n/ enqueue"
+queued -> running: "start [admitted]\n/ start"
+queued -> terminal: "invalidate [changed]; close\n/ discard"
+running -> ready: "completed\n[success, current]"
+running -> terminal: "completed [stale success] / discard;\ncompleted [failed] / retire"
+running -> cancelling: "invalidate [changed]; close\n/ cancel"
+cancelling -> terminal: "cancelled / retire;\ncompleted / discard"
+ready -> ready: "publish [denied]"
+ready -> terminal: "invalidate [changed]; close;\npublish [admitted, stale]\n/ discard"
+ready -> publishing: "publish\n[admitted, current]\n/ publish"
+publishing -> activating: "published\n[success, current]\n/ activate"
+publishing -> terminal: "published [failed or stale]\n/ rollback"
+activating -> terminal: "activated [success, current] / retire;\nactivated [failed or stale] / rollback"
+
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

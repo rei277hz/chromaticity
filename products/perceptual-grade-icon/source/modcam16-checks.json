@@ -1,0 +1,12 @@
+{
+  "reference": "User-supplied Perceptual Grade 1.11.10 model/tone.py and model/linear.py",
+  "reference_rgb_samples": 10039,
+  "native_coordinate_max_error": 3.304023721284466e-13,
+  "inverse_linear_rgb_max_error": 7.771561172376096e-15,
+  "cusp_hue_max_error_degrees": 3.434999055980598e-13,
+  "cusp_boundary_verified": true,
+  "expanded_cusps_out_of_gamut": true,
+  "texture_checked_pixels": 3671390,
+  "texture_hue_test_chroma_min": 2,
+  "texture_hue_max_error_degrees": 0.039365302246881735
+}

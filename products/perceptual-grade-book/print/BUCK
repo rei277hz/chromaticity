@@ -142,6 +142,7 @@ python_binary(
     name = "native_unpack",
     main_module = "pg_book_print.unpack_native",
     deps = [":native_unpack_support"],
+    visibility = ["PUBLIC"],
 )
 
 generate(
@@ -254,6 +255,7 @@ python_test(
         "books": "//products/perceptual-grade-book:book_inputs",
         "site": "//products/perceptual-grade-book:site[html]",
         "site-manifest.json": "//products/perceptual-grade-book:site[manifest]",
+        "policy-figures.json": "//products/perceptual-grade-book/diagrams:manifest",
         "site.zip": "//products/perceptual-grade-book:archive[zip]",
         "theme": ":theme",
         "user-manual/documents": "//products/perceptual-grade-book:user-manual[documents]",

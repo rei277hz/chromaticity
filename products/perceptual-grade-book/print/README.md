@@ -27,6 +27,7 @@ buck2 build --remote-only //products/perceptual-grade-book/print:review --show-o
 buck2 build --remote-only //products/perceptual-grade-book/print:policy_review --show-output
 buck2 build --remote-only //products/perceptual-grade-book/print:chart_review --show-output
 buck2 build --remote-only //products/perceptual-grade-book/print:chart_preview --show-output
+buck2 build --remote-only //products/perceptual-grade-book/print:policy_preview --show-output
 ```
 
 The PDF output is A4 and uses fixed pagination, running heads, folios, and
@@ -67,6 +68,11 @@ hash and physical page numbers. This is a raster review without OCR.
 The `:policy_review` target renders every page of the English Next policy
 chapter in the Technical Report, using its PDF outline to select the chapter
 boundaries.
+The `:policy_preview` target renders one policy or workflow diagram per A4 page
+at the same maximum size used in the report. Check these proofs for readable
+labels before rebuilding the complete report. The diagram action separately
+rejects text overlaps using pinned Chromium and the SVG's embedded fonts;
+passing that geometry check does not establish readability after scaling.
 The `:chart_preview` target builds an independent A4 PDF with one numerical
 chart per page at its natural print size, plus 144 dpi PNGs and a manifest. Use
 it while editing chart sources to check labels, legends, clipping, and spacing
@@ -109,6 +115,9 @@ and dense paragraphs at A4 width. The chapter and figure lists, static math,
 embedded PDF fonts, Chinese text extraction, page labels, archive determinism,
 and agreement among current site files, the deployment archive, and the
 referenced site manifest are covered by the print acceptance tests.
+Stable book anchors used by code comments must follow their headings so they
+remain inside the correct print and EPUB chapter. The acceptance tests check
+the policy anchors in both editions, including PDF named destinations.
 
 Fonts, KaTeX, and their notices are pinned build inputs. The derived document
 copies only referenced local images; historical downloads link to the published

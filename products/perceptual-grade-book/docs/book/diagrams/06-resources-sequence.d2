@@ -1,0 +1,38 @@
+shape: sequence_diagram
+
+consumer: "Lifecycle consumer"
+policy: "Resource policy"
+blender: "Blender resource / registry"
+
+consumer -> policy: "new_disposal / new_retirement; step(Event())"
+opt node disposal: {
+  disposal: "loop [fence, detach; stop if fence fails]" {
+    policy -> consumer: "fence / detach"
+    consumer -> blender: "fence subscriptions / detach users"
+    blender -> consumer: "operation receipt or error"
+    consumer -> policy: "Event(failed)"
+  }
+}
+opt fence succeeded or ordinary retirement: {
+  retirement: "loop [observe, evict, recheck, remove]\nadvance only when each receipt authorizes the next step" {
+    policy -> consumer: "observe / evict / recheck / remove"
+    consumer -> blender: "read facts / evict / reread facts / remove"
+    blender -> consumer: "fresh facts or operation receipt"
+    consumer -> policy: "Event(live, owned, users, protected, failed)"
+  }
+  alt eligibility: {
+    removed: "eviction succeeded; fresh recheck still eligible" {
+      policy -> consumer: "terminal; removal attempted"
+    }
+    retained: "stopped before removal; earlier failure or ineligible" {
+      policy -> consumer: "terminal; no removal effect"
+    }
+  }
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

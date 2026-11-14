@@ -301,7 +301,7 @@ book_generate(
     name = "favicon",
     args = [
         "--icons",
-        "$(location //products/perceptual-grade-book:book_icons)",
+        "$(location //products/perceptual-grade-icon:icons)",
     ],
     outputs = {
         "ico": "favicon.ico",
@@ -315,6 +315,12 @@ book_generate(
     tool = ":favicon_tool",
     visibility = ["PUBLIC"],
 )
+
+ICON_FILES = [
+    "perceptual-grade-" + str(size) + "-" + variant + ".png"
+    for size in [16, 32, 48, 64, 180, 192, 256, 512]
+    for variant in ["transparent", "opaque"]
+]
 
 book_generate(
     name = "ab_background",
@@ -358,6 +364,11 @@ ASSETS = {
     "src/downloads/provenance/legacy-generator-sources.json": "source-provenance.json",
 }
 
+ASSETS.update({
+    "src/assets/icons/" + name: "//products/perceptual-grade-icon:icons[" + name + "]"
+    for name in ICON_FILES
+})
+
 ASSETS.update({"src/assets/figures/" + name + ".svg": ":figures[" + name + "]" for name in FIGURES})
 
 ASSETS.update({"src/assets/illustrations/" + name + ".svg": ":figures[" + name + "]" for name in HISTORICAL_FIGURES})
@@ -388,7 +399,7 @@ python_test(
     resources = {
         "test_resources/data": "//products/perceptual-grade-book:book_data",
         "test_resources/figures": ":figures_data",
-        "test_resources/icons": "//products/perceptual-grade-book:book_icons",
+        "test_resources/icons": "//products/perceptual-grade-icon:icons",
         "test_resources/intro_source": "//products/perceptual-grade-book:book_intro_recording",
         "test_resources/intro": ":intro",
     },

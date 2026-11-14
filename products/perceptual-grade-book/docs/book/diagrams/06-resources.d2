@@ -1,18 +1,29 @@
 direction: down
 
-disposal: "disposal -> fence -> detach"
-observe: "observe native resource [R1]"
-evict: "evict -> recheck"
+disposal: "disposal"
+retirement: "retirement"
+fence: "fence"
+detach: "detach"
+observe: "observe"
+evict: "evict"
+recheck: "recheck"
 remove: "remove"
-terminal: "terminal"
-disposal -> terminal: "fence failed"
-disposal -> observe: "fenced; detach attempted"
-retirement -> observe: "begin observation"
-observe -> evict: "not live or eligible"
-observe -> terminal: "ineligible / failure"
-evict -> remove: "evicted; freshly eligible"
-evict -> terminal: "ineligible / failure"
+terminal: "terminal" {
+  style.double-border: true
+}
+
+disposal -> fence: "begin"
+retirement -> observe: "begin"
+fence -> detach: "success"
+fence -> terminal: "failed"
+detach -> observe: "receipt"
+observe -> evict: "success, not live or eligible"
+observe -> terminal: "failed or live and ineligible"
+evict -> recheck: "success"
+evict -> terminal: "failed"
+recheck -> remove: "success, eligible"
+recheck -> terminal: "failed or ineligible"
 remove -> terminal: "receipt"
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

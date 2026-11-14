@@ -1,0 +1,40 @@
+shape: sequence_diagram
+
+consumer: "Execution consumer"
+policy: "Helper policy"
+process: "Helper / transport"
+
+consumer -> policy: "launch(generation, probe_id)"
+startup: "loop [launch, probe; matching startup receipts]" {
+  policy -> consumer: "launch / dispatch_id=probe"
+  consumer -> process: "spawn / send probe"
+  process -> consumer: "hello / probe result"
+  consumer -> policy: "hello / probe_result"
+}
+work: "loop [submit, optional cancel, preview and final receipts]" {
+  consumer -> policy: "submit / cancel / correlated receipt"
+  policy -> consumer: "dispatch / send_cancel / pump / publish"
+  opt transport work authorized: {
+    consumer -> process: "authorized send or transport pump"
+  }
+  process -> consumer: "preview / result / cancelled"
+}
+consumer -> policy: "shutdown(channel)"
+shutdown: "loop [shutdown, timeout escalation, physical exit]" {
+  policy -> consumer: "send_shutdown / terminate / kill"
+  consumer -> process: "perform authorized shutdown step"
+  process -> consumer: "transport or physical-exit observation"
+  consumer -> policy: "poll / timeout(stage) / exited"
+}
+opt physical exit observed: {
+  policy -> consumer: "settle jobs + cleanup"
+  consumer -> consumer: "release transport resources"
+  consumer -> policy: "cleanup_result"
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

@@ -1,0 +1,38 @@
+shape: sequence_diagram
+
+consumer: "Comparison consumer"
+policy: "Shared-image policy"
+blender: "Blender image / metadata"
+
+consumer -> policy: "new(); step(Event())"
+transaction: "loop [prepare, snapshot, upload, pack, commit, deliver]\nskip upload + pack if matching and clean; stop on failure" {
+  policy -> consumer: "next action effect"
+  consumer -> blender: "apply authorized image operation"
+  blender -> consumer: "receipt: matching, clean, failed"
+  consumer -> policy: "Event(receipt)"
+}
+opt upload, pack, or commit failed: {
+  restoration: "loop [restore_upload, restore_pack, restore_metadata]\nstop if upload fails or packing fails or stays unclean" {
+    policy -> consumer: "restoration action"
+    consumer -> blender: "restore pixels / packing / metadata"
+    blender -> consumer: "receipt: clean, failed"
+    consumer -> policy: "Event(receipt)"
+  }
+}
+opt failure path: {
+  policy -> consumer: "fail"
+  consumer -> blender: "deliver failure output"
+  blender -> consumer: "failure-operation receipt"
+  consumer -> policy: "Event(failed)"
+}
+policy -> consumer: "retire"
+consumer -> blender: "retire eligible image resources"
+blender -> consumer: "retirement receipt"
+consumer -> policy: "Event(failed); reach terminal"
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

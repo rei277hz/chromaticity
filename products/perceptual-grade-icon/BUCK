@@ -1,0 +1,86 @@
+load("//build_defs:artifacts.bzl", "generate", "source_tree")
+
+ICON_SIZES = [16, 32, 48, 64, 180, 192, 256, 512]
+ICON_FILES = [
+    "perceptual-grade-" + str(size) + "-" + variant + ".png"
+    for size in ICON_SIZES
+    for variant in ["transparent", "opaque"]
+]
+
+AUTHORED_SOURCES = {
+    "README.md": "README.md",
+    "build_icon.py": "build_icon.py",
+    "import_icon.py": "import_icon.py",
+    "source/generate_icon.py": "source/generate_icon.py",
+    "source/icon_config.json": "source/icon_config.json",
+    "source/LICENSE": "source/LICENSE",
+    "source/modcam16.py": "source/modcam16.py",
+    "source/modcam16-checks.json": "source/modcam16-checks.json",
+}
+
+source_tree(
+    name = "sources",
+    srcs = AUTHORED_SOURCES,
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "builder_sources",
+    srcs = {"pg_icon_build/driver.py": "build_icon.py"},
+    base_module = "",
+    resources = select({
+        "prelude//os:linux": {
+            "pg_icon_build/blender": "//third_party:blender_native",
+            "pg_icon_build/native-libs": "//third_party:bpy_native_abi_linux",
+            "pg_icon_build/generate_icon.py": "source/generate_icon.py",
+            "pg_icon_build/icon_config.json": "source/icon_config.json",
+            "pg_icon_build/modcam16.py": "source/modcam16.py",
+        },
+        "DEFAULT": {
+            "pg_icon_build/blender": "//third_party:blender_native",
+            "pg_icon_build/generate_icon.py": "source/generate_icon.py",
+            "pg_icon_build/icon_config.json": "source/icon_config.json",
+            "pg_icon_build/modcam16.py": "source/modcam16.py",
+        },
+    }),
+)
+
+python_binary(
+    name = "builder",
+    main_module = "pg_icon_build.driver",
+    deps = [":builder_sources"],
+    visibility = ["PUBLIC"],
+)
+
+GENERATED_OUTPUTS = {name: name for name in ICON_FILES}
+GENERATED_OUTPUTS.update({
+    "icon": "perceptual-grade-icon.png",
+    "preview": "perceptual-grade-icon-preview.png",
+    "blend": "perceptual-grade-icon.blend",
+    "usd": "perceptual-grade-icon.usd",
+    "content_usd": "perceptual-grade-icon-content.usd",
+    "mesh": "model-mesh.npz",
+    "spectral_texture": "textures/spectral-basecolor.png",
+    "tone_texture": "textures/tone-basecolor.png",
+    "textures": "textures",
+    "manifest": "icon-manifest.json",
+    "provenance": "provenance.json",
+    "validation": "validation.json",
+})
+
+generate(
+    name = "icons",
+    outputs = GENERATED_OUTPUTS,
+    tool = ":builder",
+    visibility = ["PUBLIC"],
+)
+
+alias(name = "blend", actual = ":icons[blend]", visibility = ["PUBLIC"])
+alias(name = "scene", actual = ":icons[blend]", visibility = ["PUBLIC"])
+alias(name = "generator", actual = ":builder", visibility = ["PUBLIC"])
+alias(name = "renders", actual = ":icons", visibility = ["PUBLIC"])
+alias(name = "textures", actual = ":icons[textures]", visibility = ["PUBLIC"])
+alias(name = "tone_texture", actual = ":icons[tone_texture]", visibility = ["PUBLIC"])
+alias(name = "model_mesh", actual = ":icons[mesh]", visibility = ["PUBLIC"])
+alias(name = "manifest", actual = ":icons[manifest]", visibility = ["PUBLIC"])
+alias(name = "validation", actual = ":icons[validation]", visibility = ["PUBLIC"])

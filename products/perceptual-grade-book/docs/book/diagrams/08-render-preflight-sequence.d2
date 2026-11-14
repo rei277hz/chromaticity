@@ -1,0 +1,39 @@
+shape: sequence_diagram
+
+render: "Render thread"
+gate: "Gate + ticket policy"
+consumer: "Main-thread consumer"
+blender: "Blender scene / nodes"
+
+render -> gate: "request ticket; wait"
+loop admission until exclusive scope is available: {
+  consumer -> gate: "take ticket; enter render_preflight"
+  gate -> consumer: "admit or defer and requeue"
+}
+consumer -> blender: "set exact frame; reconcile through node effects"
+blender -> consumer: "published signature or error"
+opt stale generation receipt: {
+  consumer -> gate: "resolve published(old generation)"
+  gate -> consumer: "unchanged waiting state; no effects"
+}
+consumer -> gate: "resolve current published / failed receipt"
+alt current publication: {
+  exact: "exact signature and correlation" {
+    gate -> consumer: "release"
+    consumer -> gate: "leave scope; deliver"
+    gate -> render: "wake; continue frame"
+  }
+  failed: "mismatch or failure" {
+    gate -> consumer: "fail"
+    consumer -> blender: "apply visible failure output"
+    consumer -> gate: "finish_render_preflight_failure"
+    gate -> render: "wake; raise failure"
+  }
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

@@ -1,16 +1,16 @@
 direction: down
 
-idle: "Idle\nrunning=None"
-active: "Running A\ndesired=A"
-queued: "Running A\ndesired=B"
-next: "Running B\ndesired=B"
+idle: "running=None"
+active: "running=A\ndesired=A"
+queued: "running=A\ndesired=B"
+next: "running=B\ndesired=B"
 idle -> active: "request A / prepare"
 active -> idle: "final A"
-active -> active: "preview A"
-active -> queued: "request B"
-queued -> queued: "new demand / preview A"
+active -> active: "preview A\n/ publish preview"
+active -> queued: "request B [B != A]"
+queued -> queued: "preview A\n/ publish preview"
 queued -> next: "final A / prepare B"
 next -> idle: "final B"
 
-**.style.font-size: 20
-(** -> **)[*].style.font-size: 20
+**.style.font-size: 32
+(** -> **)[*].style.font-size: 24

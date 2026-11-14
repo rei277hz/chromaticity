@@ -102,7 +102,7 @@
         "tools/docs/favicon.py",
         "tests/docs/test_favicon.py",
         "tools/docs/site.py",
-        "docs/book/src/assets/icons",
+        "products/perceptual-grade-icon",
         "tools/docs/parts.py"
       ]
     },
@@ -194,7 +194,7 @@
       "files": [
         "tools/docs/favicon.py",
         "tests/docs/test_favicon.py",
-        "docs/book/src/assets/icons"
+        "products/perceptual-grade-icon"
       ]
     },
     {

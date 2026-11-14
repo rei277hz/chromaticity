@@ -1,0 +1,43 @@
+shape: sequence_diagram
+
+consumer: "Publication consumer"
+policy: "Bank policy"
+blender: "Blender banks / nodes"
+
+consumer -> policy: "begin(admitted, active, candidate)"
+opt active bank invalid: {
+  policy -> consumer: "fail_closed(active)"
+  consumer -> blender: "close output; preserve alpha"
+  blender -> consumer: "closure confirmed"
+  consumer -> policy: "closed(failed=false)"
+}
+publication: "loop [stage or repair, select, deliver; stop on failure]" {
+  policy -> consumer: "action(candidate)"
+  opt stage needs a replacement kernel: {
+    consumer -> blender: "append template; bind two banks"
+    blender -> consumer: "complete candidate or failure"
+  }
+  consumer -> blender: "pack / select with readback / install"
+  blender -> consumer: "packing / selector / delivery receipt"
+  consumer -> policy: "staged / selected / delivered"
+}
+opt selection or delivery failed: {
+  policy -> consumer: "restore_selector(active)"
+  consumer -> blender: "restore selector and bindings"
+  blender -> consumer: "restoration receipt or error"
+  consumer -> policy: "restored(receipt)"
+}
+closure: "loop [fail_closed returned; bounded closure attempts]" {
+  policy -> consumer: "fail_closed(active)"
+  consumer -> blender: "close output; preserve alpha"
+  blender -> consumer: "closure receipt or error"
+  consumer -> policy: "closed(receipt) while budget remains"
+}
+consumer -> consumer: "committed / failed_closed / indeterminate"
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

@@ -4,7 +4,10 @@ load("//products/perceptual-grade-book/print:rules.bzl", "book_exports")
 
 source_tree(
     name = "docs",
-    srcs = {path.removeprefix("docs/"): path for path in glob(["docs/**"])},
+    srcs = {
+        path.removeprefix("docs/"): path
+        for path in glob(["docs/**"], exclude = ["docs/book/src/assets/icons/*.png"])
+    },
     visibility = ["PUBLIC"],
 )
 
@@ -38,11 +41,6 @@ source_tree(
             "book_intro_recording",
             "docs/media/intro/",
             ["docs/media/intro/*.mp4"],
-        ),
-        (
-            "book_icons",
-            "docs/book/src/assets/icons/",
-            ["docs/book/src/assets/icons/*.png"],
         ),
     ]
 ]
@@ -108,6 +106,7 @@ python_library(
         ("assemble_tool", "assemble"),
         ("site_tool", "site"),
         ("archive_tool", "deploy"),
+        ("book_refs_tool", "book_refs"),
     ]
 ]
 
@@ -144,6 +143,21 @@ documentation(
     pins = ":tool_pins",
     rust_versions = "//third_party/rust/tools:versions",
     tool = ":site_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "book_refs",
+    args = [
+        "--docs", "$(location :docs)",
+        "--site", "$(location :site[html])",
+        "--sources", "$(location //products/perceptual-grade-next-blender:book_reference_sources)",
+    ],
+    outputs = {
+        "json": "book-refs.json",
+        "text": "book-refs.txt",
+    },
+    tool = ":book_refs_tool",
     visibility = ["PUBLIC"],
 )
 
