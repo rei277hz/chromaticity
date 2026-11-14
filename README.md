@@ -1,23 +1,27 @@
 # Linux build and test results
 
-- Commit: `4845b10b9926652d2387317dfe83879b5602a71d`
-- Recorded at: 2026-11-12T05:28:40+00:00
-- Run: https://github.com/rei277hz/chromaticity/actions/runs/43160705229
+- Commit: `b037f2d76c644119ec2c7a0bc73fe483898bb24d`
+- Recorded at: 2026-11-14T01:48:36+00:00
+- Run: https://github.com/rei277hz/chromaticity/actions/runs/43542332322
 
 Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.
 
-## Linux build targets: 2/2 passed
+## Linux build targets: 1/2 passed
 
-Run outcome: **passed**. Command exit: `0`.
+Run outcome: **failed**. Command exit: `2`.
 
 | Target | Result |
 | --- | --- |
 | `//products/perceptual-grade-next-blender:verify_policies` | passed |
-| `//products/perceptual-grade-next-blender:extension` | passed |
+| `//products/perceptual-grade-next-blender:extension` | failed |
 
-## Linux smoke suites: 35/41 passed
+Reporting notes:
 
-Run outcome: **failed**. Command exit: `32`.
+- build-report.json: the build command did not report complete success
+
+## Linux smoke suites: 12/41 passed
+
+Run outcome: **failed**. Command exit: `2`.
 
 | Target | Result |
 | --- | --- |
@@ -30,35 +34,39 @@ Run outcome: **failed**. Command exit: `32`.
 | `//products/perceptual-grade-next-blender/tests:policy_resources` | passed |
 | `//products/perceptual-grade-next-blender/tests:policy_image_publication` | passed |
 | `//products/perceptual-grade-next-blender/tests:policy_gesture` | passed |
-| `//products/perceptual-grade-next-blender/tests:preparation_runtime` | passed |
-| `//products/perceptual-grade-next-blender/tests:lut_worker` | passed |
-| `//products/perceptual-grade-next-blender/tests:lut_shader` | passed |
-| `//products/perceptual-grade-next-blender/tests:preparation` | passed |
-| `//products/perceptual-grade-next-blender/tests:color_preparation` | passed |
-| `//products/perceptual-grade-next-blender/tests:lut` | passed |
-| `//products/perceptual-grade-next-blender/tests:lut_gpu` | passed |
-| `//products/perceptual-grade-next-blender/tests:reference` | passed |
-| `//products/perceptual-grade-next-blender/tests:boundary_resource` | passed |
-| `//products/perceptual-grade-next-blender/tests:native` | passed |
-| `//products/perceptual-grade-next-blender/tests:stages` | passed |
-| `//products/perceptual-grade-next-blender/tests:stage2` | passed |
+| `//products/perceptual-grade-next-blender/tests:preparation_runtime` | failed |
+| `//products/perceptual-grade-next-blender/tests:lut_worker` | failed |
+| `//products/perceptual-grade-next-blender/tests:lut_shader` | failed |
+| `//products/perceptual-grade-next-blender/tests:preparation` | failed |
+| `//products/perceptual-grade-next-blender/tests:color_preparation` | failed |
+| `//products/perceptual-grade-next-blender/tests:lut` | failed |
+| `//products/perceptual-grade-next-blender/tests:lut_gpu` | failed |
+| `//products/perceptual-grade-next-blender/tests:reference` | failed |
+| `//products/perceptual-grade-next-blender/tests:boundary_resource` | failed |
+| `//products/perceptual-grade-next-blender/tests:native` | failed |
+| `//products/perceptual-grade-next-blender/tests:stages` | failed |
+| `//products/perceptual-grade-next-blender/tests:stage2` | failed |
 | `//products/perceptual-grade-next-blender/tests:color_stages` | failed |
 | `//products/perceptual-grade-next-blender/tests:persistent_color_stages` | failed |
 | `//products/perceptual-grade-next-blender/tests:persistent` | failed |
-| `//products/perceptual-grade-next-blender/tests:guards` | passed |
-| `//products/perceptual-grade-next-blender/tests:saturation` | passed |
+| `//products/perceptual-grade-next-blender/tests:guards` | failed |
+| `//products/perceptual-grade-next-blender/tests:saturation` | failed |
 | `//products/perceptual-grade-next-blender/tests:full` | failed |
 | `//products/perceptual-grade-next-blender/tests:grade_render_preflight` | failed |
-| `//products/perceptual-grade-next-blender/tests:gate_policy` | passed |
-| `//products/perceptual-grade-next-blender/tests:hdr_metrics` | passed |
-| `//products/perceptual-grade-next-blender/tests:architecture` | passed |
+| `//products/perceptual-grade-next-blender/tests:gate_policy` | failed |
+| `//products/perceptual-grade-next-blender/tests:hdr_metrics` | failed |
+| `//products/perceptual-grade-next-blender/tests:architecture` | failed |
 | `//products/perceptual-grade-next-blender/tests:policy_coverage` | passed |
-| `//products/perceptual-grade-next-blender/tests:package` | passed |
+| `//products/perceptual-grade-next-blender/tests:package` | failed |
 | `//products/perceptual-grade-next-blender/tests:publication_compare_package` | passed |
 | `//products/perceptual-grade-next-blender/tests:install_workspace` | passed |
-| `//products/perceptual-grade-next-blender/tests:installed` | passed |
-| `//products/perceptual-grade-next-blender/tests:compositor_gui` | passed |
-| `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | passed |
-| `//products/perceptual-grade-next-blender/tests:gesture_drag_gui` | passed |
+| `//products/perceptual-grade-next-blender/tests:installed` | failed |
+| `//products/perceptual-grade-next-blender/tests:compositor_gui` | failed |
+| `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | failed |
+| `//products/perceptual-grade-next-blender/tests:gesture_drag_gui` | failed |
 | `//products/perceptual-grade-next-blender/tests:image_save_gui` | failed |
-| `//products/perceptual-grade-next-blender/tests:stack_helper` | passed |
+| `//products/perceptual-grade-next-blender/tests:stack_helper` | failed |
+
+Reporting notes:
+
+- test-build-report.json: the build command did not report complete success
