@@ -934,6 +934,28 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertFalse(runtime._thread.is_alive())
         self.assertFalse(runtime.pending)
 
+    def test_shutdown_yields_for_completed_task_retirement_callback(self):
+        runtime = self.runtime(lambda _payload: None)
+        finished, shutdown = threading.Event(), []
+
+        async def completed():
+            return None
+
+        def complete_before_shutdown():
+            task = runtime.loop.create_task(completed())
+            runtime._tasks.add(task)
+            task.add_done_callback(runtime._task_done)
+            # The task step runs first; its done callback is queued behind the
+            # shutdown step, leaving a completed task temporarily in the set.
+            runtime._shutdown_task = runtime.loop.create_task(runtime._shutdown())
+            runtime._shutdown_task.add_done_callback(lambda _task: finished.set())
+            shutdown.append(runtime._shutdown_task)
+
+        runtime.loop.call_soon_threadsafe(complete_before_shutdown)
+        self.assertTrue(finished.wait(10), "shutdown starved the task retirement callback")
+        shutdown[0].result()
+        self.assertFalse(runtime._tasks)
+
 
 if __name__ == "__main__":
     unittest.main()

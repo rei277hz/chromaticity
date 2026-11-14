@@ -74,12 +74,17 @@ def evaluate_full(rgb, linear, tone, color, space):
 
     Deliberately compose the reference's stage APIs rather than Model.forward,
     whose entry adapter includes the excluded LUT input projection.
+
+    Color's default H-K guard runs before its final Scale. Disable that internal
+    guard here so the oracle applies exactly one H-K repair after Scale, before
+    the cube boundary guard.
     """
     from color_tools.perceptual_grade_reference.cube_guard import guard as cube_guard
     from color_tools.perceptual_grade_core.model.hk_guard import guard as hk_guard
     lp, tp = parameters(linear, tone)
     cp = grading.ColorSettings(**asdict(color))
-    reference = model.Model(model.Settings(linear=lp, tone=tp, color=cp), space)
+    reference = model.Model(model.Settings(linear=lp, tone=tp, color=cp), space,
+                            hk_guard=False)
     before = evaluate(rgb, linear, tone, space)
     toned = before['tone']
     raw = reference.color.apply_state(toned)

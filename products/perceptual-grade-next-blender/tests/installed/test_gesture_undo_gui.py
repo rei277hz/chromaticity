@@ -55,6 +55,7 @@ class GestureUndoGuiTests(unittest.TestCase):
                     str(blender),
                     "--factory-startup",
                     "--disable-autoexec",
+                    "--enable-event-simulate",
                     "--window-geometry",
                     "0",
                     "0",
@@ -82,7 +83,9 @@ class GestureUndoGuiTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     output, _ = process.communicate(timeout=10)
-                    self.fail("Native gesture undo test timed out\n" + output[-16000:])
+                    details = report.read_text() if report.exists() else "No report written"
+                    self.fail("Native gesture undo test timed out\n" + output[-16000:]
+                              + "\n" + details)
                 data = json.loads(report.read_text()) if report.exists() else {}
                 details = output[-16000:] + "\n" + json.dumps(data, indent=2)
                 if (root / "xvfb.log").exists():
