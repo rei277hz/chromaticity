@@ -366,7 +366,8 @@ def run(output_dir, *, samples=256, amplitudes=(1e-5, 1e-3, 1e-2),
         values = full_cases.rgba(space, samples)
         for name, linear, tone, color in corpus:
             reference = model.Model(model.Settings(linear=model.LinearSettings(**asdict(linear)),
-                tone=grading.ToneSettings(**asdict(tone)), color=grading.ColorSettings(**asdict(color))), space)
+                tone=grading.ToneSettings(**asdict(tone)), color=grading.ColorSettings(**asdict(color))),
+                space, hk_guard=False)
             expected = oracle.evaluate_full(values[:, :3], linear, tone, color, space)
             baseline = compose(reference, expected['encoded'])
             agreement, _ = _metrics(baseline['rgb'], expected['rgb'])

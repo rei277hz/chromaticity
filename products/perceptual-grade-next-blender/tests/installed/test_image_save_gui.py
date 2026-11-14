@@ -43,6 +43,7 @@ class ImageSaveGuiTests(unittest.TestCase):
                 report = root / "report.json"
                 process = subprocess.Popen(
                     [str(blender), "--factory-startup", "--disable-autoexec",
+                     "--enable-event-simulate",
                      "--window-geometry", "0", "0", "1280", "960",
                      "--python-exit-code", "1", "--python", str(runner), "--",
                      str(repository), str(report)],
@@ -54,7 +55,9 @@ class ImageSaveGuiTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     output, _ = process.communicate(timeout=10)
-                    self.fail("Native image-save test timed out\n" + output[-16000:])
+                    details = report.read_text() if report.exists() else "No report written"
+                    self.fail("Native image-save test timed out\n" + output[-16000:]
+                              + "\n" + details)
                 data = json.loads(report.read_text()) if report.exists() else {}
                 details = output[-16000:] + "\n" + json.dumps(data, indent=2)
                 self.assertEqual(process.returncode, 0, details)

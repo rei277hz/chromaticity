@@ -12,11 +12,15 @@ alias(
 # independently of the bpy wheel used by the fast integration suites. The
 # unversioned target is the current regular-test host; versioned targets below
 # are retained for installed compatibility coverage.
+# Use RWTH for the Blender archives because the official host returned HTTP 403
+# in GitHub CI. Buck's native downloader still verifies the pinned release hashes.
 http_file(
     name = "blender_linux_archive",
     out = "blender-5.3.0-linux-x64.tar.xz",
     sha256 = "dacb8264197a3f7fda6001285a5a506fc97ee943881261c2c3bd63c882f22e05",
-    urls = ["https://download.blender.org/release/Blender5.3/blender-5.3.0-linux-x64.tar.xz"],
+    # Original: https://download.blender.org/release/Blender5.3/blender-5.3.0-linux-x64.tar.xz
+    # Alternative mirror: https://mirror.clarkson.edu/blender/release/Blender5.3/blender-5.3.0-linux-x64.tar.xz
+    urls = ["https://ftp.halifax.rwth-aachen.de/blender/release/Blender5.3/blender-5.3.0-linux-x64.tar.xz"],
     visibility = ["PUBLIC"],
 )
 
@@ -46,7 +50,9 @@ http_file(
         "prelude//os:macos",
         "prelude//cpu:arm64",
     ],
-    urls = ["https://download.blender.org/release/Blender5.3/blender-5.3.0-macos-arm64.dmg"],
+    # Original: https://download.blender.org/release/Blender5.3/blender-5.3.0-macos-arm64.dmg
+    # Alternative mirror: https://mirror.clarkson.edu/blender/release/Blender5.3/blender-5.3.0-macos-arm64.dmg
+    urls = ["https://ftp.halifax.rwth-aachen.de/blender/release/Blender5.3/blender-5.3.0-macos-arm64.dmg"],
     visibility = ["PUBLIC"],
 )
 
@@ -81,7 +87,9 @@ http_file(
     name = "blender_524_linux_archive",
     out = "blender-5.2.4-linux-x64.tar.xz",
     sha256 = "2fd14c50987426897ba60237ee996edf2b4151f4b1a72a460ca20be58c1d2d86",
-    urls = ["https://download.blender.org/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz"],
+    # Original: https://download.blender.org/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz
+    # Alternative mirror: https://mirror.clarkson.edu/blender/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz
+    urls = ["https://ftp.halifax.rwth-aachen.de/blender/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz"],
     visibility = ["PUBLIC"],
 )
 
@@ -104,7 +112,9 @@ http_file(
         "prelude//os:macos",
         "prelude//cpu:arm64",
     ],
-    urls = ["https://download.blender.org/release/Blender5.2/blender-5.2.4-macos-arm64.dmg"],
+    # Original: https://download.blender.org/release/Blender5.2/blender-5.2.4-macos-arm64.dmg
+    # Alternative mirror: https://mirror.clarkson.edu/blender/release/Blender5.2/blender-5.2.4-macos-arm64.dmg
+    urls = ["https://ftp.halifax.rwth-aachen.de/blender/release/Blender5.2/blender-5.2.4-macos-arm64.dmg"],
     visibility = ["PUBLIC"],
 )
 

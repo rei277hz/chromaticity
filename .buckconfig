@@ -17,7 +17,7 @@
   target_platform_detector_spec = target:root//...->prelude//platforms:default target:prelude//...->prelude//platforms:default target:toolchains//...->prelude//platforms:default
 
 [project]
-  ignore = .git, buck-out, __pycache__, third_party/rust/.cargo
+  ignore = .git, .sl, buck-out, __pycache__, node_modules, target, dist, .vite, third_party/rust/.cargo, third_party/rust/vendor
 
 # BEGIN NativeLink settings
 [build]
@@ -25,6 +25,7 @@
 
 [buck2]
   digest_algorithms = SHA256
+  file_watcher = watchman
 
 [buck2_re_client]
   engine_address = 172.19.0.1:50051

@@ -287,7 +287,8 @@ def run(output_dir, *, fields=tuple(DEFAULT_CELLS), cells=None, selected_cases=D
         for space in spaces:
             prepared = prepare(linear, tone, space, color=color, full_fields=full_fields)
             reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))))
+                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      hk_guard=False)
             values = full_cases.rgba(space, SAMPLES)
             tone_state = oracle.evaluate(values[:, :3], linear, tone, space)['tone']
             initial = State(tone_state.q, tone_state.ja*abs(tone_state.ja))

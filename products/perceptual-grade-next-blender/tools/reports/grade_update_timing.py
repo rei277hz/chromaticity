@@ -16,6 +16,17 @@ from .grade_update_timing_report import validate_profile, write_report
 from .stack_lut_timing import blender_binary, software_display
 
 
+def _failure_details(output, report=None):
+    """Keep native diagnostics in the exception after temporary files disappear."""
+    details = []
+    if report is not None:
+        details.extend(str(report[key]) for key in ("error", "traceback") if report.get(key))
+    log = output / "native.log"
+    if log.is_file():
+        details.append("Native Blender log:\n" + log.read_text(encoding="utf8", errors="replace")[-16000:])
+    return "\n".join(details)
+
+
 def run(args):
     if sys.platform != "linux" or os.uname().machine not in ("x86_64", "amd64"):
         raise RuntimeError("Grade update timing currently requires Linux x86_64")
@@ -60,16 +71,19 @@ def run(args):
                 except subprocess.TimeoutExpired as error:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=10)
-                    raise RuntimeError("Grade timing session timed out; see native.log") from error
+                    raise RuntimeError("Grade timing session timed out\n" +
+                                       _failure_details(output)) from error
             process_seconds = time.perf_counter() - started
         if not result_path.is_file():
-            raise RuntimeError(f"Blender produced no report (exit {code}); see native.log")
+            raise RuntimeError(f"Blender produced no report (exit {code})\n" +
+                               _failure_details(output))
         report = json.loads(result_path.read_text(encoding="utf8"))
         report.update(process_returncode=code, process_wall_seconds=process_seconds,
                       target="//products/perceptual-grade-next-blender/tools/reports:grade_update_timing")
         write_report(output, report)
         if code or not report.get("completed"):
-            raise RuntimeError(f"Grade update timing failed; see {output / 'native.log'}")
+            raise RuntimeError(f"Grade update timing failed (exit {code})\n" +
+                               _failure_details(output, report))
     print(f"Wrote {output / 'report.json'} and {output / 'report.md'}")
     return report
 

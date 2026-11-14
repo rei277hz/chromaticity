@@ -30,7 +30,10 @@ from .stage2_parameters import (
 )
 
 
-SCHEMA = 1
+# The receipt payload changed from raw socket values to effective socket
+# contracts.  Keep the manifest version distinct so stale generated assets
+# fail explicitly instead of being interpreted with the new canonicalization.
+SCHEMA = 2
 MANIFEST_NAME = "node_templates.json"
 BLEND_NAME = "node_templates.blend"
 STACK_SHADER_NAME = "grade_stack.glsl"
@@ -193,12 +196,92 @@ def _socket_value(socket):
         return None
 
 
+def _socket_type(socket):
+    """Return the stable Blender socket type for nodes and interfaces."""
+    return str(getattr(
+        socket, "bl_idname",
+        getattr(socket, "socket_type", getattr(socket, "type", "")),
+    ))
+
+
+def _is_rgba_socket(socket):
+    return _socket_type(socket) == "NodeSocketColor" or str(
+        getattr(socket, "type", ""),
+    ) == "RGBA"
+
+
+def _neutral_rgba(socket):
+    try:
+        values = tuple(float(item) for item in socket.default_value)
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return False
+    return len(values) >= 3 and values[:3] == (0.0, 0.0, 0.0)
+
+
+def validate_color_defaults(tree):
+    """Limit effective color literals to values invariant under working-space conversion."""
+    visited = set()
+
+    def visit(current):
+        try:
+            pointer = current.as_pointer()
+        except (AttributeError, ReferenceError, RuntimeError):
+            pointer = id(current)
+        if pointer in visited:
+            return
+        visited.add(pointer)
+        for item in current.interface.items_tree:
+            if (item.item_type == "SOCKET" and item.in_out == "INPUT"
+                    and _is_rgba_socket(item) and not _neutral_rgba(item)):
+                raise TemplateAssetError(
+                    f"Template {current.name} has a working-space-sensitive color input: {item.name}")
+        for node in current.nodes:
+            for socket in node.inputs:
+                inactive = bool(getattr(socket, "is_inactive", False))
+                if (_is_rgba_socket(socket) and not socket.is_linked and not inactive
+                        and not _neutral_rgba(socket)):
+                    raise TemplateAssetError(
+                        f"Template {current.name} has a working-space-sensitive color default: "
+                        f"{node.name}.{socket.name}")
+            if node.bl_idname in {"ShaderNodeRGB", "CompositorNodeRGB"}:
+                for socket in node.outputs:
+                    if _is_rgba_socket(socket) and not _neutral_rgba(socket):
+                        raise TemplateAssetError(
+                            f"Template {current.name} has a working-space-sensitive color source: "
+                            f"{node.name}.{socket.name}")
+            child = getattr(node, "node_tree", None)
+            if child is not None:
+                visit(child)
+
+    visit(tree)
+
+
+def _socket_receipt(socket, *, include_default, input_socket):
+    linked = bool(getattr(socket, "is_linked", False))
+    inactive = bool(getattr(socket, "is_inactive", False))
+    value = (_socket_value(socket)
+             if include_default and not inactive and (not input_socket or not linked)
+             else None)
+    return (socket.name, _socket_type(socket), value)
+
+
+def _interface_receipt(item):
+    is_input = item.in_out == "INPUT"
+    return (
+        item.item_type,
+        item.in_out,
+        item.name,
+        _socket_type(item),
+        _socket_value(item) if is_input else None,
+    )
+
+
 def structure_digest(tree):
-    """Digest topology and semantic node settings, excluding bank selection."""
+    """Digest topology and effective node settings, excluding bank selection."""
+    validate_color_defaults(tree)
     try:
         interface = tuple(
-            (item.item_type, item.in_out, item.name, item.socket_type,
-             _socket_value(item))
+            _interface_receipt(item)
             for item in tree.interface.items_tree
         )
         nodes = []
@@ -220,11 +303,23 @@ def structure_digest(tree):
                 "label": node.label,
                 "properties": properties,
                 "inputs": tuple(
-                    (None if mutable_selector or live else _socket_value(socket), socket.name)
+                    (socket.name, _socket_type(socket),
+                     None if mutable_selector or live else _socket_receipt(
+                         socket, include_default=True, input_socket=True))
                     for socket in node.inputs
                 ),
-                "outputs": tuple((None if mutable_selector or live else _socket_value(socket), socket.name)
-                                 for socket in node.outputs),
+                "outputs": tuple(
+                    (socket.name, _socket_type(socket),
+                     None if mutable_selector or live else _socket_receipt(
+                         socket,
+                         include_default=node.bl_idname in {
+                             "ShaderNodeValue", "CompositorNodeValue",
+                             "ShaderNodeRGB", "CompositorNodeRGB",
+                         },
+                         input_socket=False,
+                     ))
+                    for socket in node.outputs
+                ),
                 "slot": node.get(TEMPLATE_SLOT),
             })
         links = tuple(sorted(
