@@ -2,25 +2,22 @@
   "schema": 1,
   "metadata": {
     "repository": "rei277hz/chromaticity",
-    "commit": "b037f2d76c644119ec2c7a0bc73fe483898bb24d",
-    "run_id": "43542332322",
-    "run_number": 37,
-    "run_attempt": 3,
-    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/43542332322",
-    "timestamp": "2026-11-14T06:27:29+00:00"
+    "commit": "ef7fe3f73c0ce4572411b69d6b8a98a73b86ccdf",
+    "run_id": "43639025003",
+    "run_number": 46,
+    "run_attempt": 1,
+    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/43639025003",
+    "timestamp": "2026-11-14T20:56:13+00:00"
   },
   "builds": {
-    "passed": 1,
+    "passed": 2,
     "total": 2,
-    "outcome": "failed",
-    "exit_code": 2,
+    "outcome": "passed",
+    "exit_code": 0,
     "counts": {
-      "failed": 1,
-      "passed": 1
+      "passed": 2
     },
-    "issues": [
-      "build-report.json: the build command did not report complete success"
-    ],
+    "issues": [],
     "targets": [
       {
         "target": "//products/perceptual-grade-next-blender:verify_policies",
@@ -28,22 +25,19 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender:extension",
-        "status": "failed"
+        "status": "passed"
       }
     ]
   },
   "tests": {
-    "passed": 12,
-    "total": 41,
-    "outcome": "failed",
-    "exit_code": 2,
+    "passed": 43,
+    "total": 43,
+    "outcome": "passed",
+    "exit_code": 0,
     "counts": {
-      "failed": 29,
-      "passed": 12
+      "passed": 43
     },
-    "issues": [
-      "test-build-report.json: the build command did not report complete success"
-    ],
+    "issues": [],
     "targets": [
       {
         "target": "//products/perceptual-grade-next-blender:publication_compare_parameter_policy",
@@ -83,91 +77,95 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:preparation_runtime",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:lut_worker",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:lut_shader",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:preparation",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_preparation",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:lut",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:lut_gpu",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:reference",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:boundary_resource",
-        "status": "failed"
+        "status": "passed"
+      },
+      {
+        "target": "//products/perceptual-grade-next-blender/tests:node_templates",
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:native",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stages",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stage2",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_stages",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:persistent_color_stages",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:persistent",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:guards",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:saturation",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:full",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:grade_render_preflight",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gate_policy",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:hdr_metrics",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:architecture",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_coverage",
@@ -175,7 +173,7 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:package",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:publication_compare_package",
@@ -187,27 +185,31 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:installed",
-        "status": "failed"
+        "status": "passed"
+      },
+      {
+        "target": "//products/perceptual-grade-next-blender/tests:bake_workspace_installed",
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:compositor_gui",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gesture_undo_gui",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gesture_drag_gui",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:image_save_gui",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stack_helper",
-        "status": "failed"
+        "status": "passed"
       }
     ]
   }
