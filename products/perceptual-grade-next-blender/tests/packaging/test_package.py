@@ -88,7 +88,15 @@ class PackageTests(unittest.TestCase):
                 "runtime/parameter_publication.py",
                 "runtime/publication_compare_diagnostics.py",
             } for name in names))
+            self.assertNotIn("runtime/bake_diagnostics.py", names)
+            self.assertFalse({
+                "technical-report-audit.json",
+                "technical_report_audit.py",
+                "product_build/technical_report_audit.py",
+            }.intersection(names))
             nodes_source = archive.read("nodes.py")
+            self.assertNotIn(b"PG_OT_bake_diagnostics", nodes_source)
+            self.assertNotIn(b"perceptual_grade.bake_diagnostics", nodes_source)
             self.assertNotIn(b"PG_OT_start_drag_trace", nodes_source)
             self.assertNotIn(b"PG_OT_stop_drag_trace", nodes_source)
             self.assertNotIn(b"draw_trace_menu", nodes_source)

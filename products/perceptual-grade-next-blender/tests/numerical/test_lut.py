@@ -12,6 +12,7 @@ from color_tools.kernel.lut import (
     axis,
     atlas_height,
     pack_rgbe,
+    stack_config_pixels,
     unpack_rgbe,
     _stack_matrix,
 )
@@ -45,6 +46,20 @@ def reference_cube(matrices, space="ACEScg", size=SIZE):
 
 
 class LinearStackLUTTests(unittest.TestCase):
+    def test_stack_lookup_config_packs_resolution_and_atlas_scale(self):
+        for size in (PREVIEW_SIZE, SIZE):
+            with self.subTest(size=size):
+                expected = np.array(
+                    [[[size, size**2, size**3, 1.0 / atlas_height(size)]]],
+                    dtype=np.float32,
+                )
+                actual = stack_config_pixels(size)
+                self.assertEqual(actual.shape, (1, 1, 4))
+                self.assertEqual(actual.dtype, np.float32)
+                np.testing.assert_array_equal(actual, expected)
+        with self.assertRaises(ValueError):
+            stack_config_pixels(17)
+
     def test_empty_and_ordered_stacks_preserve_the_linear_transform(self):
         first = np.array(((1.0, .2, 0.0), (0.0, .9, .1), (.1, 0.0, 1.0)))
         second = np.array(((.8, 0.0, .1), (.1, 1.0, 0.0), (0.0, .2, 1.1)))

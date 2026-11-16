@@ -270,8 +270,9 @@ def _output_projection(g,state,data,t,deficit,endpoint,white_point):
     returned_radius=g.select(legal,chroma,g.select(final_legal,radius,0.))
     returned_radius=g.mul(positive,g.select(white,0.,returned_radius))
     # Keep the tested native value; do not perform another appearance decode.
-    adapter=g.prepared.from_cones@data.inverse
-    color=_linear_map(g,native,adapter)
+    parameters=getattr(g,'parameters',None)
+    color=(parameters.output_matrix(native) if parameters is not None
+           else _linear_map(g,native,g.prepared.from_cones@data.inverse))
     trial_max=g.maximum(g.abs(final_responses[0]),g.maximum(g.abs(final_responses[1]),g.abs(final_responses[2])))
     returned_max=g.select(legal,max_response,g.select(final_legal,trial_max,neutral))
     returned_max=g.mul(positive,g.select(white,rw,returned_max))

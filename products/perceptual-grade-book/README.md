@@ -14,6 +14,27 @@ their original meaning. The Technical Report includes the **Next Blender policy
 machines** chapter, which follows current Next policies and adapters. Next has
 not yet implemented its Warp UI.
 
+Next is the implementation source of truth for Blender behavior: its source,
+requirements, and tests define supported routes, lifecycle, failure handling,
+and host boundaries. The analytic reference remains authoritative for model
+mathematics. Observable implementation changes must update the corresponding
+Technical Report section and its evidence. The 1.23.2 narrative, bilingual
+workflow, downloads, media, measurements, legacy generators, manifests, and
+preservation checks are temporary migration material. The eventual migration
+will remove all of it once Next coverage replaces it; the current archive is
+kept intact until that coordinated removal is complete.
+
+`technical-report-audit.json` records every Technical Report chapter's scope,
+source and test evidence, policy anchors, and remaining legacy replacement work.
+The Next target
+`//products/perceptual-grade-next-blender/tests:technical_report_audit` checks
+chapter coverage, evidence paths, and source-to-report references from declared
+source inputs. It stays outside the installed extension and does not render the
+book or validate legacy products. The check establishes coverage and reference
+integrity; reviewers still check that the prose describes the implemented
+behavior. Update the manifest when adding chapters or policies, changing their
+scope, or moving their evidence.
+
 Submit [issues](https://github.com/rei277hz/perceptual-grade/issues) to the
 downstream project and [pull requests](https://github.com/rei277hz/chromaticity/pulls)
 to this development repository. Both books' GitHub toolbars link here.
@@ -151,7 +172,8 @@ snapshot is consumed.
 
 The supplied `perceptual_grade-v1.23.2-20261101.zip`, historical DCTL files,
 translation-review CSV, and historical license remain archived bytes. The
-book pipeline does not build a current extension to replace them. Historical
+book pipeline does not build a current extension to replace them. These
+preservation guarantees last until the coordinated legacy retirement. Historical
 benchmark and engineering measurements are retained as data, rather than rerun
 on each builder. Historical attachment hashes and generator provenance remain explicit inputs.
 

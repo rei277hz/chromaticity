@@ -11,6 +11,39 @@ source_tree(
     visibility = ["PUBLIC"],
 )
 
+source_tree(
+    name = "technical_report_audit_docs",
+    srcs = {
+        path.removeprefix("docs/book/"): path
+        for path in glob([
+            "docs/book/src/report/**/*.md",
+            "docs/book/src/theory/**/*.md",
+            "docs/book/src/development/**/*.md",
+            "docs/book/src/reference/**/*.md",
+        ])
+    },
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "technical_report_audit_manifest",
+    src = "technical-report-audit.json",
+    visibility = ["PUBLIC"],
+)
+
+source_tree(
+    name = "technical_report_audit_evidence",
+    srcs = {
+        path: path
+        for path in glob([
+            "README.md",
+            "BUCK",
+            "tools/**/*.py",
+        ])
+    },
+    visibility = ["PUBLIC"],
+)
+
 # Independent authored inputs keep a chapter edit out of media generation.
 [
     source_tree(
@@ -92,6 +125,17 @@ source_tree(
 python_library(
     name = "build_support",
     srcs = {path.removeprefix("tools/"): path for path in glob(["tools/*.py"])},
+    base_module = "pg_book_build",
+    visibility = ["PUBLIC"],
+)
+
+# Source parsing only: this dependency never renders or validates the book.
+python_library(
+    name = "reference_parsing",
+    srcs = {
+        "assemble.py": "tools/assemble.py",
+        "book_refs.py": "tools/book_refs.py",
+    },
     base_module = "pg_book_build",
     visibility = ["PUBLIC"],
 )

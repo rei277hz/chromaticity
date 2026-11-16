@@ -33,7 +33,7 @@ from .stage2_parameters import (
 # The receipt payload changed from raw socket values to effective socket
 # contracts.  Keep the manifest version distinct so stale generated assets
 # fail explicitly instead of being interpreted with the new canonicalization.
-SCHEMA = 2
+SCHEMA = 4
 MANIFEST_NAME = "node_templates.json"
 BLEND_NAME = "node_templates.blend"
 STACK_SHADER_NAME = "grade_stack.glsl"
@@ -45,6 +45,8 @@ TEMPLATE_KIND = TEMPLATE_KIND_KEY
 TEMPLATE_VARIANT = TEMPLATE_VARIANT_KEY
 TEMPLATE_SPACE = "_pg_template_space"
 TEMPLATE_SIZE = "_pg_template_size"
+TEMPLATE_MODE = "_pg_template_mode"
+TEMPLATE_VECTOR = "_pg_template_vector"
 TEMPLATE_SOURCE = "_pg_template_source"
 TEMPLATE_CLONE = "_pg_template_clone"
 TEMPLATE_SLOT = "_pg_template_slot"
@@ -53,18 +55,24 @@ SLOT_PARAMETER_0 = "parameter:0"
 SLOT_PARAMETER_1 = "parameter:1"
 SLOT_BOUNDARY = "boundary"
 SLOT_LUT = "lut"
+SLOT_BASIS = "basis"
+SLOT_CONFIG = "config"
 SLOT_LIVE = "live"
 SLOT_BAKE = "bake"
 
 STACK_KERNEL = "_perceptual_grade_stack_kernel"
 STACK_LUT_SIGNATURE = "_perceptual_grade_lut_signature"
 STACK_IMAGE = "_perceptual_grade_stack_image"
+STACK_BASIS_IMAGE = "_perceptual_grade_stack_basis_signature"
+STACK_CONFIG_IMAGE = "_perceptual_grade_stack_config_signature"
 KERNEL_QUALITY = "_perceptual_grade_quality"
 KERNEL_TREE_TYPE = "_perceptual_grade_tree_type"
 KERNEL_WORKING_SPACE = "_perceptual_grade_working_space"
 BAKE_WRAPPER = "_pg_next_bake_wrapper"
 BAKE_LIVE = "_pg_next_bake_live"
 BAKE_READER = "_pg_next_bake_reader"
+FALLBACK_KERNEL = "_perceptual_grade_fallback_kernel"
+FALLBACK_MODE = "_perceptual_grade_fallback_mode"
 
 
 class TemplateAssetError(RuntimeError):
@@ -77,15 +85,21 @@ class TemplateVariant:
     tree_type: str
     space: Optional[str] = None
     size: Optional[int] = None
+    mode: Optional[str] = None
+    vector: Optional[bool] = None
 
     @property
     def key(self):
         if self.kind == "wrapper":
             return f"wrapper:{self.tree_type}"
-        if self.kind == "grade" and self.space:
-            return f"grade:{self.tree_type}:{self.space}"
-        if self.kind == "stack" and self.space and self.size is not None:
-            return f"stack:{self.tree_type}:{self.space}:{self.size}"
+        if self.kind == "grade" and self.space is None:
+            return f"grade:{self.tree_type}"
+        if self.kind == "stack" and self.space is None and self.size is None:
+            return f"stack:{self.tree_type}"
+        if (self.kind == "fallback" and self.mode in {"pending", "error"}
+                and type(self.vector) is bool
+                and (self.tree_type == "ShaderNodeTree" or not self.vector)):
+            return f"fallback:{self.mode}:{self.tree_type}:{int(self.vector)}"
         raise ValueError(f"Incomplete template variant: {self!r}")
 
 
@@ -97,6 +111,8 @@ class TemplateRecord:
     tree_type: str
     space: Optional[str]
     size: Optional[int]
+    mode: Optional[str]
+    vector: Optional[bool]
     node_count: int
     link_count: int
     structure_sha256: str
@@ -359,14 +375,32 @@ def _record(key, raw):
     if any(name not in raw for name in required):
         raise TemplateAssetError(f"Incomplete template record: {key}")
     kind, tree_type = str(raw["kind"]), str(raw["tree_type"])
-    if kind not in {"grade", "stack", "wrapper"} or tree_type not in TREE_TYPES:
+    if kind not in {"grade", "stack", "wrapper", "fallback"} or tree_type not in TREE_TYPES:
         raise TemplateAssetError(f"Unsupported template identity: {key}")
     space = raw.get("space")
     size = raw.get("size")
+    mode = raw.get("mode")
+    vector = raw.get("vector")
     if space is not None and not isinstance(space, str):
         raise TemplateAssetError(f"Invalid template space: {key}")
     if size is not None and (type(size) is not int or size not in STACK_SIZES):
         raise TemplateAssetError(f"Invalid template size: {key}")
+    if mode is not None and mode not in {"pending", "error"}:
+        raise TemplateAssetError(f"Invalid fallback mode: {key}")
+    if vector is not None and type(vector) is not bool:
+        raise TemplateAssetError(f"Invalid fallback Vector flag: {key}")
+    if kind == "fallback":
+        if mode not in {"pending", "error"} or type(vector) is not bool:
+            raise TemplateAssetError(f"Incomplete fallback identity: {key}")
+        if tree_type == "CompositorNodeTree" and vector:
+            raise TemplateAssetError(f"Compositor fallback cannot expose Vector: {key}")
+    elif mode is not None or vector is not None:
+        raise TemplateAssetError(f"Non-fallback template has fallback fields: {key}")
+    if ((kind == "grade" and (space is not None or size is not None))
+            or (kind == "stack" and (space is not None or size is not None))
+            or (kind in {"wrapper", "fallback"}
+                and (space is not None or size is not None))):
+        raise TemplateAssetError(f"Template identity has unrelated context fields: {key}")
     node_count, link_count = raw["node_count"], raw["link_count"]
     digest = raw["structure_sha256"]
     if (type(node_count) is not int or node_count < 1
@@ -375,7 +409,8 @@ def _record(key, raw):
         raise TemplateAssetError(f"Invalid template structure receipt: {key}")
     return TemplateRecord(
         key=key, name=str(raw["name"]), kind=kind, tree_type=tree_type,
-        space=space, size=size, node_count=node_count, link_count=link_count,
+        space=space, size=size, mode=mode, vector=vector,
+        node_count=node_count, link_count=link_count,
         structure_sha256=digest, slots=_slots(raw.get("slots")),
     )
 
@@ -401,7 +436,8 @@ def load_manifest(package=None, name=MANIFEST_NAME):
         raise TemplateAssetError("Template manifest has no variants")
     for key, record in records.items():
         try:
-            expected = TemplateVariant(record.kind, record.tree_type, record.space, record.size).key
+            expected = TemplateVariant(record.kind, record.tree_type, record.space,
+                                       record.size, record.mode, record.vector).key
         except ValueError as error:
             raise TemplateAssetError(f"Template identity is incomplete: {key}") from error
         if key != expected:
@@ -414,8 +450,10 @@ def _variant_record(records, variant):
         record = records[variant.key]
     except KeyError as error:
         raise TemplateAssetError(f"No bundled template for {variant.key}") from error
-    if (record.kind, record.tree_type, record.space, record.size) != (
-            variant.kind, variant.tree_type, variant.space, variant.size):
+    if (record.kind, record.tree_type, record.space, record.size,
+            record.mode, record.vector) != (
+            variant.kind, variant.tree_type, variant.space, variant.size,
+            variant.mode, variant.vector):
         raise TemplateAssetError(f"Template context mismatch for {variant.key}")
     return record
 
@@ -441,6 +479,10 @@ def _validate_tree(tree, record, *, source=False):
             raise TemplateAssetError(f"Template {record.key} has the wrong space marker")
         if record.size is not None and tree.get(TEMPLATE_SIZE) != record.size:
             raise TemplateAssetError(f"Template {record.key} has the wrong size marker")
+        if (record.mode is not None
+                and (tree.get(TEMPLATE_MODE) != record.mode
+                     or bool(tree.get(TEMPLATE_VECTOR)) != record.vector)):
+            raise TemplateAssetError(f"Template {record.key} has the wrong fallback marker")
         if len(tree.nodes) != record.node_count or len(tree.links) != record.link_count:
             raise TemplateAssetError(f"Template {record.key} topology changed")
         for role, names in record.slots.items():
@@ -658,7 +700,7 @@ def instantiate_grade(prepared, tree_type, parameter_images=None, active_bank=0,
     prepare_parameters(prepared)
     _check_context(store._contract()[0], prepared)
     _check_context(store._contract()[0], prepared.boundary)
-    variant = TemplateVariant("grade", tree_type, prepared.space)
+    variant = TemplateVariant("grade", tree_type)
     record = store.record(variant)
     appended = store.append(variant, retire=retire)
     tree = appended.tree
@@ -713,7 +755,8 @@ def instantiate_stack(prepared, tree_type, quality=None, *, store=None, retire=N
     cube, space = getattr(prepared, "cube", None), getattr(prepared, "space", None)
     if cube is None or cube.size not in STACK_SIZES or not isinstance(space, str):
         raise TemplateAssetError("Stack template context is invalid")
-    from .lut import ATLAS_WIDTH, atlas_height, basis
+    from .lut import (ATLAS_WIDTH, atlas_height, basis, basis_pixels,
+                      stack_config_pixels)
     import numpy as np
     expected_quality = "preview" if cube.size == 33 else "full"
     if quality is not None and quality != expected_quality:
@@ -724,7 +767,7 @@ def instantiate_stack(prepared, tree_type, quality=None, *, store=None, retire=N
             or not isinstance(cube.signature, str) or not cube.signature):
         raise TemplateAssetError("Stack template requires its canonical working-space basis")
     store = _STORE if store is None else store
-    variant = TemplateVariant("stack", tree_type, space, int(cube.size))
+    variant = TemplateVariant("stack", tree_type)
     record = store.record(variant)
     appended = store.append(variant, retire=retire)
     tree = appended.tree
@@ -740,7 +783,25 @@ def instantiate_stack(prepared, tree_type, quality=None, *, store=None, retire=N
                     STACK_LUT_SIGNATURE: cube.signature}, retire=retire,
         )
         images.append(image)
-        _bind(tree, record, {SLOT_LUT: image})
+        basis_data = basis_pixels(cube.to_lut, cube.from_lut)
+        basis_signature = _digest(np.ascontiguousarray(basis_data).tobytes())
+        basis_image = _make_image(
+            f"Perceptual Grade Stack basis {space}", basis_data,
+            marker={STACK_BASIS_IMAGE: basis_signature,
+                    "_perceptual_grade_image": True}, retire=retire,
+        )
+        images.append(basis_image)
+        config_data = stack_config_pixels(int(cube.size))
+        config_signature = _digest(np.ascontiguousarray(config_data).tobytes())
+        config_image = _make_image(
+            f"Perceptual Grade Stack lookup config {int(cube.size)}", config_data,
+            marker={STACK_CONFIG_IMAGE: config_signature,
+                    "_perceptual_grade_image": True}, retire=retire,
+        )
+        images.append(config_image)
+        _bind(tree, record, {
+            SLOT_LUT: image, SLOT_BASIS: basis_image, SLOT_CONFIG: config_image,
+        })
         tree[STACK_KERNEL] = True
         tree[KERNEL_TREE_TYPE] = tree_type
         tree[KERNEL_WORKING_SPACE] = space
@@ -788,19 +849,42 @@ def instantiate_wrapper(tree_type, kernel, *, store=None, retire=None):
         raise
 
 
+def instantiate_fallback(mode, tree_type, *, vector=False, store=None, retire=None):
+    """Append a fixed pending or error kernel from the generated library."""
+    if mode not in {"pending", "error"} or tree_type not in TREE_TYPES:
+        raise TemplateAssetError("Fallback template context is invalid")
+    if tree_type == "CompositorNodeTree" and vector:
+        raise TemplateAssetError("Compositor fallback cannot expose Vector")
+    store = _STORE if store is None else store
+    variant = TemplateVariant("fallback", tree_type, mode=mode, vector=bool(vector))
+    appended = store.append(variant, retire=retire)
+    try:
+        tree = appended.tree
+        tree[FALLBACK_KERNEL] = 1
+        tree[FALLBACK_MODE] = mode
+        return appended
+    except BaseException:
+        appended.dispose(unlink=True)
+        raise
+
+
 def validate_stack_instance(tree, *, store=None):
     """Check a saved Stack instance's topology and complete atlas binding."""
-    from .lut import ATLAS_WIDTH, atlas_height
+    from .lut import (ATLAS_WIDTH, atlas_height, basis, basis_pixels,
+                      stack_config_pixels)
+    import numpy as np
 
     try:
         store = _STORE if store is None else store
-        variant = TemplateVariant(
-            "stack", tree.bl_idname, tree.get(TEMPLATE_SPACE), tree.get(TEMPLATE_SIZE),
-        )
+        quality = tree.get(KERNEL_QUALITY)
+        size = {"preview": STACK_SIZES[0], "full": STACK_SIZES[1]}.get(quality)
+        if size is None:
+            return False
+        variant = TemplateVariant("stack", tree.bl_idname)
         record = store.record(variant)
         _validate_tree(tree, record)
-        if (tree.get(KERNEL_WORKING_SPACE) != variant.space
-                or tree.get(KERNEL_QUALITY) != ("preview" if variant.size == 33 else "full")):
+        space = tree.get(KERNEL_WORKING_SPACE)
+        if not isinstance(space, str):
             return False
         readers = tuple(tree.nodes[name] for name in record.slots.get(SLOT_LUT, ()))
         if not readers:
@@ -812,12 +896,49 @@ def validate_stack_instance(tree, *, store=None):
                 or image.colorspace_settings.name != "Non-Color"
                 or image.alpha_mode != "CHANNEL_PACKED"
                 or image.use_half_precision
-                or tuple(image.size) != (ATLAS_WIDTH, atlas_height(variant.size))
+                or tuple(image.size) != (ATLAS_WIDTH, atlas_height(size))
                 or image.get(STACK_LUT_SIGNATURE) != tree.get(STACK_LUT_SIGNATURE)
                 or not tree.get(STACK_LUT_SIGNATURE)):
             return False
-        return all(getattr(node, "image", None) in (None, image)
-                   for node in tree.nodes)
+        basis_readers = tuple(tree.nodes[name]
+                              for name in record.slots.get(SLOT_BASIS, ()))
+        basis_image = basis_readers[0].image if basis_readers else None
+        expected_basis = basis_pixels(*basis(space))
+        expected_signature = _digest(np.ascontiguousarray(expected_basis).tobytes())
+        if (basis_image is None or any(node.image != basis_image for node in basis_readers)
+                or basis_image.library is not None or basis_image.packed_file is None
+                or basis_image.is_dirty or not basis_image.is_float
+                or basis_image.colorspace_settings.name != "Non-Color"
+                or basis_image.alpha_mode != "CHANNEL_PACKED"
+                or basis_image.use_half_precision
+                or tuple(basis_image.size) != (6, 1)
+                or basis_image.get(STACK_BASIS_IMAGE) != expected_signature):
+            return False
+        actual_basis = np.empty(expected_basis.shape, dtype=np.float32)
+        basis_image.pixels.foreach_get(actual_basis.ravel())
+        expected_config = stack_config_pixels(size)
+        expected_config_signature = _digest(
+            np.ascontiguousarray(expected_config).tobytes())
+        config_readers = tuple(tree.nodes[name]
+                               for name in record.slots.get(SLOT_CONFIG, ()))
+        config_image = config_readers[0].image if config_readers else None
+        if (config_image is None
+                or any(node.image != config_image for node in config_readers)
+                or config_image.library is not None or config_image.packed_file is None
+                or config_image.is_dirty or not config_image.is_float
+                or config_image.colorspace_settings.name != "Non-Color"
+                or config_image.alpha_mode != "CHANNEL_PACKED"
+                or config_image.use_half_precision
+                or tuple(config_image.size) != (1, 1)
+                or config_image.get(STACK_CONFIG_IMAGE) != expected_config_signature):
+            return False
+        actual_config = np.empty(expected_config.shape, dtype=np.float32)
+        config_image.pixels.foreach_get(actual_config.ravel())
+        return (np.array_equal(actual_basis, expected_basis)
+                and np.array_equal(actual_config, expected_config)
+                and all(getattr(node, "image", None)
+                        in (None, image, basis_image, config_image)
+                        for node in tree.nodes))
     except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
         return False
 
@@ -847,6 +968,6 @@ __all__ = (
     "BLEND_NAME", "MANIFEST_NAME", "STACK_SHADER_NAME", "SCHEMA",
     "TemplateAssetError", "TemplateInstance", "TemplateRecord", "TemplateStore",
     "TemplateVariant", "instantiate_grade", "instantiate_stack",
-    "instantiate_wrapper", "load_manifest", "reset_cache", "shader_source",
+    "instantiate_wrapper", "instantiate_fallback", "load_manifest", "reset_cache", "shader_source",
     "structure_digest", "validate_stack_instance",
 )

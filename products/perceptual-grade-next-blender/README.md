@@ -27,18 +27,21 @@ The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
 A Grade appends its complete Linear/Tone graph from the bundled native template
-library once per working space and tree type. Ordinary adjustments publish complete 512 × 1 RGBA32F parameter data
-(8 KiB) through two fixed helper images shared by every Shader and Compositor
-node using that Grade. The inactive bank is packed and checked inside an admitted
-publication scope; only then does the selector switch to it. Bank identities
-stay fixed across edits, so publication does not allocate a version pool or rebind
-image readers. Equal-valued independent Grades own separate bank pairs.
+library once per tree type. Working-space-dependent output conversion is bound
+through the parameter image. Ordinary adjustments publish complete 512 × 1
+RGBA32F parameter data (8 KiB) through two fixed helper images shared by every
+Shader and Compositor node using that Grade. The inactive bank is packed and
+checked inside an admitted publication scope; only then does the selector switch
+to it. Bank identities stay fixed across edits, so publication does not allocate
+a version pool or rebind image readers. Equal-valued independent Grades own
+separate bank pairs.
 
 Slots 0–256 contain the Tone endpoint value, slope, and curvature; slots 257–259
 contain the Linear matrix's red/blue columns and neutral row sums; slots 260–261
-contain the Tone scalars and domain. Fixed texture samples read these values
-instead of baking them into socket defaults. The boundary texture, viewing
-constants, links, and output adapter remain fixed within a working space.
+contain the Tone scalars and domain; slots 262–264 contain the output conversion
+matrix rows. Fixed texture samples read these values instead of baking them into
+socket defaults. The boundary texture and viewing constants remain shared across
+working spaces.
 Publication packs a complete inactive bank before changing the marked selector.
 A failed transaction restores the previous selector and metadata; any failure to
 restore or deliver closes the Grade output visibly. File-load reconciliation
@@ -93,16 +96,29 @@ Shared Grade and Grade Stack nodes expose a Bake control in both Shader and
 Compositor trees. A bake captures the current native node-tree result into a
 managed packed 32-bit float RGBA Image and switches the node to that reader.
 Use Bake can be disabled at any time without unbinding the Image; changing the
-authoritative Grade or Stack settings returns the node to live output until a
-new bake is published. A managed Image may be selected by multiple nodes, so a
-rebake updates every reader of that Image.
+authoritative Grade or Stack settings or a detected source change revokes the
+bake receipt, returns the node to live output, and disables Use Bake until a
+new bake is published. Nodes retain source tracking while Use Bake is off. A
+managed Image may be selected by multiple nodes, so a rebake updates every
+reader of that Image.
 
 Shader bakes retain the legacy route distinction. A pointwise graph with one
 still Image source uses the Image route and evaluates one output pixel per
-source texel. Linked coordinates, surface-dependent nodes, or multiple source
-Images use the UV route and require a Cycles mesh with one non-overlapping UV
-map. Compositor bakes use native compositor evaluation and retain its output
+source texel. Linked coordinates, surface-dependent nodes, an upstream managed
+UV bake, or multiple source Images use the UV route and require a Cycles mesh
+with one non-overlapping UV map. Compositor bakes use native compositor evaluation and retain its output
 image domain.
+Value-only Shader graphs with no source Image use the Image route and publish a
+1x1 managed Image. Compositor constants retain the compositor canvas dimensions.
+Image-domain Shader bakes follow the active Scene render choice: EEVEE uses a
+private orthographic node-tree render, while Cycles uses the Scene's CPU or GPU
+selection. Workbench and unknown engines use Cycles CPU. UV bakes remain
+Cycles-only but honor the Scene's CPU/GPU choice. A GPU request freezes the
+Cycles compute backend and exact enabled device identities at click time; an
+unavailable selection fails visibly and is never silently changed to CPU.
+The helper does not modify the user's Scene or preferences. EEVEE's limited
+color-pass precision is handled with split signed-HDR AOV readback before the
+float Image is published.
 The Shader Vector input controls only baked sampling. When unlinked, it uses
 the recorded bake UV map (or the active render UV map for Image bakes).
 Grade parameters are evaluated through the native Grade helper-image tree, and
@@ -120,9 +136,45 @@ Simple Deform, Smooth, Warp, Wave, and Weighted Normal. Requests are serialized 
 helper lane and capture a frozen click-time snapshot; an edit, frame change, or
 invalidated source discards the in-flight result rather than publishing stale pixels.
 
+Bake freshness uses small graph/settings digests, cheap Image metadata, and
+per-ID change generations for referenced Images, Meshes, and Objects. The
+metadata includes dimensions, channels, color/alpha modes, packed status and
+size, plus external-file device, inode,
+size, mtime, and ctime facts when available. Source pixels, packed/external
+Image bytes, and `.blend`, `.npy`, or EXR bake payloads are never hashed.
+Accepting a request copies each unique source Image once to freeze its
+click-time state. Request, publication, and render boundaries compare receipts
+and tokens without image-sized hashing. File load and undo rebaseline transient
+generations against the persisted cheap receipt and preserve Use Bake when it
+still matches; a missing or mismatched receipt returns to live output and
+requires rebaking. Earlier receipt versions are not migrated. Toggle
+availability is derived from this same freshness decision and remains greyed
+out after revocation until a new bake publishes.
+
+Grade and Grade Stack receipts identify their sockets by public names, so
+generated socket identifiers can change during live/wrapper/fallback kernel
+recovery without invalidating unchanged settings and connections. Dependency
+tracking invalidates on Image updates, Mesh geometry updates, and Object
+transform updates. It ignores Object geometry-only or shading notifications
+from material/node changes and Mesh shading-only notifications; Mesh data and
+Object metadata are observed separately.
+
+Scripts that modify an Image must call
+`bpy.ops.perceptual_grade.invalidate_image(image=...)` to notify dependent bakes;
+use the operator's `image="Image Name"` argument or the extension's exported
+`invalidate_image(image)` Python function. `image.update()` alone is
+insufficient. Unnotified pixel changes that preserve cheap metadata can be
+missed, including edits made while the add-on is inactive or external-file
+replacements with unchanged recorded metadata.
+
 The Technical Report documents the [bake request policy and native evaluation
 contracts](../perceptual-grade-book/docs/book/src/development/next-policies.md#next-policy.bake),
 including queue bounds, signature fencing, publication admission, and rollback.
+Keep observable behavior changes consistent with that report and its
+[`technical-report-audit.json`](../perceptual-grade-book/technical-report-audit.json)
+evidence inventory. The Next `tests:technical_report_audit` Buck target checks
+chapter coverage, policy references, and evidence paths; reviewers must also
+compare the prose with the implementation. The audit tooling is build-only.
 
 ## Animated Grades
 
@@ -283,13 +335,16 @@ root-level packages in the archive.
 
 The `node_templates` Buck target runs the canonical emitters in pinned Blender
 5.2.4 and produces `kernel/node_templates.blend`, its runtime index
-`kernel/node_templates.json`, and `kernel/grade_stack.glsl`. The library covers
-Shader and Compositor Grade kernels in every supported working space, Stack
-kernels for both 33³ and 65³ LUTs, and the private bake wrappers. Node-owned
-Grades use the same Grade templates with independent parameter banks.
-Authoritative parameter banks, Stack LUT pixels, live kernels, and bake Images
-are bound only after a template is appended. Missing or incompatible assets
-produce a visible error and the existing alpha-preserving magenta output.
+`kernel/node_templates.json`, and `kernel/grade_stack.glsl`. Its 12 groups are
+Shader and Compositor Grade kernels, one Stack topology per tree type, two
+private bake wrappers, and six pending/error fallbacks for the supported
+interfaces. Node-owned Grades use the same Grade templates with independent
+parameter banks. Working-space-dependent Grade conversion rows and Stack basis
+matrices are bound through runtime images alongside Stack LUT pixels and its
+resolution configuration. Stack quality selects 33³ or 65³ runtime LUT/config
+data without changing template topology. Live kernels and bake Images remain
+runtime resources. Missing or incompatible assets produce a visible error and
+the existing alpha-preserving magenta output.
 
 The installed product and installed tests consume those exact generated
 resources. The long graph emitters live under `tools/template_build/` and are

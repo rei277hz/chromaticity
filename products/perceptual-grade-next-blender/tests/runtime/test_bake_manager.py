@@ -12,6 +12,8 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
+import numpy as np
+
 
 class Job:
     def __init__(self, inputs):
@@ -58,6 +60,7 @@ class BakeManagerTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, cls.directory.name)
         cls.module = importlib.import_module("bake_manager_test.runtime.bake_manager")
+        cls.worker = importlib.import_module("bake_manager_test.runtime.bake_worker")
 
     @classmethod
     def tearDownClass(cls):
@@ -84,7 +87,8 @@ class BakeManagerTests(unittest.TestCase):
             root = Path(self.snapshots.name) / str(self.snapshot_serial)
             root.mkdir()
             path = root / "snapshot.blend"
-            path.write_bytes(b"frozen scene")
+            with open(path, "wb") as stream:
+                stream.write(b"frozen scene")
             return root, path, []
 
         patcher = patch.object(self.manager, "_snapshot", side_effect=snapshot)
@@ -139,6 +143,153 @@ class BakeManagerTests(unittest.TestCase):
         self.assertEqual(self.snapshot_serial, 8)
         self.manager.cancel_all()
         self.assertFalse(self.manager.jobs)
+
+    def test_request_does_not_scan_snapshot_or_emit_payload_checksum(self):
+        node = self.node(1)
+        with patch.object(Path, "open", side_effect=AssertionError("payload scan")), \
+                patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
+            entry = self.request(node)
+        self.assertNotIn("snapshot_sha256", entry["inputs"])
+        self.assertTrue(all("sha256" not in record for record in entry["inputs"]["images"]))
+
+    def test_snapshot_copies_source_pixels_without_checksum_scan(self):
+        class Pixels:
+            @staticmethod
+            def foreach_get(values):
+                values.fill(0.25)
+
+        scene = object()
+        image = SimpleNamespace(
+            size=(2, 1), channels=4, pixels=Pixels(),
+            colorspace_settings=SimpleNamespace(name="Non-Color"),
+            alpha_mode="CHANNEL_PACKED",
+        )
+
+        class Libraries:
+            @staticmethod
+            def write(path, _ids, **_kwargs):
+                with open(path, "wb") as stream:
+                    stream.write(b"frozen scene")
+
+        data = SimpleNamespace(
+            scenes=SimpleNamespace(get=lambda _name: scene),
+            materials=SimpleNamespace(get=lambda _name: None),
+            worlds=SimpleNamespace(get=lambda _name: None),
+            objects=SimpleNamespace(get=lambda _name: None),
+            images=SimpleNamespace(get=lambda name: image if name == "Source" else None),
+            libraries=Libraries(),
+        )
+        manager = self.module.BakeManager(SimpleNamespace(data=data), Backend())
+        with patch.object(Path, "open", side_effect=AssertionError("payload scan")), \
+                patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
+            root, snapshot, records = manager._snapshot({
+                "scene": "Scene", "images": ({"image_name": "Source"},),
+            })
+        self.addCleanup(lambda: manager._remove_files(root))
+        self.assertTrue(snapshot.is_file())
+        self.assertEqual(records[0]["name"], "Source")
+        self.assertNotIn("sha256", records[0])
+        self.assertEqual(np.load(records[0]["pixels_path"], allow_pickle=False).shape,
+                         (1, 2, 4))
+
+    def test_worker_opens_snapshot_without_checksum_scan(self):
+        root = Path(self.snapshots.name) / "worker-snapshot"
+        root.mkdir()
+        snapshot = root / "snapshot.blend"
+        with open(snapshot, "wb") as stream:
+            stream.write(b"frozen scene")
+
+        class Wm:
+            @staticmethod
+            def open_mainfile(**_kwargs):
+                return {"FINISHED"}
+
+        bpy = SimpleNamespace(ops=SimpleNamespace(wm=Wm()))
+        with patch.dict(sys.modules, {"bpy": bpy}), \
+                patch.object(self.worker, "_minimal_node_types"), \
+                patch.object(self.worker, "_restore_images") as restore, \
+                patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
+            self.worker._open_snapshot({"snapshot_path": str(snapshot), "images": []})
+        restore.assert_called_once_with([])
+
+    def test_worker_restores_finite_sidecar_without_checksum_scan(self):
+        root = Path(self.snapshots.name) / "worker-images"
+        root.mkdir()
+        payload = root / "pixels.npy"
+        np.save(payload, np.full((1, 2, 4), 0.5, dtype=np.float32), allow_pickle=False)
+
+        class Pixels:
+            def foreach_set(self, _values):
+                pass
+
+        class Images:
+            def __init__(self):
+                self.image = SimpleNamespace(
+                    size=(2, 1), pixels=Pixels(), update=lambda: None,
+                    colorspace_settings=SimpleNamespace(name=""), alpha_mode="",
+                )
+
+            def get(self, _name):
+                return self.image
+
+        bpy = SimpleNamespace(data=SimpleNamespace(images=Images()))
+        record = {"name": "Source", "pixels_path": str(payload)}
+        with patch.dict(sys.modules, {"bpy": bpy}), \
+                patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
+            self.worker._restore_images([record])
+
+        np.save(payload, np.full((1, 2, 4), np.nan, dtype=np.float32), allow_pickle=False)
+        with patch.dict(sys.modules, {"bpy": bpy}), \
+                self.assertRaisesRegex(ValueError, "nonfinite"):
+            self.worker._restore_images([record])
+
+    def test_worker_result_does_not_hash_output_artifact(self):
+        root = Path(self.snapshots.name) / "worker-result"
+        root.mkdir()
+
+        class Image:
+            def __init__(self):
+                self.pixels = SimpleNamespace(foreach_set=lambda _values: None)
+
+            def update(self):
+                pass
+
+            def save_render(self, path, **_kwargs):
+                with open(path, "wb") as stream:
+                    stream.write(b"EXR data")
+
+        scene = object()
+        bpy = SimpleNamespace(data=SimpleNamespace(
+            scenes=SimpleNamespace(get=lambda _name: scene),
+            images=SimpleNamespace(remove=lambda _image: None),
+        ))
+        image = Image()
+        with patch.dict(sys.modules, {"bpy": bpy}), \
+                patch.object(self.worker, "_new_image", return_value=image), \
+                patch.object(self.worker, "_configure_linear"), \
+                patch.object(Path, "open", side_effect=AssertionError("payload scan")), \
+                patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
+            result = self.worker._result(
+                np.ones((1, 2, 4), dtype=np.float32),
+                {"artifact_dir": str(root), "generation": 1, "signature": "sig"},
+                {"scene": "Scene", "signature": "sig"}, {"domain": "IMAGE"},
+                backend="SHADER",
+            )
+        self.assertTrue(Path(result["path"]).is_file())
+        self.assertNotIn("sha256", result)
+
+    def test_mismatched_helper_signature_or_generation_never_publishes(self):
+        for number, field, value in ((1, "signature", "other"), (2, "generation", -1)):
+            with self.subTest(field=field):
+                self.events.clear()
+                entry = self.request(self.node(number))
+                self.manager.poll()
+                result = {"signature": entry["signature"], "generation": entry["generation"]}
+                result[field] = value
+                self.complete(result=result)
+                self.assertEqual(self.events, ["failure"])
+                self.assertFalse(self.manager.jobs)
+                self.assertFalse(entry["root"].exists())
 
     def test_native_requests_are_serialized_until_the_previous_job_retires(self):
         self.request(self.node(1))

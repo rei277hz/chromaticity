@@ -47,6 +47,20 @@ class Output:
     mode: Literal["live", "baked", "error"]
     use_bake: bool
     error: Optional[str] = None
+    revoke_receipt: bool = False
+
+
+@dataclass(frozen=True)
+class BindingEffects:
+    receipt_signature: Optional[str] = None
+
+
+def binding_policy(current_signature: Optional[str], artifact_valid: bool,
+                   domains_match: bool) -> BindingEffects:
+    """An explicit managed Image selection establishes this reader's baseline."""
+    if artifact_valid and domains_match and current_signature is not None:
+        return BindingEffects(current_signature)
+    return BindingEffects()
 
 
 def new() -> State:
@@ -182,19 +196,32 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
     return state, Effects()
 
 
+def bake_toggle_available(desired_signature: Optional[str],
+                          artifact_signature: Optional[str],
+                          artifact_valid: bool,
+                          live_error: Optional[str] = None) -> bool:
+    """Availability is independent of the user's persisted switch value."""
+    return (live_error is None and artifact_valid
+            and desired_signature is not None and artifact_signature is not None
+            and desired_signature == artifact_signature)
+
+
 def output_policy(use_bake: bool, desired_signature: Optional[str],
                   artifact_signature: Optional[str], artifact_valid: bool,
-                  live_error: Optional[str] = None) -> Output:
+                  live_error: Optional[str] = None,
+                  source_invalidated: bool = False) -> Output:
     """Select a node's current output while preserving image binding on bypass."""
+    stale = (artifact_signature is not None
+             and (source_invalidated or (desired_signature is not None
+                                        and desired_signature != artifact_signature)))
     if live_error is not None:
-        return Output("error", False, live_error)
+        return Output("error", False, live_error, stale)
     if not use_bake:
-        return Output("live", False)
+        return Output("live", False, revoke_receipt=stale)
     if not artifact_valid:
-        return Output("error", False, "Bound bake Image is unavailable or invalid")
-    if (desired_signature is None or artifact_signature is None
-            or desired_signature != artifact_signature):
-        return Output("live", False)
+        return Output("error", False, "Bound bake Image is unavailable or invalid", stale)
+    if not bake_toggle_available(desired_signature, artifact_signature, artifact_valid):
+        return Output("live", False, revoke_receipt=stale)
     return Output("baked", True)
 
 

@@ -16,7 +16,7 @@ from .prepare import PreparedGrade
 from .tables import TEXTURE_WIDTH
 
 
-PARAMETER_SCHEMA = 1
+PARAMETER_SCHEMA = 2
 PARAMETER_SHAPE = (1, TEXTURE_WIDTH, 4)
 PARAMETER_CONTENT_SIGNATURE = "_perceptual_grade_parameter_content_signature"
 TONE_JET_COUNT = TONE_CELLS + 1
@@ -25,6 +25,10 @@ MATRIX_BLUE_SLOT = MATRIX_RED_SLOT + 1
 MATRIX_NEUTRAL_SLOT = MATRIX_BLUE_SLOT + 1
 TONE_SCALARS_SLOT = MATRIX_NEUTRAL_SLOT + 1
 TONE_DOMAIN_SLOT = TONE_SCALARS_SLOT + 1
+OUTPUT_MATRIX_ROW_0_SLOT = TONE_DOMAIN_SLOT + 1
+OUTPUT_MATRIX_ROW_SLOTS = tuple(range(OUTPUT_MATRIX_ROW_0_SLOT,
+                                       OUTPUT_MATRIX_ROW_0_SLOT + 3))
+LAST_PARAMETER_SLOT = OUTPUT_MATRIX_ROW_SLOTS[-1]
 
 
 @dataclass(frozen=True)
@@ -52,8 +56,10 @@ class PreparedParameters:
                 or data[0, TONE_DOMAIN_SLOT, 0] <= 0):
             raise ValueError("Stage 2 Tone parameters are outside their valid domain")
         if (np.any(data[0, TONE_DOMAIN_SLOT, 1:3] != 0.)
-                or np.any(data[0, TONE_DOMAIN_SLOT + 1:, :3] != 0.)):
+                or np.any(data[0, LAST_PARAMETER_SLOT + 1:, :3] != 0.)):
             raise ValueError("Stage 2 parameter reserved channels must be zero")
+        if not np.all(data[0, OUTPUT_MATRIX_ROW_SLOTS, 3] == 1.):
+            raise ValueError("Stage 2 output matrix alpha lane must be one")
         # An ndarray with writeable=False can otherwise be made writable again
         # when it owns its allocation. Immutable bytes also isolate the caller.
         owned = np.frombuffer(data.tobytes(), dtype=np.float32).reshape(PARAMETER_SHAPE)
@@ -103,6 +109,13 @@ def prepare_parameters(prepared: PreparedGrade) -> PreparedParameters:
     matrix = np.asarray(prepared.linear_to_cones)
     if matrix.shape != (3, 3) or not np.isfinite(matrix).all():
         raise ValueError("Stage 2 parameters require a finite 3 by 3 cone matrix")
+    boundary = prepared.boundary
+    if boundary is None:
+        from .boundary import prepare_boundary
+        boundary = prepare_boundary(prepared.fl, prepared.aw, prepared.gamma)
+    output_matrix = np.asarray(prepared.from_cones) @ np.asarray(boundary.inverse)
+    if output_matrix.shape != (3, 3) or not np.isfinite(output_matrix).all():
+        raise ValueError("Stage 2 parameters require a finite output conversion matrix")
 
     pixels = np.zeros(PARAMETER_SHAPE, dtype=np.float32)
     pixels[..., 3] = 1.
@@ -118,6 +131,7 @@ def prepare_parameters(prepared: PreparedGrade) -> PreparedParameters:
             tone = prepared.tone
             pixels[0, TONE_SCALARS_SLOT] = tone.black, tone.span, tone.slope, tone.high
             pixels[0, TONE_DOMAIN_SLOT, 0] = table.domain
+            pixels[0, OUTPUT_MATRIX_ROW_SLOTS, :3] = output_matrix
     except (FloatingPointError, OverflowError) as error:
         raise ValueError("Stage 2 parameters are not representable as float32") from error
     return PreparedParameters(pixels)

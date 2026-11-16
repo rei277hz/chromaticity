@@ -3,6 +3,7 @@
 import importlib
 from importlib.resources import files
 from itertools import count
+import json
 import os
 from pathlib import Path
 import sys
@@ -123,6 +124,7 @@ class BakeRouteTests(unittest.TestCase):
         self.material = ID("Material", node_tree=self.tree)
         self.scene = ID("Scene", frame_current=7, frame_subframe=.25, world=None,
                         compositing_node_group=None, objects=Collection(),
+                        cycles=SimpleNamespace(device="CPU"),
                         render=SimpleNamespace(engine="CYCLES", resolution_x=100,
                                                resolution_y=80, resolution_percentage=50))
         self.context = SimpleNamespace(scene=self.scene, object=None,
@@ -182,10 +184,101 @@ class BakeRouteTests(unittest.TestCase):
     def test_constant_image_route_is_one_pixel_and_value_only(self):
         route = self.module.describe(self.grade, self.context)
         self.assertEqual((route["domain"], route["width"], route["height"]), ("IMAGE", 1, 1))
+        self.assertEqual(route["shader_backend"], "CYCLES_CPU")
         self.assertEqual((route["frame"], route["subframe"]), (7, .25))
         self.assertEqual(len(route["signature"]), 64)
         self.assertIsNone(route["object_name"])
         self.assertEqual(self.module.describe(self.grade, route)["signature"], route["signature"])
+
+    def test_shader_backend_follows_engine_and_cycles_device_with_cpu_fallback(self):
+        cases = (
+            ("CYCLES", "CPU", "CYCLES_CPU"),
+            ("CYCLES", "GPU", "CYCLES_GPU"),
+            ("BLENDER_EEVEE", "CPU", "EEVEE"),
+            ("BLENDER_EEVEE_NEXT", "GPU", "EEVEE"),
+            ("BLENDER_WORKBENCH", "GPU", "CYCLES_CPU"),
+            ("UNKNOWN_RENDER_ENGINE", "GPU", "CYCLES_CPU"),
+        )
+        for engine, device, expected in cases:
+            with self.subTest(engine=engine, device=device):
+                self.scene.render.engine = engine
+                self.scene.cycles.device = device
+                route = self.module.describe(self.grade, self.context)
+                self.assertEqual(route["shader_backend"], expected)
+                self.assertEqual(route["render_engine"], engine)
+                self.assertEqual(route["cycles_device"],
+                                 None if expected == "EEVEE" else
+                                 "GPU" if expected == "CYCLES_GPU" else "CPU")
+
+    def test_cycles_device_and_enabled_gpu_set_are_part_of_bake_identity(self):
+        texture = self.texture()
+        link(texture, "Color", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)
+        self.scene.cycles.device = "GPU"
+        self.context.preferences = SimpleNamespace(addons={
+            "cycles": SimpleNamespace(preferences=SimpleNamespace(
+                compute_device_type="METAL",
+                devices=[
+                    SimpleNamespace(id="gpu-2", name="GPU 2", type="METAL", use=True),
+                    SimpleNamespace(id="gpu-1", name="GPU 1", type="METAL", use=True),
+                    SimpleNamespace(id="cpu", name="CPU", type="CPU", use=False),
+                ],
+            )),
+        })
+        gpu = self.module.describe(self.grade, self.context)
+        self.assertEqual(gpu["shader_backend"], "CYCLES_GPU")
+        self.assertEqual(gpu["cycles_gpu"]["compute_device_type"], "METAL")
+        self.assertEqual(tuple(item["id"] for item in gpu["cycles_gpu"]["devices"]),
+                         ("gpu-1", "gpu-2"))
+        self.assertNotEqual(first["signature"], gpu["signature"])
+        self.assertNotEqual(first["receipt_signature"], gpu["receipt_signature"])
+        self.context.preferences.addons["cycles"].preferences.devices[0].use = False
+        changed = self.module.describe(self.grade, self.context)
+        self.assertNotEqual(gpu["signature"], changed["signature"])
+
+    def test_only_bake_request_refreshes_enabled_gpu_devices(self):
+        self.scene.cycles.device = "GPU"
+        discoveries = []
+        preferences = SimpleNamespace(
+            compute_device_type="METAL",
+            devices=[SimpleNamespace(id="gpu", name="GPU", type="METAL", use=True)],
+            get_devices=lambda: discoveries.append("refreshed"),
+        )
+        self.context.preferences = SimpleNamespace(addons={
+            "cycles": SimpleNamespace(preferences=preferences),
+        })
+        preview = self.module.preview(self.grade, self.context)
+        self.assertEqual(preview["cycles_gpu"]["devices"][0]["id"], "gpu")
+        self.assertEqual(discoveries, [])
+        route = self.module.describe(self.grade, self.context)
+        self.assertEqual(route["cycles_gpu"]["devices"][0]["id"], "gpu")
+        self.assertEqual(discoveries, ["refreshed"])
+
+    def test_uv_backend_honors_cycles_device(self):
+        self.mapped_texture()
+        self.mesh()
+        self.scene.cycles.device = "GPU"
+        route = self.module.describe(self.grade, self.context)
+        self.assertEqual((route["domain"], route["shader_backend"]),
+                         ("UV", "CYCLES_GPU"))
+
+    def test_engine_and_gpu_compute_backend_changes_invalidate_bake_identity(self):
+        first = self.module.describe(self.grade, self.context)
+        self.scene.render.engine = "BLENDER_EEVEE"
+        eevee = self.module.describe(self.grade, self.context)
+        for key in ("signature", "receipt_signature", "observation_signature"):
+            self.assertNotEqual(first[key], eevee[key])
+        self.scene.render.engine = "CYCLES"
+        self.scene.cycles.device = "GPU"
+        preferences = SimpleNamespace(compute_device_type="CUDA", devices=[])
+        self.context.preferences = SimpleNamespace(addons={
+            "cycles": SimpleNamespace(preferences=preferences),
+        })
+        cuda = self.module.describe(self.grade, self.context)
+        preferences.compute_device_type = "OPTIX"
+        optix = self.module.describe(self.grade, self.context)
+        for key in ("signature", "receipt_signature", "observation_signature"):
+            self.assertNotEqual(cuda[key], optix[key])
 
     def test_per_node_grade_is_not_a_bake_target(self):
         self.grade.bl_idname = "PGShaderGradePerNode"
@@ -199,6 +292,16 @@ class BakeRouteTests(unittest.TestCase):
         self.grade.pg_stack_entries[0].grade.pg_tone.fit = .5
         self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
 
+    def test_grade_interface_receipt_uses_public_socket_names(self):
+        texture = self.texture()
+        link(texture, "Color", self.grade, "Color")
+        link(texture, "Alpha", self.grade, "Alpha")
+        first = self.module.describe(self.grade, self.context)["receipt_signature"]
+        self.grade.inputs.get("Color").identifier = "Socket_7"
+        self.grade.inputs.get("Alpha").identifier = "Socket_9"
+        second = self.module.describe(self.grade, self.context)["receipt_signature"]
+        self.assertEqual(first, second)
+
     def test_still_image_route_uses_full_native_dimensions(self):
         texture = self.texture()
         mix = Node(self.tree, "ShaderNodeMath", inputs=(("Value", .2),), outputs=(("Value", None),))
@@ -207,7 +310,7 @@ class BakeRouteTests(unittest.TestCase):
         route = self.module.describe(self.grade, self.context)
         self.assertEqual((route["domain"], route["width"], route["height"]), ("IMAGE", 3, 2))
         self.assertEqual(route["images"][0]["image_name"], texture.image.name)
-        self.assertEqual(texture.image.pixels.reads, 1)
+        self.assertEqual(texture.image.pixels.reads, 0)
 
     def test_explicit_uv_link_selects_uv_and_saved_context_keeps_the_object(self):
         self.mapped_texture()
@@ -231,6 +334,113 @@ class BakeRouteTests(unittest.TestCase):
         route = self.module.describe(self.grade, self.context)
         self.assertEqual(route["domain"], "UV")
         self.assertIn("multiple_images", route["reasons"])
+
+    def test_image_metadata_is_read_once_and_dependencies_are_deduplicated(self):
+        first = self.texture(name="First")
+        second = self.texture(name="Second", image=first.image)
+        mix = Node(self.tree, "ShaderNodeMixRGB", inputs=(("A", None), ("B", None)),
+                   outputs=(("Color", None),))
+        link(first, "Color", mix, "A")
+        link(second, "Color", mix, "B")
+        link(mix, "Color", self.grade, "Color")
+        link(first, "Alpha", self.grade, "Alpha")
+        obj = self.mesh()
+        dependencies = []
+        with patch.object(self.module, "_image_state", wraps=self.module._image_state) as image_state:
+            route = self.module.describe(self.grade, self.context, dependencies=dependencies)
+        self.assertEqual(image_state.call_count, 1)
+        self.assertEqual([item.session_uid for item in dependencies],
+                         [first.image.session_uid, obj.session_uid, obj.data.session_uid])
+        json.dumps(route)
+        self.assertEqual(first.image.pixels.reads, 0)
+
+    def test_preview_and_observe_collect_live_dependencies_outside_value_only_route(self):
+        texture = self.texture()
+        link(texture, "Color", self.grade, "Color")
+        for operation in (self.module.preview, self.module.observe):
+            with self.subTest(operation=operation.__name__):
+                dependencies = [texture.image]
+                route = operation(self.grade, self.context, dependencies=dependencies)
+                self.assertEqual(len(dependencies), 1)
+                self.assertIs(dependencies[0], texture.image)
+                json.dumps(route)
+
+    def test_receipt_is_stable_across_full_and_passive_routes_and_dirty_restore(self):
+        texture = self.mapped_texture()
+        self.mesh()
+        request = self.module.describe(self.grade, self.context)
+        with patch.object(self.module, "_geometry_state",
+                          side_effect=AssertionError("Full geometry work")):
+            passive = self.module.preview(self.grade, self.context)
+            texture.image.is_dirty = False
+            restored = self.module.observe(self.grade, self.context)["route"]
+        self.assertEqual(request["receipt_signature"], passive["receipt_signature"])
+        self.assertEqual(request["receipt_signature"], restored["receipt_signature"])
+        self.assertNotEqual(request["observation_signature"], restored["observation_signature"])
+
+    def test_image_metadata_changes_both_request_and_passive_identity(self):
+        texture = self.texture()
+        link(texture, "Color", self.grade, "Color")
+        changes = (
+            (texture.image, "size", (4, 2)),
+            (texture.image, "channels", 3),
+            (texture.image, "is_float", False),
+            (texture.image, "alpha_mode", "PREMUL"),
+            (texture.image.colorspace_settings, "name", "sRGB"),
+            (texture.image, "packed_file", SimpleNamespace(size=5)),
+        )
+        for owner, field, value in changes:
+            with self.subTest(field=field):
+                first = self.module.describe(self.grade, self.context)
+                previous = getattr(owner, field)
+                setattr(owner, field, value)
+                second = self.module.describe(self.grade, self.context)
+                self.assertNotEqual(first["signature"], second["signature"])
+                self.assertNotEqual(first["receipt_signature"], second["receipt_signature"])
+                self.assertNotEqual(first["observation_signature"], second["observation_signature"])
+                self.assertEqual(second["observation_signature"],
+                                 self.module.observe(self.grade, self.context)["signature"])
+                setattr(owner, field, previous)
+
+    def test_packed_payload_is_never_accessed_and_dirty_state_is_not_durable(self):
+        class Packed:
+            size = 13
+
+            @property
+            def data(self):
+                raise AssertionError("Packed Image contents were read")
+
+        texture = self.texture()
+        texture.image.source = "FILE"
+        texture.image.packed_file = Packed()
+        link(texture, "Color", self.grade, "Color")
+        with patch.object(texture.image.pixels, "foreach_get",
+                          side_effect=AssertionError("Image pixels were read")):
+            first = self.module.describe(self.grade, self.context)
+            texture.image.is_dirty = False
+            second = self.module.describe(self.grade, self.context)
+            self.module.preview(self.grade, self.context)
+        self.assertEqual(first["signature"], second["signature"])
+        self.assertEqual(first["receipt_signature"], second["receipt_signature"])
+        self.assertNotEqual(first["observation_signature"], second["observation_signature"])
+
+    def test_save_as_path_remapping_keeps_canonical_image_identity(self):
+        texture = self.texture()
+        texture.image.source = "FILE"
+        texture.image.filepath = "//assets/source.exr"
+        texture.image.library = SimpleNamespace(filepath="//assets/library.blend")
+        texture.image.packed_file = SimpleNamespace(size=13)
+        texture.bl_rna.properties = (SimpleNamespace(
+            identifier="image", is_readonly=False, type="POINTER"),)
+        self.host.path.abspath = lambda path, library=None: str(Path("/tmp/bake-project") / path[2:]) if path.startswith("//") else path
+        link(texture, "Color", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)
+        texture.image.filepath = "/tmp/bake-project/assets/source.exr"
+        texture.image.library.filepath = "/tmp/bake-project/assets/library.blend"
+        second = self.module.describe(self.grade, self.context)
+        self.assertEqual(first["signature"], second["signature"])
+        self.assertEqual(first["receipt_signature"], second["receipt_signature"])
+        self.assertEqual(first["observation_signature"], second["observation_signature"])
 
     def test_uv_binding_is_sticky_and_image_binding_rejects_uv_transition(self):
         self.mesh()
@@ -322,7 +532,9 @@ class BakeRouteTests(unittest.TestCase):
             identifier="object", is_readonly=False, type="POINTER"),)
         link(coordinate, "Object", texture, "Vector")
         link(texture, "Color", self.grade, "Color")
-        first = self.module.describe(self.grade, self.context)["signature"]
+        dependencies = []
+        first = self.module.describe(self.grade, self.context, dependencies=dependencies)["signature"]
+        self.assertIn(reference.session_uid, [item.session_uid for item in dependencies])
         reference.matrix_world = ((1., 0., 0., 2.), (0., 1., 0., 0.),
                                   (0., 0., 1., 0.), (0., 0., 0., 1.))
         self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
@@ -359,7 +571,7 @@ class BakeRouteTests(unittest.TestCase):
         texture.image.session_uid += 10000
         self.assertEqual(first, self.module.describe(self.grade, self.context)["signature"])
 
-    def test_packed_pixel_digest_detects_same_size_replacement(self):
+    def test_packed_metadata_changes_identity_without_reading_contents(self):
         texture = self.texture()
         texture.image.source = "FILE"
         texture.image.is_dirty = False
@@ -368,7 +580,10 @@ class BakeRouteTests(unittest.TestCase):
         link(texture, "Color", self.grade, "Color")
         first = self.module.describe(self.grade, self.context)["signature"]
         texture.image.packed_file.data = b"other pixels"
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        texture.image.packed_file.size = 13
         self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertEqual(texture.image.pixels.reads, 0)
 
     def test_destination_image_cannot_be_an_effective_source(self):
         texture = self.texture()
@@ -381,36 +596,40 @@ class BakeRouteTests(unittest.TestCase):
         texture = self.texture()
         link(texture, "Color", self.grade, "Color")
         route = self.module.describe(self.grade, self.context)
-        reads = texture.image.pixels.reads
-        with patch.object(self.module, "_hash_file", side_effect=AssertionError("File I/O")):
+        with patch.object(Path, "open", side_effect=AssertionError("File content read")):
             passive = self.module.observe(self.grade, self.context)
         self.assertEqual(route["observation_signature"], passive["signature"])
-        self.assertEqual(texture.image.pixels.reads, reads)
+        self.assertEqual(texture.image.pixels.reads, 0)
 
-    def test_clean_file_fingerprint_includes_effective_loaded_pixels(self):
+    def test_silent_pixel_edits_require_caller_invalidation(self):
         texture = self.texture()
         texture.image.source = "FILE"
         texture.image.is_dirty = False
         texture.image.filepath = "/tmp/still-source.exr"
         link(texture, "Color", self.grade, "Color")
-        with patch.object(self.module, "_hash_file", return_value="unchanged-file"), \
-                patch.object(self.module, "_sidecars", return_value=()):
+        with patch.object(Path, "open", side_effect=AssertionError("File content read")):
             first = self.module.describe(self.grade, self.context)["signature"]
             texture.image.pixels.values[0] = .7
-            self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
+            self.assertEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertEqual(texture.image.pixels.reads, 0)
 
-    def test_clean_file_fingerprint_includes_sidecar_contents(self):
+    def test_file_and_sidecar_contents_are_not_opened_by_any_route_scan(self):
         texture = self.texture()
         texture.image.source = "FILE"
         texture.image.is_dirty = False
-        texture.image.filepath = "/tmp/still-source.exr"
         link(texture, "Color", self.grade, "Color")
-        with patch.object(self.module, "_sidecars", return_value=(Path("/tmp/still-source.exr.sidecar"),)):
-            with patch.object(self.module, "_hash_file", side_effect=("image", "sidecar-one")):
-                first = self.module.describe(self.grade, self.context)["signature"]
-            with patch.object(self.module, "_hash_file", side_effect=("image", "sidecar-two")):
-                second = self.module.describe(self.grade, self.context)["signature"]
-        self.assertNotEqual(first, second)
+        with tempfile.TemporaryDirectory(prefix="bake-file-observation-") as directory:
+            path = Path(directory) / "source.exr"
+            path.write_bytes(b"image contents")
+            Path(str(path) + ".sidecar").write_bytes(b"color profile")
+            texture.image.filepath = str(path)
+            with patch.object(Path, "open", side_effect=AssertionError("File content read")):
+                request = self.module.describe(self.grade, self.context)
+                preview = self.module.preview(self.grade, self.context)
+                observed = self.module.observe(self.grade, self.context)
+            self.assertEqual(request["observation_signature"], preview["observation_signature"])
+            self.assertEqual(request["observation_signature"], observed["signature"])
+        self.assertEqual(texture.image.pixels.reads, 0)
 
     def test_passive_file_observation_detects_source_and_sidecar_changes_without_content_reads(self):
         texture = self.texture()
@@ -422,26 +641,25 @@ class BakeRouteTests(unittest.TestCase):
             path.write_bytes(b"pixels")
             texture.image.filepath = str(path)
             sidecar = Path(str(path) + ".sidecar")
-            with patch.object(self.module, "_hash_file", side_effect=AssertionError("Content read")):
-                first = self.module.observe(self.grade, self.context)["signature"]
-                path.write_bytes(b"changed pixels")
-                changed = self.module.observe(self.grade, self.context)["signature"]
-                self.assertNotEqual(first, changed)
-                sidecar.write_bytes(b"color profile")
-                created = self.module.observe(self.grade, self.context)["signature"]
-                self.assertNotEqual(changed, created)
-                sidecar.write_bytes(b"updated color profile")
-                updated = self.module.observe(self.grade, self.context)["signature"]
-                self.assertNotEqual(created, updated)
-                sidecar.unlink()
-                removed = self.module.observe(self.grade, self.context)["signature"]
-                self.assertNotEqual(updated, removed)
-                path.unlink()
-                missing = self.module.observe(self.grade, self.context)["signature"]
-                self.assertNotEqual(removed, missing)
+            first = self.module.observe(self.grade, self.context)["signature"]
+            path.write_bytes(b"changed pixels")
+            changed = self.module.observe(self.grade, self.context)["signature"]
+            self.assertNotEqual(first, changed)
+            sidecar.write_bytes(b"color profile")
+            created = self.module.observe(self.grade, self.context)["signature"]
+            self.assertNotEqual(changed, created)
+            sidecar.write_bytes(b"updated color profile")
+            updated = self.module.observe(self.grade, self.context)["signature"]
+            self.assertNotEqual(created, updated)
+            sidecar.unlink()
+            removed = self.module.observe(self.grade, self.context)["signature"]
+            self.assertNotEqual(updated, removed)
+            path.unlink()
+            missing = self.module.observe(self.grade, self.context)["signature"]
+            self.assertNotEqual(removed, missing)
             self.assertEqual(texture.image.pixels.reads, 0)
 
-    def test_file_timestamps_affect_observation_but_not_exact_content_signature(self):
+    def test_file_timestamps_conservatively_change_request_and_observation(self):
         texture = self.texture()
         texture.image.source = "FILE"
         texture.image.is_dirty = False
@@ -455,17 +673,38 @@ class BakeRouteTests(unittest.TestCase):
             os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1000000000))
             second = self.module.describe(self.grade, self.context)
             passive = self.module.observe(self.grade, self.context)
-            self.assertEqual(first["signature"], second["signature"])
+            self.assertNotEqual(first["signature"], second["signature"])
+            self.assertNotEqual(first["receipt_signature"], second["receipt_signature"])
             self.assertNotEqual(first["observation_signature"], second["observation_signature"])
             self.assertEqual(second["observation_signature"], passive["signature"])
 
-    def test_dirty_pixels_and_native_defaults_change_identity(self):
+    def test_file_identity_and_change_timestamps_are_conservative_evidence(self):
+        texture = self.texture()
+        texture.image.source = "FILE"
+        texture.image.filepath = "/tmp/stat-source.exr"
+        link(texture, "Color", self.grade, "Color")
+        fields = dict(st_dev=1, st_ino=2, st_size=3, st_mtime_ns=4, st_ctime_ns=5)
+        with patch.object(Path, "stat", return_value=SimpleNamespace(**fields)):
+            first = self.module.describe(self.grade, self.context)
+        for field in fields:
+            with self.subTest(field=field):
+                changed = dict(fields)
+                changed[field] += 1
+                with patch.object(Path, "stat", return_value=SimpleNamespace(**changed)):
+                    second = self.module.describe(self.grade, self.context)
+                    passive = self.module.preview(self.grade, self.context)
+                self.assertNotEqual(first["signature"], second["signature"])
+                self.assertNotEqual(first["receipt_signature"], second["receipt_signature"])
+                self.assertEqual(second["receipt_signature"], passive["receipt_signature"])
+
+    def test_dirty_state_is_transient_but_native_defaults_change_identity(self):
         texture = self.texture()
         link(texture, "Color", self.grade, "Color")
         first = self.module.describe(self.grade, self.context)["signature"]
         texture.image.pixels.values[0] = .8
+        texture.image.is_dirty = False
         second = self.module.describe(self.grade, self.context)["signature"]
-        self.assertNotEqual(first, second)
+        self.assertEqual(first, second)
         self.grade.inputs.get("Alpha").default_value = .4
         self.assertNotEqual(second, self.module.describe(self.grade, self.context)["signature"])
 
@@ -481,6 +720,23 @@ class BakeRouteTests(unittest.TestCase):
         self.assertFalse(first["upstream"])
         upstream.pg_bake_image["_pg_next_bake_operation"] = "rebake"
         self.assertNotEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
+
+    def test_upstream_uv_bake_forces_surface_route_and_cycles(self):
+        self.mesh()
+        upstream = self.make_grade(self.tree, name="UV baked upstream")
+        upstream.pg_use_bake = True
+        upstream.pg_bake_image = Image("Stored UV bake")
+        upstream.pg_bake_image[self.module.BAKE_DOMAIN] = "UV"
+        link(upstream, "Color", self.grade, "Color")
+
+        self.scene.render.engine = "BLENDER_EEVEE"
+        self.blocked("cycles")
+
+        self.scene.render.engine = "CYCLES"
+        route = self.module.describe(self.grade, self.context)
+        self.assertEqual(route["domain"], "UV")
+        self.assertIn("upstream_uv_bake", route["reasons"])
+        self.assertEqual(route["shader_backend"], "CYCLES_CPU")
 
     def test_target_baked_vector_does_not_change_live_bake_identity(self):
         first = self.module.describe(self.grade, self.context)["signature"]

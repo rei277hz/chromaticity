@@ -2,17 +2,48 @@ shape: sequence_diagram
 
 manager: "Bake manager"
 policy: "Bake policy"
+freshness: "Bake freshness policy"
 helper: "Native Blender helper"
 host: "Publication gate + Blender"
 
-manager -> host: "require current kernels;\nfreeze scene and image pixels"
+opt file load or undo: {
+  host -> manager: "restore binding, Use Bake,\nand cheap persisted receipt"
+  manager -> freshness: "compare graph/settings and Image metadata;\nrebaseline transient per-ID generations"
+  alt persisted receipt: {
+    matching: "stable facts match" {
+      freshness -> manager: "preserve receipt and Use Bake"
+      manager -> host: "reconcile the restored selection"
+    }
+    changed: "missing or mismatched" {
+      freshness -> manager: "revoke receipt; select live;\ndisable Use Bake until rebake"
+      manager -> host: "apply revocation effects"
+    }
+  }
+}
+manager -> host: "require current kernels; resolve domain/backend;\nfreeze scene, sources, and enabled Cycles GPU devices"
+manager -> freshness: "capture cheap metadata, per-ID generations,\ngraph/settings, engine, and device selection"
+freshness -> manager: "current request receipt"
 manager -> policy: "request(signature, generation, admitted)"
 policy -> manager: "enqueue; reserve this node"
 manager -> policy: "start when the helper slot is free"
 policy -> manager: "start"
 manager -> helper: "submit immutable snapshot"
-helper -> helper: "evaluate native Grade\nor Stack LUT trees"
+alt shader evaluator: {
+  eevee_image: "EEVEE Image route" {
+    helper -> helper: "render a private orthographic plane;\nreconstruct signed-HDR values from AOVs"
+  }
+  cycles_shader: "Cycles Image or UV route" {
+    helper -> helper: "evaluate native Grade or Stack LUT\non the selected CPU/GPU device"
+  }
+  compositor: "Compositor route" {
+    helper -> helper: "evaluate native compositor tree\nwith its existing output route"
+  }
+}
 opt source changes or cancellation: {
+  host -> manager: "notified Image edit / explicit invalidate_image;\nsource or settings observation changes"
+  manager -> freshness: "advance affected per-ID generation;\ncompare every bound node, including Use Bake off"
+  freshness -> manager: "revoke receipt; select live;\ndisable Use Bake until rebake"
+  manager -> host: "apply revocation effects"
   manager -> policy: "invalidate or close"
   policy -> manager: "cancel; retain running ownership"
   manager -> helper: "request cancellation"
@@ -31,13 +62,17 @@ alt completion: {
       host -> manager: "defer; retry on a later poll"
     }
     manager -> host: "enter admitted commit scope"
+    manager -> freshness: "check current cheap metadata,\ngenerations, and graph/settings digest"
+    freshness -> manager: "current receipt or revocation effects"
     manager -> policy: "publish(admitted, current signature)"
     policy -> manager: "publish"
-    manager -> host: "snapshot destination;\nupload, pack, commit metadata"
+    manager -> host: "snapshot destination; upload, pack;\ncommit Image metadata and receipt"
     host -> manager: "publication receipt"
     manager -> policy: "published(receipt, current signature)"
     opt publication succeeded and remains current: {
       policy -> manager: "activate"
+      manager -> freshness: "install completed receipt"
+      freshness -> manager: "enable Use Bake; reconcile readers"
       manager -> host: "select baked output;\nsynchronize shared readers"
       host -> manager: "activation receipt"
       manager -> policy: "activated(receipt, current signature)"
@@ -51,6 +86,14 @@ alt completion: {
     }
     manager -> manager: "retire files and reservation\nafter the terminal effect"
     manager -> host: "leave the same commit scope"
+  }
+}
+loop after publication, including Use Bake off: {
+  host -> manager: "observe source metadata and notified changes"
+  manager -> freshness: "compare receipt and Image generations"
+  opt source or settings changed: {
+    freshness -> manager: "revoke receipt; select live;\ndisable Use Bake until rebake"
+    manager -> host: "apply revocation effects to all affected readers"
   }
 }
 

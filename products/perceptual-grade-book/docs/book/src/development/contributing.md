@@ -13,7 +13,12 @@ Development takes place in
 code, documentation, and translation changes. Work from that repository's
 current source and build instructions.
 
-The handbook is maintained for the latest Perceptual Grade. [Understanding the model](../theory/structure.md) and the current-reference sections of [Full forward and inverse math](forward-inverse-math.md) follow `libraries/perceptual-grade-reference`; [Next Blender policy machines](next-policies.md) follows the current Next product. Usage, host captures, and much of the runtime/build guidance still describe the 1.23.2 products and their original source layout. Keep those version labels until the corresponding sections are updated. Current book authoring instructions are in [Documentation and media](documentation.md) and the [book product README](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/README.md).
+The handbook is maintained for the latest Perceptual Grade. [Understanding the model](../theory/structure.md) and the current-reference sections of [Full forward and inverse math](forward-inverse-math.md) follow `libraries/perceptual-grade-reference`; [Next Blender policy machines](next-policies.md) follows the current Next product. Next source, requirements, and tests are authoritative for implemented Blender behavior, and observable changes must update the matching report section and evidence. Usage, host captures, and much of the runtime/build guidance still describe the 1.23.2 products and their original source layout. Keep those version labels until the corresponding sections are replaced. The intended end state removes all 1.23.2 narrative, bilingual workflow, downloads, media, measurements, legacy generators, manifests, and preservation checks; the current archive remains only until that coordinated migration is complete. Current book authoring instructions are in [Documentation and media](documentation.md) and the [book product README](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/README.md).
+
+Maintain the book's `technical-report-audit.json` alongside chapter, policy, or
+evidence changes. The Next `technical_report_audit` target checks scope coverage
+and source references; review the corresponding runtime and tests to establish
+that the report's claims are accurate.
 
 You can improve Perceptual Grade through its grading model, host integration, translations, teaching material or reproducible measurements. Start with the part you want to change and read the corresponding section below. You do not need to work on every layer to make a useful contribution.
 

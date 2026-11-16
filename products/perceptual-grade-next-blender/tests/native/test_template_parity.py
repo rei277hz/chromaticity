@@ -4,7 +4,9 @@ import unittest
 
 import numpy as np
 
-from color_tools.kernel.node_templates import instantiate_grade, instantiate_stack
+from color_tools.kernel.node_templates import (
+    instantiate_grade, instantiate_stack, structure_digest,
+)
 from color_tools.template_build.stage2_graph import build_stage2_group
 from color_tools.template_build.stack_graph import build_stack_group
 from tools.perceptual_grade.reports import cases
@@ -44,6 +46,7 @@ class TemplateParityTests(unittest.TestCase):
 
     def test_stack_production_rgb_and_alpha_match_emitter(self):
         values = cases.rgba(64)
+        receipts = {}
         for space in SPACES:
             for size in (33, 65):
                 prepared = stack_prepared(space, size, scale=0.8)
@@ -51,6 +54,18 @@ class TemplateParityTests(unittest.TestCase):
                     with self.subTest(space=space, size=size, context=context):
                         self.assert_parity(prepared, context, build_stack_group,
                                            instantiate_stack, values)
+                        instance = instantiate_stack(prepared, {
+                            "shader": "ShaderNodeTree",
+                            "compositor": "CompositorNodeTree",
+                        }[context])
+                        try:
+                            receipts.setdefault(context, set()).add(
+                                structure_digest(instance.tree)
+                            )
+                        finally:
+                            instance.dispose()
+        for context, digests in receipts.items():
+            self.assertEqual(len(digests), 1, context)
 
 
 if __name__ == "__main__":

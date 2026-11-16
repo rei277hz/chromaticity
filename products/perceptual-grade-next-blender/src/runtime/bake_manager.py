@@ -5,7 +5,6 @@
 from collections import deque
 from concurrent.futures import CancelledError
 from contextlib import nullcontext
-import hashlib
 from pathlib import Path
 import shutil
 import tempfile
@@ -80,8 +79,12 @@ class BakeManager:
                 str(snapshot), ids, path_remap="ABSOLUTE", fake_user=True,
             )
             images = []
+            copied_images = set()
             for descriptor in route.get("images", ()):
                 name = str(descriptor.get("image_name", ""))
+                if name in copied_images:
+                    continue
+                copied_images.add(name)
                 image = self.bpy.data.images.get(name)
                 if image is None:
                     raise RuntimeError("Bake source Image disappeared before snapshot")
@@ -93,12 +96,8 @@ class BakeManager:
                 image.pixels.foreach_get(values)
                 path = root / ("image-" + uuid.uuid4().hex + ".npy")
                 np.save(path, values.reshape(height, width, channels), allow_pickle=False)
-                digest = hashlib.sha256()
-                with path.open("rb") as stream:
-                    for block in iter(lambda: stream.read(1024 * 1024), b""):
-                        digest.update(block)
                 images.append({
-                    "name": name, "pixels_path": str(path), "sha256": digest.hexdigest(),
+                    "name": name, "pixels_path": str(path),
                     "colorspace": str(image.colorspace_settings.name),
                     "alpha_mode": str(image.alpha_mode),
                 })
@@ -152,13 +151,8 @@ class BakeManager:
         generation = self.generation
         root, snapshot, images = self._snapshot(route)
         try:
-            digest = hashlib.sha256()
-            with snapshot.open("rb") as stream:
-                for block in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(block)
             inputs = {
                 "snapshot_path": str(snapshot),
-                "snapshot_sha256": digest.hexdigest(),
                 "artifact_dir": str(root), "images": images,
                 "route": route, "target": dict(route),
                 "identity": signature, "signature": signature,

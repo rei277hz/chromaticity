@@ -376,7 +376,7 @@ def failing_presenter(records, signature, error, quality="full"):
 
 def failing_retirement(kernels):
     result = original_retirement(kernels)
-    if len(presented) >= len(users) and not retirement_attempts:
+    if len(presented) >= len(users) - 1 and not retirement_attempts:
         retirement_attempts.append(True)
         return result + (RuntimeError("transaction retirement failed"),)
     return result

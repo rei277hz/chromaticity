@@ -1,3 +1,14 @@
+load("//build_defs:artifacts.bzl", "source_tree")
+
+source_tree(
+    name = "technical_report_audit_tests",
+    srcs = {path: path for path in glob([
+        "**/*.py",
+        "BUCK",
+    ])},
+    visibility = ["PUBLIC"],
+)
+
 python_library(
     name = "lut_gpu_support",
     srcs = {
@@ -144,6 +155,25 @@ python_test(
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
     },
     deps = ["//third_party:numpy"],
+)
+
+python_test(
+    name = "bake_worker_runtime",
+    srcs = ["runtime/test_bake_worker.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+    },
+    deps = ["//third_party:numpy"],
+)
+
+python_test(
+    name = "bake_freshness",
+    srcs = ["runtime/test_bake_freshness.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+    },
 )
 
 python_test(
@@ -603,6 +633,21 @@ python_test(
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
         "package-report.json": "//products/perceptual-grade-next-blender:extension[report]",
     },
+)
+
+python_test(
+    name = "technical_report_audit",
+    srcs = ["packaging/test_technical_report_audit.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "audit.json": "//products/perceptual-grade-book:technical_report_audit_manifest",
+        "book_report": "//products/perceptual-grade-book:technical_report_audit_docs",
+        "book_evidence": "//products/perceptual-grade-book:technical_report_audit_evidence",
+        "next_sources": "//products/perceptual-grade-next-blender:book_reference_sources",
+        "next_tests": ":technical_report_audit_tests",
+        "reference_sources": "//libraries/perceptual-grade-reference:sources",
+    },
+    deps = ["//products/perceptual-grade-next-blender:technical_report_audit_code"],
 )
 
 python_test(
