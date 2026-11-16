@@ -2,7 +2,10 @@ load("//build_defs:artifacts.bzl", "source_tree")
 
 source_tree(
     name = "technical_report_audit_tests",
-    srcs = {path: path for path in glob(["**/*.py", "BUCK"])},
+    srcs = {path: path for path in glob([
+        "**/*.py",
+        "BUCK",
+    ])},
     visibility = ["PUBLIC"],
 )
 
