@@ -65,10 +65,16 @@ class BakeInstalledTests(unittest.TestCase):
                 self.assertTrue(data.get("live_restored"), details)
                 self.assertTrue(data.get("shared_rebake"), details)
                 self.assertTrue(data.get("stale_discarded"), details)
+                self.assertTrue(data.get("engine_selection_stale"), details)
                 self.assertTrue(data.get("wrapper_independent"), details)
                 self.assertTrue(data.get("wrapper_recovery"), details)
                 self.assertTrue(data.get("grade_edit_live_fallback"), details)
                 self.assertTrue(data.get("identity_match"), details)
+                self.assertTrue(data.get("engine_selection"), details)
+                self.assertIn(data.get("cycles_gpu_acceptance", {}).get("status"),
+                              {"passed", "skipped"}, details)
+                self.assertEqual(data.get("eevee_transport_shapes"),
+                                 [[1, 1], [2, 2], [2, 5], [5, 2]], details)
                 self.assertTrue(data.get("baked_conversion"), details)
                 self.assertTrue(data.get("render_admission"), details)
                 self.assertTrue(data.get("source_edit_fallback"), details)

@@ -1,6 +1,10 @@
 # Publishing
 
-> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+> **Mixed current and historical guidance:** the book-site outputs and linked
+> Buck2 publication targets are current. The release procedure retained after
+> them still describes the 1.23.2 runtime, source layout, and validation profile.
+> For current development commands and supported behavior, use the product
+> READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
 
 The current documentation deliverables are one `perceptual-grade-site.zip`
 containing both books, English and Simplified Chinese User Manual PDFs and
@@ -10,6 +14,8 @@ English report at `technical/en/`. The manual's editions are at `manual/en/`
 and `manual/zh-Hans/`. Build them with the targets in the
 [current publication guide](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-book/README.md),
 using Buck2 with `--remote-only`.
+
+## Retained 1.23.2 release procedure
 
 The original release procedure below also required reviewing the installable
 extension and DCTL in their hosts. Keep RELEASES.md in the original repository

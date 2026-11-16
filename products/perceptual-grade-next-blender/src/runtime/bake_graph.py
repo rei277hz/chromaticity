@@ -42,7 +42,7 @@ def image_allowed(node, image):
     if image is None:
         return True
     try:
-        return (image.library is None and image.get(SCHEMA) == 1
+        return (image.library is None and image.get(SCHEMA) == 2
                 and image.source in {"FILE", "GENERATED"} and image.is_float
                 and image.packed_file is not None and not image.is_dirty
                 and image.get(DOMAIN) in {"EMPTY", "IMAGE", "UV", "COMPOSITOR"}

@@ -55,6 +55,10 @@ source_tree(
         "tools/generate_node_templates.py",
         "tools/template_build/**/*.py",
         "examples/publication_compare/**/*.py",
+        "README.md",
+        "BUCK",
+        "requirements/*.inv",
+        "src/locales/*.json",
     ])},
     visibility = ["PUBLIC"],
 )
@@ -269,6 +273,7 @@ invariant_proof(
         "accept_start_from_another_generation",
         "publish_stale_capture",
         "keep_stale_bake_selected",
+        "allow_stale_toggle",
     ],
     required_properties = [
         "request_requires_admission_and_valid_identity",
@@ -282,6 +287,10 @@ invariant_proof(
         "input_change_discards_queued_result",
         "terminal_receipts_are_inert",
         "stale_bake_automatically_uses_live_output",
+        "toggle_requires_current_receipt_and_valid_artifact",
+        "stale_disabled_bake_revokes_receipt",
+        "matching_disabled_bake_retains_receipt",
+        "shared_image_binding_requires_valid_matching_route",
         "invalid_selected_image_fails_closed",
         "live_failure_overrides_baked_output",
     ],
@@ -705,6 +714,14 @@ python_library(
     base_module = "product_build",
     visibility = ["PUBLIC"],
     deps = ["//tools/verification:packaging"],
+)
+
+python_library(
+    name = "technical_report_audit_code",
+    srcs = {"technical_report_audit.py": "tools/technical_report_audit.py"},
+    base_module = "product_build",
+    visibility = ["PUBLIC"],
+    deps = ["//products/perceptual-grade-book:reference_parsing"],
 )
 
 python_binary(

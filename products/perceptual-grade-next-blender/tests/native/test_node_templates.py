@@ -17,6 +17,7 @@ from color_tools.kernel.stage2_bindings import (
     PARAMETER_READER, PARAMETER_READER_BANK, PARAMETER_SELECTOR,
 )
 from color_tools.kernel.stage2_parameters import prepare_parameters
+from color_tools.kernel.lut import basis, basis_pixels, stack_config_pixels
 
 from .template_support import SPACES, TREE_TYPES, complete_prepared, stack_prepared
 
@@ -72,17 +73,22 @@ class NodeTemplateTests(unittest.TestCase):
 
     def test_manifest_covers_every_product_variant(self):
         expected = {
-            f"grade:{tree_type}:{space}" for tree_type in TREE_TYPES for space in SPACES
+            f"grade:{tree_type}" for tree_type in TREE_TYPES
         } | {
-            f"stack:{tree_type}:{space}:{size}"
-            for tree_type in TREE_TYPES for space in SPACES for size in (33, 65)
-        } | {f"wrapper:{tree_type}" for tree_type in TREE_TYPES}
+            f"stack:{tree_type}" for tree_type in TREE_TYPES
+        } | {f"wrapper:{tree_type}" for tree_type in TREE_TYPES} | {
+            f"fallback:{mode}:{tree_type}:{vector}"
+            for mode in ("pending", "error") for tree_type in TREE_TYPES
+            for vector in ((0, 1) if tree_type == "ShaderNodeTree" else (0,))
+        }
+        self.assertEqual(len(expected), 12)
         manifest, records = node_templates.load_manifest()
         self.assertEqual(set(manifest["variants"]), expected)
         self.assertEqual(set(records), expected)
 
     def test_templates_accept_the_actual_working_space(self):
         """Blender converts color defaults while appending a library."""
+        receipts = {"grade": {}, "stack": {}}
         for space in SPACES:
             with self.subTest(space=space):
                 self.set_working_space(space)
@@ -97,6 +103,12 @@ class NodeTemplateTests(unittest.TestCase):
                         stack[tree_type] = node_templates.instantiate_stack(
                             stack_prepared(space, 33), tree_type,
                         )
+                        receipts["grade"].setdefault(tree_type, set()).add(
+                            node_templates.structure_digest(grade[tree_type].tree),
+                        )
+                        receipts["stack"].setdefault(tree_type, set()).add(
+                            node_templates.structure_digest(stack[tree_type].tree),
+                        )
                         wrappers[tree_type] = node_templates.TemplateInstance(
                             node_templates.instantiate_wrapper(
                                 tree_type, grade[tree_type].tree,
@@ -109,6 +121,38 @@ class NodeTemplateTests(unittest.TestCase):
                         instance.dispose()
                     for instance in grade.values():
                         instance.dispose()
+        for kind in receipts:
+            for tree_type, values in receipts[kind].items():
+                self.assertEqual(len(values), 1, (kind, tree_type, values))
+
+    def test_fallback_templates_preserve_interfaces_and_alpha(self):
+        for mode in ("pending", "error"):
+            for tree_type in TREE_TYPES:
+                vectors = (False, True) if tree_type == "ShaderNodeTree" else (False,)
+                for vector in vectors:
+                    with self.subTest(mode=mode, tree_type=tree_type, vector=vector):
+                        built = node_templates.instantiate_fallback(
+                            mode, tree_type, vector=vector,
+                        )
+                        try:
+                            tree = built.tree
+                            self.assertEqual(tree.get(node_templates.FALLBACK_KERNEL), 1)
+                            self.assertEqual(tree.get(node_templates.FALLBACK_MODE), mode)
+                            inputs = {item.name for item in tree.interface.items_tree
+                                      if item.item_type == "SOCKET" and item.in_out == "INPUT"}
+                            self.assertEqual("Vector" in inputs, vector)
+                            output = next(item for item in tree.nodes
+                                          if item.bl_idname == "NodeGroupOutput")
+                            self.assertTrue(output.inputs["Color"].is_linked)
+                            if tree_type == "ShaderNodeTree":
+                                self.assertTrue(output.inputs["Alpha"].is_linked)
+                            elif mode == "error":
+                                self.assertTrue(any(
+                                    node.bl_idname == "CompositorNodeSetAlpha"
+                                    for node in tree.nodes
+                                ))
+                        finally:
+                            built.dispose(unlink=True)
 
     def test_receipt_uses_effective_defaults(self):
         prepared = complete_prepared()
@@ -180,9 +224,9 @@ class NodeTemplateTests(unittest.TestCase):
                     if failure == "invalid_manifest":
                         manifest["schema"] = -1
                     elif failure == "missing_variant":
-                        del manifest["variants"]["grade:ShaderNodeTree:Linear Rec.709"]
+                        del manifest["variants"]["grade:ShaderNodeTree"]
                     else:
-                        manifest["variants"]["grade:ShaderNodeTree:Linear Rec.709"][
+                        manifest["variants"]["grade:ShaderNodeTree"][
                             "structure_sha256"] = "0" * 64
                     (root / "node_templates.json").write_text(json.dumps(manifest))
                 before = (set(bpy.data.node_groups), set(bpy.data.images))
@@ -195,7 +239,7 @@ class NodeTemplateTests(unittest.TestCase):
     def test_existing_group_named_like_template_is_never_adopted_as_source(self):
         prepared = complete_prepared()
         _, records = node_templates.load_manifest()
-        record = records["grade:ShaderNodeTree:Linear Rec.709"]
+        record = records["grade:ShaderNodeTree"]
         before_groups = set(bpy.data.node_groups)
         before_images = set(bpy.data.images)
         user_tree = bpy.data.node_groups.new(record.name, "ShaderNodeTree")
@@ -256,7 +300,7 @@ class NodeTemplateTests(unittest.TestCase):
         finally:
             first.dispose()
 
-    def test_every_stack_variant_uploads_its_own_atlas(self):
+    def test_shared_stack_templates_bind_size_specific_runtime_images(self):
         for space in SPACES:
             for size in (33, 65):
                 prepared = stack_prepared(space, size)
@@ -269,19 +313,46 @@ class NodeTemplateTests(unittest.TestCase):
                             self.assert_local(first)
                             self.assert_local(second)
                             self.assertNotEqual(first.tree, second.tree)
-                            first_image, = first.images
-                            second_image, = second.images
-                            self.assertNotEqual(first_image, second_image)
+                            first_lut, first_basis, first_config = first.images
+                            second_lut, second_basis, second_config = second.images
+                            self.assertNotEqual(first_lut, second_lut)
+                            self.assertNotEqual(first_basis, second_basis)
+                            self.assertNotEqual(first_config, second_config)
+                            self.assertTrue(node_templates.validate_stack_instance(first.tree))
                             expected = (prepared.cube.shader_pixels() if tree_type == "ShaderNodeTree"
                                         else prepared.cube.compositor_pixels())
-                            np.testing.assert_array_equal(image_pixels(first_image), expected)
-                            readers = [node for node in first.tree.nodes
-                                       if getattr(node, "image", None) is not None]
-                            self.assertTrue(readers)
-                            self.assertTrue(all(node.image == first_image for node in readers))
+                            np.testing.assert_array_equal(image_pixels(first_lut), expected)
+                            expected_basis = basis_pixels(*basis(space))
+                            np.testing.assert_array_equal(image_pixels(first_basis), expected_basis)
+                            expected_config = stack_config_pixels(size)
+                            np.testing.assert_array_equal(image_pixels(first_config), expected_config)
+                            record = node_templates._STORE.record(
+                                node_templates.TemplateVariant("stack", tree_type),
+                            )
+                            lut_readers = [first.tree.nodes[name] for name in
+                                           record.slots[node_templates.SLOT_LUT]]
+                            basis_readers = [first.tree.nodes[name] for name in
+                                             record.slots[node_templates.SLOT_BASIS]]
+                            config_readers = [first.tree.nodes[name] for name in
+                                              record.slots[node_templates.SLOT_CONFIG]]
+                            self.assertTrue(lut_readers)
+                            self.assertTrue(basis_readers)
+                            self.assertTrue(config_readers)
+                            self.assertTrue(all(node.image == first_lut for node in lut_readers))
+                            self.assertTrue(all(node.image == first_basis for node in basis_readers))
+                            self.assertTrue(all(node.image == first_config for node in config_readers))
                         finally:
                             second.dispose()
                             first.dispose()
+
+    def test_stack_validation_rejects_resolution_config_drift(self):
+        instance = node_templates.instantiate_stack(stack_prepared(size=33), "ShaderNodeTree")
+        try:
+            self.assertTrue(node_templates.validate_stack_instance(instance.tree))
+            instance.tree[node_templates.KERNEL_QUALITY] = "full"
+            self.assertFalse(node_templates.validate_stack_instance(instance.tree))
+        finally:
+            instance.dispose()
 
     def test_wrapper_instances_share_only_the_requested_live_kernel(self):
         prepared = complete_prepared()

@@ -6,7 +6,8 @@ from .graph import Graph, BuiltGrade, TREE_TYPES, count_nodes
 from .guard_graph import compositor_stage2_output_guard
 from ..kernel.stage2_parameters import (
     MATRIX_RED_SLOT, MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT,
-    TONE_SCALARS_SLOT, TONE_DOMAIN_SLOT, PARAMETER_CONTENT_SIGNATURE,
+    TONE_SCALARS_SLOT, TONE_DOMAIN_SLOT, OUTPUT_MATRIX_ROW_SLOTS,
+    PARAMETER_CONTENT_SIGNATURE,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, parameter_content_signature,
     parameter_image_matches, prepare_parameters,
 )
@@ -152,6 +153,12 @@ class ParameterBindings:
         blue_delta = graph.vscale(self.sample(MATRIX_BLUE_SLOT)[0], graph.sub(blue, green))
         neutral = graph.vscale(self.sample(MATRIX_NEUTRAL_SLOT)[0], green)
         return graph.vadd(graph.vadd(red_delta, blue_delta), neutral)
+
+    def output_matrix(self, vector):
+        return self.graph.vector(tuple(
+            self.graph.dot(vector, self.sample(slot)[0])
+            for slot in OUTPUT_MATRIX_ROW_SLOTS
+        ))
 
 
 def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,

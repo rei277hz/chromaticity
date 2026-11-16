@@ -14,6 +14,23 @@ useful for understanding earlier products, but are labeled separately from the
 current reference. The English-only Next Blender policy chapter describes
 Next's current policies; Next has not yet implemented Warp.
 
+For Blender behavior, `products/perceptual-grade-next-blender` is the current
+authority: its source, requirements, and tests define the implemented routes,
+state transitions, native evaluation, failure behavior, and host boundaries.
+The analytic reference remains the authority for model mathematics. Any
+observable Next change must update this report and link to the relevant source
+or test evidence. The 1.23.2 implementation, user-facing workflow, downloads,
+media, measurements, legacy generators, manifests, and preservation checks are
+temporary migration material. The planned end state removes all of that legacy
+content after Next coverage replaces it; this report currently retains the
+historical labels and archive while that migration is coordinated.
+
+The repository's `products/perceptual-grade-book/technical-report-audit.json`
+records chapter scope, source and test evidence, policy anchors, and remaining
+legacy replacement work. The Next Buck test `technical_report_audit` verifies
+that coverage and the references. Reviewers also compare the prose with the
+implementation; valid references alone do not establish semantic agreement.
+
 The User Manual covers installation and the everyday 1.23.2 workflow. See the
 [User Manual](https://rei277hz.github.io/perceptual-grade/manual/en/index.html)
 for those instructions and the packaged downloads.

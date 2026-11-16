@@ -170,9 +170,15 @@ the current non-`None` signature.
 
 The build consumer instantiates a native tree from the product's generated
 `node_templates.blend` library and binds the prepared parameter banks or Stack
-LUT. Its runtime index identifies the complete Shader/Compositor variant,
-working space, LUT size, resource slots, and expected structure. The same Buck
-target supplies the installed product and installed tests. Canonical graph
+LUT. Its runtime index identifies the Shader/Compositor tree type, resource
+slots, and expected structure. There is one Stack topology per tree type;
+preview/final resolution, cube strides, and atlas-height scaling come from a
+dedicated 1×1 RGBA32F runtime configuration image bound alongside the LUT and
+working-space basis images. With the pinned Blender 5.2.4 generator, the
+12-group library is
+3,084,040 bytes, 58,557 bytes (1.86%) smaller than the preceding 14-group
+library (3,142,597 bytes). The same Buck target supplies the installed product
+and installed tests. Canonical graph
 emitters remain in the repository's build-only `tools/template_build` package;
 they are absent from the extension ZIP. The Stack helper likewise reads the
 generated `grade_stack.glsl` resource instead of emitting the shared equations
@@ -448,15 +454,19 @@ its final receipt or physical shutdown; a failed helper close retains ownership
 and its error for retry. Terminal retirement removes the job and temporary
 snapshot files. `terminal` is absorbing and does not itself imply success.
 
-`output_policy()` is derived from the node's Use Bake setting, the desired
-signature, the artifact signature, image validity, and any live-kernel error; it
-is not another stored mode flag. Use Bake can be disabled while retaining the
-managed Image binding. A stale artifact automatically selects the live Grade or
-Stack result. An invalid managed image or an unrecoverable live kernel selects
-the visible error path and clears baked selection rather than rendering stale
+`output_policy()` is derived from the node's Use Bake setting, the current
+small signature, the persisted receipt signature, image validity, and any
+live-kernel error; it is not another stored
+mode or readiness flag. Use Bake can be disabled while retaining the managed
+Image binding. A stale artifact automatically selects the live Grade or Stack
+result. An invalid managed image or an unrecoverable live kernel selects the
+visible error path and clears baked selection rather than rendering stale
 pixels. When a shared Image is selected by several Grade nodes, a successful
 rebake updates the Image once and synchronizes every reader; rollback likewise
-fans out to all readers.
+fans out to all readers. The freshness decision extends the same bake policy;
+it adds no independent stored mode. Its returned effects are the sole authority
+to revoke a receipt, turn Use Bake off, or reconcile readers. Toggle availability
+is derived from those same facts and stays false after revocation until rebake.
 
 ![Bake request and publication policy](../assets/illustrations/next-policy/09-bake.svg)
 
@@ -464,21 +474,25 @@ fans out to all readers.
 
 ![Bake request workflow](../assets/illustrations/next-policy/09-bake-sequence.svg)
 
-<p class="figure-caption">The click-time route snapshot enters the single helper lane. The helper receipt is checked again before the gate commits a managed float Image, activates the requesting node, and synchronizes shared readers. A changed signature before publication discards the artifact; a publication or activation error restores the ImageSnapshot.</p>
+<p class="figure-caption">The click-time route snapshot enters the single helper lane. The helper receipt is checked again before the gate commits a managed float Image, activates the requesting node, and synchronizes shared readers. A changed graph/settings digest or dependency generation before publication discards the artifact; a publication or activation error restores the ImageSnapshot. Load and undo rebaseline cheap persisted receipts before preserving baked selection.</p>
 
 ### Route selection and source constraints
 
 `src/runtime/bake_routes.py` discovers the effective upstream graph and supplies
-a cheap observation signature plus a full semantic signature that remains stable
-across save/load. It resolves the exact graph owner and nested group occurrence,
-rejecting ambiguous occurrences. It preserves
+a small graph/settings digest plus a cheap observation of each source Image.
+It resolves the exact graph owner and nested group occurrence, rejecting
+ambiguous occurrences. It preserves
 the legacy distinction between Image and UV bakes:
 
 * An Image bake evaluates one output pixel per texel of a single ordinary still
-  Image source through a pointwise graph. It uses
-  the source image dimensions and rejects linked source coordinates, UDIM/tiled
-  images, sequences or movies, multiview/multilayer sources, unsupported
-  projections, and feedback where the destination Image is also an input.
+  Image source through a pointwise graph with unlinked source coordinates. It
+  uses the source image dimensions. A value-only Shader graph with no source
+  Image is the explicit constant case and produces a 1x1 Image. Image-domain
+  sources must not be UDIM/tiled, sequences or movies, or multiview/multilayer;
+  the destination Image cannot also be an input. In the isolated snapshot,
+  ordinary source textures use flat projection, closest interpolation, extended
+  edges, and identity texture mapping so each output pixel samples its source
+  texel directly. UV-route sources retain their captured sampling settings.
 * A UV bake is selected for a material graph with multiple image inputs, linked
   source coordinates, surface-dependent inputs, or an existing UV-domain
   destination. It requires Cycles, an active render UV
@@ -488,30 +502,89 @@ the legacy distinction between Image and UV bakes:
   UV/deformation modifiers, hidden render meshes, and world UV routes are
   rejected explicitly. Dimensions and overlap work are bounded by the pixel
   and comparison budgets.
-* A Compositor bake uses the compositor graph and its native output route. It
-  cannot write a UV-domain destination. Unsupported compositor sources and
-  scene/render observations become part of the signature or block the route
-  before a helper is started. Shader to RGB, movie-clip, and mask sources are
-  rejected explicitly.
+* A Compositor bake uses the compositor graph and its native output route. A
+  compositor constant uses the scene's scaled output canvas rather than the
+  Shader constant's 1x1 result. It cannot write a UV-domain destination.
+  Unsupported compositor sources and scene/render observations become part of
+  the signature or block the route before a helper is started. Shader to RGB,
+  movie-clip, and mask sources are rejected explicitly.
 
-The full signature includes graph and Grade settings, source file and sidecar
-identity, effective source pixels, scene/render state, and (for UV routes)
-mesh attributes, color attributes, weights, corner normals, smoothing/sharp
-edges, auto-smooth settings, active color metadata, UV geometry, and material
-slot. Unsupported attribute data fails closed. The cheaper observation
-signature is used for UI reconciliation; only the full signature can authorize
-publication.
+The persisted bake receipt stores a small signature over the graph/settings
+digest, route and UV context, and cheap metadata for every unique source Image:
+its semantic ID, source kind and path, dimensions and channels, color and alpha
+modes, packed or external status, packed size when available, and external-file
+stat facts (device, inode, size, mtime, and ctime when available) for the image
+and relevant sidecars. `src/runtime/bake_freshness.py` keeps runtime per-ID
+generations for referenced Images, Meshes, and Objects, together with the durable
+receipt codec. Observing these facts reads no source Image pixels or
+packed/external Image bytes. Source and bake payloads are never hashed; small
+graph/settings and metadata digests are allowed. At request acceptance, each
+unique source Image is copied once into
+the click-time snapshot so the helper evaluates a stable request; the `.blend`,
+`.npy`, and `.exr` payloads are not hashed.
+
+The freshness decision is derived from the current receipt, cheap Image
+metadata, per-ID generations, graph/settings digest, and live-kernel status; no
+stored `ready` or `stale` flag duplicates those facts. Nodes bound to a managed
+Image are tracked even while Use Bake is off, so a shared Image change can
+revoke every dependent receipt. A detected source, route, Grade, or Stack
+change revokes the affected receipt, selects live output, turns Use Bake off,
+and disables (greys out) the control until a new bake publishes. Policy effects
+authorize the corresponding metadata and graph mutations.
+
+Dependency notifications advance generations for changed Images, Mesh geometry,
+and Object transforms. When Blender supplies update flags, an Object notification
+with geometry or shading set but no transform update is ignored: Blender also
+emits those flags for material changes, node changes, and derived selector
+reconciliation. Mesh data has its own generation, while Object transforms,
+material slots, modifiers, and other relevant metadata are observed separately.
+Mesh shading-only notifications are also ignored. This avoids revoking a bake
+merely because its managed graph was recovered or synchronized.
+
+After file load or undo, transient per-ID generations are rebaselined against
+the cheap persisted metadata. A matching receipt preserves `pg_use_bake`; a
+missing, unsupported, or mismatched receipt is revoked and returns the node to
+live output with Use Bake disabled until rebake. Earlier receipt schemas are
+not migrated. Rebaseline does not rewrite the receipt or claim that pixel
+contents were checked. External-file changes that preserve
+the recorded metadata may therefore be missed. Scripts that change an Image
+must explicitly invalidate it with
+`bpy.ops.perceptual_grade.invalidate_image(image="Image Name")` or the
+extension's exported `invalidate_image(image)` Python function; calling
+`image.update()` alone does not reliably notify the tracker. Changes made by
+scripts while the add-on is inactive can also be missed when their cheap
+metadata is unchanged.
+
+Passive reconciliation compares the cheap observations and per-ID generations;
+it performs no image-sized hashing. Request, completion, publication, and render
+boundaries check the current receipt, graph/settings digest, generations, and
+metadata before accepting or activating output. This intentionally accepts the
+documented blind spot for unnotified edits that preserve all recorded cheap
+facts.
 
 ### Native evaluation and wrapper graph
 
 `src/runtime/bake_worker.py` opens an isolated `.blend` snapshot, restores float
-Image sidecars, and evaluates the native Blender graph. A Shader Grade bake
-captures RGB and alpha in independent native passes through the Grade helper
-Image nodes. A Grade Stack bake evaluates the complete node tree containing its
-65^3 LUT; it does not run a Python approximation of the LUT. Compositor bakes
-use a native compositor output/File Output EXR path. The worker returns a
-checksummed artifact receipt only after dimensions, channels, finite pixels,
-and the expected route identity have been verified.
+Image sidecars, and evaluates the native Blender graph. Image-domain Shader
+bakes select EEVEE or Cycles CPU/GPU from the captured Scene settings; an
+unsupported Scene engine falls back to Cycles CPU. UV Shader bakes require
+Cycles and honor its CPU/GPU selection. A GPU request also carries the exact
+Cycles compute backend and enabled device identities from click time. The
+helper configures and verifies that selection, and reports an error when it is
+unavailable rather than silently changing devices. The user's Scene and
+preferences are never changed. EEVEE uses a private orthographic render of the
+node tree and split AOV readback to retain signed HDR range through half-float
+color passes. Its private Scene clears inherited World volumes and material
+overrides so they cannot alter the captured graph. An upstream managed UV bake
+requires the UV route to preserve its surface sampling coordinates.
+Cycles captures RGB and alpha in native passes through the Grade helper Image
+nodes. A Grade Stack bake evaluates the complete node tree containing its 65^3
+LUT; it does not run a Python approximation of the LUT. Compositor bakes use a
+native compositor output/File Output EXR path and retain their existing route.
+The effective engine/device selection is part of the route signature, so a
+change during a request discards the result. The worker returns a receipt only
+after dimensions, channels, finite pixels, and the expected route identity have
+been verified; it does not hash the `.blend`, `.npy`, or `.exr` payloads.
 
 `src/runtime/bake_graph.py` instantiates a private wrapper template for each Grade or Stack node
 that uses baking. Authoritative Grade settings still determine the embedded
@@ -525,6 +598,11 @@ wrappers use the compositor switch. Copies have private wrappers and selectors;
 shared Grade nodes continue to share their live Grade kernel, and the managed
 Image may also be shared. Updating the live kernel preserves the wrapper's
 outer socket identities and its per-node Image binding.
+The receipt identifies Grade and Grade Stack sockets by their public names,
+including when they occur upstream. It ignores the generated `Socket_N`
+identifiers of live, wrapper, and fallback interfaces, which can change during
+kernel recovery. Rebuilding derived kernels therefore preserves a matching
+receipt when the authoritative settings and public connections are unchanged.
 
 ### Managed Image publication
 
@@ -533,7 +611,7 @@ capture/restore helpers, and `PublicationGate.commit()`. It is intentionally
 separate from the comparison-only `src/policy/image_publication.py` reducer and
 its `run_image_publication()`/`snapshot_commit()` helpers. The destination is a
 managed packed float RGBA Image with bake metadata, dimensions, domain, UV map,
-and artifact signature. A new destination is installed only after the artifact
+and freshness receipt. A new destination is installed only after the artifact
 receipt is valid; an existing shared destination is captured before pixels,
 colorspace, alpha mode, precision, and metadata are changed. Any failure in
 packing, metadata, activation, or signature admission restores that snapshot

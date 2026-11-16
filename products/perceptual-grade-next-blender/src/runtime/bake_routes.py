@@ -1,14 +1,14 @@
 """Discover a bake's native domain and freeze its effective input identity.
 
-This module retains no Blender objects between calls. ``preview`` and
-``observe`` inspect inexpensive RNA values and file metadata; ``describe`` also
-fingerprints pixels, external image contents and UV geometry for a request.
+This module retains no Blender objects between calls. Image freshness uses
+inexpensive RNA values and file metadata throughout; ``describe`` additionally
+validates exact UV and geometry data for a request. Pixel edits are tracked by
+the caller's dependency invalidation, never by scanning Image contents here.
 Generated Grade kernels are deliberately absent from input fingerprints.
 """
 
 # pg-book: technical-report/en#next-policy.bake
 
-from array import array
 from collections.abc import Mapping
 import hashlib
 import json
@@ -20,6 +20,7 @@ SCHEMA = 1
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
+EEVEE_ENGINES = frozenset(("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"))
 # These modifiers preserve loop topology and UV coordinates. Blender exposes
 # a viewport evaluated mesh to Python, which cannot certify render-only
 # topology/UV changes, so other enabled render modifiers require application
@@ -91,16 +92,79 @@ def _semantic_identity(value, seen=None):
     kind = str(getattr(value, "bl_idname", type(value).__name__))
     library = getattr(value, "library", None)
     library_path = str(getattr(library, "filepath", "")) if library is not None else ""
+    filepath = str(getattr(value, "filepath", ""))
+    if kind == "Image" or library_path:
+        import bpy
+        library_path = _absolute_path(bpy, library_path)
+        if kind == "Image":
+            filepath = _absolute_path(bpy, filepath, library=library)
     owner = getattr(value, "id_data", None)
     if owner is not None and owner is not value:
         return ("node", kind, str(getattr(value, "name", "")),
                 _semantic_identity(owner, seen), library_path)
-    return (kind, str(getattr(value, "name", "")),
-            str(getattr(value, "filepath", "")), library_path)
+    return (kind, str(getattr(value, "name", "")), filepath, library_path)
 
 
 def _same(left, right):
     return left is not None and right is not None and _identity(left) == _identity(right)
+
+
+def _cycles_device_identity(device):
+    """Return a value-only identity for one Cycles device."""
+    return {
+        "id": str(getattr(device, "id", "")),
+        "name": str(getattr(device, "name", "")),
+        "type": str(getattr(device, "type", "")),
+    }
+
+
+def _cycles_gpu_preferences(host, *, exact=False):
+    """Read configured Cycles devices, probing only for an accepted request."""
+    preferences = getattr(getattr(host, "context", None), "preferences", None)
+    addons = getattr(preferences, "addons", None)
+    addon = addons.get("cycles") if addons is not None and hasattr(addons, "get") else None
+    cycles = getattr(addon, "preferences", None)
+    if cycles is None:
+        return {"compute_device_type": None, "devices": ()}
+    if exact:
+        try:
+            cycles.get_devices()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+    compute_type = str(getattr(cycles, "compute_device_type", "NONE"))
+    devices = tuple(
+        _cycles_device_identity(device)
+        for device in getattr(cycles, "devices", ())
+        if bool(getattr(device, "use", False))
+        and str(getattr(device, "type", "")) in {"CPU", compute_type}
+    )
+    return {
+        "compute_device_type": compute_type,
+        "devices": tuple(sorted(devices, key=lambda item: (item["id"], item["type"], item["name"]))),
+    }
+
+
+def _shader_backend(host, scene, *, domain, exact=False):
+    """Resolve the native backend used by a shader bake."""
+    render_engine = str(getattr(getattr(scene, "render", None), "engine", ""))
+    cycles = getattr(scene, "cycles", None)
+    cycles_device = str(getattr(cycles, "device", "CPU")).upper()
+    if domain == "UV" and render_engine != "CYCLES":
+        raise RouteBlocked("cycles", "UV Bake requires the Cycles render engine")
+    if render_engine in EEVEE_ENGINES and domain == "IMAGE":
+        backend = "EEVEE"
+    elif render_engine == "CYCLES":
+        backend = "CYCLES_GPU" if cycles_device == "GPU" else "CYCLES_CPU"
+    else:
+        backend = "CYCLES_CPU"
+    return {
+        "render_engine": render_engine,
+        "cycles_device": ("GPU" if backend == "CYCLES_GPU" else
+                          "CPU" if backend == "CYCLES_CPU" else None),
+        "shader_backend": backend,
+        "cycles_gpu": (_cycles_gpu_preferences(host, exact=exact)
+                        if backend == "CYCLES_GPU" else None),
+    }
 
 
 def _plain(value):
@@ -116,11 +180,24 @@ def _plain(value):
         raise RouteBlocked("unsupported_value", "Bake cannot fingerprint a native input value") from None
 
 
-def _rna_state(value, seen=None, depth=0):
+def _collect_dependency(value, dependencies, dependency_seen):
+    if dependencies is None or not hasattr(value, "session_uid"):
+        return
+    key = _identity(value)
+    if key not in dependency_seen:
+        dependency_seen.add(key)
+        dependencies.append(value)
+        if hasattr(value, "matrix_world"):
+            _collect_dependency(getattr(value, "data", None), dependencies,
+                                dependency_seen)
+
+
+def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=None):
     """Snapshot writable semantic RNA, including ramps, curves and mappings."""
     if value is None or isinstance(value, (bool, int, float, str)):
         return _plain(value)
     seen = set() if seen is None else seen
+    dependency_seen = set() if dependency_seen is None else dependency_seen
     key = _identity(value)
     if key in seen:
         return ("reference", _semantic_identity(value))
@@ -129,7 +206,9 @@ def _rna_state(value, seen=None, depth=0):
     properties = getattr(getattr(value, "bl_rna", None), "properties", None)
     if properties is None:
         if hasattr(value, "__dict__"):
-            return tuple(sorted((name, _rna_state(item, seen | {key}, depth + 1))
+            return tuple(sorted((name, _rna_state(
+                item, seen | {key}, depth + 1, dependencies, dependency_seen,
+            ))
                                 for name, item in vars(value).items()
                                 if name not in _UI_PROPERTIES and not name.startswith("_")
                                 and not callable(item)))
@@ -143,11 +222,15 @@ def _rna_state(value, seen=None, depth=0):
             continue
         item = getattr(value, name)
         if prop.type == "POINTER" and item is not None and hasattr(item, "session_uid"):
+            _collect_dependency(item, dependencies, dependency_seen)
             frozen = (_semantic_identity(item), _dependency_state(item, seen | {key}, depth + 1))
         elif prop.type == "COLLECTION":
-            frozen = tuple(_rna_state(entry, seen | {key}, depth + 1) for entry in item)
+            frozen = tuple(_rna_state(
+                entry, seen | {key}, depth + 1, dependencies, dependency_seen,
+            ) for entry in item)
         else:
-            frozen = _rna_state(item, seen | {key}, depth + 1)
+            frozen = _rna_state(item, seen | {key}, depth + 1,
+                                dependencies, dependency_seen)
         result.append((name, frozen))
     return tuple(result)
 
@@ -193,6 +276,11 @@ def _socket(collection, identifier):
 
 
 def _socket_name(socket):
+    # Grade's public interface survives swapping derived live, wrapper and
+    # fallback groups, whose generated Socket_N identifiers can differ.
+    if getattr(getattr(socket, "node", None), "bl_idname", None) in (
+            GRADE_TYPES | STACK_TYPES | PER_NODE_TYPES | READER_TYPES):
+        return str(socket.name)
     return str(getattr(socket, "identifier", socket.name))
 
 
@@ -322,18 +410,22 @@ def _grade_values(owner):
             tuple((name, _plain(getattr(tone, name))) for name in TONE_FIELDS))
 
 
-def _hash_file(path):
-    digest = hashlib.sha256()
+def _absolute_path(host, path, library=None):
+    raw = str(path or "")
+    if not raw:
+        return ""
     try:
-        with Path(path).open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-    except OSError as error:
-        raise RouteBlocked("source_file", "Bake source Image file is unavailable: " + str(error)) from error
-    return digest.hexdigest()
+        resolved = host.path.abspath(raw, library=library)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        resolved = raw
+    try:
+        return str(Path(resolved).expanduser().resolve(strict=False))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return str(Path(resolved).expanduser())
 
 
 def _image_state(host, image, *, full):
+    """Return stable Image metadata without reading or hashing pixel payloads."""
     source = str(image.source)
     if source in {"MOVIE", "SEQUENCE"}:
         raise RouteBlocked("source_sequence", "Bake does not support movie or image-sequence sources")
@@ -345,61 +437,36 @@ def _image_state(host, image, *, full):
         raise RouteBlocked("source_multiview", "Bake does not support multiview Image sources")
     if getattr(image, "type", "IMAGE") not in {"IMAGE", "UV_TEST"}:
         raise RouteBlocked("source_multilayer", "Bake does not support multilayer Image sources")
-    state = (_semantic_identity(image), source, str(getattr(image, "filepath", "")),
-             str(image.colorspace_settings.name), str(image.alpha_mode),
-             bool(getattr(image, "is_float", False)), image.get(BAKE_DOMAIN),
-             image.get("_pg_next_bake_operation"))
-    if not full:
-        return state, None, None
     width, height = (int(item) for item in image.size)
     if min(width, height) < 1:
         raise RouteBlocked("source_empty", "Bake source Image has no pixels")
-    if width * height * 16 > MAX_PIXEL_BYTES:
+    channels = int(image.channels)
+    if channels < 1 or (full and not getattr(image, "has_data", False)):
+        raise RouteBlocked("source_empty", "Bake source Image has no loaded pixels")
+    if full and width * height * 16 > MAX_PIXEL_BYTES:
         raise RouteBlocked("dimensions", "Bake source Image exceeds the 512 MiB pixel budget")
-    if bool(getattr(image, "is_dirty", False)) or source == "GENERATED":
-        if not image.has_data:
-            raise RouteBlocked("source_empty", "Bake source Image has no loaded pixels")
-        count = width * height * int(image.channels)
-        pixels = array("f", [0.]) * count
-        image.pixels.foreach_get(pixels)
-        payload = ("pixels", hashlib.sha256(memoryview(pixels).cast("B")).hexdigest())
-    else:
-        packed = getattr(image, "packed_file", None)
-        if packed is not None:
-            data = getattr(packed, "data", None)
-            try:
-                packed_digest = hashlib.sha256(bytes(data)).hexdigest() if data is not None else None
-            except (TypeError, ValueError):
-                packed_digest = None
-            payload = ("packed", packed_digest, int(getattr(packed, "size", 0)))
-        else:
-            path = host.path.abspath(image.filepath, library=getattr(image, "library", None))
-            payload = ("file", _hash_file(path),
-                       tuple((str(candidate), _hash_file(candidate)) for candidate in _sidecars(path)))
-        if getattr(image, "has_data", False):
-            values = array("f", [0.]) * (width * height * int(image.channels))
-            image.pixels.foreach_get(values)
-            payload = (*payload, "pixels", hashlib.sha256(memoryview(values).cast("B")).hexdigest())
-        else:
-            raise RouteBlocked("source_empty", "Bake cannot fingerprint the effective loaded Image pixels")
-    return (*state, width, height, int(image.channels), payload), width, height
-
-
-def _sidecars(path):
-    return tuple(item for item in _sidecar_candidates(path) if item.is_file())
+    packed = getattr(image, "packed_file", None)
+    state = (
+        _semantic_identity(image),
+        source, width, height, channels,
+        bool(getattr(image, "is_float", False)),
+        str(image.colorspace_settings.name), str(image.alpha_mode),
+        packed is not None, int(getattr(packed, "size", 0)) if packed is not None else None,
+        _file_observation(host, image),
+        image.get(BAKE_DOMAIN), image.get("_pg_next_bake_operation"),
+    )
+    return state, width, height
 
 
 def _file_observation(host, image):
-    """Return cheap disk facts for passive source invalidation.
-
-    This deliberately avoids opening or hashing files. Exact requests still
-    use `_hash_file` and loaded pixel digests in `_image_state`.
-    """
+    """Return bounded file metadata for an external still Image and sidecars."""
     if str(image.source) != "FILE" or getattr(image, "packed_file", None) is not None:
         return None
     try:
-        path = Path(host.path.abspath(
-            image.filepath, library=getattr(image, "library", None)))
+        raw_path = getattr(image, "filepath", "")
+        if not raw_path:
+            return ((str(raw_path), None),)
+        path = Path(_absolute_path(host, raw_path, library=getattr(image, "library", None)))
         candidates = (path, *_sidecar_candidates(path))
         result = []
         for candidate in candidates:
@@ -408,7 +475,10 @@ def _file_observation(host, image):
             except OSError:
                 result.append((str(candidate), None))
             else:
-                result.append((str(candidate), int(stat.st_size), int(stat.st_mtime_ns)))
+                result.append((
+                    str(candidate), int(stat.st_dev), int(stat.st_ino),
+                    int(stat.st_size), int(stat.st_mtime_ns), int(stat.st_ctime_ns),
+                ))
         return tuple(result)
     except (AttributeError, OSError, TypeError, ValueError):
         return ((str(getattr(image, "filepath", "")), None),)
@@ -627,13 +697,16 @@ def _geometry_observation(obj):
 
 
 class _Walker:
-    def __init__(self, host, scene, *, full, compositor):
+    def __init__(self, host, scene, *, full, compositor, dependencies=None):
         self.host, self.scene, self.full = host, scene, full
         self.compositor = compositor
+        self.dependencies = dependencies
         self.graph = []
         self.images = {}
         self.image_observations = {}
         self.image_pointers = set()
+        self.image_states = {}
+        self.dependency_pointers = set()
         self.upstream = {}
         self.reasons = set()
         self.visiting = set()
@@ -657,7 +730,9 @@ class _Walker:
                 self.output(link.from_node, link.from_socket, parents)
 
     def _observe(self, node, output, parents, semantic=None):
-        state = _rna_state(node) if semantic is None else semantic
+        state = (_rna_state(node, dependencies=self.dependencies,
+                            dependency_seen=self.dependency_pointers)
+                 if semantic is None else semantic)
         inputs = tuple(item for item in node.inputs
                        if semantic is None or item.name in {"Color", "Alpha"})
         sockets = tuple((_socket_name(item), _plain(getattr(item, "default_value", None)),
@@ -672,7 +747,13 @@ class _Walker:
         if image is None:
             raise RouteBlocked("baked_unbound" if baked else "source_unbound",
                                "Bake source Image is unbound")
-        state, width, height = _image_state(self.host, image, full=self.full)
+        image_identity = _identity(image)
+        if image_identity not in self.image_states:
+            self.image_states[image_identity] = _image_state(
+                self.host, image, full=self.full,
+            )
+            self._add_dependency(image)
+        state, width, height = self.image_states[image_identity]
         self.image_pointers.add(_identity(image))
         key = (tuple(_semantic_identity(item) for item in parents),
                _semantic_identity(node), _semantic_identity(image))
@@ -685,10 +766,11 @@ class _Walker:
                     interpolation=str(getattr(sampler, "interpolation", "Linear")),
                     extension=str(getattr(sampler, "extension", "REPEAT")), baked=baked)
         self.images[key] = (state, item)
+        if (baked and not self.compositor
+                and image.get(BAKE_DOMAIN) == "UV"):
+            self.reasons.add("upstream_uv_bake")
         self.image_observations[key] = (
-            state[:-4] if self.full else state, bool(getattr(image, "is_dirty", False)),
-            int(getattr(getattr(image, "packed_file", None), "size", 0)),
-            _file_observation(self.host, image),
+            state, bool(getattr(image, "is_dirty", False)),
         )
         vector = next((item for item in node.inputs if item.name == "Vector"), None)
         if baked:
@@ -805,10 +887,13 @@ class _Walker:
         self.rendered.add(key)
         objects = tuple(scene.objects)
         camera = getattr(scene, "camera", None)
+        self._add_dependency(camera)
         summary = (_semantic_identity(scene), _rna_state(scene.render),
                    _rna_state(getattr(scene, "cycles", None)),
                    _semantic_identity(camera), _dependency_state(camera),
-                   _rna_state(getattr(scene, "world", None)))
+                   _rna_state(getattr(scene, "world", None),
+                              dependencies=self.dependencies,
+                              dependency_seen=self.dependency_pointers))
         self.render_observations.append((*summary, tuple(
             (_geometry_observation(obj),
              _rna_state(getattr(obj, "data", None)) if getattr(obj, "type", None) in {"LIGHT", "CAMERA"} else None)
@@ -821,10 +906,17 @@ class _Walker:
         self.render_states.append((*summary, geometry))
         owners = [getattr(scene, "world", None)]
         for obj in objects:
+            self._add_dependency(obj)
+            self._add_dependency(getattr(obj, "data", None))
             owners.extend(slot.material for slot in getattr(obj, "material_slots", ()))
             if getattr(obj, "type", None) == "LIGHT":
                 owners.append(obj.data)
-        owner_settings = tuple((_semantic_identity(owner), _rna_state(owner))
+        for owner in owners:
+            self._add_dependency(owner)
+        owner_settings = tuple((_semantic_identity(owner), _rna_state(
+            owner, dependencies=self.dependencies,
+            dependency_seen=self.dependency_pointers,
+        ))
                                for owner in owners if owner is not None)
         self.render_states.append(("owner_settings", owner_settings))
         self.render_observations.append(("owner_settings", owner_settings))
@@ -837,6 +929,9 @@ class _Walker:
                         and getattr(endpoint, "is_active_output", True)):
                     for socket in endpoint.inputs:
                         self.input(socket, ())
+
+    def _add_dependency(self, value):
+        _collect_dependency(value, self.dependencies, self.dependency_pointers)
 
 
 def _intersection_area(subject, clip):
@@ -938,7 +1033,7 @@ def _dimension(node, key):
     return int(value)
 
 
-def _describe(node, context, *, full):
+def _describe(node, context, *, full, dependencies=None):
     import bpy
     if not is_bake_target(node):
         raise RouteBlocked("target", "Bake is available only for shared Grade and Grade Stack nodes")
@@ -946,7 +1041,9 @@ def _describe(node, context, *, full):
         raise RouteBlocked("target", "Bake requires a Shader or Compositor graph")
     kind, owner, scene, root, parents = _owner(bpy, node, context)
     compositor = kind == "compositor"
-    walker = _Walker(bpy, scene, full=full, compositor=compositor)
+    collected_dependencies = [] if dependencies is not None else None
+    walker = _Walker(bpy, scene, full=full, compositor=compositor,
+                     dependencies=collected_dependencies)
     for socket in node.inputs:
         if socket.name in {"Color", "Alpha"}:
             walker.input(socket, parents)
@@ -977,6 +1074,8 @@ def _describe(node, context, *, full):
         else:
             obj = getattr(context or bpy.context, "object", None)
         uv_map = _uv(obj, full=full)
+        walker._add_dependency(obj)
+        walker._add_dependency(getattr(obj, "data", None))
         if not any(_same(obj, item) for item in scene.objects):
             raise RouteBlocked("mesh_scene", "UV Bake active mesh is not in the selected scene")
         if obj.hide_render:
@@ -1007,6 +1106,9 @@ def _describe(node, context, *, full):
     if width is not None and height is not None:
         if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES or (domain == "UV" and max(width, height) > MAX_UV_SIZE):
             raise RouteBlocked("dimensions", "Bake dimensions exceed the 512 MiB pixel budget")
+    shader_backend = None if compositor else _shader_backend(
+        bpy, scene, domain=domain, exact=full,
+    )
     result = dict(schema=SCHEMA, domain=domain, width=width, height=height,
                   scene=str(scene.name), frame=int(scene.frame_current),
                   subframe=float(scene.frame_subframe), owner_kind=kind, owner_name=str(owner.name),
@@ -1015,21 +1117,32 @@ def _describe(node, context, *, full):
                   material_slot=material_slot, uv_map=uv_map,
                   reasons=tuple(sorted(walker.reasons)),
                   images=tuple(item[1] for item in walker.images.values()),
-                  upstream=tuple(walker.upstream.values()), signature=None)
+                  upstream=tuple(walker.upstream.values()), signature=None,
+                  **({} if shader_backend is None else shader_backend))
     colorspace = getattr(bpy.data, "colorspace", None)
     working_space = (getattr(colorspace, "working_space_interop_id", None),
                      getattr(colorspace, "working_space", None))
-    observation = (SCHEMA, domain, width if domain == "UV" else None,
-                   height if domain == "UV" else None, _semantic_identity(scene),
-                   _semantic_identity(owner), _semantic_identity(node),
-                   tuple(_semantic_identity(item) for item in parents),
-                   result["frame"], result["subframe"], scene.render.engine, working_space,
-                   _grade_settings(node), tuple(walker.graph),
-                   tuple(walker.image_observations.items()),
-                   _geometry_observation(obj) if obj is not None else None,
-                   tuple(walker.render_observations),
-                   material_slot, uv_map)
-    result["observation_signature"] = _digest(observation)
+    receipt_observation = (
+        SCHEMA, domain, width if domain == "UV" else None,
+        height if domain == "UV" else None, _semantic_identity(scene),
+        _semantic_identity(owner), _semantic_identity(node),
+        tuple(_semantic_identity(item) for item in parents),
+        result["frame"], result["subframe"], scene.render.engine, working_space,
+        None if shader_backend is None else (
+            shader_backend["shader_backend"], shader_backend["cycles_device"],
+            shader_backend["cycles_gpu"]),
+        _grade_settings(node), tuple(walker.graph),
+        tuple((key, state) for key, (state, _dirty) in walker.image_observations.items()),
+        _geometry_observation(obj) if obj is not None else None,
+        tuple(walker.render_observations),
+        material_slot, uv_map,
+    )
+    result["receipt_signature"] = _digest(receipt_observation)
+    result["observation_signature"] = _digest((
+        receipt_observation,
+        tuple((key, dirty) for key, (_state, dirty)
+              in walker.image_observations.items()),
+    ))
     if full:
         terminal = tuple((_socket_name(socket), _plain(getattr(socket, "default_value", None)),
                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
@@ -1039,29 +1152,48 @@ def _describe(node, context, *, full):
                      _semantic_identity(owner), _semantic_identity(node),
                      tuple(_semantic_identity(item) for item in parents),
                      result["frame"], result["subframe"], scene.render.engine, working_space,
+                     None if shader_backend is None else (
+                         shader_backend["shader_backend"], shader_backend["cycles_device"],
+                         shader_backend["cycles_gpu"]),
                      _grade_settings(node), terminal, tuple(walker.graph),
                      tuple((key, item[0]) for key, item in walker.images.items()),
                      tuple(walker.render_states), _rna_state(scene.render) if compositor else None,
                      _geometry_state(obj) if obj is not None else None,
                      material_slot, uv_map)
         result["signature"] = _digest(signature)
+    if dependencies is not None:
+        existing = {_identity(item) for item in dependencies}
+        for item in collected_dependencies:
+            key = _identity(item)
+            if key not in existing:
+                existing.add(key)
+                dependencies.append(item)
     return result
 
 
-def describe(node, context=None):
-    """Return a value-only exact request, reading source pixels and UV geometry."""
-    return _describe(node, context, full=True)
+def describe(node, context=None, *, dependencies=None):
+    """Return a value-only request with exact UV/geometry and cheap Image facts.
+
+    When provided, ``dependencies`` receives each effective source Image and
+    referenced Object/Mesh once. It is a caller-owned transient list; the
+    returned route never contains Blender IDs.
+
+    ``receipt_signature`` uses the same cheap facts as ``preview`` and omits
+    transient dirty state. ``signature`` additionally covers validated exact
+    geometry; only an explicit request needs that full geometry work.
+    """
+    return _describe(node, context, full=True, dependencies=dependencies)
 
 
-def preview(node, context=None):
+def preview(node, context=None, *, dependencies=None):
     """Return route controls without pixel/file content reads or UV overlap work."""
-    return _describe(node, context, full=False)
+    return _describe(node, context, full=False, dependencies=dependencies)
 
 
-def observe(node, context=None):
+def observe(node, context=None, *, dependencies=None):
     """Return a passive eligibility observation suitable for node UI drawing."""
     try:
-        route = preview(node, context)
+        route = preview(node, context, dependencies=dependencies)
         return dict(state="ready", code=None, detail=None, signature=route["observation_signature"], route=route)
     except RouteBlocked as error:
         return dict(state="blocked", code=error.code, detail=str(error), signature=None, route=None)

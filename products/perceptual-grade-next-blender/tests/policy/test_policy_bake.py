@@ -1,6 +1,9 @@
 import unittest
 
-from policy.bake import Effects, Event, State, can_enqueue, new, output_policy, step
+from policy.bake import (
+    Effects, Event, State, bake_toggle_available, binding_policy, can_enqueue,
+    new, output_policy, step,
+)
 
 
 class BakePolicyTests(unittest.TestCase):
@@ -74,6 +77,25 @@ class BakePolicyTests(unittest.TestCase):
         self.assertEqual(output.mode, "error")
         self.assertFalse(output.use_bake)
         self.assertIsNotNone(output.error)
+
+    def test_toggle_requires_current_receipt_and_valid_image(self):
+        self.assertTrue(bake_toggle_available("same", "same", True))
+        self.assertFalse(bake_toggle_available("changed", "same", True))
+        self.assertFalse(bake_toggle_available("same", "same", False))
+        self.assertFalse(bake_toggle_available("same", "same", True, "live failed"))
+
+    def test_stale_receipt_is_revoked_and_valid_manual_off_is_retained(self):
+        stale = output_policy(False, "changed", "old", True)
+        self.assertEqual((stale.mode, stale.use_bake, stale.revoke_receipt),
+                         ("live", False, True))
+        current = output_policy(False, "same", "same", True)
+        self.assertFalse(current.revoke_receipt)
+
+    def test_shared_image_binding_requires_matching_route_and_valid_artifact(self):
+        self.assertEqual(binding_policy("route", True, True).receipt_signature,
+                         "route")
+        self.assertIsNone(binding_policy("route", False, True).receipt_signature)
+        self.assertIsNone(binding_policy("route", True, False).receipt_signature)
 
 
 if __name__ == "__main__":

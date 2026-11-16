@@ -10,13 +10,17 @@ from ..kernel.node_templates import (
     SLOT_LIVE,
     SLOT_LUT,
     SLOT_BAKE,
+    SLOT_BASIS,
+    SLOT_CONFIG,
     TEMPLATE_KIND,
+    TEMPLATE_MODE,
     TEMPLATE_SCHEMA,
     TEMPLATE_SIZE,
     TEMPLATE_SOURCE,
     TEMPLATE_SLOT,
     TEMPLATE_SPACE,
     TEMPLATE_VARIANT,
+    TEMPLATE_VECTOR,
     STACK_IMAGE,
     TemplateAssetError,
     TemplateVariant,
@@ -45,8 +49,14 @@ def _discover_slots(tree, kind):
                     image.get("perceptual_grade_nodes_field_role") == "boundary_seed"
                     or node.label == "AP1 boundary root seed"):
                 role = SLOT_BOUNDARY
-            if role is None and (image.get(STACK_IMAGE) or kind == "stack"):
+            if role is None and (
+                    image.get(STACK_IMAGE)
+                    or image.get("perceptual_grade_nodes_field_role") == "stack_lut"):
                 role = SLOT_LUT
+            if role is None and image.get("perceptual_grade_nodes_field_role") == "stack_basis":
+                role = SLOT_BASIS
+            if role is None and image.get("perceptual_grade_nodes_field_role") == "stack_config":
+                role = SLOT_CONFIG
         if role is None and node.get(BAKE_LIVE):
             role = SLOT_LIVE
         if role is None and node.get(BAKE_READER):
@@ -57,9 +67,10 @@ def _discover_slots(tree, kind):
     return {role: tuple(names) for role, names in result.items()}
 
 
-def tag_template(tree, key, kind, space=None, size=None, *, slots=None):
+def tag_template(tree, key, kind, space=None, size=None, *, mode=None,
+                 vector=None, slots=None):
     """Mark an emitted tree as a source template and return its record."""
-    variant = TemplateVariant(kind, tree.bl_idname, space, size)
+    variant = TemplateVariant(kind, tree.bl_idname, space, size, mode, vector)
     if variant.key != key:
         raise TemplateAssetError(f"Template key does not match identity: {key}")
     tree[TEMPLATE_SCHEMA] = TEMPLATE_MARKER_SCHEMA
@@ -70,6 +81,9 @@ def tag_template(tree, key, kind, space=None, size=None, *, slots=None):
         tree[TEMPLATE_SPACE] = space
     if size is not None:
         tree[TEMPLATE_SIZE] = size
+    if mode is not None:
+        tree[TEMPLATE_MODE] = mode
+        tree[TEMPLATE_VECTOR] = bool(vector)
     discovered = _discover_slots(tree, kind)
     if slots is not None:
         for role, names in _slots(slots).items():
@@ -79,11 +93,13 @@ def tag_template(tree, key, kind, space=None, size=None, *, slots=None):
                     raise TemplateAssetError(f"Template slot is absent: {name}")
                 _tag_node(node, role)
             discovered[role] = tuple(names)
-    return describe_template(tree, key, kind, space=space, size=size, slots=discovered)
+    return describe_template(tree, key, kind, space=space, size=size,
+                             mode=mode, vector=vector, slots=discovered)
 
 
-def describe_template(tree, key, kind, space=None, size=None, *, slots=None):
-    variant = TemplateVariant(kind, tree.bl_idname, space, size)
+def describe_template(tree, key, kind, space=None, size=None, *, mode=None,
+                      vector=None, slots=None):
+    variant = TemplateVariant(kind, tree.bl_idname, space, size, mode, vector)
     if variant.key != key:
         raise TemplateAssetError(f"Template key does not match identity: {key}")
     slots = _slots(slots) if slots is not None else _discover_slots(tree, kind)
@@ -93,6 +109,8 @@ def describe_template(tree, key, kind, space=None, size=None, *, slots=None):
         "tree_type": tree.bl_idname,
         "space": space,
         "size": size,
+        "mode": mode,
+        "vector": vector,
         "node_count": len(tree.nodes),
         "link_count": len(tree.links),
         "structure_sha256": structure_digest(tree),

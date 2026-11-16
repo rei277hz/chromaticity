@@ -33,6 +33,28 @@ def basis(space="Linear Rec.709"):
     return to_lut, np.linalg.inv(to_lut)
 
 
+def basis_pixels(to_lut, from_lut):
+    """Pack neutral-preserving matrix terms for the runtime Stack basis image."""
+    matrices = tuple(np.asarray(matrix, dtype=np.float64)
+                     for matrix in (to_lut, from_lut))
+    if any(matrix.shape != (3, 3) or not np.isfinite(matrix).all()
+           for matrix in matrices):
+        raise ValueError("Stack basis requires two finite 3 by 3 matrices")
+    vectors = []
+    for matrix in matrices:
+        vectors.extend((
+            matrix[:, 0],
+            matrix[:, 2],
+            tuple(math.fsum(float(value) for value in row) for row in matrix),
+        ))
+    pixels = np.zeros((1, 6, 4), dtype=np.float32)
+    pixels[0, :, :3] = np.asarray(vectors, dtype=np.float32)
+    pixels[0, :, 3] = 1.0
+    if not np.isfinite(pixels).all():
+        raise ValueError("Stack basis is not representable as float32")
+    return pixels
+
+
 def axis(size=SIZE):
     """Nonnegative log1p-spaced ACEScg coordinates, including endpoints."""
     if not isinstance(size, int) or size < 2:
@@ -48,6 +70,17 @@ def atlas_height(size=SIZE):
     if not isinstance(size, int) or size < 2:
         raise ValueError("A LUT atlas requires at least two samples per axis")
     return (4 * size**3 + ATLAS_WIDTH - 1) // ATLAS_WIDTH
+
+
+def stack_config_pixels(size):
+    """Pack resolution-dependent Stack lookup values into one RGBA32F texel."""
+    if type(size) is not int or size not in (PREVIEW_SIZE, SIZE):
+        raise ValueError("Stack lookup configuration requires a supported cube size")
+    pixels = np.empty((1, 1, 4), dtype=np.float32)
+    pixels[0, 0] = size, size**2, size**3, 1.0 / atlas_height(size)
+    if not np.isfinite(pixels).all():
+        raise ValueError("Stack lookup configuration is not representable as float32")
+    return pixels
 
 
 def pack_rgbe(rgb):
@@ -170,4 +203,5 @@ def _stack_matrix(matrices, space):
 
 __all__ = ("SIZE", "PREVIEW_SIZE", "CELLS", "MINIMUM", "MAXIMUM", "KAPPA",
            "LOG_RANGE", "ATLAS_WIDTH", "ATLAS_HEIGHT", "LinearCube", "axis",
-           "atlas_height", "basis", "pack_rgbe", "unpack_rgbe")
+           "atlas_height", "basis", "basis_pixels", "stack_config_pixels",
+           "pack_rgbe", "unpack_rgbe")

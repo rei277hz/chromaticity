@@ -95,7 +95,11 @@ class BakeGeometryTests(unittest.TestCase):
         routes.link(render, "Image", target, "Color")
         context = SimpleNamespace(scene=self.scene, object=None,
                                   space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
-        baseline = self.module.describe(target, context)["signature"]
+        dependencies = []
+        baseline = self.module.describe(target, context, dependencies=dependencies)["signature"]
+        dependency_ids = [item.session_uid for item in dependencies]
+        self.assertIn(self.mesh_object.session_uid, dependency_ids)
+        self.assertIn(mesh.session_uid, dependency_ids)
         mesh.attributes[0].data[0].color = (0.8, 0.7, 0.6, 1.0)
         self.assertNotEqual(baseline, self.module.describe(target, context)["signature"])
 

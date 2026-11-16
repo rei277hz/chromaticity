@@ -21,7 +21,7 @@ PARAMETER_SAMPLE_BANK = "_perceptual_grade_parameter_sample_bank"
 PARAMETER_READER = "_perceptual_grade_parameter_reader"
 PARAMETER_READER_BANK = "_perceptual_grade_parameter_reader_bank"
 
-TEMPLATE_SCHEMA = "perceptual-grade-node-template-v1"
+TEMPLATE_SCHEMA = "perceptual-grade-node-template-v3"
 TEMPLATE_KIND = "_perceptual_grade_template_kind"
 TEMPLATE_VARIANT = "_perceptual_grade_template_variant"
 TEMPLATE_IMAGE_ROLE = "_perceptual_grade_template_image_role"

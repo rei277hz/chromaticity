@@ -3,7 +3,10 @@
 Perceptual Grade is developed by Rei277Hz. Its current monorepo source, including
 DCTL, is available under `MIT OR Apache-2.0`; packaged Blender extensions and
 their Corresponding Source are additionally offered under `GPL-3.0-or-later`.
-Its analytic DCTL and native extension share the grading model. See the
+The preserved 1.23.2 DCTL and Blender extension share their historical grading
+model. The current analytic reference and Next have separate implementation
+scopes, described in [Appearance coordinates and grading](../theory/structure.md)
+and [Next Blender policy machines](../development/next-policies.md). See the
 [License](license.md) for the current policy and the separate historical downloads.
 
 ## Color appearance
@@ -18,11 +21,16 @@ Hellwig and Fairchild, [Revising CAM16-UCS](https://doi.org/10.2352/CIC.2022.30.
 
 [Colour’s von Kries adaptation implementation](https://colour.readthedocs.io/en/develop/_modules/colour/adaptation/vonkries.html), for CAT16 adaptation.
 
-The native Stage 2 graph and NumPy scope implementation share the DCTL’s modCAM16 coordinates, H–K compensation, hue eccentricity, default calibration and monotone softplus remapping. The tool adds its own signed-value extension, tonal coefficient model, Adaptance weighting, hue-concentration controls and bounded H–K inverse guard. These engineering choices are described in the theory chapters.
+The historical native Stage 2 graph and NumPy scope implementation share the
+1.23.2 DCTL’s modCAM16 coordinates, H–K compensation, hue eccentricity, default
+calibration and monotone softplus remapping. That product adds its own
+signed-value extension, tonal coefficient model, Adaptance weighting,
+hue-concentration controls and bounded H–K inverse guard. The theory chapters
+identify the current reference equations and distinguish this historical profile.
 
 ## Robust statistics
 
-Hubert, Rousseeuw and Verdonck, [A deterministic algorithm for robust location and scatter](https://wis.kuleuven.be/stat/robust/papers/2012/DetMCD.pdf), 2012, supplies the DetMCD algorithm used for diagnostic contours. The implementation is original, using six deterministic starts, Qn scales, concentration steps and reweighting. No code from robustbase or scikit-learn is included. Its contours describe diagnostic pixel distributions and never feed the grading calculation.
+Hubert, Rousseeuw and Verdonck, [A deterministic algorithm for robust location and scatter](https://wis.kuleuven.be/stat/robust/papers/2012/DetMCD.pdf), 2012, supplies the DetMCD algorithm used for the historical extension's diagnostic contours. That implementation is original, using six deterministic starts, Qn scales, concentration steps and reweighting. No code from robustbase or scikit-learn is included. Its contours describe diagnostic pixel distributions and never feed the grading calculation.
 
 The article appears in *Journal of Computational and Graphical Statistics*
 21(3), 618–637. The original NumPy implementation now lives in
@@ -32,7 +40,10 @@ corrections and documented degenerate/display fallbacks.
 
 ## Host and build tools
 
-Perceptual Grade runs as an extension inside [Blender](https://www.blender.org/). The extension implements the grading controls, scopes and render methods using Blender’s node system and color-management facilities.
+Perceptual Grade runs as an extension inside [Blender](https://www.blender.org/).
+Next implements its grading controls and native evaluation using Blender’s node
+system and color-management facilities. The retained 1.23.2 manual describes
+that earlier extension's scopes and render-method controls.
 
 The Perceptual Grade DCTL runs inside DaVinci Resolve. [Blackmagic Design’s documentation](https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion) describes the host; use the DCTL Developer documentation shipped with your build for its interface.
 

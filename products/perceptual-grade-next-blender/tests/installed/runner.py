@@ -1363,15 +1363,19 @@ assert all(node.use_custom_color
            for node in shared_shader_nodes)
 shader_error = shared_shader_nodes[0].node_tree
 shader_output = shader_error.nodes.get("Group Output")
-assert tuple(shader_output.inputs["Color"].default_value) == (1.0, 0.0, 1.0, 1.0)
+shader_magenta, = shader_output.inputs["Color"].links
+assert shader_magenta.from_node.bl_idname == "ShaderNodeCombineColor"
+assert tuple(shader_magenta.from_node.inputs[name].default_value
+             for name in ("Red", "Green", "Blue")) == (1.0, 0.0, 1.0)
 assert any(link.from_socket.name == "Alpha"
            and link.to_socket.name == "Alpha" for link in shader_error.links)
 assert nodes._kernel_error_text(shared_shader_nodes[0]) == "Grade output is magenta"
 assert shared_compositor_node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
 compositor_error = shared_compositor_node.node_tree
 magenta = next(node for node in compositor_error.nodes
-               if node.bl_idname == "CompositorNodeRGB")
-assert tuple(magenta.outputs[0].default_value) == (1.0, 0.0, 1.0, 1.0)
+               if node.bl_idname == "CompositorNodeCombineColor")
+assert tuple(magenta.inputs[name].default_value
+             for name in ("Red", "Green", "Blue")) == (1.0, 0.0, 1.0)
 assert any(node.bl_idname == "CompositorNodeSetAlpha" for node in compositor_error.nodes)
 separate_error = next(node for node in compositor_error.nodes
                       if node.bl_idname == "CompositorNodeSeparateColor")
@@ -1380,7 +1384,7 @@ restore_error = next(node for node in compositor_error.nodes
 assert any(link.from_socket == separate_error.outputs["Alpha"]
            and link.to_socket == restore_error.inputs["Alpha"]
            for link in compositor_error.links)
-assert any(link.from_socket == magenta.outputs[0]
+assert any(link.from_node == magenta
            and link.to_socket == restore_error.inputs["Image"]
            for link in compositor_error.links)
 nodes._write_grade_parameters = original_parameter_writer

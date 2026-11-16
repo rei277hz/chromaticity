@@ -1,0 +1,115 @@
+"""Small source revisions and durable, metadata-only bake receipts.
+
+No operation here reads image pixels. Runtime ID keys deliberately never enter
+persisted receipts; load/undo rebuild their baselines from restored provenance.
+"""
+
+# pg-book: technical-report/en#next-policy.bake
+
+from dataclasses import dataclass
+import json
+from typing import Optional
+
+
+RECEIPT_SCHEMA = 1
+
+
+@dataclass(frozen=True)
+class BakeReceipt:
+    signature: str
+
+    def encode(self):
+        return json.dumps({"schema": RECEIPT_SCHEMA, "signature": self.signature},
+                          separators=(",", ":"), sort_keys=True)
+
+    @classmethod
+    def decode(cls, value) -> Optional["BakeReceipt"]:
+        try:
+            record = json.loads(value)
+            signature = record.get("signature")
+            if (type(record.get("schema")) is int
+                    and record["schema"] == RECEIPT_SCHEMA
+                    and isinstance(signature, str) and signature):
+                return cls(signature)
+        except (AttributeError, TypeError, ValueError):
+            pass
+        return None
+
+
+def source_key(value):
+    value = getattr(value, "original", value)
+    uid = getattr(value, "session_uid", None)
+    if uid is None:
+        pointer = getattr(value, "as_pointer", None)
+        uid = pointer() if pointer is not None else id(value)
+    return type(value).__name__, int(uid)
+
+
+class BakeSources:
+    """Track only the IDs used by bound receipts or pending requests."""
+
+    def __init__(self):
+        self.generations = {}
+        self.bindings = {}
+        self.readers = {}
+
+    def clear(self):
+        self.generations.clear()
+        self.bindings.clear()
+        self.readers.clear()
+
+    def forget(self, node_key):
+        previous = self.bindings.pop(node_key, ())
+        for key, _generation, _dirty in previous:
+            readers = self.readers.get(key)
+            if readers is not None:
+                readers.discard(node_key)
+                if not readers:
+                    self.readers.pop(key, None)
+
+    def snapshot(self, dependencies):
+        facts = {}
+        for value in dependencies:
+            key = source_key(value)
+            facts[key] = (key, self.generations.get(key, 0),
+                          bool(getattr(value, "is_dirty", False)))
+        return tuple(sorted(facts.values()))
+
+    def bind(self, node_key, dependencies):
+        snapshot = self.snapshot(dependencies)
+        # Do not retire/recreate shared generations while replacing a binding.
+        previous = self.bindings.get(node_key, ())
+        self.bindings[node_key] = snapshot
+        current_keys = {key for key, _generation, _dirty in snapshot}
+        for key in current_keys:
+            self.readers.setdefault(key, set()).add(node_key)
+        for key, _generation, _dirty in previous:
+            if key not in current_keys:
+                readers = self.readers[key]
+                readers.discard(node_key)
+                if not readers:
+                    self.readers.pop(key)
+        return snapshot
+
+    def matches(self, snapshot):
+        return all(self.generations.get(tuple(key), 0) == generation
+                   for key, generation, _dirty in snapshot)
+
+    def changed(self, node_key, dependencies):
+        baseline = self.bindings.get(node_key)
+        if baseline is None:
+            return False
+        current = self.snapshot(dependencies)
+        if tuple((key, generation) for key, generation, _dirty in current) != tuple(
+                (key, generation) for key, generation, _dirty in baseline):
+            return True
+        return any(dirty and not old_dirty
+                   for (_, _, dirty), (_, _, old_dirty) in zip(current, baseline))
+
+    def invalidate(self, dependencies):
+        affected = set()
+        for key in {source_key(value) for value in dependencies}:
+            if key in self.readers:
+                self.generations[key] = self.generations.get(key, 0) + 1
+                affected.update(self.readers[key])
+        return affected

@@ -115,6 +115,44 @@
       "assert": "output.mode == 'live' and not output.use_bake and output.error is None"
     },
     {
+      "name": "toggle_requires_current_receipt_and_valid_artifact",
+      "variables": {
+        "current": "Optional[str]",
+        "receipt": "Optional[str]",
+        "valid": "bool"
+      },
+      "lets": {
+        "available": "bake_toggle_available(current, receipt, valid)"
+      },
+      "assert": "not available or (valid and current is not None and current == receipt)"
+    },
+    {
+      "name": "stale_disabled_bake_revokes_receipt",
+      "variables": {},
+      "lets": {
+        "output": "output_policy(False, 'new', 'old', True)"
+      },
+      "assert": "output.mode == 'live' and not output.use_bake and output.revoke_receipt"
+    },
+    {
+      "name": "matching_disabled_bake_retains_receipt",
+      "variables": {},
+      "lets": {
+        "output": "output_policy(False, 'same', 'same', True)"
+      },
+      "assert": "output.mode == 'live' and not output.use_bake and not output.revoke_receipt"
+    },
+    {
+      "name": "shared_image_binding_requires_valid_matching_route",
+      "variables": {},
+      "lets": {
+        "valid": "binding_policy('route', True, True)",
+        "invalid_image": "binding_policy('route', False, True)",
+        "wrong_domain": "binding_policy('route', True, False)"
+      },
+      "assert": "valid.receipt_signature == 'route' and invalid_image.receipt_signature is None and wrong_domain.receipt_signature is None"
+    },
+    {
       "name": "invalid_selected_image_fails_closed",
       "variables": {},
       "lets": {
@@ -178,10 +216,19 @@
     {
       "name": "keep_stale_bake_selected",
       "function": "output_policy",
-      "target": "desired_signature != artifact_signature",
+      "target": "not bake_toggle_available(desired_signature, artifact_signature, artifact_valid)",
       "replacement": "False",
       "detects": [
         "property.stale_bake_automatically_uses_live_output"
+      ]
+    },
+    {
+      "name": "allow_stale_toggle",
+      "function": "bake_toggle_available",
+      "target": "desired_signature == artifact_signature",
+      "replacement": "True",
+      "detects": [
+        "property.toggle_requires_current_receipt_and_valid_artifact"
       ]
     }
   ]

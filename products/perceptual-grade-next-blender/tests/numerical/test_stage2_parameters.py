@@ -9,15 +9,19 @@ import numpy as np
 from color_tools.kernel import (
     ColorSettings, LinearSettings, ToneSettings, prepare, prepare_tone,
 )
+from color_tools.kernel.boundary import prepare_boundary
+from color_tools.kernel.settings import SPACES
 from color_tools.kernel.stage2_parameters import (
     MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT, MATRIX_RED_SLOT,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, PreparedParameters,
-    TONE_DOMAIN_SLOT, TONE_JET_COUNT, TONE_SCALARS_SLOT, prepare_parameters,
+    LAST_PARAMETER_SLOT, TONE_DOMAIN_SLOT, TONE_JET_COUNT, TONE_SCALARS_SLOT,
+    prepare_parameters,
+    OUTPUT_MATRIX_ROW_SLOTS,
 )
 
 
-def complete(linear=LinearSettings(), tone=ToneSettings()):
-    prepared = prepare(linear, tone)
+def complete(linear=LinearSettings(), tone=ToneSettings(), space="Linear Rec.709"):
+    prepared = prepare(linear, tone, space)
     return replace(prepared, tone=prepare_tone(tone, full_fields=True))
 
 
@@ -55,6 +59,20 @@ class Stage2ParameterTests(unittest.TestCase):
         expected = np.asarray(expected_columns[-1], np.float32) * neutrals[:, None]
         np.testing.assert_array_equal(native, expected)
 
+    def test_working_space_output_adapter_is_packed_as_three_rows(self):
+        for space in SPACES:
+            with self.subTest(space=space):
+                prepared = complete(space=space)
+                pixels = prepare_parameters(prepared).pixels[0]
+                boundary = prepared.boundary or prepare_boundary(
+                    prepared.fl, prepared.aw, prepared.gamma,
+                )
+                output_matrix = prepared.from_cones @ boundary.inverse
+                np.testing.assert_array_equal(
+                    pixels[OUTPUT_MATRIX_ROW_SLOTS, :3],
+                    output_matrix.astype(np.float32),
+                )
+
     def test_packed_tone_reproduces_existing_runtime_evaluation(self):
         settings = ToneSettings(input_nits=(.2, 8., 40., 235., 1150.), fit=2.)
         prepared = complete(tone=settings)
@@ -89,7 +107,7 @@ class Stage2ParameterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "alpha"):
             PreparedParameters(pixels)
         pixels = prepare_parameters(prepared).pixels.copy()
-        pixels[0, TONE_DOMAIN_SLOT + 1, 0] = 1.
+        pixels[0, LAST_PARAMETER_SLOT + 1, 0] = 1.
         with self.assertRaisesRegex(ValueError, "reserved"):
             PreparedParameters(pixels)
         with self.assertRaisesRegex(ValueError, "schema"):
