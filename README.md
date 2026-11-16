@@ -1,8 +1,8 @@
 # Linux build and test results
 
-- Commit: `ef7fe3f73c0ce4572411b69d6b8a98a73b86ccdf`
-- Recorded at: 2026-11-14T20:56:13+00:00
-- Run: https://github.com/rei277hz/chromaticity/actions/runs/43639025003
+- Commit: `48a4904d8c7ec7f76af3dd51c6d003ddafdbf667`
+- Recorded at: 2026-11-16T05:03:08+00:00
+- Run: https://github.com/rei277hz/chromaticity/actions/runs/43806557752
 
 Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.
 
@@ -15,7 +15,7 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender:verify_policies` | passed |
 | `//products/perceptual-grade-next-blender:extension` | passed |
 
-## Linux smoke suites: 43/43 passed
+## Linux smoke suites: 47/47 passed
 
 Run outcome: **passed**. Command exit: `0`.
 
@@ -31,6 +31,8 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender/tests:policy_image_publication` | passed |
 | `//products/perceptual-grade-next-blender/tests:policy_gesture` | passed |
 | `//products/perceptual-grade-next-blender/tests:preparation_runtime` | passed |
+| `//products/perceptual-grade-next-blender/tests:runtime_bake_routes` | passed |
+| `//products/perceptual-grade-next-blender/tests:bake_worker_runtime` | passed |
 | `//products/perceptual-grade-next-blender/tests:lut_worker` | passed |
 | `//products/perceptual-grade-next-blender/tests:lut_shader` | passed |
 | `//products/perceptual-grade-next-blender/tests:preparation` | passed |
@@ -55,9 +57,11 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender/tests:architecture` | passed |
 | `//products/perceptual-grade-next-blender/tests:policy_coverage` | passed |
 | `//products/perceptual-grade-next-blender/tests:package` | passed |
+| `//products/perceptual-grade-next-blender/tests:technical_report_audit` | passed |
 | `//products/perceptual-grade-next-blender/tests:publication_compare_package` | passed |
 | `//products/perceptual-grade-next-blender/tests:install_workspace` | passed |
 | `//products/perceptual-grade-next-blender/tests:installed` | passed |
+| `//products/perceptual-grade-next-blender/tests:bake_installed` | passed |
 | `//products/perceptual-grade-next-blender/tests:bake_workspace_installed` | passed |
 | `//products/perceptual-grade-next-blender/tests:compositor_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | passed |

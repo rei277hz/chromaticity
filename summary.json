@@ -2,12 +2,12 @@
   "schema": 1,
   "metadata": {
     "repository": "rei277hz/chromaticity",
-    "commit": "ef7fe3f73c0ce4572411b69d6b8a98a73b86ccdf",
-    "run_id": "43639025003",
-    "run_number": 46,
+    "commit": "48a4904d8c7ec7f76af3dd51c6d003ddafdbf667",
+    "run_id": "43806557752",
+    "run_number": 51,
     "run_attempt": 1,
-    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/43639025003",
-    "timestamp": "2026-11-14T20:56:13+00:00"
+    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/43806557752",
+    "timestamp": "2026-11-16T05:03:08+00:00"
   },
   "builds": {
     "passed": 2,
@@ -30,12 +30,12 @@
     ]
   },
   "tests": {
-    "passed": 43,
-    "total": 43,
+    "passed": 47,
+    "total": 47,
     "outcome": "passed",
     "exit_code": 0,
     "counts": {
-      "passed": 43
+      "passed": 47
     },
     "issues": [],
     "targets": [
@@ -77,6 +77,14 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:preparation_runtime",
+        "status": "passed"
+      },
+      {
+        "target": "//products/perceptual-grade-next-blender/tests:runtime_bake_routes",
+        "status": "passed"
+      },
+      {
+        "target": "//products/perceptual-grade-next-blender/tests:bake_worker_runtime",
         "status": "passed"
       },
       {
@@ -176,6 +184,10 @@
         "status": "passed"
       },
       {
+        "target": "//products/perceptual-grade-next-blender/tests:technical_report_audit",
+        "status": "passed"
+      },
+      {
         "target": "//products/perceptual-grade-next-blender/tests:publication_compare_package",
         "status": "passed"
       },
@@ -185,6 +197,10 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:installed",
+        "status": "passed"
+      },
+      {
+        "target": "//products/perceptual-grade-next-blender/tests:bake_installed",
         "status": "passed"
       },
       {
