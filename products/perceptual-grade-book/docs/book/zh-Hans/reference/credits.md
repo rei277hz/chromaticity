@@ -93,4 +93,5 @@ jsDelivr 上的 Fontsource 发行包加载。其 SIL Open Font License 1.1 许�
 `docs/data/appearance-references.json`。
 
 [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) 提供固定版本的 FFmpeg
-二进制文件，用于转换屏幕录像；Pillow 用于编码成对演示图及简介中的 WebP 演示。
+二进制文件，供保留的录像生成器转换屏幕录像；Pillow 用于编码成对及简介 WebP 输出。
+这些输出及其静态帧仅供构建阶段使用，不进入当前发布的书籍产品。

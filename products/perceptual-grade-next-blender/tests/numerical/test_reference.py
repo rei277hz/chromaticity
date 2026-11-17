@@ -87,19 +87,18 @@ class ReferenceTests(unittest.TestCase):
             self.assertTrue(np.isfinite(result['tone'].q).all())
             self.assertTrue(np.isfinite(result['rgb']).all())
 
-    def test_full_oracle_applies_one_hk_guard_after_scale(self):
+    def test_full_oracle_applies_one_hk_guard_before_scale(self):
         _, linear, tone, color = next(row for row in full_cases.grades()
                                      if row[0] == 'all_active')
         events = []
         references = []
         model_constructor = model.Model
         color_apply = grading.Color.apply_state
-        hk_module = importlib.import_module(
-            'color_tools.perceptual_grade_core.model.hk_guard')
         cube_module = importlib.import_module(
             'color_tools.perceptual_grade_reference.cube_guard')
-        hk_guard = hk_module.guard
+        hk_guard = grading.guard
         cube_guard = cube_module.guard
+        repairs = []
 
         def construct(*args, **kwargs):
             reference = model_constructor(*args, **kwargs)
@@ -113,7 +112,9 @@ class ReferenceTests(unittest.TestCase):
 
         def apply_hk(*args, **kwargs):
             events.append('hk')
-            return hk_guard(*args, **kwargs)
+            repaired = hk_guard(*args, **kwargs)
+            repairs.append((args, repaired))
+            return repaired
 
         def apply_cube(*args, **kwargs):
             events.append('cube')
@@ -121,16 +122,45 @@ class ReferenceTests(unittest.TestCase):
 
         with patch.object(oracle.model, 'Model', side_effect=construct), \
                 patch.object(grading.Color, 'apply_state', apply_color), \
-                patch.object(hk_module, 'guard', side_effect=apply_hk), \
+                patch.object(grading, 'guard', side_effect=apply_hk), \
                 patch.object(cube_module, 'guard', side_effect=apply_cube):
             result = oracle.evaluate_full(full_cases.rgba(count=64)[:, :3], linear, tone, color,
                                           'Linear Rec.709')
 
         self.assertEqual(len(references), 1)
-        self.assertFalse(references[0].hk_guard)
-        self.assertFalse(references[0].color.hk_guard)
-        self.assertEqual(events, ['color_after_scale', 'hk', 'cube'])
+        self.assertTrue(references[0].hk_guard)
+        self.assertTrue(references[0].color.hk_guard)
+        self.assertEqual(events, ['hk', 'color_after_scale', 'cube'])
+        self.assertEqual(len(repairs), 1)
+        np.testing.assert_array_equal(repairs[0][0][2], result['reference_energy'])
+        # The repaired state has not yet received the selected final Scale.
+        # A post-Scale repair would instead equal the exported Color state.
+        self.assertGreater(float(np.max(abs(repairs[0][1][0] - result['color'].q))), 1e-4)
+        np.testing.assert_array_equal(result['hk_q'], result['color'].q)
+        np.testing.assert_array_equal(result['hk_energy'], result['color'].energy)
         self.assertTrue(result['guarded'])
+
+    def test_full_oracle_distinguishes_repair_order_with_adaptance_and_scale(self):
+        color = full_cases.guard_before_scale_grade()
+        linear, tone = LinearSettings(), ToneSettings()
+        for space in cases.SPACES:
+            with self.subTest(space=space):
+                values = full_cases.rgba(space, count=64)[:, :3]
+                result = oracle.evaluate_full(values, linear, tone, color, space)
+                lp, tp = oracle.parameters(linear, tone)
+                old = model.Model(model.Settings(
+                    linear=lp, tone=tp, color=grading.ColorSettings(**asdict(color)),
+                ), space, hk_guard=False)
+                unguarded = old.color.apply_state(result['tone'])
+                post_scale_q, _ = grading.guard(
+                    unguarded.q, unguarded.energy, result['reference_energy'],
+                )
+                difference = oracle.metrics(result['hk_q'], post_scale_q)
+                self.assertGreater(difference['max_normalized'], 1e-3, difference)
+                self.assertTrue(np.isfinite(result['rgb']).all())
+                np.testing.assert_array_equal(
+                    result['rgb'][np.all(values == 0., axis=-1)], 0.,
+                )
 
 
 if __name__ == '__main__':

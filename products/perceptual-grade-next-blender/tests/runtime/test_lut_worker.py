@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 
 from color_tools.kernel import lut
-from color_tools.kernel.settings import LinearSettings, Settings, ToneSettings
+from color_tools.kernel.settings import ColorSettings, LinearSettings, Settings, ToneSettings, WebSettings
 from color_tools.lut_codec import (
     freeze_prepared, freeze_settings, thaw_prepared, thaw_settings,
 )
@@ -86,6 +86,13 @@ class LUTWorkerTests(unittest.TestCase):
             linear=LinearSettings(exposure=.5, balance=(.1, .2),
                                   matrix=((1., 0., 0.), (0., 2., 0.), (0., 0., 3.))),
             tone=ToneSettings(fit=.5), space="ACEScg",
+            color=ColorSettings(
+                lightness=((1., -2., 3., -4.),)*4,
+                chroma=((.1, -.2, .3, -.4),)*4,
+                adaptance=((1., -.5),)*4, global_gain=.25,
+                web=WebSettings(hue_degrees=((2.,)*6,)*4,
+                                log_chroma=((.1,)*6,)*4,
+                                log_scale=((.2,)*6,)*4)),
         ),)
         self.assertEqual(thaw_settings(freeze_settings(settings)), settings)
         original = prepared(lut.PREVIEW_SIZE, settings)

@@ -1,6 +1,12 @@
 load("//build_defs:artifacts.bzl", "python_tool", "source_tree")
 load(":rules.bzl", "book_generate")
 
+export_file(
+    name = "publication_sources",
+    src = "BUCK",
+    visibility = ["PUBLIC"],
+)
+
 python_library(
     name = "action_sources",
     srcs = {"pg_book_generators/action.py": "action.py"},
@@ -348,9 +354,6 @@ ASSETS = {
     "src/site.webmanifest": ":favicon[webmanifest]",
     "src/assets/cie_1931_xy_locus.png": ":locus[png]",
     "src/assets/ab_background.png": ":ab_background[png]",
-    "src/assets/intro/match-three-images.webp": ":intro[animation]",
-    "src/assets/intro/match-three-images-still.webp": ":intro[still]",
-    "src/assets/demos/manifest.json": ":demos[manifest]",
     "src/assets/fragments/benchmark.md": ":figures[benchmark]",
     "src/assets/fragments/lut-shaper-key.md": ":figures[shaper_key]",
     "src/assets/fragments/lut-domain128-key.md": ":figures[domain_key]",
@@ -359,7 +362,6 @@ ASSETS = {
     "src/downloads/provenance/numerical-figures.json": ":figures[manifest]",
     "src/downloads/provenance/photographic-figures.json": ":photos[manifest]",
     "src/downloads/provenance/host-screenshots.json": ":screenshots[manifest]",
-    "src/downloads/provenance/intro-video.json": ":intro[manifest]",
     "src/downloads/provenance/favicon.json": ":favicon[manifest]",
     "src/downloads/provenance/legacy-generator-sources.json": "source-provenance.json",
 }
@@ -376,10 +378,6 @@ ASSETS.update({"src/assets/illustrations/" + name + ".svg": ":figures[" + name +
 ASSETS.update({"src/assets/figures/photo-" + name + ".png": ":photos[" + name + "]" for name in PHOTO_GRADES})
 
 ASSETS.update({"src/assets/screenshots/" + name + ".png": ":screenshots[" + name + "]" for name in SCREENSHOTS})
-
-ASSETS.update({"src/assets/demos/" + name + ".webp": ":demos[" + name + "]" for name in DEMOS})
-
-ASSETS.update({"src/assets/demos/" + name + "-still.webp": ":demos[" + name + "_still]" for name in DEMOS})
 
 source_tree(
     name = "assets",

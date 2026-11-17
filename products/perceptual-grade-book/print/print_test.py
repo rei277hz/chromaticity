@@ -130,7 +130,8 @@ class PrintBuildChecks:
                     self.assertTrue(any(path.startswith("development/") for path in paths))
                     self.assertFalse(any(path.startswith("guide/") for path in paths))
                 self.assertEqual([item["title"] for item in edition["parts"]], [item["title"] for item in parts])
-                self.assertGreater(edition["math_expressions_rendered"], 0)
+                self.assertEqual(edition["math_expressions_rendered"] > 0,
+                                 self.publication == "technical-report")
                 self.assertEqual(edition["remaining_data_tex"], 0)
 
                 book_html = self.documents / language / "book.html"
@@ -162,7 +163,8 @@ class PrintBuildChecks:
                 self.assertIn('@import url("tinos/index.css")', pdf_font_css)
                 self.assertEqual('"Tinos", "Noto Serif SC", serif' in pdf_font_css, language == "zh-Hans")
                 self.assertFalse(parsed.xpath("//*[@data-tex]"))
-                self.assertGreater(len(parsed.xpath("//*[contains(concat(' ', normalize-space(@class), ' '), ' katex ')]")), 0)
+                self.assertEqual(bool(parsed.xpath("//*[contains(concat(' ', normalize-space(@class), ' '), ' katex ')]")),
+                                 self.publication == "technical-report")
                 self.assertFalse(parsed.xpath("//iframe|//video|//audio"))
                 for image in parsed.xpath("//img[@src]"):
                     reference = image.get("src")
@@ -170,8 +172,8 @@ class PrintBuildChecks:
                         continue
                     target = (book_html.parent / reference).resolve()
                     self.assertTrue(target.is_file(), reference)
-                    if "/assets/demos/" in reference:
-                        self.assertIn("-still.", reference)
+                    self.assertNotIn("/assets/demos/", reference)
+                    self.assertNotIn("/assets/intro/", reference)
 
     def test_same_print_document_links_remain_internal(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -343,7 +345,7 @@ class PrintBuildChecks:
                 if language == "zh-Hans":
                     extracted_text = "".join(page.extract_text() or "" for page in PdfReader(str(pdf_path)).pages)
                     compact_text = re.sub(r"\s+", "", extracted_text)
-                    for expected in ("用户手册", "选择工作白点", "共享与复用调色", "安装与连接", "白平衡"):
+                    for expected in ("用户手册", "场景工作空间", "共享与动画", "安装与连接", "白平衡"):
                         self.assertTrue(expected in compact_text, f"Chinese PDF text extraction is missing {expected}")
 
                 if language == "en" and self.publication == "user-manual":
@@ -388,7 +390,7 @@ class PrintBuildChecks:
         # Fontsource CJK shards reuse glyph IDs for different characters. When
         # a PDF renderer confuses those fonts, text extraction and the visible
         # glyph can disagree even though the font is embedded successfully.
-        expected_characters = set("用户手册选择工作白点安装与连接")
+        expected_characters = set("用户手册场景工作空间安装与连接")
         checked_characters = set()
         checked_weights = set()
         visited = set()
@@ -489,6 +491,8 @@ class PrintBuildChecks:
                         self.assertIn(member, names)
                         if item.get("media-type") == "application/xhtml+xml":
                             root = ET.fromstring(archive.read(member))
+                            self.assertFalse(root.findall(".//{http://www.w3.org/1999/xhtml}video"))
+                            self.assertFalse(root.findall(".//{http://www.w3.org/1999/xhtml}audio"))
                             self.assertFalse(root.findall(".//*[@data-tex]"))
                             properties = set(item.get("properties", "").split())
                             self.assertEqual("mathml" in properties,

@@ -549,6 +549,19 @@ $$
 
 For pixel hue \(\theta\), apply \(\theta+S_5(\min(C/\tau_\theta,1))(\mathrm{warp}(\theta)-\theta)\). Positive radial coefficients interpolate logarithmically between destination hues. Rows interpolate with the quintic smoother on anchor spacing, with constant tails; target hues must preserve strict cyclic order.
 
+**Next authoring boundary.** Next strengthens that order to a 4° minimum cyclic
+destination gap. A direct edit pins one hue, pushes neighbors, and attempts
+constrained restoration of earlier automatically displaced values. Sparse
+origin/return-offset claims belong to editing history, outside the mathematical
+settings signature. They are not coefficient fields. An invalid animation
+sample instead minimizes the sum of squared lifted-angle changes over the
+convex cyclic-gap constraints, deriving an effective web without rewriting
+keys. Invalid-row repair solves with a 4.0001° gap before float32 storage and
+checks the stored result against the public 4° minimum; valid rows stay exact.
+The product's synchronous [authoring policy](next-policies.md#next-policy.color-authoring)
+authorizes mutations; this boundary does not change the reference angular or
+radial evaluator once supplied valid settings.
+
 **Selective Adaptance.** Four neutral a/b destinations calibrate positive response gains. At anchor \(H_i\), let \(A_0=A_w(H_i/100)^{1/\gamma}\), \(r_0=A_0/3.05\), and decode target responses \(r_i^*\in(0,400)\):
 
 $$
@@ -568,6 +581,14 @@ T_m(r)=\frac{mr}{1+(m-1)|r|/400}\qquad(|r|\le400).
 $$
 
 The exterior continuation is algebraic; responses at or beyond the physical pole are not directly uncompressed. Reconstruct responses from carried energy and opponent coordinates. The common \(k\) is calibrated against a hypothetical neutral at the same frozen tonal selector. It preserves that neutral's \(J_A\) at the Adaptance output; the subsequent H–K repair may change it.
+
+Next resolves a finite out-of-range Adaptance destination along its original
+a/b ray, reducing its radius until all calibrated responses are strictly inside
+\((0,400)\), with an inward numerical allowance. It rejects nonfinite requests.
+This is a parameter-admission operation, not a later per-pixel clamp. Tone Peak
+changes clear hue-restoration claims and resolve the dependent hue geometry
+and Adaptance limits together. Animated samples use effective resolved values
+without modifying saved controls or keyframes.
 
 **Repair, then Scale.** Apply the H–K guard of section 7 to the Adaptance result, using \(E_r=\max(E_0,0)\). For requested \(H\ge0\) it produces \(E_g\ge0\); for \(H>0\) and \(E_r>0\), \(E_g>0\). Negative requested H retains the signed bypass. Then apply the previously selected \(\lambda>0\):
 
@@ -1260,9 +1281,9 @@ The independent analytic reference evaluates Tone and Stage-3 coefficient functi
 | Independent analytic reference | closed-form forward Tone | closed-form coefficients and corrected Warp |
 | Reference `BakeStack` | prepared inverse Tone table | reference forward kernel |
 | Retained production inverse | profile-specific inverse Tone preparation | retained controls and ordering |
-| Next Blender product | Stage 1/Tone implementation | Warp not implemented |
+| Next Blender product | Prepared Tone parameters | Prepared J/C, tonal web and selective Adaptance; H–K repair before Scale |
 
-The shared inverse-Tone table used by the reference `BakeStack` solves for the scalar inverse \(t(H)\) during preparation and represents \(q(H)=t(H)/H\) against \(u=\log(1+H/s)\), where \(s\) is its table scale. It uses an adaptive node axis and quintic Hermite interpolation; the positive linear tail is evaluated analytically. Intervals are refined until five fractional probes and Bernstein checks for positive \(q\) and increasing \(Hq\) pass. Preparation is bounded by `MAX_CELLS=2048`, `MAX_ROUNDS=32`, `MAX_ROOT_EVALUATIONS=80` and a 64 KiB budget. A limit is not the stored size. Next's experimental Color preparation is not evidence of a shipped Warp path.
+The shared inverse-Tone table used by the reference `BakeStack` solves for the scalar inverse \(t(H)\) during preparation and represents \(q(H)=t(H)/H\) against \(u=\log(1+H/s)\), where \(s\) is its table scale. It uses an adaptive node axis and quintic Hermite interpolation; the positive linear tail is evaluated analytically. Intervals are refined until five fractional probes and Bernstein checks for positive \(q\) and increasing \(Hq\) pass. Preparation is bounded by `MAX_CELLS=2048`, `MAX_ROUNDS=32`, `MAX_ROOT_EVALUATIONS=80` and a 64 KiB budget. A limit is not the stored size. Next uses its own fixed role-image layouts for ordinary Grade evaluation and samples the complete forward function for Grade Stacks; those resources do not redefine the analytic reference.
 
 **Historical residual-coordinate forward table.** The construction below and its uniform 2048-cell example belong to the retained derivation; they do not describe the reference `BakeStack` inverse-Tone table. Use the selected historical implementation's own table layout when reproducing its output.
 
@@ -1301,7 +1322,7 @@ $$
 
 Evaluate \(\sum_{j=0}^5a_ju^j\) by Horner's rule. Adjacent intervals use the same stored values, slopes, and curvatures.
 
-The current inverse-Tone table uses the same quintic Hermite interpolation basis, but on its adaptive \(u=\log(1+H/s)\) nodes and stored inverse ratio \(q=t/H\); it does not use the historical residual coordinates, uniform grid, or forward residual table above. Its monotonicity gate checks the stored interpolation itself before accepting each interval. No Stage-3 table is deployed: the four-curve-family description and the \(512\times70\) atlas belong to the unreachable legacy generator noted in 14.2. The p=2 classifier is evaluated analytically from carried \(J_2\) and current \(C_2\); height dot products remain live.
+The reference `BakeStack` inverse-Tone table uses the same quintic Hermite interpolation basis, but on its adaptive \(u=\log(1+H/s)\) nodes and stored inverse ratio \(q=t/H\); it does not use the historical residual coordinates, uniform grid, or forward residual table above. Its monotonicity gate checks the stored interpolation itself before accepting each interval. That reference path has no Stage-3 curve table: the four-curve-family description and the \(512\times70\) atlas belong to the unreachable legacy generator noted in 14.2. Next's separate five-role prepared bundle is described in [Next Blender policy machines](next-policies.md#next-policy.bank-publication). The p=2 classifier is evaluated analytically from carried \(J_2\) and current \(C_2\); height dot products remain live.
 
 ### 14.3 A new inverse tone table
 

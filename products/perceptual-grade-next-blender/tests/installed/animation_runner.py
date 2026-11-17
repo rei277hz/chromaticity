@@ -11,6 +11,7 @@ import bpy
 import numpy as np
 
 
+started_at = time.monotonic()
 repository, report_path, mode = sys.argv[sys.argv.index("--") + 1:]
 repository, report_path = Path(repository), Path(report_path)
 bpy.context.preferences.extensions.repos.new(
@@ -26,6 +27,9 @@ scene.render.engine = "BLENDER_EEVEE"
 scene.render.use_compositing = True
 scene.render.compositor_device = "CPU"
 scene.render.compositor_precision = "FULL"
+scene.render.threads_mode = "FIXED"
+scene.render.threads = 2
+scene.eevee.taa_render_samples = 1
 scene.render.resolution_x = 16
 scene.render.resolution_y = 16
 scene.render.resolution_percentage = 100
@@ -99,7 +103,15 @@ nodes._gesture_keyframe_baselines[gesture_token] = nodes._capture_gesture_keyfra
           for target in gesture_targets)
 )
 shader_node.exposure = 1.25
+shader_node.web_hue_1_0 = 30.0
+shader_node.web_hue_2_0 = 180.0
+pushed_hues = {f"web_hue_2_{handle}": getattr(shader_node, f"web_hue_2_{handle}")
+               for handle in range(6)
+               if getattr(shader_node, f"web_hue_2_{handle}") != 0.0}
+assert len(pushed_hues) > 1, pushed_hues
+assert any(claim is not None for claim in nodes._hue_claims(shader_node)[2])
 scene.frame_set(8)
+assert nodes._hue_claims(shader_node, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
 scene.tool_settings.use_keyframe_insert_auto = False
 nodes._end_gesture(window_key, gesture_token)
 animation_data = material.node_tree.animation_data
@@ -110,6 +122,78 @@ curve = next(item for item in strip.channelbag(animation_data.action_slot).fcurv
              if item.data_path == exposure_path)
 assert any(abs(point.co.x - 6) < 1e-6 and abs(point.co.y - 1.25) < 1e-6
            for point in curve.keyframe_points)
+web_auto_curve = next(item for item in strip.channelbag(animation_data.action_slot).fcurves
+                      if item.data_path == shader_node.path_from_id() + ".web_hue_1_0")
+assert any(abs(point.co.x - 6) < 1e-6 and abs(point.co.y - 30.0) < 1e-6
+           for point in web_auto_curve.keyframe_points)
+curves = strip.channelbag(animation_data.action_slot).fcurves
+for name, value in pushed_hues.items():
+    pushed_curve = next(curve for curve in curves
+                        if curve.data_path == shader_node.path_from_id(name))
+    assert any(abs(point.co.x - 6) < 1e-6 and abs(point.co.y - value) < 1e-5
+               for point in pushed_curve.keyframe_points), (name, value)
+    curves.remove(pushed_curve)
+with nodes._suspend(shader_node):
+    for handle in range(6):
+        setattr(shader_node, f"web_hue_2_{handle}", 0.0)
+
+# Repeated same-time callbacks retain provenance. Actual frame/subframe
+# changes expire every per-node claim, even while rendering blocks refresh.
+shared_claim_grade = nodes._make_grade()
+shared_claim_grade.pg_color.web_hue_3_0 = 180.0
+shared_claims = nodes._hue_claims(shared_claim_grade.pg_color)
+shader_node.web_hue_3_0 = 180.0
+local_claims = nodes._hue_claims(shader_node)
+assert local_claims != nodes.color_authoring.EMPTY_CLAIMS
+nodes._frame_change_pre(scene)
+nodes._frame_change_post(scene)
+assert nodes._hue_claims(shader_node) == local_claims
+blocked = nodes._frame_reconcile_blocked
+try:
+    nodes._frame_reconcile_blocked = lambda _pointer: True
+    scene.frame_set(8, subframe=0.25)
+    scene.frame_set(8)
+finally:
+    nodes._frame_reconcile_blocked = blocked
+assert nodes._hue_claims(shader_node, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
+assert nodes._hue_claims(shared_claim_grade.pg_color) == shared_claims
+bpy.data.node_groups.remove(shared_claim_grade)
+
+# Invalid native animation samples resolve only in immutable evaluation
+# snapshots. RNA, saved keyframes, and editing provenance stay untouched.
+with nodes._suspend(shader_node), nodes._suspend(compositor_node):
+    shader_node.web_hue_3_0 = 360.0
+    shader_node.web_hue_3_1 = -360.0
+    compositor_node.adaptance_a_3 = 1000000.0
+    compositor_node.adaptance_b_3 = -1000000.0
+temporary_curves = []
+for target, names in ((shader_node, ("web_hue_3_0", "web_hue_3_1")),
+                      (compositor_node, ("adaptance_a_3", "adaptance_b_3"))):
+    for name in names:
+        assert target.keyframe_insert(data_path=name, frame=8)
+        data = target.id_data.animation_data
+        bag = data.action.layers[0].strips[0].channelbag(data.action_slot)
+        temporary_curves.append((bag, next(curve for curve in bag.fcurves
+                                         if curve.data_path == target.path_from_id(name))))
+scene.frame_set(8)
+raw_shader = nodes._raw_grade_settings(shader_node, "Linear Rec.709")
+raw_compositor = nodes._raw_grade_settings(compositor_node, "Linear Rec.709")
+key_values = tuple(tuple(tuple(point.co) for point in curve.keyframe_points)
+                   for _bag, curve in temporary_curves)
+assert nodes._settings_for_node(shader_node, "Linear Rec.709") != raw_shader
+assert nodes._settings_for_node(compositor_node, "Linear Rec.709") != raw_compositor
+assert nodes._raw_grade_settings(shader_node, "Linear Rec.709") == raw_shader
+assert nodes._raw_grade_settings(compositor_node, "Linear Rec.709") == raw_compositor
+assert key_values == tuple(tuple(tuple(point.co) for point in curve.keyframe_points)
+                           for _bag, curve in temporary_curves)
+assert nodes._hue_claims(shader_node, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
+for bag, curve in temporary_curves:
+    bag.fcurves.remove(curve)
+with nodes._suspend(shader_node), nodes._suspend(compositor_node):
+    for handle in range(6):
+        setattr(shader_node, f"web_hue_3_{handle}", 0.0)
+    compositor_node.adaptance_a_3 = 0.0
+    compositor_node.adaptance_b_3 = 0.0
 
 scene.tool_settings.use_keyframe_insert_auto = old_auto_key
 failures = nodes._refresh_nodes((shader_node, compositor_node))
@@ -122,11 +206,17 @@ for frame, exposure in ((1, 0.0), (3, 2.0)):
     shader_node.exposure = exposure
     compositor_node.exposure = exposure
     shader_node.fit = -0.5 if frame == 1 else 0.5
+    shader_node.web_hue_1_0 = -15.0 if frame == 1 else 15.0
+    compositor_node.adaptance_a_1 = 0.0 if frame == 1 else 0.125
     assert material.node_tree.keyframe_insert(data_path=exposure_path, frame=frame)
     fit_path = shader_node.path_from_id() + ".fit"
     assert material.node_tree.keyframe_insert(data_path=fit_path, frame=frame)
+    web_path = shader_node.path_from_id() + ".web_hue_1_0"
+    assert material.node_tree.keyframe_insert(data_path=web_path, frame=frame)
     compositor_path = compositor_node.path_from_id() + ".exposure"
     assert compositor_tree.keyframe_insert(data_path=compositor_path, frame=frame)
+    adaptance_path = compositor_node.path_from_id() + ".adaptance_a_1"
+    assert compositor_tree.keyframe_insert(data_path=adaptance_path, frame=frame)
 
 
 def action_curve(owner, data_path):
@@ -138,7 +228,9 @@ def action_curve(owner, data_path):
 
 for curve in (action_curve(material.node_tree, exposure_path),
               action_curve(material.node_tree, fit_path),
-              action_curve(compositor_tree, compositor_path)):
+              action_curve(material.node_tree, web_path),
+              action_curve(compositor_tree, compositor_path),
+              action_curve(compositor_tree, adaptance_path)):
     for point in curve.keyframe_points:
         point.interpolation = "LINEAR"
 for frame, expected in ((1, 0.0), (2, 1.0), (3, 2.0)):
@@ -152,6 +244,8 @@ for frame, expected in ((1, 0.0), (2, 1.0), (3, 2.0)):
     assert abs(compositor_node.exposure - expected) < 1e-6, (
         frame, compositor_node.exposure, expected,
     )
+    assert abs(shader_node.web_hue_1_0 - (expected * 15.0 - 15.0)) < 1e-6
+    assert abs(compositor_node.adaptance_a_1 - expected * .0625) < 1e-6
 animated_nodes, _, _ = nodes._animation_snapshot(scene)
 assert shader_node in animated_nodes and compositor_node in animated_nodes
 
@@ -161,6 +255,10 @@ exposure_path = shader_node.path_from_id() + ".exposure"
 fit_path = shader_node.path_from_id() + ".fit"
 assert len(action_curve(material.node_tree, exposure_path).keyframe_points) == 3
 assert len(action_curve(material.node_tree, fit_path).keyframe_points) == 2
+web_path = shader_node.path_from_id() + ".web_hue_1_0"
+assert len(action_curve(material.node_tree, web_path).keyframe_points) == 3
+assert len(action_curve(compositor_tree,
+                        compositor_node.path_from_id() + ".adaptance_a_1").keyframe_points) == 2
 
 # Exercise the actual .blend persistence boundary for both tree Actions.
 scene.frame_start, scene.frame_end, scene.frame_step = (1, 3, 1)
@@ -179,15 +277,21 @@ shader_node = material.node_tree.nodes[node_names[0]]
 compositor_node = compositor_tree.nodes[node_names[1]]
 exposure_path = shader_node.path_from_id() + ".exposure"
 fit_path = shader_node.path_from_id() + ".fit"
+web_path = shader_node.path_from_id() + ".web_hue_1_0"
 compositor_path = compositor_node.path_from_id() + ".exposure"
+adaptance_path = compositor_node.path_from_id() + ".adaptance_a_1"
 assert len(action_curve(material.node_tree, exposure_path).keyframe_points) == 3
 assert len(action_curve(material.node_tree, fit_path).keyframe_points) == 2
+assert len(action_curve(material.node_tree, web_path).keyframe_points) == 3
 assert len(action_curve(compositor_tree, compositor_path).keyframe_points) == 2
+assert len(action_curve(compositor_tree, adaptance_path).keyframe_points) == 2
 
 scene.frame_set(2, subframe=0.25)
 assert abs(shader_node.exposure - 1.25) < 1e-6
 assert abs(shader_node.fit - 0.125) < 1e-6
 assert abs(compositor_node.exposure - 1.25) < 1e-6
+assert abs(shader_node.web_hue_1_0 - 3.75) < 1e-6
+assert abs(compositor_node.adaptance_a_1 - 0.078125) < 1e-6
 failures = nodes._refresh_nodes((shader_node, compositor_node))
 assert not failures, failures
 failures = nodes._drain_preparations()
@@ -244,6 +348,8 @@ def on_render_pre(current_scene, *_args):
             receipt.update(
                 exposure=float(shader_node.exposure),
                 compositor_exposure=float(compositor_node.exposure),
+                web_hue=float(shader_node.web_hue_1_0),
+                adaptance=float(compositor_node.adaptance_a_1),
                 signature=signature,
                 ready=ready, error=error,
             )
@@ -258,6 +364,7 @@ def on_render_init(current_scene, *_args):
 
 def on_render_complete(current_scene, *_args):
     render_completions.append(int(current_scene.as_pointer()))
+    checkpoint("render_complete")
 
 
 def on_render_cancel(current_scene, *_args):
@@ -266,6 +373,7 @@ def on_render_cancel(current_scene, *_args):
 
 def on_render_write(current_scene, *_args):
     render_writes.append(int(current_scene.frame_current))
+    checkpoint("render_write")
 
 
 bpy.app.handlers.render_pre.append(on_render_pre)
@@ -280,6 +388,17 @@ repeat_prefix = report_path.parent / "grade_repeat_"
 file_formats = scene.render.image_settings.bl_rna.properties["file_format"].enum_items
 movie_supported = any(item.identifier == "FFMPEG" for item in file_formats)
 state = {"phase": "sequence", "result": None, "error": None, "run": None}
+
+
+def checkpoint(event):
+    data = {
+        "event": event, "seconds": time.monotonic()-started_at,
+        "phase": state["phase"], "render_starts": len(render_starts),
+        "render_completions": len(render_completions),
+        "render_writes": list(render_writes), "frames": [item["frame"] for item in receipts],
+    }
+    report_path.write_text(json.dumps(data))
+    print(json.dumps(dict(kind="animation_checkpoint", **data)), flush=True)
 
 
 def finish_test():
@@ -300,6 +419,8 @@ def finish_test():
             assert [round(item["compositor_exposure"], 4) for item in receipts[:3]] == [
                 0.0, 1.0, 2.0,
             ], receipts
+            assert [round(item["web_hue"], 4) for item in receipts[:3]] == [-15.0, 0.0, 15.0]
+            assert [round(item["adaptance"], 4) for item in receipts[:3]] == [0.0, .0625, .125]
             assert len({item["signature"] for item in receipts[:3]}) == 3, receipts
 
         sequence_files = sorted(report_path.parent.glob("grade_sequence_*.png"))
@@ -395,6 +516,7 @@ def begin_render():
         "cancellations_before": len(render_cancellations),
         "deadline": time.monotonic() + 270.0,
     }
+    checkpoint("begin_render")
     try:
         if bpy.app.background:
             state["result"] = bpy.ops.render.render("EXEC_DEFAULT", animation=True)
@@ -434,6 +556,17 @@ def monitor_gui():
             finish_test()
             return None
         return 0.05
+    # render_complete is a callback inside Blender's still-active render job.
+    # Wait for retirement before invoking the next render or restoring scene
+    # state, as a second INVOKE can otherwise overlap native job teardown.
+    if any(bpy.app.is_job_running(name) for name in
+           ("RENDER", "RENDER_PREVIEW", "COMPOSITE")):
+        if time.monotonic() >= run["deadline"]:
+            state["error"] = "Native animation render did not retire"
+            finish_test()
+            return None
+        return 0.05
+    checkpoint("render_retired")
     if run["phase"] == "sequence":
         state["phase"], state["result"] = "movie", None
         state["run"] = None

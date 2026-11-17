@@ -37,11 +37,20 @@ class ResourcePolicyTests(unittest.TestCase):
         self.assertEqual(step(state, Event()), (state, Effects()))
 
     def test_changed_user_count_or_protection_cancels_removal(self):
-        for observation in ({"users": 1}, {"protected": True}, {"owned": False}):
+        for observation in ({"users": 1}, {"protected": True}, {"owned": False},
+                            {"retain_for_undo": True}):
             with self.subTest(observation=observation):
                 fields = {"live": True, "owned": True, **observation}
                 state, effects = step(State("recheck"), Event(**fields))
                 self.assertEqual((state, effects), (State("terminal"), Effects()))
+
+    def test_undo_retained_fallback_is_fake_user_protected(self):
+        state, effects = step(State("observe"), Event(
+            live=True, owned=True, retain_for_undo=True,
+        ))
+        self.assertEqual((state, effects), (State("retain"), Effects("retain")))
+        self.assertEqual(step(state, Event()), (State("terminal"), Effects()))
+        self.assertEqual(step(state, Event(failed=True)), (State("terminal"), Effects()))
 
     def test_removed_wrapper_only_evicts_cache(self):
         state, effects = step(State("observe"), Event(live=False))

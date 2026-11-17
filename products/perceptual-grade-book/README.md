@@ -7,19 +7,21 @@ bilingual User Manual contains the introduction and user guides in English and
 Simplified Chinese. The English-only Technical Report contains the theory and
 development chapters. The report's model chapters follow
 `libraries/perceptual-grade-reference`, including Stage 3 Adaptance → H–K
-repair → common positive Scale. Some manual, host-capture, and runtime material
-still describes the preserved 1.23.2 release. Each current or historical
+repair → common positive Scale. The manual describes Next node workflows;
+some Technical Report engineering chapters and recorded measurements still
+describe the preserved 1.23.2 release. Each current or historical
 profile is identified; archived downloads and recorded measurements retain
 their original meaning. The Technical Report includes the **Next Blender policy
-machines** chapter, which follows current Next policies and adapters. Next has
-not yet implemented its Warp UI.
+machines** chapter, which follows current Next policies and adapters. Next
+provides the full numeric Stage 3 J, C, Adaptance, and Warp controls; the
+draggable Warp diagram is deferred.
 
 Next is the implementation source of truth for Blender behavior: its source,
 requirements, and tests define supported routes, lifecycle, failure handling,
 and host boundaries. The analytic reference remains authoritative for model
 mathematics. Observable implementation changes must update the corresponding
-Technical Report section and its evidence. The 1.23.2 narrative, bilingual
-workflow, downloads, media, measurements, legacy generators, manifests, and
+Technical Report section and its evidence. The remaining 1.23.2 report narrative,
+downloads, media, measurements, legacy generators, manifests, and
 preservation checks are temporary migration material. The eventual migration
 will remove all of it once Next coverage replaces it; the current archive is
 kept intact until that coordinated removal is complete.
@@ -97,6 +99,15 @@ integrity hashes. Buck verifies the pinned CDN resources while preparing the
 configuration and license notices; font and KaTeX payloads are absent from the
 deployment ZIP. Media are served locally. Reading equations and loading the
 chosen fonts require access to the CDN.
+
+The User Manual retains a clearly labeled legacy 1.23.2 extension ZIP link and
+does not offer a Next extension ZIP. Book publication excludes demo and intro
+animations, their stills, and animation provenance from the site, deployment
+ZIP, PDF, and EPUB. The `generators:demos` and `generators:intro` targets and
+source recordings remain available for future video work. The Next-scoped
+`//products/perceptual-grade-next-blender/tests:handbook_audit` consumes the
+published artifacts to check the manual's scope, retained legacy link, and
+static-image contract.
 
 The Technical Report is currently English-only. Its D2 policy diagrams are
 static SVGs with embedded fonts, generated with the pinned D2 distribution

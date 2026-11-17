@@ -1,21 +1,92 @@
 # Grading-stage gates and end-to-end error
 
-## Current schema-5 layout and absolute HDR error — 2026-10-30
+## Current Stage 3 contract — 2026-11-17
 
-**Implementation and absolute HDR reassessment are complete.** The native
-runtime now uses Tone **256**, Color coefficients **8,192** and Compact
-Adaptance **3,072** cells together, with Web parameters **4,096**, Web toes
-**1,536** and the fixed **513 × 321** output boundary. Tone Fit accepts
-**[-2, 2]**; the separate Color fits retain **[-2, 6]**. The current corpus
-replaces Tone fit-3 stress settings with fit 2 and excludes the fit-3 endpoint
-case; historical fit-3 receipts remain historical. Layout schema **5** requires
-rebuilding obsolete persistent trees and rejects obsolete Tone/Color payload
-reuse. This combined promotion follows the user's explicit size choices.
+Next uses **field layout schema 6** and **parameter schema 4**. Adaptance has
+one fixed **32,768-cell** Compact field packed into **8193 × 4 RGBA32F**
+pixels (**524,352 bytes per bank**). A complete five-role settings bank is
+**2,916,976 bytes**; the pair uses **5,833,952 bytes** (about **5.56 MiB**),
+excluding the shared output-boundary image. Runtime never chooses a smaller
+Adaptance layout from the authored settings. The other fixed role dimensions
+remain scalar/Tone 512 × 1, Color 8193 × 2, Web 4097 × 32 and toes 1537 × 1.
 
-Current resident payload is **5,076,560 RGBA32F bytes / 4.841 MiB**, including
-its **2,634,768-byte** fixed boundary, or **2,441,792 bytes / 2.329 MiB without
-that boundary**. Runtime Tone retains its 512-texel packing width: 256 cells
-occupy 512 × 1, whereas the preceding diagnostic candidate used 257 × 1.
+The Stage 3 implementation preserves exact-zero Adaptance support, stable
+reflected-H response differences, and reference H–K repair **before** the final
+Web Scale. It carries J_A explicitly through disabled stages and inactive
+repair; positive Scale multiplies J_A directly and energy by its square.
+The production Compositor can retain Tone's response basis only when Color is
+inactive and H–K is provably inactive, retaining actual cube legality and
+endpoint policy. Uniform output conversion composes before spatial decode.
+An illegal projected decode gets one radius retry at `0.99609375`, accepted
+only after actual decoded legality; an already-legal result stays unchanged.
+These adaptations add no texture role, schema, or policy machine.
+
+Final default-path acceptance passed in build
+`d1006e84-e3fb-4683-aa36-d9ededfe5d21`: five source-emitted Shader methods in
+423.640 s, five Compositor methods in 422.974 s, and five Stack GPU checks in
+190.122 s. The optional production-Compositor refinements do not affect these
+default paths. The unchanged normalized RGB limit is `1e-4`.
+Live build `252b9488-83c2-49de-8943-8f509bc7e8f0` passed the installed
+Compositor fixture in 61.382 s (16 exercise frames, 12 automatic updates,
+signed/HDR/nonfinite colors, alpha, two reload-repair frames, and normal exit),
+all 18 source-carrier live evaluations in 226.453 s, and five transport checks,
+with four remote commands and zero local commands. Auto retains 0.01 and Full
+`1e-4` acceptance. These are correctness-workload timings, not edit latency.
+
+The parameterized static suite splits the current Stage 3 methods across
+interface, Shader, Compositor, and extreme targets; publication/save-load keeps
+its separate two-method target. Basic guarded parity retains 3 ppm with an
+independent `1e-4` RGB gate. The extended active-Color extreme test retains
+5 ppm binding parity against an equivalent-arithmetic protected baseline,
+with three independent `1e-4` oracle gates; it is distinct from the older
+achromatic-only 3 ppm diagnostic. All these sections pass, including extreme
+build `82e081c4-17e1-4921-a756-8daa18cfbd14` (390.0 s action).
+The full installed suite passed on Blender 5.3/LTS in 223.659/224.968 s,
+including removed-primary recovery and normal exit. Final frozen-asset build
+`40fc9dd3-66b5-452b-9bbb-cf052870b80e` passed both shipped numerical gates
+(26.850/27.219 s), all 13 template behavior methods (43.297 s), three bpy
+receipt methods (56.718 s), and three native receipt methods (62.664 s,
+plus one build-only check in 65.173 s). Exact receipts cover all 12 groups.
+No schema-5 timing is relabeled as a schema-6 measurement.
+
+The final measured 12-group library is **3,688,385 bytes**; its runtime manifest
+is **9,464 bytes**, and its bundled Stack shader is **67,226 bytes**, before ZIP
+compression. The **7,896,941-byte** detailed structure report is a build-only
+diagnostic and is excluded from the extension ZIP. Stored Grade Shader and
+Compositor kernels contain 1,795/3,042 nodes and 3,099/5,402 links; Stack kernels
+contain 214/238 nodes and 320/356 links. These counts do not measure evaluation
+speed.
+
+The authoritative layouts are in
+[`src/kernel/layouts.py`](../../src/kernel/layouts.py); the five-role bank
+contract is in
+[`src/kernel/stage2_parameters.py`](../../src/kernel/stage2_parameters.py).
+See the [product README](../../README.md) and
+[Technical Report](../../../perceptual-grade-book/docs/book/src/development/next-policies.md)
+for current publication and output behavior.
+
+All studies below retain their original source identities, numeric results,
+failure witnesses and receipt paths. References to “current” within those
+historical studies mean the source/layout used in that study, not today's
+schema-6 product. In particular, the schema-5 3,072-cell layout and its
+2,441,792-byte inventory do not describe the current settings bank.
+
+## Historical schema-5 layout and absolute HDR error — 2026-10-30
+
+**This schema-5 implementation and absolute HDR reassessment were complete.**
+The measured native runtime used Tone **256**, Color coefficients **8,192** and
+Compact Adaptance **3,072** cells together, with Web parameters **4,096**, Web toes
+**1,536** and the fixed **513 × 321** output boundary. Tone Fit accepted
+**[-2, 2]**; the separate Color fits retained **[-2, 6]**. That corpus
+replaced Tone fit-3 stress settings with fit 2 and excluded the fit-3 endpoint
+case; historical fit-3 receipts remain historical. Layout schema **5** required
+rebuilding obsolete persistent trees and rejected obsolete Tone/Color payload
+reuse. This combined promotion followed the user's explicit size choices.
+
+The measured schema-5 payload was **5,076,560 RGBA32F bytes / 4.841 MiB**,
+including its **2,634,768-byte** fixed boundary, or **2,441,792 bytes / 2.329 MiB without
+that boundary**. Tone retained its 512-texel packing width: 256 cells
+occupied 512 × 1, whereas the preceding diagnostic candidate used 257 × 1.
 
 | Texture | Cells | Width × height | RGBA32F bytes |
 |---|---:|---|---:|
@@ -74,7 +145,7 @@ passes **86 test methods across nine Buck2 targets**: 40 layout, 30 tool and
 16 native/persistent/gate-policy methods.
 
 The preceding schema-4 generation, complete-preparation and prepared-edit
-timings remain historical measurements; they are not current schema-5 costs.
+timings remain historical measurements; they do not measure schema 5 or 6.
 Accuracy-run durations are not performance evidence.
 
 ## Historical schema-4 layout sensitivity
@@ -455,15 +526,17 @@ acceptance contract, which gives several intermediate errors their own gates.
 Until that contract is deliberately revised, an end-to-end pass does not waive
 an intermediate failure.
 
-## Pipeline and current gates
+## Historical pipeline and gate inventory — 2026-10-30
 
-The reference comparison follows Linear → appearance encoding → Tone → Color
+The recorded comparison followed Linear → appearance encoding → Tone → Color
 terms → tonal Web → selective Adaptance → Web final scale → H–K repair → AP1
-output-boundary projection and scene decode. Parameter textures approximate
+output-boundary projection and scene decode. Current Stage 3 instead performs
+the reference H–K repair before Web final Scale, as described above. The
+following gate inventory belongs to the recorded study. Parameter textures approximate
 functions used inside the Color/Tone stages; their error gates are upstream of
 the native stage comparisons.
 
-| Layer | Current measurement and limit | Why it is separate |
+| Layer | Historical measurement and limit | Why it is separate |
 |---|---|---|
 | Portable Linear preparation | Independent-reference matrix comparison uses `rtol=atol=3e-12`; primitive matrix and endpoint tests have their own tighter float64 tolerances. | Verifies control conventions and matrix construction before native float32 execution. |
 | Native appearance/Tone handoff | H/a/b vector normalized error `≤ 1e-4`; `J_A` uses `rtol=1e-4, atol=1e-5`, signed energy uses `rtol=2e-4, atol=1e-5`. Exact black and neutral-opponent cases are asserted. | Tests exposed stage interfaces independently of the complete wrapper. |

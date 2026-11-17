@@ -1,10 +1,429 @@
 # Testing and measurements
 
-> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+> **Version scope:** the current Next validation section below describes the current implementation. The remaining sections retain historical runtime layouts and versioned measurements. For current development commands and supported behavior, also use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
 
 Choose validation around the behavior you changed. Numerical tests isolate equations and invariants; DCTL parity tests compare the analytic reference; native-render tests check the graph actually evaluated by Blender. Packaging and documentation tests cover the artifacts readers and users receive. The [build chapter](building.md#run-tests) lists the targets.
 
 A failing reproduction should identify the host version, input interpretation, grade, render method and device. Run the focused gate first, then the related integration gates. Report measured results with their workload and settings, so another contributor can reproduce them.
+
+## Current Next Color authoring validation
+
+Color authoring has separate ownership, numerical, and native host contracts.
+The synchronous `color_authoring` policy admits scalar capture/clear effects;
+the runtime composes reversible six-handle edits; `color_resolution` supplies
+evaluation-only hue projection and radial Adaptance limits. Their focused gates
+are:
+
+```sh
+buck2 build --remote-only \
+  //products/perceptual-grade-next-blender:proof_color_authoring
+buck2 test --remote-only \
+  //products/perceptual-grade-next-blender/tests:color_authoring \
+  //products/perceptual-grade-next-blender/tests:color_resolution
+```
+
+The scalar proof checks owner identity, same-owner baseline retention, takeover,
+manual detachment, blocked return, and exact-owner baseline release. Its
+reachability witness and three mutations exercise those decisions. It does not
+prove float equality, the geometric solver, or Blender rollback. Runtime tests
+cover both edit directions and the cyclic seam, transitive pushes, simultaneous
+constrained restoration, blocked claims, takeover, idempotence, and real
+Peak-dependent geometry. Numerical tests use independent normal-cone
+certificates for closest-angle projection and check the radial response domain,
+float32 storage, nonfinite rejection, and unchanged authored animation samples.
+The public hue gap is 4°; invalid-row repair reserves 4.0001° before storage
+and checks the resulting float32 gaps against 4°.
+
+The follow-up scalar proof passed in remote build `18f94c3f` with one remote
+command and zero local commands. Final runtime/package build
+`de327672-c1bb-4b60-8eef-e19f7f8a728f` passed all nine resolution checks
+(0.219 s), 14 authoring checks (0.405 s), three package checks (0.314 s),
+125 preparation-runtime checks (2.067 s), the bake-route gate, and one native
+undo method (11.514 s), using 25 remote commands and zero local commands.
+The authoring cases include all six edited handles, the supported Peak values,
+hard offset bounds, and float32 restoration near the minimum gap. These timings
+measure correctness workloads rather than interactive response.
+
+Installed animation and conversion fixtures cover the remaining Blender
+adapters: typed fractional precision and soft ranges, node-owned versus shared
+claims, same-time versus actual frame/subframe changes, copy/reset/conversion,
+saved metadata, undo, Auto/Limited indicators, and effective sampled settings
+without keyframe writes. The independent native undo fixture
+`installed/gesture_undo_runner.py` also detaches a hue claim by editing its
+unchanged numeric value. It requires an undo state that restores only the
+provenance while leaving the mathematical signature and effective hues unchanged,
+then another undo that restores the original transform and empty claims.
+
+Final current-Blender build `be62f7db` passed one conversion method in about
+31 s and two animation methods in about 64.4 s, including extreme Adaptance
+and the 0.01 drag-increment contract. LTS build `5bb89482` passed conversion
+in about 31 s and both animation methods in about 60.9 s. LTS native undo
+passed in two consecutive isolated runs, `26f53c9b` (11.523 s) and
+`3622ae9a` (11.099 s), with normal native process exit. Three preceding LTS
+runs crashed in native code during the existing exposure-undo case, before
+the hue assertions; the passing reruns followed no production fix. Those
+historical retries do not close the defect; the subsequent diagnosis and
+authorized lifetime repair are recorded below. The fixture retains
+faulthandler and native crash-report output and continues to require successful
+Blender exit. These results are separate from the initial Stage 3 timings below.
+
+The first follow-up documentation build `d1fff95f-6075-457e-86d7-e2d88c2343bc`
+passed all 15 report traceability checks (0.244 s) and all three handbook
+artifact checks (9.098 s), including the new sequence's label geometry, site,
+deployment ZIP, bilingual manuals, and report exports. Its fresh isolation
+rebuilt dependencies with 872 remote commands and zero local commands. The
+legacy ZIP remains and animated images are excluded from published artifacts.
+
+## LTS undo fallback-lifetime repair
+
+The later reproduction builds `d215a97d`, `0c52be78`, and `69116c83` reproduce
+the native crash during the second exposure undo, before the new hue
+assertions. Isolated build `7056eb87` passes the same pre-repair workload.
+That intermittent success is not repair evidence.
+
+The crash stack repeatedly enters the address near `0x96b5cc`, resolved against
+the pinned Blender 5.2.4 binary to
+`NodeTreeMainUpdater::make_node_previews_dirty`. This establishes recursive
+node-tree traversal and stack exhaustion. Source review at Blender commit
+[`cd5dc428cce1`](https://github.com/blender/blender/tree/cd5dc428cce1) finds
+raw ID addresses in [`writefile.cc` lines 835–840](https://github.com/blender/blender/blob/cd5dc428cce1/source/blender/blenloader/intern/writefile.cc#L835-L840),
+undo restoration in [`readfile.cc` around
+read_libblock_undo_restore_at_old_address`](https://github.com/blender/blender/blob/cd5dc428cce1/source/blender/blenloader/intern/readfile.cc#L3367-L3390),
+later library linking in [`readfile.cc` lines 4620 onward](https://github.com/blender/blender/blob/cd5dc428cce1/source/blender/blenloader/intern/readfile.cc#L4620),
+full-ID swapping in [`lib_id.cc` lines 979–993](https://github.com/blender/blender/blob/cd5dc428cce1/source/blender/blenkernel/intern/lib_id.cc#L979-L993),
+and recursive preview traversal in [`node_tree_update.cc` lines
+923–934](https://github.com/blender/blender/blob/cd5dc428cce1/source/blender/blenkernel/intern/node_tree_update.cc#L923-L934).
+A freed historical fallback's address could be reused by a temporary parent ID,
+then cause a restored child pointer to map to that parent itself. This is the
+source-supported mechanism being removed; the specific allocation-address
+collision has not been captured directly.
+The diagnosis must not be presented as a captured collision or a new hue
+authoring failure.
+
+The accepted fix is the
+[six-variant persistent fallback pool](next-policies.md#persistent-fallback-lifetime-and-undo).
+The existing resource policy authorizes retention through its `retain` effect;
+the consumer applies fake-user protection. Current `ID.users` is not an undo
+lifetime proof. The pool validates against the exact shipped manifest receipt
+on every acquisition, scans current datablocks without retaining RNA wrappers,
+and preserves published, legacy, and invalid historical fallback IDs while
+leaving invalid ones unused. Failed unpublished candidates remain reclaimable.
+
+The self-contained native fixture checks repeated reconciliation without new
+fallback allocation, shared readers and removal, stable pending→live→pending
+identity, save/load retention, and acyclic nested groups after undo and load.
+Template and resource-policy tests additionally cover every mode/host/interface
+variant, corrupted topology and receipt rejection, retained historical groups,
+and failure cleanup. It uses no user-provided `.blend` fixture. The eight
+resource-policy checks passed in remote build `57b31729` with five remote
+commands and zero local commands. A separate explicit Buck2 build of
+`proof_resources[report]`, `76919d83-f191-48a1-9b1a-cf7276cc6c97`, passed
+with seven remote commands and zero local. The report records `ok=true`,
+all ten required properties including both undo-retention properties, two
+witnesses, and two mutations. A `buck2 test` invocation does not build a proof
+target's `DefaultInfo`; its test result must not substitute for this proof-build
+receipt. Additional repair receipts are:
+
+| Scope | Remote build | Passing checks and body duration | Commands, remote/local |
+| --- | --- | --- | --- |
+| Preparation runtime | `6816f1ad` | 126 checks, 2.157 s | 53 / 0 |
+| Node templates | `cb0091e5` | 15 methods, 39.627 s | 49 / 0 |
+| GUI undo and drag | `c97eb4e1` | Current undo 12.271 s; LTS undo 12.822 s; LTS drag 16.567 s | 63 / 0 |
+| Package, architecture, LTS animation | `9a6f09dd` | Three + two + two methods; animation 60.715 s | 11 / 0 |
+| Native pool matrices and LTS templates | `f126a588` | Pool: six current and six LTS methods, 1.758/1.733 s; LTS templates: 15 methods, 40.731 s | 87 / 0 |
+
+Three concurrent LTS undo runs—`b8ae8c9d`, `16f3fe6b`, and `d91cbf63`—also
+passed in 15.060, 15.029, and 15.009 s. Distinct test environment labels
+required three actual remote executions. These runs retain normal Blender
+process exit and the pool identity, sharing, lifecycle, save/load, and acyclic
+graph assertions; they do not simply accept a report from a crashed process.
+
+`native/test_fallback_pool.py` supplies the additional six-variant matrix:
+preferred/scanned reuse without ID growth, policy-authorized retention,
+invalid-mode and topology replacement while preserving old IDs, legacy-marker
+retention, rejection of linked fallbacks in favor of local instances, and full
+cleanup after failed unpublished validation. The Next targets `:fallback_pool`
+and `:fallback_pool_lts` are in the explicit CI inventory and both pass in
+`f126a588`. Their LTS host took 4.323 s for the 1.733 s pool body; the native
+LTS template host took 43.368 s for its 40.731 s body. Final documentation
+artifact acceptance is recorded separately below. Normal process exit remains
+required; do not replace these contracts with a retry-only gate.
+
+The final legacy-marker edge checks marker presence rather than truthiness:
+historical groups remain retained when their marker value is `0` or `False`.
+Build `f62b7ffd-cda9-47d5-90b3-ab5838e81307` passed the expanded current/LTS
+six-variant matrices (six methods each, 1.635/1.702 s bodies; LTS host 4.333 s)
+and all 15 report checks (0.229 s), with seven remote commands and zero local.
+Final LTS undo build `f8a97062-b32d-4cdb-a781-0f4ec0589b66` passed in
+12.315 s with three remote commands and zero local.
+
+Documentation build `2900ea1c-c400-41b6-a9bf-80a8de4bb9d5` passed all
+15 report checks (0.235 s) and all three handbook artifact checks (7.289 s).
+It validates updated D2 geometry, site and deployment ZIP, bilingual manual
+PDF/EPUB, and report PDF/EPUB, using 872 remote commands and zero local.
+
+## Current Next native parameter validation
+
+The fixed Grade graph uses complete Linear, Tone, and Stage 3 parameter bundles.
+Five native targets check its evaluation and update behavior:
+
+```sh
+buck2 test --remote-only \
+  //products/perceptual-grade-next-blender/tests:stage2 \
+  //products/perceptual-grade-next-blender/tests:stage2_shader \
+  //products/perceptual-grade-next-blender/tests:stage2_compositor \
+  //products/perceptual-grade-next-blender/tests:stage2_extreme \
+  //products/perceptual-grade-next-blender/tests:stage2_updates
+```
+
+The retained `stage2` target name runs two interface/allocation methods.
+`stage2_shader` and `stage2_compositor` each run the basic guarded-parity
+method for their own context, retaining both Linear Rec.709 and ACEScg cases,
+signed/HDR inputs, alpha, and independent-reference checks. `stage2_extreme`
+runs the remaining extreme Tone method. Stage 3 is included in all of them;
+their names do not limit evaluation to Stage 2.
+
+These four static targets use `native/test_stage2.py`. `PG_STAGE2_SECTION`
+accepts only `interface`, `shader`, `compositor`, or `extreme`. The module's
+`load_tests` checks the exact union of current Stage 3 method names; the guarded method
+is intentionally shared by its two context sections. The default section is
+`interface`, so a default module load alone runs only its two methods. CI
+enumerates all four static Buck targets explicitly.
+
+The basic guarded case requires the fixed tree's maximum normalized RGB error
+against the independent oracle to be at most `1e-4`, and its parity with the
+generic graph to be at most `3e-6` (3 ppm). The extended extreme case combines
+the two Tone extremes with active Color, Adaptance, and non-unit Scale. It
+independently gates three outputs—the generic graph, a protected generic graph,
+and the fixed parameter graph—against the oracle at `1e-4`. Its `5e-6` (5 ppm)
+binding-parity gate compares the fixed tree with the protected generic baseline,
+which uses the same protected arithmetic and scaled energy carrier while
+retaining separate parameter and field reads. Exact validity, saturation,
+alpha, and embedded-alpha comparisons remain.
+
+An earlier extreme candidate passed the independent RGB gate (about `2.33e-5`)
+but differed from the specialized generic graph by about `2.2e-5`. Those two
+graphs used different arithmetic and energy carriers, so that comparison did
+not isolate parameter binding. The equivalent-arithmetic baseline preserves
+the current extreme test's 5 ppm binding gate and adds its own independent
+oracle gate. That revision passed in remote build
+`82e081c4-17e1-4921-a756-8daa18cfbd14`: the extreme action took 390.0 s
+(386.689 s test body), and the basic Compositor action took 303.4 s
+(300.043 s test body). The batch ran four remote commands and zero local
+commands. These results precede the later GPU Auto boundary-retry and fused
+scene-decode candidate; they do not certify that candidate's live precision.
+This extended active-Color test replaces the older achromatic-only diagnostic, whose parity limit
+was 3 ppm. The current basic guarded test retains its separate 3 ppm limit.
+
+The accepted production-Compositor candidate also passed the two affected
+static targets in build `931037c4-2077-4e08-9fd9-e864f7e3412d`: basic
+Compositor took 281.0 s per action and the extended extreme case took 423.3 s
+(420.004 s test body), retaining the same independent and binding-parity gates.
+The batch ran four remote commands and zero local commands.
+
+`stage2_updates` repeatedly publishes complete parameter bundles, including
+active Stage 3 settings, while checking native output against the independent
+oracle. It verifies that group and Image identities, links, socket defaults,
+bank bindings, and the active selector remain fixed. A save/reload case checks
+packed role payloads and identical rendered output after restoration.
+
+The targets run in separate test processes because even an earlier three-method
+basic section reached the 600-second per-process limit; repeated publication
+and save/reload renders already have their own process. Splitting the current
+Stage 3 suite preserves its methods, subcases, corpus, and acceptance limits;
+that claim does not equate the extended Color test with its older achromatic
+predecessor. Individual test
+durations remain correctness workload measurements, not Blender interaction
+latency claims.
+
+Complete Grade acceptance is also divided by host evaluation context:
+
+```sh
+buck2 test --remote-only \
+  //products/perceptual-grade-next-blender/tests:full \
+  //products/perceptual-grade-next-blender/tests:full_compositor
+```
+
+Both targets use `native/test_full.py`. `full` selects Shader evaluation and
+`full_compositor` selects Compositor evaluation through the validated
+`PG_FULL_CONTEXT` setting. Together they retain the complete corpus across
+working spaces, extreme controls, field-row isolation, alpha and diagnostic
+checks, construction cleanup, and packed save/reload without add-on
+registration. The split bounds each process separately by the same 600-second
+limit; the acceptance thresholds and selected cases remain unchanged. These
+cases exercise the source-emitted native graph.
+
+The shipped fixed Grade templates have separate numerical gates:
+
+```sh
+buck2 test --remote-only \
+  //products/perceptual-grade-next-blender/tests:color_templates \
+  //products/perceptual-grade-next-blender/tests:color_templates_compositor
+```
+
+They instantiate the bundled `.blend` Grade, bind complete runtime parameter
+images, and evaluate six active/extreme configurations in all three working
+spaces. Both use the unchanged `1e-4` normalized RGB gate, require finite
+output, preserve alpha exactly, and keep black exactly black. The Compositor
+gate also checks embedded alpha. This covers the fixed production topology
+independently of source-emitted graph acceptance.
+
+On 2026-11-17, remote batch `516be663-3d88-41c7-9cfd-9230ce1021b8`
+passed 35 preparation checks, five full-Grade test methods per context, and
+all 18 production-template configurations per context. The Compositor template
+gate additionally checked nonfinite routing. The source-emitted Shader and
+Compositor test bodies took about 407 s and 417 s; these are correctness-workload
+durations, not interactive latency. Subsequent unused-branch hardening passed
+the shipped-template gates and exact template receipt checks in both bpy and
+native Blender. Before the later identity-carrier repair, hardened source-emitted
+acceptance also passed in remote build `dfa03f20-5e0d-4ccc-8c64-d833b9ebf06d`:
+five Shader methods in 381.625 s
+and five Compositor methods in 384.276 s, with two remote commands and zero
+local commands. The semantic-carrier static run subsequently passed the
+interface, Shader, Compositor, and publication/save-load sections; the revised
+extreme gate passed in the separate equivalent-arithmetic build recorded above.
+Final source-emitted full-Grade acceptance passed in build
+`d1006e84-e3fb-4683-aa36-d9ededfe5d21`: five Shader methods in 423.640 s and
+five Compositor methods in 422.974 s. All five Stack GPU checks also passed in
+190.122 s. The later optional production-Compositor projection refinements do
+not affect these default full-Grade and Stack paths. Final shipped-template
+numerical and receipt checks have separate results below; none of these timings is
+an interaction-latency claim.
+
+The installed save/recovery fixture `:image_save_gui` passed in remote build
+`d06c154f-a5f9-4957-94cf-d60ec941beea`: one test body in 33.338 s, one remote
+command, zero local commands, and a successful native Blender exit. It retains
+real packing failures, five-role bundles, reload, dirty user Images, and
+transaction rollback. The same fixture previously timed out at 300 s with
+stacks in repeated RNA `socket.links` scans; validation now constructs a fresh
+link index per call. Live compositor refresh advances after the later host
+invalidation repair; its numerical acceptance is tracked separately below.
+
+A live reset-Color diagnostic localizes that Auto discrepancy to an unnecessary
+signed-energy/J_A round trip: the same neutral pixel changes from J_A 522 after
+Tone to 521.5 after Color, with about 1.308% normalized RGB error. The first
+frozen-J_A carrier probe passed `:compositor_carriers` in build
+`f5c24a36-41b7-4ec7-a57e-f30b357fe352` (164.3 s). Its 18 real live evaluations
+span GPU Auto, GPU Full, and CPU Full. Tone/Color J_A handoff matches exactly;
+the largest neutral Auto output improved from 89.3125 to 89.875 against
+90.509666 (about 0.00694 normalized error), and Full modes pass `1e-4`.
+
+This is intermediate-source evidence. Equality of stored energy alone is
+unsafe when the carrier underflows to zero and Scale changes. The semantic
+hardening carries J_A explicitly through disabled stages and inactive H–K repair
+and multiplies it by positive Scale. The intermediate build's shipped
+`:compositor_gui` still failed exposure/GPU Auto at 0.01068249 against the
+unchanged 0.01 limit; that result does not describe the final accepted candidate.
+
+Final live acceptance passed in remote build
+`252b9488-83c2-49de-8943-8f509bc7e8f0`. The installed `:compositor_gui` fixture
+took 61.382 s and retained all 16 exercise frames and 12 automatic updates,
+signed/HDR/nonfinite input colors, exact alpha checks, two reload-repair frames,
+and normal exit. Auto retains its 0.01 normalized RGB limit; Full retains
+`1e-4`. The source `:compositor_carriers` gate passed all 18 live evaluations
+in 226.453 s across GPU Auto, GPU Full, and CPU Full, including exact
+Tone/Color J_A handoff. All five transport checks passed. The complete batch
+ran four remote commands and zero local commands.
+
+The accepted production-Compositor path retains Tone's raw response basis only
+when Color and H–K are semantic identities, composes uniform output conversion
+before spatial decode, and attempts a smaller radius only after a primary
+decode is illegal. The retry must pass actual decoded legality. These changes
+address extra half-image round trips and boundary rounding without modifying
+the generic full-Grade or Stack defaults, the numerical limits, or publication
+policy ownership.
+
+Final frozen-asset build `40fc9dd3-66b5-452b-9bbb-cf052870b80e` passed all five
+asset gates: shipped Shader Color (one method, 26.850 s), shipped Compositor
+Color (one method, 27.219 s), template behavior (13 methods, 43.297 s), bpy
+receipt schema (three methods, 56.718 s), and native executable receipts
+(three methods, 62.664 s, plus one build-only check in 65.173 s). Both numerical
+gates retain `1e-4`; exact append/binding receipts cover all 12 groups. The
+remotely materialized final assets contain a 3,688,385-byte `.blend`, a
+9,464-byte runtime manifest, and a 67,226-byte Stack shader. The 7,896,941-byte
+structure report remains a build diagnostic outside the extension ZIP.
+
+The link-index repair also reduced the installed ownership setup phase from
+397.139 s to 58.886 s in recorded fixture runs. The latter still records 33 tree
+builds totaling 30.379 s and cumulative preparation-drain measurements of
+39.679 s; those phase totals are not additive wall times or interactive latency
+guarantees. A separate removed-primary-Image repair makes role enumeration
+tolerate an externally deleted native wrapper; all 125 preparation-runtime
+checks pass.
+
+The complete installed suite subsequently passed with the semantic J_A carrier
+in remote build `2e322f99-3ca6-4d12-b4d1-fcf598568d3f`: 223.659 s on Blender
+5.3 and 224.968 s on LTS, including normal native exit. It retains every
+installed section, removed-primary-Image recovery, and the strict check that
+recovery requires only one preparation. Its recorded section durations are:
+
+| Installed section | Blender 5.3 | LTS |
+|---|---:|---:|
+| Node and ownership setup | 58.685 s | 58.281 s |
+| Parameter publication and save/load recovery | 66.785 s | 67.273 s |
+| Stack and gestures | 15.521 s | 15.476 s |
+| Concurrency and failure | 57.261 s | 56.470 s |
+| Undo and teardown | 21.935 s | 23.469 s |
+
+These five sections exclude extension startup and other harness overhead, so
+their sum does not equal the complete test duration. They measure the installed
+correctness fixture, not interactive latency. Live compositor precision remains
+a separate acceptance gate.
+
+Installed node-owned Stage 3 animation passed in build
+`8429ee5b-7fc8-48b4-b24d-ca6a24daf230`: the two background/GUI methods took
+68.866 s on Blender 5.3 and 68.087 s on LTS. They retain animated Web and
+Adaptance values, complete helper-role publication, persistence, per-frame
+preflight, the 300-second process limit, and normal native exit. The batch ran
+59 remote commands and zero local commands.
+
+Real window drag and undo gesture gates also passed in build
+`77704df5-bbed-45ae-818f-a1864ff82ab2`: `:gesture_drag_gui` took 17.075 s and
+`:gesture_undo_gui` took 11.832 s per test body, with six remote commands and
+zero local commands for the batch. Their passing gesture scope does not imply
+that the separate live GPU Auto gate has passed.
+
+CI enumerates both native acceptance halves and all five parameterized graph
+targets, together with the production-template, Color transport, receipt, and
+installed animation gates. Its explicit Next inventory also includes
+`handbook_audit`, which checks the completed site, deployment archive, and
+print artifacts for animation exclusion and the retained legacy ZIP link.
+The book toolchain is a declared dependency of that Next audit.
+
+The template receipt gates run the same append and binding cases through two
+Blender hosts:
+
+```sh
+buck2 test --remote-only \
+  //products/perceptual-grade-next-blender/tests:template_receipts \
+  //products/perceptual-grade-next-blender/tests:template_receipts_blender
+```
+
+`template_receipts` uses the bpy 5.3 wheel; `template_receipts_blender` uses the
+pinned native Blender 5.3 executable. Both compare all 12 appended groups with
+the generator's exact structure receipts, check Grade bindings in Shader and
+Compositor for Linear Rec.709, Linear Rec.2020, and ACEScg, and reject effective
+float32 subnormal socket literals. This catches host-specific literal changes
+without weakening the runtime structure contract. Detailed receipt payloads
+are test diagnostics from `node_templates[report]`, rather than extra shipped
+manifest data.
+
+The finite-output router has focused gates separate from Grade accuracy:
+
+```sh
+buck2 test --remote-only \
+  //products/perceptual-grade-next-blender/tests:compositor_validity \
+  //products/perceptual-grade-next-blender/tests:compositor_validity_blender
+```
+
+The first checks CPU Full; the native Blender gate also requests GPU Full and
+GPU Auto. Final rendering promotes the requested Auto mode to effective Full,
+so these checks do not establish half-precision materialization safety.
+They inject NaN and positive/negative infinity into projected RGB
+and into observed state whose projection is finite, then require magenta and
+exact alpha preservation. These cases validate routing at the observed graph
+boundary. They do not establish every finite intermediate's accuracy or
+replace production-template and `compositor_gui` live-Viewer acceptance.
 
 ## Shared Grade regression checks
 
@@ -244,7 +663,8 @@ Run the same `//:gpu_solver_math` and `//:gpu_baking` targets below.
 source fingerprints and the software-renderer scope. Physical Metal startup
 and performance still require a Mac run. The 1.23.0 timing/photographic tables
 below retain their original source snapshots; they are not new 1.23.1 timing
-measurements. See [startup errors and logs](../guide/render-methods.md#gpu-startup-errors-and-logs).
+measurements. Current helper lifecycle and failure handling are documented in
+the [Next policy chapter](next-policies.md#next-policy.helper).
 
 ## Installed GPU baking (1.23.0)
 
@@ -253,8 +673,8 @@ The installed implementation is `model/gpu.py`, `model/gpu_shader.py`,
 device for nonlinear LUT work and reports the backend in the sidebar.
 `tools/experiments/gpu_solver.py` is now a thin workstation-measurement adapter,
 with an optional strict whole-grid CPU repair probe that is not installed.
-The [render-method guide](../guide/render-methods.md#automatic-gpu-baking) explains
-selection, first-use compilation and save/render CPU completion.
+The current [render and bake guide](https://rei277hz.github.io/perceptual-grade/manual/en/guide/render-methods.html)
+describes Next's supported bake routes and render readiness.
 
 ```sh
 buck2 test //:gpu_solver_math //:gpu_baking

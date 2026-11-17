@@ -12,7 +12,8 @@ and interpolation, the H–K guard, and the architecture and development history
 of the project. Historical implementation details and measurements remain
 useful for understanding earlier products, but are labeled separately from the
 current reference. The English-only Next Blender policy chapter describes
-Next's current policies; Next has not yet implemented Warp.
+Next's current policies, including Stage 3 Warp and the five-image parameter
+publication bundle.
 
 For Blender behavior, `products/perceptual-grade-next-blender` is the current
 authority: its source, requirements, and tests define the implemented routes,
@@ -31,9 +32,10 @@ legacy replacement work. The Next Buck test `technical_report_audit` verifies
 that coverage and the references. Reviewers also compare the prose with the
 implementation; valid references alone do not establish semantic agreement.
 
-The User Manual covers installation and the everyday 1.23.2 workflow. See the
-[User Manual](https://rei277hz.github.io/perceptual-grade/manual/en/index.html)
-for those instructions and the packaged downloads.
+The User Manual describes current Next node workflows and retains a clearly
+labeled link to the legacy 1.23.2 ZIP. It does not offer a Next ZIP download.
+See the [User Manual](https://rei277hz.github.io/perceptual-grade/manual/en/index.html)
+for Blender setup and grading instructions.
 
 [rei277hz/perceptual-grade](https://github.com/rei277hz/perceptual-grade) is the
 downstream code snapshot repository. It currently contains preserved

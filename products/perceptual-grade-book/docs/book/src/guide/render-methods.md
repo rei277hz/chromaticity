@@ -1,76 +1,58 @@
-# Render methods
+# Render and bake
 
-> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+Shared Grade and Grade Stack nodes provide a **Bake** operation in Shader and
+Compositor trees. Per-node animated Grade nodes intentionally do not provide
+Bake, because their settings are time-varying.
 
-An ordinary **Grade** node always applies its Grade forward. Choose **Baked LUT** or **Direct** in the Perceptual Grade sidebar. The node body contains the Grade selector and a pencil for showing or hiding its diagram; it has no Render Method or Direction dropdown. The Perceptual Grade DCTL in Resolve evaluates the equations analytically.
+## Bake a node result
 
-## Choose for the job
+Select a supported Grade or Stack node, set the output dimensions when the
+route allows it, and click **Bake** in the sidebar. The result is published to
+a managed packed 32-bit float RGBA Image and the node switches to that reader.
+The result is the native evaluated output of the node tree, so Grade uses its
+helper-image kernel and Grade Stack uses its full 65³ LUT graph.
 
-For Shading, start with Baked LUT. It reuses precomputed colors when a material is evaluated across samples and light bounces. For Compositing, start with Direct. It evaluates the model in native nodes and avoids a finite 3D color grid across full-frame gradients.
+**Use Bake** chooses between the Image and live node output without removing the
+Image binding. If settings or tracked source data change, the receipt is
+revoked, the node returns to live output, and Use Bake is disabled until a new
+bake succeeds. You can also turn Use Bake off manually while keeping the Image
+assigned. A managed Image may be shared: rebaking it updates every reader.
 
-Baked LUT stores Tone and Color at input colors and interpolates between nearby samples. The Linear matrix stays exact, outside the cube. Direct calculates the appearance and color operations using smooth one-dimensional coefficient tables. Compare both on demanding gradients or strong grades before choosing for a final render.
+Settings tracking includes Linear, Tone, and every Stage 3 control on the target,
+enabled Stack entries, and live upstream Grade/Stack nodes.
 
-Render Method belongs to the node. Several nodes can share one Grade while using different render methods. Working White belongs to the Grade and appears in Stage 1 of the sidebar.
+The optional Shader **Vector** input controls baked sampling only. When it is
+unlinked, sampling uses the recorded bake UV map, or the active render UV map
+for an Image bake.
 
-## While editing
+## Image and UV routes
 
-On an ordinary Grade node with Baked LUT selected, edits temporarily use Direct while the matching table is prepared. The completed table takes over when ready. Final rendering waits for the current table; Direct remains Direct throughout.
+A pointwise Shader graph with one ordinary still Image and unlinked source
+coordinates uses an Image bake: one output pixel per source texel. A constant
+Shader graph uses a 1×1 image. Compositor bakes retain the native compositor
+output domain, including the scene canvas size for constants.
 
-## Automatic GPU baking
+Linked coordinates, surface-dependent shading, multiple source Images, or an
+upstream managed UV bake require a UV bake on a mesh. UV baking uses Cycles and
+needs an active, non-overlapping map in the 0–1 tile. Image bakes follow the
+Scene render engine: EEVEE uses a private orthographic render, Cycles uses the
+selected CPU or GPU device, and Workbench or an unknown engine falls back to
+Cycles CPU. UV bakes use the Scene's Cycles CPU/GPU choice. An unavailable GPU
+selection fails visibly instead of silently changing devices. The bake helper
+does not change Scene or user preferences.
 
-From 1.23.0, nonlinear LUT bakes automatically use Blender's graphics device
-when its compute shader passes the startup check. This applies to ordinary
-forward Grade LUTs and to forward/inverse Grade Stacks. **Baked LUT** remains
-the render method; GPU or CPU describes how its table is prepared.
+Bake explicitly rejects UDIM/tiled Images, movies and image sequences,
+multiview/multilayer sources, Shader to RGB, movie clips and masks, linked or
+animated cache/Alembic geometry, missing or overlapping UVs, and unsupported
+graph occurrences. Apply unsupported topology-changing or deformation
+modifiers before a UV bake. The [Next bake policy](https://rei277hz.github.io/perceptual-grade/technical/en/development/next-policies.html#next-policy.bake)
+lists the current route boundaries.
 
-The sidebar reports **Baking: GPU** with the actual graphics backend/device,
-or **Baking: CPU** with a fallback reason. This selection uses Blender's
-graphics context, independently of the Cycles CPU/Metal/CUDA preference and
-the compositor render device. Matrix-only transforms stay on the CPU because
-they need no nonlinear solve. Software graphics devices, unavailable contexts,
-failed shader checks and singular inverse matrices also use the CPU.
+## Render readiness
 
-The shader is compiled from source through Blender's own GPU API. Its first
-use can pause while the graphics driver compiles it; later edits reuse the
-program. Warm GPU dispatches are bounded, and inverse vertices flagged by the
-device are reevaluated through the complete CPU transform before publication.
-GPU arithmetic is float32; the CPU uses float64. Their inverse tolerances differ,
-so a GPU table is an approximation with its own audit, not a promise of identical
-CPU vertices. See [validation and workstation measurement](../development/testing.md#installed-gpu-baking-1230).
-
-GPU work runs in a drawing context. If saving or rendering needs an unfinished
-table before that work completes, Blender finishes it on the CPU. An already
-installed matching GPU table is reused. No extra GPU package or compiled
-extension binary is required.
-
-### GPU startup errors and logs
-
-“Preparing GPU bake” means the job is waiting for GPU startup in a drawing
-context. Version 1.23.2 performs the inverse shader's complete Broyden updates
-on vector columns: it avoids both the undeclared `outerProduct` builtin and
-the matrix/scalar division rejected by the reported Metal compiler.
-A compiler or dispatch failure switches to CPU,
-shows the exception type/message in the sidebar, and prints one warning and
-traceback per graphics context. Failed contexts are retried after disabling
-and enabling the extension or restarting Blender.
-
-There is no separate extension log file. On macOS, save the project and quit
-Blender, then launch it from Terminal to see and record errors:
-
-```sh
-/Applications/Blender.app/Contents/MacOS/Blender --debug-gpu \
-  2>&1 | tee "$HOME/Desktop/perceptual-grade-gpu.log"
-```
-
-Adjust the application path if Blender is installed elsewhere. Reproduce the
-bake; the terminal output is also saved to `perceptual-grade-gpu.log` on the
-Desktop. Physical Metal compilation/performance must still be checked on a Mac;
-software OpenGL arithmetic tests cannot establish it.
-
-## Grade Stack
-
-A **Grade Stack** uses one LUT, with a 33³ editing preview and 65³ final quality for its entire enabled sequence, including every Linear matrix. Each entry has a forward/inverse toggle. To apply one Grade inversely, use a Stack with one inverse entry.
-
-The Stack first installs a 33³ LUT for fast output and scope updates, then reuses every preview vertex while refining to 65³ after edits settle. Both scopes and native output use the installed LUT. Continuous edits coalesce into successive previews. Final rendering and normal saving require the latest 65³ cube. Before its first preview, the node passes input through and scopes wait. See the Stack guide for scheduling and accuracy details.
-
-See [Inverse grading and Grade Stacks](inverse-stack.md), [evaluation and interpolation](../theory/lut.md), and [measure render methods](../development/testing.md#measure-render-methods).
+Next reconciles derived kernels before rendering. Only a full result for the
+current settings signature is render-ready. During interaction a previous
+complete result may remain visible with **Updating**; a failed current result
+shows magenta with alpha preserved and blocks render preflight. Grade Stack
+preparation can show its 33³ preview during editing, but final rendering waits
+for 65³.

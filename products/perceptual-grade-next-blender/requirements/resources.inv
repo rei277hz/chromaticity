@@ -22,6 +22,36 @@
   },
   "properties": [
     {
+      "name": "undo_retained_resources_are_not_removed",
+      "variables": {
+        "event": "Event"
+      },
+      "assume": [
+        "not event.failed",
+        "event.live",
+        "event.owned",
+        "event.retain_for_undo"
+      ],
+      "lets": {
+        "transition": "step(State('observe'), event)"
+      },
+      "assert": "transition[1].action == 'retain' and transition[0].phase == 'retain'"
+    },
+    {
+      "name": "undo_retention_prevents_deletion",
+      "variables": {
+        "state": "State",
+        "event": "Event"
+      },
+      "assume": [
+        "event.retain_for_undo"
+      ],
+      "lets": {
+        "transition": "step(state, event)"
+      },
+      "assert": "transition[1].action != 'remove'"
+    },
+    {
       "name": "deletion_requires_eviction_and_fresh_eligibility",
       "variables": {
         "state": "State",

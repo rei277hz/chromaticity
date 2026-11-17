@@ -1,4 +1,4 @@
-"""Concurrent, host-free preparation of complete Linear and Tone Grades."""
+"""Concurrent, host-free preparation of complete Linear, Tone and Color Grades."""
 
 # pg-book: technical-report/en#next-policy.preparation-join
 
@@ -12,6 +12,7 @@ import time
 
 from ..kernel.boundary import RESOURCE_SCHEMA, prepare_boundary
 from ..kernel.color_prepare import prepare_color
+from ..kernel.color_resolution import COLOR_RESOLUTION_SCHEMA
 from ..kernel.prepare import (
     GAMMA,
     PreparedGrade,
@@ -19,12 +20,12 @@ from ..kernel.prepare import (
     prepare_tone,
     viewing,
 )
-from ..kernel.settings import ColorSettings, Settings
+from ..kernel.settings import Settings
 from ..kernel.stage2_parameters import prepare_parameters
 from ..policy import preparation_join
 
 
-PREPARATION_SCHEMA = 1
+PREPARATION_SCHEMA = 2
 
 
 def preparation_signature(settings: Settings) -> str:
@@ -32,7 +33,7 @@ def preparation_signature(settings: Settings) -> str:
     if not isinstance(settings, Settings):
         raise TypeError("Grade preparation requires frozen Settings")
     encoded = json.dumps(
-        (PREPARATION_SCHEMA, RESOURCE_SCHEMA, asdict(settings)),
+        (PREPARATION_SCHEMA, COLOR_RESOLUTION_SCHEMA, RESOURCE_SCHEMA, asdict(settings)),
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
@@ -77,7 +78,7 @@ class GradePreparer:
     @staticmethod
     def _tone_and_color(settings):
         tone = prepare_tone(settings.tone, full_fields=True)
-        color = prepare_color(settings.color, tone, full_fields=False)
+        color = prepare_color(settings.color, tone, full_fields=True)
         return tone, color
 
     @staticmethod
@@ -96,8 +97,6 @@ class GradePreparer:
     async def prepare(self, settings: Settings) -> PreparedGrade:
         """Launch every required component before awaiting any one of them."""
         signature = preparation_signature(settings)
-        if settings.color != ColorSettings():
-            raise ValueError("Grade preparation currently supports neutral Color only")
         started = time.perf_counter()
         state = preparation_join.new(signature)
         loop = asyncio.get_running_loop()
@@ -177,7 +176,7 @@ class GradePreparer:
         )
         if (boundary.fl, boundary.aw, boundary.gamma) != (tone.fl, tone.aw, tone.gamma):
             raise ValueError("Boundary geometry belongs to a different appearance context")
-        prepared = PreparedGrade(linear, tone, settings.space, color, boundary, False)
+        prepared = PreparedGrade(linear, tone, settings.space, color, boundary, True)
         # The small atlas assembly belongs to the complete snapshot's timing.
         # Shield its worker just as the parallel children: cancellation must
         # not release a scheduler slot before physical preparation retires.

@@ -16,8 +16,10 @@ state + event -> policy.step(...) -> new state + effects
 ```
 
 An effect is the policy's authorization for one external operation. The runtime
-executes it and feeds the resulting receipt back as the next event. This keeps
-the state transition testable while making the side-effect boundary explicit.
+executes it. When completion affects later decisions, an operation receipt
+returns as the next event; synchronous authoring admission needs no completion
+event. This keeps transitions testable while making the side-effect boundary
+explicit.
 
 ![The policy and effect-consumer boundary](../assets/illustrations/next-policy/00-policy-layer.svg)
 
@@ -84,6 +86,79 @@ work, `loop` repeated work, `alt` alternative paths, and `par` concurrent work.
 The frames describe control flow rather than additional stored states. Related
 policies share a sequence when they participate in the same interaction.
 
+## Color authoring: ownership before preparation
+
+<a id="next-policy.color-authoring"></a>
+
+`src/policy/color_authoring.py` is a synchronous per-handle ownership machine,
+composed by `src/runtime/color_authoring.py` before normal Grade preparation.
+It has no job, phase, generation, or completion receipt. Its only stored fact
+is `State(origin_handle: Optional[int])`: absence means that this handle has no
+automatic-restoration owner. The runtime's sparse `Claim(origin_handle,
+restore_offset)` adds the exact authored return position without putting a
+floating-point record into the scalar policy state.
+
+The events are `manual`, `push`, `restore`, and `clear`. A push by the current
+owner preserves the earlier return position. A push from another owner returns
+`capture`, authorizing the runtime to capture the handle's current position
+before moving it. Manual editing and explicit clearing return `clear` only
+when a claim exists. Restoration clears a claim only for its current owner
+when the runtime reports `at_baseline`; a constrained or blocked return keeps
+the claim. `Effects(action: Optional["capture" | "clear"])` is the sole
+permission to replace or remove that ownership metadata. Events with no
+authorized mutation have empty effects.
+
+The runtime combines these scalar decisions with a numerical transaction. It
+pins the edited hue, pushes neighbors to preserve every cyclic 4° gap,
+including the seam in either edit direction, and then restores claimed offsets
+as far as the same constraints allow. Manually editing a displaced hue starts
+from its current position and detaches only that handle. Aggregate
+`Effects(settings: Optional[Settings], claims: Optional[Claims])` authorizes
+the single Blender consumer to apply settings and claim replacements together
+in one edit scope. Callbacks and error handlers do not bypass that consumer.
+
+The claims do not affect the mathematical settings signature, prepared image
+payloads, Stack function, or bake freshness digest. A separate undo fingerprint
+includes them, so editing-history changes can still restore correctly even
+when the effective transform is unchanged. `COLOR_RESOLUTION_SCHEMA = 1`
+versions Grade, preparation, and Stack derived signatures independently of
+template topology and texture schemas. Bake freshness still observes the raw
+control values, so equal effective repairs do not hide an authored edit. This
+authoring boundary adds no template group, role Image, or texture-layout change.
+Node-owned claims clear on an
+actual frame or subframe change; repeated notifications at the same time do
+not clear them. Shared Grade claims survive timeline changes. A Peak change
+clears claims and resolves the new hue geometry and radial Adaptance limits in
+one transaction. Reset, copy, conversion, load, and undo adapters must preserve
+this ownership boundary rather than writing metadata on their own.
+
+Animation uses a different admission path. Invalid sampled hue rows are
+projected to the unique closest feasible lifted angles under squared-angle
+distance. The repair solve uses a 4.0001° gap before float32 storage, then
+checks the stored row against the public 4° minimum; an already-valid row is
+preserved exactly. Finite out-of-range Adaptance targets
+are shortened along their a/b ray; nonfinite requests fail visibly. These
+effective settings feed preparation without changing authored values,
+keyframes, or ownership claims. **Auto** is derived from current displacement
+and identifies the owning handle; **Limited** compares raw with effective
+settings. Neither indication is an independent persisted validity flag.
+
+![Color authoring and evaluated constraints](../assets/illustrations/next-policy/10-color-authoring-sequence.svg)
+
+<p class="figure-caption">The runtime solves geometry and asks the scalar policy for capture or clear permission. One consumer applies the composed settings/claim effects before requesting ordinary preparation. Invalid animated samples produce effective settings without rewriting keys.</p>
+
+The symbolic requirements establish scalar ownership and effect admission;
+they do not prove the numerical optimizer or float equality at the return
+position. Runtime and numerical tests cover the cyclic geometry, exact captured
+baselines, push/restore interactions, and evaluation projection. The scalar
+proof, nine numerical checks, and 14 reversible-edit runtime checks pass. Native
+animation, conversion, and provenance-only undo checks also pass on current
+Blender and LTS. The [validation record](testing.md#current-next-color-authoring-validation)
+separately records LTS native undo crashes before the hue checks and the active
+[fallback-lifetime repair](#persistent-fallback-lifetime-and-undo). Earlier
+passing retries do not establish that this separate defect is fixed. The
+earlier Stage 3 receipts do not certify these authoring adapters.
+
 ## Preparation: latest demand, one worker
 
 <a id="next-policy.preparation"></a>
@@ -131,8 +206,9 @@ returned only at that final point. Stale and duplicate receipts do nothing.
 The preparer launches all three functions before awaiting any one of them. It
 then assembles the `PreparedGrade` only after the join authorizes completion,
 checks that boundary geometry belongs to the same appearance context, and
-prepares the parameter atlas. This is why a first error cannot immediately
-release the executor slot.
+prepares the complete role bundle. Color preparation joins to the frozen Tone
+and appearance context before that result may publish. This is why a first
+error cannot immediately release the executor slot.
 
 **Simplification candidate J1.** The fixed three-child barrier could be expressed
 directly around `asyncio.gather`, reducing the explicit pending-bit reducer.
@@ -174,11 +250,25 @@ LUT. Its runtime index identifies the Shader/Compositor tree type, resource
 slots, and expected structure. There is one Stack topology per tree type;
 preview/final resolution, cube strides, and atlas-height scaling come from a
 dedicated 1×1 RGBA32F runtime configuration image bound alongside the LUT and
-working-space basis images. With the pinned Blender 5.2.4 generator, the
-12-group library is
-3,084,040 bytes, 58,557 bytes (1.86%) smaller than the preceding 14-group
-library (3,142,597 bytes). The same Buck target supplies the installed product
-and installed tests. Canonical graph
+working-space basis images. The final frozen
+pinned Blender 5.2.4 Stage 3 generator produced
+a **3,688,385-byte** library containing 12 groups, a **9,464-byte** runtime
+manifest, and a **67,226-byte** Stack shader. These are uncompressed artifact
+sizes, not the extension ZIP's compressed size. Its **7,896,941-byte** detailed
+structure report is a build diagnostic and is excluded from the extension ZIP.
+The stored kernel inventory is:
+
+| Kernel | Nodes | Links |
+|---|---:|---:|
+| Grade Shader | 1,795 | 3,099 |
+| Grade Compositor | 3,042 | 5,402 |
+| Stack Shader | 214 | 320 |
+| Stack Compositor | 238 | 356 |
+
+These counts describe the stored kernel trees, not an expanded-occurrence cost
+or an evaluation-speed measurement. The remaining eight groups are private bake
+wrappers and interface-specific pending/error fallbacks. The same Buck target
+supplies the installed product and installed tests. Canonical graph
 emitters remain in the repository's build-only `tools/template_build` package;
 they are absent from the extension ZIP. The Stack helper likewise reads the
 generated `grade_stack.glsl` resource instead of emitting the shared equations
@@ -191,6 +281,77 @@ template is an installation failure and follows the existing visible-error
 path. The asset contains topology and static data; Grade settings and prepared
 payloads remain authoritative. File load and render preflight keep their
 existing reconciliation obligations.
+
+Exact structure receipts must survive both library append and runtime resource
+binding. The receipt audit exercises the generated 12-group library through
+both the bpy 5.3 wheel and the native Blender 5.3 executable; it also checks
+Grade bindings in all three working spaces and both editor tree types. The
+build-only Color emitter expresses its overflow threshold with two normal
+float32 factors rather than a subnormal socket literal, which native Blender
+can flush to zero. Receipt validation remains exact. Detailed expected structure
+payloads are recorded only in the generator's diagnostic report, outside the
+shipped manifest and ZIP.
+
+Runtime parameter-sampler validation builds a fresh socket-to-link index from
+the kernel's links for each validation call. Blender's RNA `socket.links`
+lookup scans the tree's edges; repeating it throughout a large Grade caused
+long save/recovery validation. The index preserves the same exact edge and
+cardinality checks without retaining a cache across graph mutations. The native
+`image_save_gui` regression passed in 33.338 s after this change; the preceding
+same-fixture run timed out at 300 s with stacks in repeated `socket.links`
+scans. That passing fixture retains real image packing failures, complete role
+bundles, reload, dirty user-image preservation, and transaction rollback checks.
+This is a fixture result, not a general kernel-evaluation latency measurement.
+
+Compositor Grade output has a separate graph-level finite-value router. Stage 3
+carries signed energy as `Ecarrier = E / 4096` and carries `J_A` explicitly.
+Changed energy can recover `J_A = sign(Ecarrier) * sqrt(abs(Ecarrier)) * 64`;
+disabled stages and inactive H–K repair retain the current `J_A` instead.
+Positive Scale multiplies that coordinate directly and multiplies energy by
+its square. Output projection uses `J_A` and a compensated distance to white,
+avoiding an unscaled squared-energy
+image. The router observes original source RGB and the final Stage 3 `H`, `a`,
+`b`, chroma, carried energy, and reference energy. Each observed value must
+satisfy `abs(x) < FLOAT_MAX`; projected RGB must satisfy `abs(x) < 65504`.
+These strict bounds conservatively reject the representational endpoints as
+well as NaN and infinity. Invalidity selects magenta `(1, 0, 1)`, and the
+existing alpha-restoration path preserves source alpha.
+
+This explicit coordinate avoids inferring semantic identity from equality of
+stored energy, which can hide a Scale change after half-float underflow.
+Active H–K repair still uses its original predicate and frozen post-Tone energy;
+carrying `J_A` does not bypass repair for a negative achromatic coordinate when
+reflected `H` is nonnegative. It adds no texture role, schema, or policy machine.
+The production Compositor path can also retain Tone's raw response basis when
+every authored Color family is inactive and H–K is provably inactive: `J_A >= 0`
+or reflected `H < 0`. A negative achromatic coordinate with nonnegative
+reflected H remains eligible for repair. The retained decode still passes the
+actual AP1 cube-legality and endpoint checks. Uniform runtime output-matrix
+rows compose with the cone-to-AP1 matrix before touching spatial cone values,
+avoiding a separately rounded half-precision AP1 image on that legal identity
+path. Active Color, including non-unit Web Scale, uses its transformed state.
+
+After an illegal primary projected decode, this Compositor path evaluates one
+retry at `0.99609375` times the radius and accepts it only if the actual decoded
+RGB passes the same legality check. Already-legal primary output stays
+unchanged; an illegal retry retains the interior-neutral fallback. Generic
+full-Grade and Stack default projection paths retain their previous behavior.
+These precision adaptations add no texture role, schema, or policy machine.
+The shipped live-Viewer and source-carrier gates pass, with unchanged 0.01 Auto
+and `1e-4` Full limits; [testing](testing.md) records the workload and evidence.
+
+Validity always uses the original values. Ordered minimum/maximum operations
+sanitize only the unused interpolation operand, so a NaN cannot contaminate
+the selected magenta branch; accepted RGB values remain unchanged. This is a
+check of observed source, state, and output, not a proof that every intermediate
+is finite or numerically accurate. Finite saturation remains a separate
+representational diagnostic. The router adds no policy machine: graph-value
+invalidity and installation/publication failure retain their distinct paths.
+
+The isolated router tests cover CPU and GPU final rendering with exact alpha
+preservation. Blender promotes requested Auto precision to effective Full for
+those final renders; live-Viewer acceptance separately checks actual Auto
+half-precision image materialization.
 
 The preparation signature identifies shared prepared Grade data; the desired
 kernel signature can additionally identify the node's graph context. A current
@@ -290,26 +451,67 @@ keep the generation fence; otherwise an old helper can publish into a new one.
 <a id="next-policy.bank-publication"></a>
 
 `src/policy/bank_publication.py` is the active production publication path. The
-parameter-image code in `nodes.py` constructs two packed image banks, while
-`runtime/bank_publication.py` consumes the reducer's effects. The inactive bank
-is staged and checked before the selector changes. Selection is read back, then
-delivery publishes the resource and dispatches installation results to all
-affected node records.
+parameter-image code in `nodes.py` constructs two packed banks, each with five
+fixed RGBA32F image roles: scalar/Tone parameters, Color coefficients, Web
+parameters, Web toes, and Adaptance parameters. `runtime/bank_publication.py`
+consumes the reducer's effects. One shared selector chooses the entire bundle;
+there are no independent Stage 2 and Stage 3 publication policies. Every role of
+the inactive candidate is staged and its schema, role identity, dimensions, and
+content receipt checked before selection changes. An unchanged candidate role
+may retain its clean matching payload. Selection is read back, then delivery
+publishes the resource and dispatches installation results to all affected node
+records.
+
+Delivery invalidates all five active role Images before recording the bound
+generation and dispatching successful installation results. Only after those
+node receipts are current does it request a live compositor reevaluation. On
+Blender 5.3, plain `ID.update_tag()` does not request `ID_RECALC_COMPOSITOR`;
+the consumer reasserts each consuming scene's unchanged
+`compositing_node_group` through its RNA setter, including nested Grade users.
+This preserves root identity and topology while requesting the host's compositor
+recalculation. The operation remains inside the policy-authorized delivery
+effect and adds no policy state or machine. The final installed live-Viewer
+fixture passes all 12 automatic updates; [testing](testing.md) records its
+precision, reload-repair, and native-exit coverage.
+
+The fixed role layouts occupy 2,916,976 bytes per bank (5,833,952 bytes, about
+5.56 MiB, for both),
+excluding the shared boundary image. The scalar/Tone image is 512×1; the Color,
+Web, Web-toe, and Adaptance images are 8193×2, 4097×32, 1537×1, and 8193×4.
+Role image contents remain derived from the authoritative settings. Schema 4
+receipts and the v4 template marker reject mixed roles or obsolete saved
+layouts instead of accepting partial data.
+
+Field layout schema 6 fixes Adaptance at 32,768 cells, segmented into four
+8193-pixel rows of RGBA32F (524,352 bytes per bank). This is one invariant
+layout for every Grade, rather than a resolution chosen from authored values.
+It replaces the 3,072-cell, 49,168-byte field: interpolation near a zero-support
+boundary otherwise fails the unchanged extreme-grade RGB gate. The increase
+is 475,184 bytes per bank. Earlier HDR-budget studies of the smaller field
+remain historical diagnostics, not certification of the current layout.
+
+Two scalar-image texels carry the four tonal anchors and four authored
+Adaptance-row activity flags. They preserve exact-zero cardinal support when
+the prepared Adaptance atlas is interpolated: sampling across a boundary must
+not invent a correction in an inactive interval or at an inactive anchor.
+The graph derives this support from authoritative controls, rather than
+discarding small values with a tolerance. The scalar image remains 512×1, so
+these fields do not change the bundle's byte size or publication mechanism.
 
 When a required Grade tree is missing or structurally damaged, the admitted
-stage/repair consumer appends the matching bundled template and binds its two
-parameter-image slots before returning a clean staging receipt. Ordinary edits
-retain the existing graph and bank identities. Template append is an operation
+stage/repair consumer appends the matching bundled template and binds both
+complete role bundles before returning a clean staging receipt. Ordinary edits
+retain the existing graph and all ten role image identities. Template append is an operation
 inside the existing effect, not a new state or permission that bypasses the
 publication gate.
 
 ![Production two-bank publication](../assets/illustrations/next-policy/04-bank-publication.svg)
 
-<p class="figure-caption">An invalid active bank first closes output, then repairs both banks. A selection or delivery failure restores the old selector before failing closed.</p>
+<p class="figure-caption">One selector publishes a complete five-role bank for Tone and Stage 3. An invalid active bank first closes output, then repairs both banks. A selection or delivery failure restores the old selector before failing closed.</p>
 
 ![Bank publication workflow](../assets/illustrations/next-policy/04-bank-publication-sequence.svg)
 
-<p class="figure-caption">The consumer writes the packed banks, appends and binds a native template when the graph needs replacement, reads back the selector, and dispatches installation receipts to Blender nodes. Alternative frames distinguish ordinary staging and repair. A failed selector change or delivery restores the old selector before bounded failure-output closure retries.</p>
+<p class="figure-caption">The consumer stages all five roles, reusing only matching clean candidate payloads, before one selector changes. It appends and binds a native template only when the graph needs replacement. Failed selection or delivery restores the old selector before bounded failure-output closure retries.</p>
 
 The admission facts require two distinct valid bank indices and an admitted
 publication context. If the active bank is invalid, `repair_gate` first waits
@@ -523,6 +725,13 @@ unique source Image is copied once into
 the click-time snapshot so the helper evaluates a stable request; the `.blend`,
 `.npy`, and `.exr` payloads are not hashed.
 
+The settings digest includes every Linear, Tone, and Stage 3 numeric field,
+including J/C response, fit, Global C Gain, Adaptance, and all Warp handles.
+The same Stage 3 field inventory supplies node settings and bake observation.
+It covers the bake target, every enabled Stack Grade, and live upstream Grade
+or Stack nodes. This keeps completion fencing and persisted load/undo receipts
+sensitive to Stage 3 changes as well as the immediate edit callbacks.
+
 The freshness decision is derived from the current receipt, cheap Image
 metadata, per-ID generations, graph/settings digest, and live-kernel status; no
 stored `ready` or `stale` flag duplicates those facts. Nodes bound to a managed
@@ -629,28 +838,86 @@ validity, and image agreement must all be true. `runtime/grade_resources.py`
 uses it at the boundary where a persisted host resource is considered the
 installed resource.
 
-The reducer sequences disposal and retirement. Disposal fences subscriptions,
+The reducer sequences disposal, retention, and retirement. Disposal fences subscriptions,
 then detaches the node's Grade and kernel references. Retirement observes the
-native resource. A live, owned,
-zero-user, unprotected resource is eligible for eviction; a non-live wrapper
-can be evicted directly. After eviction, the policy requires a fresh eligibility
-observation before native removal.
+native resource. A live, owned resource whose observation requests
+`retain_for_undo` returns `Effects(action="retain")`, then terminates without
+eviction or removal. The effect consumer sets the fake user; callbacks and
+cleanup paths do not perform that retention mutation independently. A live,
+owned, zero-user, unprotected resource without that retention requirement is
+eligible for eviction; a non-live wrapper can be evicted directly. After
+eviction, the policy requires a fresh eligibility observation before native
+removal. This adds a branch to the existing resource policy, not a new machine.
 
 ![Resource adoption and retirement](../assets/illustrations/next-policy/06-resources.svg)
 
-<p class="figure-caption">Adoption is a conjunction predicate. Deletion is a separate receipt sequence with a fresh zero-user and protection check.</p>
+<p class="figure-caption">Adoption is a conjunction predicate. Deletion is a separate receipt sequence with a fresh zero-user and protection check. The retention branch described here ends after its policy-authorized fake-user effect.</p>
 
 ![Resource retirement workflow](../assets/illustrations/next-policy/06-resources-sequence.svg)
 
-<p class="figure-caption">Disposal optionally adds the fencing and detachment prefix to retirement. The consumer obtains native facts again after eviction, so the original zero-user observation cannot by itself authorize native deletion.</p>
+<p class="figure-caption">Disposal optionally adds the fencing and detachment prefix to retirement. The consumer obtains native facts again after eviction, so the original zero-user observation cannot by itself authorize native deletion. Undo-retained fallbacks take the retention branch instead.</p>
+
+### Persistent fallback lifetime and undo
+
+Blender's `ID.users` counts current references; it does not count every raw ID
+reference retained by undo memfiles. A fallback with no current readers can
+still be part of an earlier undo state. Ordinary cleanup therefore preserves
+published pending/error node groups, including legacy helpers. It does not
+use a zero user count to infer that undo has released them.
+Legacy fallback recognition checks marker presence, so a historical marker
+whose value is `0` or `False` still receives retention.
+
+The fallback pool is lazy and has six supported variants:
+
+| Output | Shader, no Vector | Shader, Vector | Compositor |
+| --- | --- | --- | --- |
+| Pending passthrough | one reusable group | one reusable group | one reusable group |
+| Error magenta, preserving alpha | one reusable group | one reusable group | one reusable group |
+
+Acquisition scans the current Blender datablocks, tries the current group
+first, and reuses a local group only after its host type, mode, interface, topology,
+effective settings, and exact manifest structure receipt validate. A marker or
+matching name alone cannot admit it. Otherwise the runtime appends the matching
+shipped template and validates it before publication. It retains no RNA wrapper
+cache across undo, load, or graph changes. Each valid variant is immutable and
+can be shared by independent readers. A pending→live→pending transition reuses
+the retained pending group, while fake-user protection keeps its identity
+available through reader removal and save/load.
+
+An invalid historical helper is retained unused rather than repaired in place,
+adopted, or deleted. A new validated group supplies current output. Repeated
+external corruption can therefore leave additional unused historical IDs; the
+six-variant contract bounds the reusable variants, not every historical ID in
+a user file. A failed candidate that has never been published still follows
+the ordinary candidate-cleanup path. No settings texture, template variant,
+graph emitter, or runtime color equation is added by this lifetime repair.
+
+The source-level reason for this boundary is documented in the testing chapter:
+Blender's undo writer records raw ID addresses, its restore path remaps old
+addresses before later library linking, and the node-tree preview updater walks
+group references recursively. The report links the pinned source ranges and
+labels the address-reuse/self-remap path as an inference; only the recursive
+stack overflow itself is confirmed by the native crash report.
+
+The native regression repeats reconciliation, sharing and reader removal,
+pending→live→pending publication, undo identity checks, save/load, and
+acyclic traversal. Policy, runtime, template, GUI undo/drag, packaging, and LTS
+animation checks pass, including three concurrent remote LTS undo executions,
+the current/LTS six-variant native pool matrices with false-valued legacy-marker
+cases, an explicit resource-proof report build, and documentation artifact audits. The
+[validation record](testing.md#lts-undo-fallback-lifetime-repair)
+keeps these repair receipts separate from earlier pre-repair passing retries.
 
 **Simplification candidate R1.** The `disposal` and `retirement` entry paths
 already share the suffix beginning at `observe`. Their two initial phases exist
 only to issue the first effect. An initializer returning `(state, effects)` could
 remove these entry phases, at the cost of a different runtime runner contract.
 This offers less benefit than B1/B2 or P1. Disposal must still fence and detach
-before observation; ordinary retirement must begin with observation. Native user counts remain authoritative; adding a
-Python ownership ledger would create a second, stale source of truth.
+before observation; ordinary retirement must begin with observation. Native
+user counts remain authoritative for current readers; the independent
+`retain_for_undo` observation protects historical fallback references that
+those counts do not represent. A Python reader-count ledger would duplicate
+current Blender state.
 
 ## Gesture observer and participants
 
@@ -744,6 +1011,9 @@ behavior. For example:
 
 * `requirements/preparation.inv` proves latest-demand replacement and receipt
   correlation; it does not prove executor cancellation.
+* `requirements/color_authoring.inv` proves scalar ownership and capture/clear
+  admission. Exact floating-point baselines, cyclic geometry, closest-angle
+  projection, and radial Adaptance limiting belong to the runtime tests.
 * `requirements/preparation_join.inv` proves the all-three barrier and delayed
   error; `grade_preparation.py` supplies the physical `gather` and shielding.
 * `requirements/node.inv` proves current/full/error presentation decisions;
@@ -754,7 +1024,10 @@ behavior. For example:
   contract.
 * The bank, image, and resource requirements prove fail-closed sequencing and
   eligibility predicates, while their consumers perform native operations and
-  collect receipts.
+  collect receipts. The resource retention branch proves that an admitted
+  `retain_for_undo` observation cannot authorize removal; native undo pointer
+  lifetimes, fake-user persistence, and acyclic restored graphs remain host-test
+  premises.
 * `requirements/gesture.inv` proves scalar token, phase, participant, and undo
   decisions. It does not prove the coordinator's collection bookkeeping.
 * `requirements/render_preflight.inv` proves exact release correlation and
@@ -767,6 +1040,17 @@ behavior. For example:
   Blender evaluation contracts that the reducer intentionally does not model.
 
 Some named requirements make the review points especially concrete. The
+authoring invariant is `owner_is_a_handle_or_absent`; its properties are
+`same_owner_retains_baseline`,
+`takeover_captures_current_position`, `manual_detaches_only_this_claim`,
+`restore_requires_current_owner_and_baseline`,
+`baseline_completion_releases_claim`, `clear_removes_claim`,
+`absent_claim_has_no_clear_effect`, and `invalid_push_has_no_effect`.
+The reachable witness covers push, ownership takeover, rejected old-owner
+restoration, and final release. Mutations check that same-owner pushes cannot
+recapture the baseline and that an old owner or blocked return cannot release
+the claim. These scalar proofs do not establish the numerical optimizer or
+the runtime's floating-point `at_baseline` calculation. The
 preparation queue properties are `running_request_only_replaces_latest_demand`,
 `final_receipt_starts_latest_successor`, and
 `obsolete_failure_does_not_publish_error`. The join uses
@@ -834,6 +1118,7 @@ effect consumer. The parameter-image policy is in the comparison example; the
 other listed policies are in the product's `src/policy` package.
 
 * Preparation scheduler: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/preparation.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/preparation.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/preparation.py).
+* Color authoring: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/color_authoring.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/color_authoring.inv) · [composer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/color_authoring.py) · [Blender consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/nodes.py).
 * Preparation join: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/preparation_join.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/preparation_join.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/grade_preparation.py).
 * Node output: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/node.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/node.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/nodes.py).
 * Helper process: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/helper.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/helper.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/execution.py).
@@ -841,7 +1126,7 @@ other listed policies are in the product's `src/policy` package.
 * Immutable parameter-image comparison: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/examples/publication_compare/policy/parameter_publication.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/examples/publication_compare/requirements/parameter_publication.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/examples/publication_compare/runtime/parameter_publication.py).
 * Shared-image publication: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/image_publication.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/image_publication.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/image_publication.py), exercised by the comparison example.
 * Compositor publication gate: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/compositor_publication.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/compositor_publication.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/publication.py); live snapshot publication is comparison-only.
-* Resource lifecycle: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/resources.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/resources.inv) · [consumers](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/resource_lifecycle.py) and [Grade resources](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/grade_resources.py).
+* Resource lifecycle: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/resources.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/resources.inv) · [consumers](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/resource_lifecycle.py), [Grade resources](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/grade_resources.py), and [fallback acquisition](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/nodes.py#L1418).
 * Gesture coordination: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/gesture.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/gesture.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/gesture_coordinator.py).
 * Render preflight: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/render_preflight.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/render_preflight.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/publication.py), resolved from `nodes.py`.
 * Bake requests: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/bake.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/bake.inv) · [manager](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_manager.py) · [routes](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_routes.py) · [worker](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_worker.py) · [wrapper graph](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_graph.py).

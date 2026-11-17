@@ -24,8 +24,8 @@ def thaw_settings(settings):
             space=item["space"],
             color=ColorSettings(**item["color"]),
         )
-        if snapshot.space not in SPACES or snapshot.color != ColorSettings():
-            raise ValueError("Stack settings require a supported space and neutral Color")
+        if snapshot.space not in SPACES:
+            raise ValueError("Stack settings require a supported working space")
         result.append(snapshot)
     return tuple(result)
 

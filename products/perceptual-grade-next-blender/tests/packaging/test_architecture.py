@@ -19,6 +19,7 @@ EMITTERS = frozenset({
     'graph.py', 'color_graph.py', 'guard_graph.py', 'stage2_graph.py',
     'persistent.py', 'lut_graph.py', 'stack_graph.py', 'wrapper_graph.py',
     'lut_shader_emitter.py',
+    'parameter_color.py', 'compositor_output.py',
 })
 KERNEL_RESOURCES = frozenset({
     'output_boundary.npz', 'node_templates.blend', 'node_templates.json',

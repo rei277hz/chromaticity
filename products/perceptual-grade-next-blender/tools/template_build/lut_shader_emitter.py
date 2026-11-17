@@ -1,10 +1,16 @@
-"""Emit the current native Stage 2 and guard equations as compute GLSL."""
+"""Emit the shared native full Grade equations as compute GLSL."""
 
 from numbers import Real
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 
 from .graph import Graph
-from .guard_graph import GuardedSockets, hk_guard, output_guard
+from .guard_graph import output_guard
+from .parameter_color import ParameterColorGraph
+from ..kernel.prepare import prepare
+from ..kernel.stage2_parameters import (
+    MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT, MATRIX_RED_SLOT,
+    PARAMETER_ROLE_SHAPES, TONE_DOMAIN_SLOT, TONE_SCALARS_SLOT,
+)
 
 
 class _Expression:
@@ -23,25 +29,72 @@ def _code(value):
     return "vec3(" + ", ".join(_code(item) for item in value) + ")"
 
 
-class _ComputeGraph:
-    """Compose Graph's existing equations with a GLSL arithmetic adapter."""
+class _ComputeParameters:
+    """Read the same role/scalar ABI as a native Grade without image banking."""
 
-    _STAGES = (
-        "add", "sub", "mul", "madd", "div", "abs", "sqrt", "power",
-        "minimum", "maximum", "lt", "sign", "hypot", "saturate",
-        "vscale", "vadd", "vsub", "vmul", "vdiv", "_eccentricity",
-        "encode_cones", "remap", "tone",
-    )
+    def __init__(self, graph):
+        self.graph = graph
+        black, span, slope, high = self.scalar(TONE_SCALARS_SLOT)
+        self.tone = SimpleNamespace(active=True, black=black, span=span,
+                                    slope=slope, high=high)
+        self.domain = self.scalar(TONE_DOMAIN_SLOT)[0]
+
+    def scalar(self, slot):
+        value = self.graph._emit("vec4", f"texelFetch(grade_parameters, ivec2({slot}, grade_index), 0)")
+        return tuple(self.graph._emit("float", f"{value.code}.{channel}")
+                     for channel in "xyzw")
+
+    def sample(self, slot):
+        values = self.scalar(slot)
+        return self.graph.vector(values[:3]), values[3]
+
+    def matrix(self, value):
+        graph = self.graph
+        red, green, blue = graph.split(value)
+        red_delta = graph.vscale(self.sample(MATRIX_RED_SLOT)[0], graph.sub(red, green))
+        blue_delta = graph.vscale(self.sample(MATRIX_BLUE_SLOT)[0], graph.sub(blue, green))
+        neutral = graph.vscale(self.sample(MATRIX_NEUTRAL_SLOT)[0], green)
+        return graph.vadd(graph.vadd(red_delta, blue_delta), neutral)
+
+    def sample_field(self, role, table, coordinate, row):
+        graph = self.graph
+        height, width, _ = PARAMETER_ROLE_SHAPES[role]
+        sampler = {"color": "grade_color", "web": "grade_web",
+                   "web_toe": "grade_web_toe", "adaptance": "grade_adaptance"}[role]
+        if table.segments > 1:
+            segment = graph.minimum(table.segments-1,
+                graph.op('FLOOR',graph.div(coordinate,table.segment_cells)))
+            coordinate = graph.sub(coordinate,graph.mul(segment,table.segment_cells))
+            row = graph.madd(row,table.segments,segment)
+        position = graph._emit("float", f"clamp({_code(coordinate)}, 0.0, {float(width-1)})")
+        left = graph._emit("int", f"min(int(floor({position.code})), {width-2})")
+        fraction = graph._emit("float", f"{position.code} - float({left.code})")
+        y = graph._emit("int", f"grade_index * {height} + int(clamp(floor({_code(row)} + 0.5), 0.0, {float(height-1)}))")
+        value = graph._emit("vec4", (
+            f"mix(texelFetch({sampler}, ivec2({left.code}, {y.code}), 0), "
+            f"texelFetch({sampler}, ivec2({left.code} + 1, {y.code}), 0), {fraction.code})"))
+        return tuple(graph._emit("float", f"{value.code}.{channel}")
+                     for channel in "xyzw")
+
+    def output_matrix(self, value):
+        # Every grade exports directly into the fixed AP1 LUT basis. The final
+        # native Stack lookup owns the separate conversion back to scene RGB.
+        return value
+
+
+class _ComputeGraph(ParameterColorGraph, Graph):
+    """Compose Graph's existing equations with a GLSL arithmetic adapter."""
 
     def __init__(self, boundary):
         self.tree = SimpleNamespace(bl_idname="ShaderNodeTree")
         self.cache = {}
-        # Graph's shared equations use the prepared symbolic values here;
-        # this adapter has no native node-image parameter bindings.
-        self.parameters = None
         self.boundary = boundary
         self.lines = []
         self._expressions = {}
+        self.parameters = _ComputeParameters(self)
+        # Only fixed layouts and field identities are needed from preparation;
+        # all authored choices are read from each grade's uploaded role texels.
+        defaults = prepare(boundary=boundary,full_fields=True)
         self.prepared = SimpleNamespace(
             fl=boundary.fl,
             aw=boundary.aw,
@@ -49,20 +102,10 @@ class _ComputeGraph:
             # Stack values stay in the fixed AP1 LUT basis between grades.
             from_cones=boundary.matrix,
             boundary=boundary,
-            tone=SimpleNamespace(
-                active=True,
-                black=self.parameter(3, "x"),
-                span=self.parameter(3, "y"),
-                slope=self.parameter(3, "z"),
-                high=self.parameter(3, "w"),
-            ),
-            table=SimpleNamespace(cells=256, domain=self.parameter(4, "x")),
+            tone=self.parameters.tone,
+            table=SimpleNamespace(cells=256, domain=self.parameters.domain),
+            color=defaults.color,
         )
-
-    def __getattr__(self, name):
-        if name in self._STAGES:
-            return MethodType(getattr(Graph, name), self)
-        raise AttributeError(name)
 
     def _emit(self, kind, expression):
         key = kind, expression
@@ -71,10 +114,6 @@ class _ComputeGraph:
             self.lines.append(f"    {kind} {result.code} = {expression};")
             self._expressions[key] = result
         return self._expressions[key]
-
-    def parameter(self, field, channel=None):
-        value = f"texelFetch(grade_parameters, ivec2({field}, grade_index), 0)"
-        return self._emit("float", f"{value}.{channel}") if channel else self._emit("vec3", f"{value}.xyz")
 
     def op(self, operation, *values):
         a = tuple(_code(value) for value in values) + ("", "", "")
@@ -90,6 +129,9 @@ class _ComputeGraph:
             "SQRT": f"sqrt(max(0.0, {a[0]}))",
             "POWER": f"pow(max(0.0, {a[0]}), {a[1]})",
             "FLOOR": f"floor({a[0]})",
+            "FLOORED_MODULO": f"mod({a[0]}, {a[1]})",
+            "SINE": f"sin({a[0]})",
+            "COSINE": f"cos({a[0]})",
             "SIGN": f"sign({a[0]})",
             "LESS_THAN": f"float({a[0]} < {a[1]})",
             "COMPARE": f"float(abs({a[0]} - {a[1]}) <= {a[2]})",
@@ -117,15 +159,19 @@ class _ComputeGraph:
         return self._emit("vec3", expression)
 
     def select(self, condition, yes, no):
-        return self._emit("float", f"mix({_code(no)}, {_code(yes)}, clamp({_code(condition)}, 0.0, 1.0))")
+        if isinstance(condition,Real):
+            return yes if condition else no
+        return self._emit("float", f"({_code(condition)} > 0.0 ? {_code(yes)} : {_code(no)})")
 
     safe_select = select
 
     def vselect(self, condition, yes, no):
-        return self._emit("vec3", f"mix({_code(no)}, {_code(yes)}, clamp({_code(condition)}, 0.0, 1.0))")
+        if isinstance(condition,Real):
+            return yes if condition else no
+        return self._emit("vec3", f"({_code(condition)} > 0.0 ? {_code(yes)} : {_code(no)})")
 
     def vselect_components(self, condition, yes, no):
-        return self._emit("vec3", f"mix({_code(no)}, {_code(yes)}, clamp({_code(condition)}, vec3(0.0), vec3(1.0)))")
+        return self._emit("vec3", f"mix({_code(no)}, {_code(yes)}, greaterThan({_code(condition)}, vec3(0.0)))")
 
     def clamp(self, value, low=0.0, high=1.0):
         return self._emit("float", f"clamp({_code(value)}, {_code(low)}, {_code(high)})")
@@ -145,7 +191,7 @@ class _ComputeGraph:
 
     def sample_texture(self, pixels, u=None, v=None, *, pixel_coordinates=None, **_kwargs):
         if pixels is not self.boundary.pixels or pixel_coordinates is None:
-            raise ValueError("The Stage 2 shader only samples its prepared boundary seed")
+            raise ValueError("The Grade shader only samples its prepared boundary seed here")
         x, y = pixel_coordinates
         value = self._emit("vec3", f"sample_boundary(vec2({_code(x)}, {_code(y)}))")
         return value, 1.0
@@ -153,8 +199,8 @@ class _ComputeGraph:
     def _sample(self, index):
         code = _code(index)
         cell = self._emit("int", f"int(clamp(floor({code}), 0.0, 255.0))")
-        left = self._emit("vec3", f"texelFetch(grade_parameters, ivec2(5 + {cell.code}, grade_index), 0).xyz")
-        right = self._emit("vec3", f"texelFetch(grade_parameters, ivec2(6 + {cell.code}, grade_index), 0).xyz")
+        left = self._emit("vec3", f"texelFetch(grade_parameters, ivec2({cell.code}, grade_index), 0).xyz")
+        right = self._emit("vec3", f"texelFetch(grade_parameters, ivec2(1 + {cell.code}, grade_index), 0).xyz")
         return left, right
 
     def lookup(self, z):
@@ -173,16 +219,12 @@ class _ComputeGraph:
 
 
 def grade_source(boundary):
-    """Create Stage 2 shader using native Graph and guard implementations."""
+    """Create the complete Grade shader using shared build-only equations."""
     graph = _ComputeGraph(boundary)
-    rows = tuple(graph.parameter(row) for row in range(3))
     input_color = _Expression("input_value", "vec3")
-    cones = graph.matrix(input_color, rows)
+    cones = graph.parameters.matrix(input_color)
     toned = graph.tone(graph.encode_cones(cones))
-    energy = toned.energy
-    state = GuardedSockets(graph, toned.H, toned.a, toned.b, energy, energy,
-                           chroma_value=toned.chroma)
-    guarded = output_guard(graph, hk_guard(graph, state))
+    guarded = output_guard(graph, graph.color_and_guard(toned))
     native = guarded.native_color
     body = "\n".join((
         _PREAMBLE,

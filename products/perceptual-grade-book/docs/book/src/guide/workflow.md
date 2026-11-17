@@ -1,17 +1,35 @@
 # Grade in three stages
 
-> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+A Grade applies three connected stages: **Linear** establishes exposure, white
+balance, and broad color relationships; **Tone** maps scene luminance to
+perceptual lightness; **Color** shapes lightness and chroma by tone and hue.
+Adjust them in that order, checking the complete image after each stage.
 
-Follow two images through the same sequence. Example A is SDR; Example B is HDR. They stay on the left and right throughout the book. Each pair demonstrates the same control with a different grading intention.
+Start with a neutral reference and a correctly decoded input. In Linear, correct
+the cast and set an overall level without forcing highlights to white. In Tone,
+place the black, shadow, midtone, white, and highlight anchors for the image's
+dynamic range. In Color, make selective changes while watching skin, neutrals,
+and saturated colors together. A single grade is a global transform, so it
+cannot compensate for local lighting or an incorrect input color profile.
 
-Start by neutralizing the light and balancing exposure in both images. Refine the SDR image’s muted color relationships while preserving the HDR image’s separation between diffuse surfaces and bright highlights. In Tone, build an S-shaped contrast curve for A and use a gamma-like curve to open darker areas in B. Carry those choices into Color, where the same controls refine each image’s own tonal distribution.
+Next exposes the full numeric Stage 3 controls in the sidebar. **J** adjusts
+lightness response by low/high chroma and opponent direction. **C** adjusts
+chroma response using the same drivers, plus global chroma gain. **Adaptance**
+sets opponent-space targets at Shadows, Midtones, White, and Highlights with a
+shared half-influence saturation. **Warp** uses a six-handle cyclic color web at
+the four non-black tone anchors: chroma is expressed in stops, hue as the stored
+degree offset, and Scale in stops. Each family is interpolated smoothly across
+tone. The draggable Warp diagram is not part of this control set; use its numeric
+fields.
 
-Every demonstration starts with the previous demonstration’s result. Keep the same images, crop, view transform and exposure settings across the sequence; carry the completed Linear and Tone adjustments into all six Color operations. The side-by-side animations compare two examples, not a before/after split.
+The numerical grading model uses frozen post-Tone selectors and signed energy.
+The order is J/C response, Warp hue/chroma and positive Scale selection,
+selective Adaptance, H–K repair, then Scale on the repaired opponent coordinates
+and Scale squared to energy. The H–K guard runs before Scale. The output boundary separately
+projects values into the supported RGB cube when required.
 
-In [Linear](linear.md), make what should look white actually white, then check exposure and color relationships against the chart. In [Tone](tone.md), shape contrast and open the shadows, then compare the SDR and HDR waveforms. In [Color](color.md), shape lightness, chroma, Adaptance and hue within selected tonal regions.
+Keep exposure, view transform, and input decoding consistent while comparing
+versions of a grade. Scene-linear values can exceed display white; judge them
+through the intended display transform rather than clamping source highlights.
 
-The square recordings show each image beside the Perceptual Grade extension’s gizmo in Blender. They loop at their recorded speed; if one adjustment finishes earlier, its final frame waits for the other. Each pair repeats automatically after a short final-frame hold.
-
-These are screen recordings of SDR and HDR source images, both encoded for the web as sRGB. The HDR example demonstrates grading and scope behavior; this web page does not reproduce an HDR display’s peak luminance.
-
-Panels labelled Dummy recording still use the bundled temporary clip. The accompanying lesson describes the intended operation; the label disappears automatically when its source recording is replaced.
+Continue with [Linear](linear.md), [Tone](tone.md), and [Color](color.md).

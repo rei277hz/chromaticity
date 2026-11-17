@@ -137,7 +137,8 @@ class _PersistentGraph(Graph):
         return replace(yes, **{name:self.route(predicate, getattr(yes,name), getattr(no,name))
             for name in ('H','a','b','energy','saturated')},
             chroma_value=self.route(predicate, yes.chroma, no.chroma),
-            offset_value=self.route(predicate, yes.offset, no.offset))
+            offset_value=self.route(predicate, yes.offset, no.offset),
+            ja_value=self.route(predicate, yes.J_A, no.J_A))
 
     def _bounds(self, prepared):
         key=(id(prepared.tone),id(prepared.color))
@@ -303,7 +304,11 @@ class _PersistentGraph(Graph):
         nonblack=self.lt(0.,state.tonal_h)
         changed=replace(state,H=self.safe_select(nonblack,h,state.H),a=self.safe_select(nonblack,a,state.a),
             b=self.safe_select(nonblack,b,state.b),energy=self.safe_select(nonblack,energy,state.energy),
-            chroma_value=c,offset_value=offset,saturated=self._color_flag(state.saturated,self.mul(nonblack,self._color_flag(flag,fe))))
+            chroma_value=c,offset_value=offset,ja_value=None,
+            saturated=self._color_flag(state.saturated,self.mul(nonblack,self._color_flag(flag,fe))))
+        moved=self.mul(nonblack,self.maximum(self.lt(0.,self.abs(self.sub(h,state.H))),
+            self.lt(0.,self.abs(self.sub(c,state.chroma)))))
+        changed=replace(changed,ja_value=self.select(moved,changed.J_A,state.J_A))
         return self.route_state(lambda p:p.color.lightness_active or p.color.chroma_active,changed,state)
 
     def _color_web(self,state):
@@ -347,7 +352,9 @@ class _PersistentGraph(Graph):
         energy,fe,offset=self._color_carry(state,state.H,c1)
         changed=replace(state,a=a,b=b,energy=self.route(chroma_active,energy,state.energy),
             saturated=self.route(chroma_active,self._color_flag(flag,fe),flag),chroma_value=c1,
-            offset_value=self.route(chroma_active,offset,state.offset))
+            offset_value=self.route(chroma_active,offset,state.offset),ja_value=None)
+        moved=self.lt(0.,self.abs(self.sub(c1,c)))
+        changed=replace(changed,ja_value=self.select(moved,changed.J_A,state.J_A))
         return self.route_state(lambda p:p.color.web_active,changed,state),scale,scale_flag
 
     def _color_response_delta(self,responses,logs,gains,log_bound):
@@ -356,10 +363,19 @@ class _PersistentGraph(Graph):
         choice=self.bounded('transformed_response')
         return tuple(self.route(choice,a,b) for a,b in zip(stable,robust))
 
+    def _color_adaptance_controls(self):
+        anchors=tuple(self.parameter(f'adaptance_anchor_{index}',
+            lambda p,index=index:float(p.color.anchors[index])) for index in range(4))
+        flags=tuple(self.parameter(f'adaptance_support_{index}',
+            lambda p,index=index:float(any(value != 0. for value in p.color.settings.adaptance[index])))
+            for index in range(4))
+        return anchors,flags
+
     def _color_adaptance(self,state):
         table=self.prepared.color.adaptance_table
         s=self.mul(math.sqrt(self.prepared.aw/(3.05*400.)),self.power(self.mul(.01,state.tonal_h),1/(2*self.prepared.gamma)))
-        chosen=self.sample_field(table,self.mul(table.cells,self.div(s,self.add(1.,s))),0)
+        support=self._color_adaptance_support(state.tonal_h)
+        chosen=tuple(self.mul(support,value) for value in self.sample_field(table,self.mul(table.cells,self.div(s,self.add(1.,s))),0))
         half=self.parameter('adaptance_half',lambda p:p.color.settings.adaptance_half_saturation)
         half2=self.parameter('adaptance_half2',lambda p:p.color.settings.adaptance_half_saturation**2)
         a2=self.mul(half2,self.abs(state.source_energy));c2=self.mul(state.source_chroma,state.source_chroma)
@@ -377,10 +393,12 @@ class _PersistentGraph(Graph):
         overflow=lambda p:self.fact(p,'max_log')>=88.
         gain=self.route(overflow,saturated,gain);gf=self.route(overflow,gf,0.)
         upper=self.parameter('adaptance_k_upper',lambda p:self.fact(p,'max_k'))
-        factor,ff=self._color_exp(self.mul(reach,chosen[3]),upper)
+        factor_log=self.mul(reach,chosen[3])
+        factor,ff=self._color_exp(factor_log,upper)
         es=self._eccentricity(state.a,state.b,robust=False)[0]
         er=self._eccentricity(state.a,state.b,robust=True)[0]
         eccentricity=self.route(self.bounded('pre_adaptance_C',limit=2.**58),es,er)
+        input_eccentricity=eccentricity
         opponent_scale=self.div(self.prepared.aw/1204.,eccentricity)
         achromatic=self.mul(self.prepared.aw/100.**(1/self.prepared.gamma),self.mul(self.sign(state.energy),self.power(self.abs(state.energy),1/(2*self.prepared.gamma))))
         opponent=self.vadd(self.vscale(tuple(row[1] for row in INVERSE),state.a),self.vscale(tuple(row[2] for row in INVERSE),state.b))
@@ -410,21 +428,38 @@ class _PersistentGraph(Graph):
         neutral=self.mul(self.sub(1.,self.lt(0.,state.source_chroma)),self.sub(1.,self.lt(0.,state.chroma)))
         energy=self.safe_select(neutral,state.energy,energy)
         chroma,fc=self._color_norm_result(a,b);height=self._color_h(energy,chroma)
-        active=self.mul(self.lt(0.,reach),self.lt(0.,state.tonal_h))
+        height=self._color_adaptance_height(state,height,achromatic,opponent_scale,
+            input_eccentricity,da,du,dw,factor_log)
+        log_components=self.split(self.vop('ABSOLUTE',logs))
+        changed_log=self.maximum(self.abs(factor_log),self.maximum(log_components[0],
+            self.maximum(log_components[1],log_components[2])))
+        active=self.mul(self.lt(0.,changed_log),self.lt(0.,state.tonal_h))
         changed=self._color_flag(*flags,fa,fb,fj,fe,fc)
         result=replace(state,H=self.safe_select(active,height,state.H),a=self.safe_select(active,a,state.a),b=self.safe_select(active,b,state.b),
             energy=self.safe_select(active,energy,state.energy),chroma_value=self.select(active,chroma,state.chroma),offset_value=None,
+            ja_value=self.safe_select(active,self.safe_select(neutral,state.J_A,self.mul(self.sign(ac),ja)),state.J_A),
             saturated=self._color_flag(state.saturated,self.mul(active,changed)))
         return self.route_state(lambda p:p.color.adaptance_active,result,state)
 
-    def color(self,appearance):
+    def color(self,appearance,*,guarded=False):
         original=self._color_input(appearance)
         state=self._color_terms(original)
         state,scale,flag=self._color_web(state)
         state=self._color_adaptance(state)
+        state=self.route_state(lambda p:p.color.active,state,original)
+        if guarded:
+            repaired=self.hk_guard(state)
+            # Preserve frozen Color selectors and its rationalized-offset
+            # contract while replacing only the repaired handoff values.
+            state=replace(state,H=repaired.H,a=repaired.a,b=repaired.b,
+                energy=repaired.energy,saturated=repaired.saturated,
+                chroma_value=repaired.chroma,offset_value=None,ja_value=repaired.J_A)
         result=self._color_scale(state,scale,flag)
-        state=self.route_state(lambda p:_active(p.color.settings.web.log_scale),result,state)
-        return self.route_state(lambda p:p.color.active,state,original)
+        return self.route_state(lambda p:_active(p.color.settings.web.log_scale),result,state)
+
+    def color_and_guard(self, appearance):
+        """Run the persistent Color path with H-K repair before final Scale."""
+        return self.color(appearance, guarded=True)
 
     def hk_guard(self,state):
         # Both precision variants remain permanently present; native rewiring
@@ -432,11 +467,14 @@ class _PersistentGraph(Graph):
         safe=self._legacy(True,hk_guard,self,state)
         mixed=self._legacy(lambda names,limit:limit==2.**60,hk_guard,self,state)
         robust=self._legacy(False,hk_guard,self,state)
-        small=lambda p:self.bounded('H',limit=2.**28)(p) and self.bounded('energy','C',limit=2.**58)(p)
-        square=self.bounded('H',limit=2.**60)
+        # Repair runs after Adaptance and before Scale, so its policy uses
+        # those stage bounds rather than the final scaled output bounds.
+        small=lambda p:self.bounded('post_adaptance_H',limit=2.**28)(p) and self.bounded('post_adaptance_energy','post_adaptance_C',limit=2.**58)(p)
+        square=self.bounded('post_adaptance_H',limit=2.**60)
         def choose(a,b,c):return self.route(small,a,self.route(square,b,c))
         return replace(safe,**{n:choose(getattr(safe,n),getattr(mixed,n),getattr(robust,n))
-            for n in ('H','a','b','energy','saturated')},chroma_value=choose(safe.chroma,mixed.chroma,robust.chroma))
+            for n in ('H','a','b','energy','saturated')},chroma_value=choose(safe.chroma,mixed.chroma,robust.chroma),
+            ja_value=choose(safe.J_A,mixed.J_A,robust.J_A))
 
 
 class PersistentGrade:
@@ -607,7 +645,7 @@ def build_persistent(prepared,tree_type='ShaderNodeTree',*,name='Perceptual Grad
         for n in ('Alpha','Decode Valid','Pole Margin','Saturated'):_interface(tree,n,'OUTPUT','NodeSocketFloat')
         source=graph.node('NodeGroupInput');output=graph.node('NodeGroupOutput');output.is_active_output=True
         state=graph.encode_cones(graph.matrix(source.outputs['Color'],graph.prepared.linear_to_cones))
-        state=graph.color(graph.tone(state));decoded=output_guard(graph,graph.hk_guard(state))
+        state=graph.color_and_guard(graph.tone(state));decoded=output_guard(graph,state)
         if tree_type=='CompositorNodeTree':
             separate=graph.node('CompositorNodeSeparateColor');separate.mode='RGB'
             graph.connect(source.outputs['Color'],separate.inputs['Image']);alpha=separate.outputs['Alpha']

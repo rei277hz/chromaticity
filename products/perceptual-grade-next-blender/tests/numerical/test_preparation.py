@@ -280,7 +280,7 @@ class FixedRuntimePreparationTests(unittest.TestCase):
     def test_same_size_prior_schema_fields_are_regenerated(self):
         from color_tools.kernel.layouts import LAYOUT_SCHEMA
         baseline = prepare(full_fields=True)
-        self.assertEqual(LAYOUT_SCHEMA, 5)
+        self.assertEqual(LAYOUT_SCHEMA, 6)
         for attribute in ('coefficient_table', 'adaptance_table', 'web_table', 'web_toe_table'):
             with self.subTest(attribute=attribute):
                 expected = getattr(baseline.color, attribute)
@@ -303,7 +303,7 @@ class FixedRuntimePreparationTests(unittest.TestCase):
                 prior = replace(baseline, color=old_color)
                 refreshed = prepare_update(Settings(), prior)
                 self.assertIsNot(refreshed.color, old_color)
-                self.assertEqual(refreshed.color.layout_schema, 5)
+                self.assertEqual(refreshed.color.layout_schema, 6)
                 self.assertFalse(hasattr(refreshed.color, 'adaptance_interior_table'))
 
     def test_strong_controls_keep_one_fixed_adaptance_field(self):
@@ -315,7 +315,7 @@ class FixedRuntimePreparationTests(unittest.TestCase):
             self.assertGreater(float(np.max(abs(current.color.log_gains))), 1.)
             self.assertFalse(hasattr(current.color, 'adaptance_interior_table'))
             self.assertEqual(len(current.color.tables), 4)
-            self.assertEqual(current.color.adaptance_table.cells, 3072)
+            self.assertEqual(current.color.adaptance_table.cells, 32768)
             self.assertEqual(current.color.adaptance_table.mapping, 'response_compact')
             self.assertIs(current.color.coefficient_table, neutral.color.coefficient_table)
             self.assertIs(current.color.web_table, neutral.color.web_table)

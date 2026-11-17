@@ -55,13 +55,13 @@ def guard_builder(mode,reference_energy=100.):
     return build
 
 
-def hk_probes():
+def hk_probes(reference_energy=100.):
     rng=np.random.default_rng(812)
     h=10**rng.uniform(-2,3,256);ratio=rng.uniform(0,4,256);c=ratio*h*h/66;angle=rng.uniform(-np.pi,np.pi,256)
     q=np.column_stack((h,c*np.cos(angle),c*np.sin(angle))).astype(np.float32)
     q[:6]=[[0,0,0],[10,0,0],[-10,20,0],[5,20,0],[10,50/66,0],[10,50/66+.0001,0]]
     c=np.hypot(q[:,1].astype(float),q[:,2].astype(float));base=np.sqrt(66*c);u=q[:,0]-base;e=u*(abs(u)+2*base)
-    expected,energy=reference_hk(q,e,100.)
+    expected,energy=reference_hk(q,e,reference_energy)
     return np.column_stack((q,np.ones(256,np.float32))),expected,energy
 
 

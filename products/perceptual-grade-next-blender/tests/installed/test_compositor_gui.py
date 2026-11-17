@@ -60,9 +60,13 @@ class CompositorGuiTests(unittest.TestCase):
                     self.assertEqual(process.returncode, 0, details)
                     self.assertTrue(data.get("passed"), details)
                     if phase == "exercise":
-                        self.assertEqual(len(data["rows"]), 13, details)
+                        self.assertEqual(len(data["rows"]), 16, details)
                         self.assertEqual(data["saved_schema"], [3, 3, 3], details)
-                        self.assertEqual(data["automatic_updates"], 9, details)
+                        self.assertEqual(data["automatic_updates"], 12, details)
+                        self.assertEqual({
+                            (row["device"], row["precision"])
+                            for row in data["rows"] if row["config"] == "color"
+                        }, {("GPU", "AUTO"), ("CPU", "FULL"), ("GPU", "FULL")}, details)
                     else:
                         self.assertEqual(data["loaded_schema"], [3, 3, 3], details)
                         self.assertEqual(data["repaired_schema"], [6, 6, 6], details)

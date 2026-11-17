@@ -1,6 +1,6 @@
 # Direct and sampled evaluation
 
-The independent analytic reference is `libraries/perceptual-grade-reference`; the DCTL and frozen Blender product retain older production profiles. The Next Blender product currently exposes Stage 1 and Tone, and has not implemented Warp. This chapter describes the reference and sampled-kernel coordinates, while each table names the implementation it applies to.
+The independent analytic reference is `libraries/perceptual-grade-reference`; the archived DCTL and frozen Blender product retain older production profiles. Next Blender exposes all three stages and samples its full Stage 3 function into the Stack LUT. This chapter describes the reference and sampled-kernel coordinates, while each table names the implementation it applies to.
 
 ## Choose the input sample grid
 
@@ -95,13 +95,22 @@ Tables are not shared across implementations, and they are not the same size eve
 | Independent analytic reference | closed form, no table | closed form, no curve table | Cached D65 cube context; decoded RGB is validated |
 | Reference `BakeStack` | Prepared inverse Tone table | Reference forward kernel | Shared native AP1 LUT and output cube projection |
 | Frozen 1.23.2 production profile | Adaptive inverse Tone table, cap 2048 cells | 1.23.2 controls and ordering | Historical production boundary resources |
-| Next Blender product | Current Stage 1/Tone implementation | Warp not implemented or exposed | Product LUT contract is still evolving |
+| Next Blender product | Stage 1 and Tone parameter image | Five-role bundle includes prepared Stage 3 Color fields | Ordinary Grade uses a native tree; Stack uses one complete 33³/65³ LUT |
 
-**The independent analytic reference has no per-pixel curve table.** It evaluates tone and coefficient kernels directly. Stage 3's tonal web, selective Adaptance and guard-before-Scale order are the current reference model. Next Blender has not yet implemented that Warp path.
+**The independent analytic reference has no per-pixel curve table.** It evaluates tone and coefficient kernels directly. Stage 3's tonal web, selective Adaptance and guard-before-Scale order are the current reference model. Next's native Grade and Stack adapters implement that order using their prepared data rather than the reference's direct evaluator.
 
 **The reference's accelerated `BakeStack` also prepares an inverse Tone table.** This is an acceleration resource, not a change to the independent analytic forward model. Separately, the frozen 1.23.2 inverse bake adaptively adds scalar inverse-tone cells by bisection until five-fraction probe error and a Bernstein monotonicity check pass. `MAX_CELLS = 2048`, 32 refinement rounds, 80 root evaluations and a 64 KiB budget bound that historical refinement; 2048 is an abort condition, not a stored size. Above its tail threshold the legacy table is not consulted and the linear asymptote is evaluated analytically.
 
-**Next Blender's current product scope is narrower than the reference model.** Its user-facing implementation covers Stage 1 and Tone; the future Warp and corrected H–K-before-Scale ordering are not part of its current render contract. Experimental Color preparation code is not a shipped Warp implementation or evidence of renderer behavior.
+**Next Blender includes the reference Stage 3 in its render contract.** J/C response, Warp hue/chroma and Scale selection, selective Adaptance, H–K repair, and post-repair Scale are evaluated from the prepared role images. The native Stack helper evaluates the complete function at every LUT vertex. H–K repair occurs before Scale; it is not repeated at the output cube boundary.
+
+Next's field layout schema 6 always uses 32,768 Adaptance cells, stored as four
+8193-pixel RGBA32F rows (524,352 bytes). The fixed grid replaces the earlier
+3,072-cell field after strict extreme-grade RGB checks exposed interpolation
+error near zero cardinal support. Exact support flags preserve mathematical
+zeros; the denser grid controls the remaining interpolation error. Runtime
+settings never choose a different grid. Older HDR-budget measurements of the
+smaller field describe that historical profile, rather than the current
+final-output acceptance contract.
 
 **The chroma classifier has no table in any profile.** The p=2 low/high split is evaluated from the carried achromatic lightness and the current chroma at every pixel. An earlier design sampled a chroma threshold; that row is gone.
 
@@ -115,6 +124,6 @@ A bake uses the selected model and publishes only for its current parameter sign
 
 The reference inverse and reference `BakeStack` use the current corrected forward model. The retained production inverse and Stack sections in the full mathematical specification describe their historical profile. Every reference Stack stage runs at each vertex, including its matrix, without sampling an intermediate 3D LUT.
 
-The shared nested-grid profile installs a 33³ preview, then refines to 65³, reusing all 35,937 preview vertices exactly and evaluating only the remaining 238,688. These counts describe the sampled-kernel profile, not proof of reference inverse accuracy. Small inverse residuals at vertices do not establish between-vertex accuracy.
+The reference nested-grid profile installs a 33³ preview, then refines to 65³, reusing all 35,937 preview vertices exactly and evaluating only the remaining 238,688. Next uses the same nested coordinates but evaluates each resolution separately in its GPU helper. These counts describe reference sample reuse, not Next dispatch work or proof of reference inverse accuracy. Small inverse residuals at vertices do not establish between-vertex accuracy.
 
 [Download the production axes, matrices and constants](../downloads/lut-production.json). The file records the earlier \(0…128\) axis and is retained as an archive; it is not regenerated, and its `axis_65` does not describe the \(1024\) bound above.

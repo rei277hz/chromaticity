@@ -64,6 +64,11 @@ resources between both books. Individual public targets are
 `:ab_background`, and `:locus`. Their named outputs include required media and
 provenance. Generated files belong in Buck outputs; do not copy them into source.
 
+The video recordings and `:demos`/`:intro` producers remain available, but their
+animated outputs, stills, and animation provenance are not members of `:assets`.
+No site, deployment ZIP, PDF, or EPUB ships animated images. Reintroducing a
+video presentation must preserve that publication boundary.
+
 The tests exercise real encoded MOV fixtures, color interpretation, trim timing,
 print stills, looping, deterministic output, required media failures, exact PNG
 payloads in ICO files, and provenance independent of build locations.

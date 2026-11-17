@@ -1,8 +1,9 @@
-"""GPU-only ordered Stage 1/2 Stack baking in the private Blender helper."""
+"""GPU-only ordered full Grade Stack baking in the private Blender helper."""
 
 from dataclasses import asdict, dataclass
 import hashlib
 import json
+import math
 from threading import current_thread, main_thread
 import time
 from typing import Optional
@@ -10,12 +11,21 @@ from typing import Optional
 import numpy as np
 
 from .kernel import lut
+from .kernel.stage2_parameters import (
+    MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT, MATRIX_RED_SLOT, prepare_parameters,
+)
 from .lut_shader import grade_source
 
 
 DISPATCH_SAMPLES = 4096
 _LOCAL_SIZE = 64
-_PARAMETER_WIDTH = 512
+_ROLE_SAMPLERS = {
+    "parameter": "grade_parameters",
+    "color": "grade_color",
+    "web": "grade_web",
+    "web_toe": "grade_web_toe",
+    "adaptance": "grade_adaptance",
+}
 
 
 @dataclass(frozen=True)
@@ -27,24 +37,36 @@ class PreparedStack:
 
 
 def _signature(settings, space):
-    payload = ("stage-1-2-guarded-stack-v1", space, tuple(asdict(item) for item in settings))
+    from .kernel.color_resolution import COLOR_RESOLUTION_SCHEMA
+
+    payload = ("stage-1-2-3-guarded-stack-v2", COLOR_RESOLUTION_SCHEMA,
+               space, tuple(asdict(item) for item in settings))
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
                                      allow_nan=False).encode("utf8")).hexdigest()
 
 
 def _parameters(prepared, from_lut):
-    pixels = np.zeros((max(1, len(prepared)), _PARAMETER_WIDTH, 4), dtype=np.float32)
-    for ordinal, grade in enumerate(prepared):
+    """Stack each fixed-shape role by grade, preserving the shared bundle ABI."""
+    roles = {role: [] for role in _ROLE_SAMPLERS}
+    for grade in prepared:
         if grade.table is None or grade.table.cells != 256 or grade.boundary is None:
-            raise ValueError("Stack grading requires a complete Stage 2 preparation")
-        pixels[ordinal, :3, :3] = grade.linear_to_cones @ from_lut
-        tone = grade.tone
-        pixels[ordinal, 3] = (tone.black, tone.span, tone.slope, tone.high)
-        pixels[ordinal, 4, 0] = grade.table.domain
-        pixels[ordinal, 5:262, :3] = grade.table.jets
-    if not np.isfinite(pixels).all():
-        raise ValueError("Stack grading parameters must be finite float32")
-    return pixels
+            raise ValueError("Stack grading requires a complete Grade preparation")
+        parameters = grade.parameters or prepare_parameters(grade)
+        for role in roles:
+            pixels = parameters.roles[role]
+            if role == "parameter":
+                pixels = pixels.copy()
+                matrix = grade.linear_to_cones @ from_lut
+                pixels[0, MATRIX_RED_SLOT, :3] = matrix[:, 0]
+                pixels[0, MATRIX_BLUE_SLOT, :3] = matrix[:, 2]
+                pixels[0, MATRIX_NEUTRAL_SLOT, :3] = tuple(
+                    math.fsum(float(value) for value in row) for row in matrix)
+            if not np.isfinite(pixels).all():
+                raise ValueError("Stack grading parameters must be finite float32")
+            roles[role].append(pixels)
+    return {role: (np.concatenate(pixels, axis=0) if pixels
+                   else np.zeros((1, 1, 4), dtype=np.float32))
+            for role, pixels in roles.items()}
 
 
 class StackGPUBackend:
@@ -77,7 +99,8 @@ class StackGPUBackend:
             return
         info = gpu.types.GPUShaderCreateInfo()
         info.local_group_size(_LOCAL_SIZE, 1, 1)
-        for binding, name in enumerate(("axis_values", "input_values", "grade_parameters", "boundary_seed")):
+        samplers = ("axis_values", "input_values", "boundary_seed", *_ROLE_SAMPLERS.values())
+        for binding, name in enumerate(samplers):
             info.sampler(binding, "FLOAT_2D", name)
         info.image(0, "RGBA32F", "FLOAT_2D", "output_pixels", qualifiers={"WRITE"})
         for name in ("cube_size", "sample_start", "sample_count", "output_width", "grade_index", "first_grade"):
@@ -116,7 +139,8 @@ class StackLUTBaker:
         self.cursor = self._grade = 0
         self._edges = False
         self._output = self._values = self._axis_texture = None
-        self._parameter_texture = self._boundary_texture = None
+        self._parameter_textures = {}
+        self._boundary_texture = None
         self._readback_pending = self._closed = False
         self.texture_allocation_seconds = {"preview": 0.0, "full": 0.0}
         self.readback_seconds = {"preview": 0.0, "full": 0.0}
@@ -136,7 +160,10 @@ class StackLUTBaker:
         )
 
     def _create_resources(self):
-        self._parameter_texture = self._texture(_parameters(self.prepared, self.from_lut))
+        self._parameter_textures = {
+            role: self._texture(pixels)
+            for role, pixels in _parameters(self.prepared, self.from_lut).items()
+        }
         pixels = self.prepared[0].boundary.pixels if self.prepared else np.zeros((2, 2, 4), np.float32)
         self._boundary_texture = self._texture(pixels)
 
@@ -185,7 +212,8 @@ class StackLUTBaker:
         else:
             shader.uniform_sampler("axis_values", self._axis_texture)
             shader.uniform_sampler("input_values", self._values[(self._grade + 1) % 2])
-            shader.uniform_sampler("grade_parameters", self._parameter_texture)
+            for role, sampler in _ROLE_SAMPLERS.items():
+                shader.uniform_sampler(sampler, self._parameter_textures[role])
             shader.uniform_sampler("boundary_seed", self._boundary_texture)
             if self.prepared:
                 shader.uniform_int("grade_index", self._grade)
@@ -224,7 +252,8 @@ class StackLUTBaker:
     def close(self):
         _require_main_thread()
         self._output = self._values = self._axis_texture = None
-        self._parameter_texture = self._boundary_texture = None
+        self._parameter_textures.clear()
+        self._boundary_texture = None
         self._closed = True
 
 

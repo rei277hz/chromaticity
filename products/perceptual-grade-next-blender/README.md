@@ -1,9 +1,9 @@
 # Perceptual Grade for Blender
 
-This step adds Grade and Grade Stack nodes to the Shader and Compositor Color Add
-menus. Regular Grade nodes apply Stage 1 and Tone through the product's `kernel`
-package; Grade Stack nodes apply ordered, forward-only Stage 1 and Tone Grades through
-progressive 33³/65³ GPU LUTs. Both remain static and use shared Grade datablocks.
+Grade and Grade Stack nodes appear in the Shader and Compositor Color Add
+menus. Regular Grade nodes apply Linear, Tone, and Stage 3 Color through the
+product's `kernel` package; Grade Stack nodes apply ordered, forward-only complete
+Grades through progressive 33³/65³ GPU LUTs. Both use shared static Grade datablocks.
 The Add menus provide one Grade entry. Right-click a Grade node and choose
 **Convert to Node-Owned Grade** to give it independent settings and numeric keyframes
 in Blender's native animation editors. All variants use the same Grade controls and preparation
@@ -11,10 +11,27 @@ model. Regular Grade controls remain disabled until a Grade datablock is selecte
 
 The [Perceptual Grade handbook](../perceptual-grade-book/README.md) follows the
 latest mathematical reference in English and Simplified Chinese, with HTML,
-PDF, and EPUB editions. Some usage chapters still describe preserved 1.23.2
-behavior; their scope is identified. Next has not yet implemented the Warp UI.
-Its future Warp implementation must follow the reference's Adaptance → H–K
-repair → common positive Scale order.
+PDF, and EPUB editions. Its bilingual User Manual describes current Next
+behavior and retains a clearly labeled legacy 1.23.2 ZIP link. Stage 3 supplies
+numeric J, C, Adaptance, and Warp controls; the draggable Warp diagram is deferred.
+Warp hue is displayed as its stored degree offset. All Grade paths follow the
+reference's Adaptance → H–K repair → common positive Scale order.
+
+Adaptance drags use 0.01 increments and tonal soft spans of ±4, ±10, ±20,
+and ±25. Finite requests beyond the physical response domain are limited
+radially, preserving the a/b tint direction. Warp hue edits maintain at least
+4° between cyclic target angles by pushing neighbors; the Auto indicator names
+the initiating handle. Returning that handle restores its neighbors toward
+their saved positions until blocked. A manual edit detaches only that handle;
+a new push transfers ownership using its current position as the new baseline.
+Claims persist through copy, conversion, save, and undo. Actual frame/subframe
+changes expire per-node claims; shared Grade claims remain. Animated samples
+resolve through the same immutable settings boundary for Grade and Stack,
+without rewriting RNA or keyframes; Limited identifies raw/effective differences.
+Tone Peak edits clear claims and revalidate hue and Adaptance together.
+Settings-resolution schema 1 versions derived signatures independently of the
+unchanged template topology and texture schemas. Authoring provenance never
+enters those signatures; bake freshness still includes the raw control values.
 
 A private asyncio loop owns the preparation schedulers. Each shared
 Grade has one active preparation and one replaceable latest settings snapshot;
@@ -26,22 +43,32 @@ policy state.
 The loop starts the newest successor as soon as active preparation finishes,
 without waiting for Blender's publication timer.
 
-A Grade appends its complete Linear/Tone graph from the bundled native template
+A Grade appends its complete Linear/Tone/Color graph from the bundled native template
 library once per tree type. Working-space-dependent output conversion is bound
-through the parameter image. Ordinary adjustments publish complete 512 × 1
-RGBA32F parameter data (8 KiB) through two fixed helper images shared by every
-Shader and Compositor node using that Grade. The inactive bank is packed and
-checked inside an admitted publication scope; only then does the selector switch
-to it. Bank identities stay fixed across edits, so publication does not allocate
-a version pool or rebind image readers. Equal-valued independent Grades own
-separate bank pairs.
+through the parameter image. Each of two fixed banks owns five RGBA32F helper
+images: scalar/Tone parameters, Color coefficients, Web parameters, Web toes,
+and Adaptance parameters. One complete bank is 2,916,976 bytes; the pair uses
+5,833,952 bytes (about 5.56 MiB), excluding the shared boundary image. All Shader and Compositor
+nodes using one Grade share these banks. Every role of the inactive bank is
+staged and checked in one admitted publication scope before the shared selector
+switches. An unchanged role can reuse a candidate image with the matching clean
+receipt. Bank identities remain fixed across edits, and independent Grades own
+separate pairs.
 
 Slots 0–256 contain the Tone endpoint value, slope, and curvature; slots 257–259
 contain the Linear matrix's red/blue columns and neutral row sums; slots 260–261
 contain the Tone scalars and domain; slots 262–264 contain the output conversion
-matrix rows. Fixed texture samples read these values instead of baking them into
-socket defaults. The boundary texture and viewing constants remain shared across
-working spaces.
+matrix rows. Further slots carry Stage 3 flags, scalars, and field domains;
+two texels hold the tonal anchors and authored Adaptance-row activity flags.
+These preserve exact-zero cardinal support across atlas interpolation without
+tolerance-based suppression. Parameter schema 4 retains the 512×1 scalar image;
+the other role images carry the prepared coefficient and web data. Fixed texture
+samples read these values instead of baking them into socket defaults. The
+Adaptance field always uses 32,768 cells in an 8193×4 RGBA32F image
+(524,352 bytes per bank); runtime never selects its resolution from settings.
+This replaces the earlier 3,072-cell field to satisfy the retained extreme-grade
+RGB gate near exact-zero cardinal support. Field layout schema is 6.
+The boundary texture and viewing constants remain shared across working spaces.
 Publication packs a complete inactive bank before changing the marked selector.
 A failed transaction restores the previous selector and metadata; any failure to
 restore or deliver closes the Grade output visibly. File-load reconciliation
@@ -50,12 +77,34 @@ before accepting restored data. If the active bank fails its content receipt,
 recovery first revokes the Grade output and proceeds to rewrite both banks only
 after the fail-closed receipt succeeds.
 
-Compositor Grade graphs support both GPU Auto and Full precision without changing
-the scene setting. The output guard carries signed achromatic lightness and a
-bounded normalized distance to white, avoiding large squared-energy intermediates
-that can clip in Auto's half-precision preview buffers. CPU and GPU Full retain
-the existing full-precision accuracy gates; Auto previews allow half-precision
-rounding.
+Compositor Grade graphs retain the Scene's GPU Auto or Full precision selection.
+Stage 3 carries signed energy divided by 4096 and carries J_A explicitly.
+Disabled stages and inactive H-K repair preserve J_A; positive Scale multiplies
+it directly, alongside Scale squared on energy. Changed energy can still recover
+J_A through its signed square root scaled by 64. This avoids an unscaled squared-
+energy image and redundant half-precision round trips at output projection.
+When all authored Color families are inactive and H-K is provably inactive
+(`J_A >= 0` or reflected `H < 0`), output projection can retain Tone's raw
+response basis. It still checks actual AP1 cube legality and endpoint policy.
+For that legal identity path, uniform output-conversion rows are composed with
+the cone-to-AP1 matrix before spatial decode, avoiding an extra half-precision
+AP1 image. Active Color always uses its actual transformed coordinates.
+If the primary projected decode is illegal, the Compositor path tries one
+radius multiplied by `0.99609375`; only an actually legal retry is accepted
+before the existing interior-neutral fallback. A legal primary result is
+unchanged. Generic full-Grade and Stack default paths keep their prior behavior.
+The output router checks original source RGB, the final Stage 3
+carrier, and projected RGB. Observed nonfinite or representational-edge values
+select magenta with alpha preserved; accepted output pixels are unchanged.
+This check does not certify every finite intermediate's accuracy. Finite
+saturation is a separate diagnostic. CPU and GPU Full retain full-precision
+accuracy gates; Auto previews allow half-precision rounding.
+Remote live acceptance passed in build `252b9488-83c2-49de-8943-8f509bc7e8f0`:
+the installed Viewer fixture took 61.382 s, including 16 exercise frames,
+12 automatic updates, signed/HDR/nonfinite colors, alpha, two reload-repair
+frames, and normal exit. Its limits remain 0.01 for Auto and `1e-4` for Full.
+The source carrier gate passed 18 live evaluations in 226.453 s and all five
+transport checks passed. These are correctness-fixture timings.
 
 Foreground publications coalesce to the newest complete result per source and
 process one source per timer turn, with no preview frequency cap or settle delay.
@@ -180,7 +229,7 @@ compare the prose with the implementation. The audit tooling is build-only.
 
 Add a regular Grade node, then right-click it and choose **Convert to Node-Owned
 Grade** in either the Shader or Compositor editor. This copies the selected Grade's
-Linear and Tone settings; an empty Grade node uses the default settings. Editing the
+Linear, Tone, and Color settings; an empty Grade node uses the default settings. Editing the
 converted node does not change the original Grade datablock.
 
 To return to shared settings, right-click the node and choose **Convert to
@@ -345,6 +394,14 @@ resolution configuration. Stack quality selects 33³ or 65³ runtime LUT/config
 data without changing template topology. Live kernels and bake Images remain
 runtime resources. Missing or incompatible assets produce a visible error and
 the existing alpha-preserving magenta output.
+
+The final measured 12-group `.blend` is **3,688,385 bytes**; its runtime manifest is
+**9,464 bytes**, and the Stack shader is **67,226 bytes**. These are raw asset
+sizes before ZIP compression. The **7,896,941-byte** detailed structure report
+is build-only and is excluded from the extension ZIP. Stored Grade Shader and
+Compositor kernels contain 1,795/3,042 nodes and 3,099/5,402 links; Stack kernels
+contain 214/238 nodes and 320/356 links. These inventories do not measure
+evaluation speed.
 
 The installed product and installed tests consume those exact generated
 resources. The long graph emitters live under `tools/template_build/` and are

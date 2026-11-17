@@ -62,7 +62,9 @@ class InstalledAnimationTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     output, _ = process.communicate(timeout=10)
-                    self.fail("Continuous animation render timed out\n" + output[-20000:])
+                    checkpoint = report.read_text() if report.exists() else "No animation checkpoint"
+                    self.fail("Continuous animation render timed out\n" + output[-20000:]
+                              + "\n" + checkpoint)
                 data = json.loads(report.read_text()) if report.exists() else {}
                 details = output[-20000:] + "\n" + json.dumps(data, indent=2)
                 self.assertEqual(process.returncode, 0, details)

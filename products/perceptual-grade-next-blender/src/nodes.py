@@ -1,4 +1,4 @@
-"""Guarded Grade nodes and their shared Linear and Tone settings UI."""
+"""Guarded Grade nodes and their shared Linear, Tone, and Color settings UI."""
 
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -6,6 +6,7 @@ from functools import partial
 from itertools import count
 import hashlib
 import json
+import math
 from pathlib import Path
 import threading
 from uuid import uuid4
@@ -25,8 +26,10 @@ from bpy.props import (
 
 from .kernel import (
     LinearSettings,
+    ColorSettings,
     Settings,
     ToneSettings,
+    WebSettings,
     prepare_linear,
     project_source_white_component,
 )
@@ -35,19 +38,25 @@ from .kernel.node_templates import (
     instantiate_grade,
     instantiate_fallback,
     instantiate_stack,
+    validate_fallback_instance,
     validate_stack_instance,
 )
 from .kernel.stage2_bindings import (
     PARAMETER_IMAGE, PARAMETER_BANK_BINDINGS,
     PARAMETER_ACTIVE_BANK, PARAMETER_GENERATION, PARAMETER_SELECTOR,
     PARAMETER_SAMPLE_SELECTOR, PARAMETER_SAMPLE_ID, PARAMETER_SAMPLE_KIND,
-    PARAMETER_SAMPLE_BANK,
-    PARAMETER_READER, PARAMETER_READER_BANK,
+    PARAMETER_SAMPLE_BANK, PARAMETER_SAMPLE_ROLE,
+    PARAMETER_READER, PARAMETER_READER_BANK, PARAMETER_READER_ROLE,
+    PARAMETER_ROLE,
 )
-from .kernel.stage2_parameters import PARAMETER_SCHEMA, PARAMETER_SHAPE, prepare_parameters
+from .kernel.stage2_parameters import (
+    PARAMETER_SCHEMA, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
+    prepare_parameters, parameter_bank_images, bind_parameter_bank,
+)
 from .kernel.stage2_parameters import (
     PARAMETER_CONTENT_SIGNATURE, parameter_content_signature,
-    parameter_image_matches,
+    parameter_image_matches, parameter_bundle_receipt_matches,
+    set_parameter_bundle_signature,
 )
 from .lut_gpu import PreparedStack as _PreparedStack
 from .lut_helper import StackHelperBackend
@@ -56,10 +65,16 @@ from .kernel.tone_ui import (
     TONE_DEFAULTS, TONE_FIELDS, TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS,
     clamp_tone_anchor,
 )
+from .kernel.color_ui import (
+    COLOR_DEFAULTS as _COLOR_DEFAULTS, COLOR_DRIVERS as _COLOR_DRIVERS,
+    COLOR_FIELDS as _COLOR_FIELDS,
+)
+from .kernel.color_resolution import COLOR_RESOLUTION_SCHEMA, resolve_settings
 from .policy import node as node_policy
 from .policy import bake as bake_policy
 from .policy import render_preflight as render_preflight_policy
 from .runtime import gesture_coordinator as gesture_policy
+from .runtime import color_authoring
 from .runtime.preparation import PreparationRuntime
 from .runtime.grade_preparation import GradePreparer
 from .runtime.grade_resources import (
@@ -130,6 +145,8 @@ _compositor_receipts = CompositorReceipts()
 _frame_change_active = False
 _frame_reconcile_pending = False
 _frame_reconcile_scenes = {}
+_frame_color_keys = {}
+_frame_color_invalidations = set()
 _KERNEL_SCHEMA = 6
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
@@ -140,6 +157,8 @@ _NODE_ERROR = "_perceptual_grade_kernel_error"
 _NODE_ERROR_REASON = "_perceptual_grade_kernel_error_reason"
 _NODE_PENDING = "_perceptual_grade_kernel_pending"
 _NODE_ANIMATION_ERROR = "_perceptual_grade_animation_error"
+_HUE_CLAIMS = "_perceptual_grade_hue_claims_v1"
+_HUE_CLAIM_FRAME = "_perceptual_grade_hue_claim_frame_v1"
 _CONVERSION_BACKUP = "_perceptual_grade_conversion_backup"
 _BAKE_SCHEMA = 2
 _BAKE_IMAGE_SCHEMA = "_pg_next_bake_schema"
@@ -181,6 +200,11 @@ _LINEAR_DEFAULTS = {
 
 _TONE_FIELDS = TONE_FIELDS
 _ANIMATABLE_TONE_FIELDS = tuple(name for name in _TONE_FIELDS if name != "peak_nits")
+_COLOR_TONES = ("shadows", "midtones", "white", "highlights")
+_WEB_HANDLES = ("red", "yellow", "green", "cyan", "blue", "magenta")
+_ANIMATABLE_COLOR_FIELDS = _COLOR_FIELDS
+_J_LOW_LIMITS = (30.0, 50.0, 100.0, 200.0)
+_J_HIGH_LIMITS = (100.0, 200.0, 400.0, 700.0)
 
 
 def _is_grade_node(node):
@@ -911,7 +935,7 @@ def _holder(settings):
         for node in getattr(owner, "nodes", ()):
             if _is_shared_grade_node(node) and any(
                     getattr(node, name).as_pointer() == pointer
-                    for name in ("pg_linear", "pg_tone")):
+                    for name in ("pg_linear", "pg_tone", "pg_color")):
                 return node
     except (AttributeError, ReferenceError, RuntimeError, ValueError):
         return None
@@ -926,14 +950,180 @@ def _tone_controls(owner):
     return owner if _is_per_node_grade_node(owner) else owner.pg_tone
 
 
+def _color_controls(owner):
+    return owner if _is_per_node_grade_node(owner) else owner.pg_color
+
+
+def _hue_claims(settings, *, current_frame=True):
+    """Read saved authoring provenance; numerical settings never contain it."""
+    if (current_frame and _is_per_node_grade_node(settings)
+            and (settings.get(_HUE_CLAIM_FRAME) != _frame_color_key()
+                 or _frame_color_invalidation_pending())):
+        return color_authoring.EMPTY_CLAIMS
+    encoded = settings.get(_HUE_CLAIMS)
+    if encoded is None:
+        return color_authoring.EMPTY_CLAIMS
+    try:
+        rows = json.loads(encoded)
+        if len(rows) != 4 or any(len(row) != 6 for row in rows):
+            raise ValueError("Invalid hue claim dimensions")
+        result = []
+        for row in rows:
+            claims = []
+            for claim in row:
+                if claim is None:
+                    claims.append(None)
+                    continue
+                origin, baseline = claim
+                if type(origin) is not int or not 0 <= origin < 6 or not math.isfinite(baseline):
+                    raise ValueError("Invalid hue ownership claim")
+                claims.append(color_authoring.Claim(origin, float(baseline)))
+            result.append(tuple(claims))
+        return tuple(result)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        # Damaged editing provenance cannot authorize restoring another value.
+        return color_authoring.EMPTY_CLAIMS
+
+
+def _frame_color_key(scene=None):
+    scene = scene if scene is not None else getattr(bpy.context, "scene", None)
+    if scene is None:
+        return None
+    return json.dumps((int(scene.frame_current), float(scene.frame_subframe).hex()),
+                      separators=(",", ":"))
+
+
+def _frame_color_invalidation_pending(scene=None):
+    scene = scene if scene is not None else getattr(bpy.context, "scene", None)
+    return scene is not None and scene.as_pointer() in _frame_color_invalidations
+
+
+def _observe_color_frame(scene):
+    """Remember real time changes even while rendering defers reconciliation."""
+    pointer, frame = scene.as_pointer(), _frame_color_key(scene)
+    previous = _frame_color_keys.get(pointer)
+    if previous is not None and previous != frame:
+        _frame_color_invalidations.add(pointer)
+    _frame_color_keys[pointer] = frame
+
+
+# pg-book: technical-report/en#next-policy.color-authoring
+def _consume_color_authoring(settings, effects):
+    """Apply the complete policy-authorized edit, with one rollback boundary."""
+    writes = []
+    if effects.settings is not None:
+        color = effects.settings.color
+        writes.extend((f"web_hue_{row}_{handle}", float(np.float32(value)))
+                      for row, values in enumerate(color.web.hue_degrees)
+                      for handle, value in enumerate(values))
+        writes.extend((f"adaptance_{axis}_{row}", float(np.float32(value)))
+                      for row, values in enumerate(color.adaptance)
+                      for axis, value in zip(("a", "b"), values))
+    writes = tuple((name, value) for name, value in writes
+                   if float(getattr(settings, name)) != value)
+    previous = tuple((name, settings.is_property_set(name), getattr(settings, name))
+                     for name, _value in writes)
+    metadata = tuple((key, settings.get(key)) for key in (_HUE_CLAIMS, _HUE_CLAIM_FRAME))
+
+    def restore_metadata():
+        for key, value in metadata:
+            if value is None:
+                if key in settings:
+                    del settings[key]
+            else:
+                settings[key] = value
+
+    with _suspend(settings):
+        try:
+            for name, value in writes:
+                setattr(settings, name, value)
+            if effects.claims is not None:
+                if any(claim is not None for row in effects.claims for claim in row):
+                    settings[_HUE_CLAIMS] = json.dumps(tuple(tuple(
+                        None if claim is None else (claim.origin_handle, claim.restore_offset)
+                        for claim in row) for row in effects.claims), separators=(",", ":"))
+                    if _is_per_node_grade_node(settings):
+                        frame = _frame_color_key()
+                        if frame is not None:
+                            settings[_HUE_CLAIM_FRAME] = frame
+                            _observe_color_frame(bpy.context.scene)
+                    elif _HUE_CLAIM_FRAME in settings:
+                        del settings[_HUE_CLAIM_FRAME]
+                else:
+                    for key in (_HUE_CLAIMS, _HUE_CLAIM_FRAME):
+                        if key in settings:
+                            del settings[key]
+        except BaseException:
+            for name, was_set, value in previous:
+                if was_set:
+                    setattr(settings, name, value)
+                else:
+                    settings.property_unset(name)
+            restore_metadata()
+            raise
+
+
+def _clear_frame_color_claims(scene, nodes=None):
+    """Per-node ownership belongs to its authored frame, including subframes."""
+    _observe_color_frame(scene)
+    frame = _frame_color_key(scene)
+    changed = _frame_color_invalidation_pending(scene)
+    candidates = _all_grade_nodes() if changed or nodes is None else nodes
+    for node in candidates:
+        if (_is_per_node_grade_node(node) and node.get(_HUE_CLAIMS) is not None
+                and (changed or node.get(_HUE_CLAIM_FRAME) != frame)):
+            _consume_color_authoring(node, color_authoring.clear_claims(
+                _hue_claims(node, current_frame=False),
+            ))
+    _frame_color_invalidations.discard(scene.as_pointer())
+
+
+def _color_authoring_setter(name, row, column, *, hue):
+    def get(settings):
+        return float(settings.get(name, 0.0))
+
+    def set_value(settings, value):
+        value = float(np.float32(value))
+        if settings.as_pointer() in _syncing or _frame_change_active:
+            settings[name] = value
+            return
+        owner = _holder(settings)
+        if owner is None:
+            settings[name] = value
+            return
+        if _is_per_node_grade_node(settings):
+            _observe_color_frame(bpy.context.scene)
+            if _frame_color_invalidation_pending():
+                _clear_frame_color_claims(bpy.context.scene)
+        if (_is_per_node_grade_node(settings) and settings.get(_HUE_CLAIMS) is not None
+                and settings.get(_HUE_CLAIM_FRAME) != _frame_color_key()):
+            _consume_color_authoring(settings, color_authoring.clear_claims(
+                _hue_claims(settings, current_frame=False),
+            ))
+        raw = _raw_grade_settings(owner, "Linear Rec.709")
+        claims = _hue_claims(settings)
+        edit = color_authoring.edit_hue if hue else color_authoring.edit_adaptance
+        _consume_color_authoring(settings, edit(raw, claims, row, column, value))
+    return get, set_value
+
+
+def _rebase_color_authoring(owner):
+    settings = _color_controls(owner)
+    effects = color_authoring.rebase(_raw_grade_settings(owner, "Linear Rec.709"),
+                                     _hue_claims(settings, current_frame=False))
+    _consume_color_authoring(settings, effects)
+
+
 @contextmanager
 def _suspend(settings):
     pointer = settings.as_pointer()
+    already_syncing = pointer in _syncing
     _syncing.add(pointer)
     try:
         yield
     finally:
-        _syncing.discard(pointer)
+        if not already_syncing:
+            _syncing.discard(pointer)
 
 
 def _copy_linear(source, target):
@@ -956,10 +1146,34 @@ def _copy_tone(source, target):
 
 
 def _reset_tone(settings):
+    peak = settings.peak_nits
     with _suspend(settings):
         for name in _TONE_FIELDS:
             if settings.is_property_set(name):
                 settings.property_unset(name)
+    owner = _holder(settings)
+    if owner is not None and peak != settings.peak_nits:
+        _rebase_color_authoring(owner)
+
+
+def _copy_color(source, target):
+    with _suspend(target):
+        for name in _COLOR_FIELDS:
+            setattr(target, name, getattr(source, name))
+        _consume_color_authoring(target, color_authoring.Effects(claims=_hue_claims(source)))
+
+
+def _reset_color(settings, fields=_COLOR_FIELDS):
+    with _suspend(settings):
+        for name in fields:
+            if settings.is_property_set(name):
+                settings.property_unset(name)
+    hue_rows = tuple(sorted({int(name.split("_")[2]) for name in fields
+                             if name.startswith("web_hue_")}))
+    if hue_rows:
+        _consume_color_authoring(settings, color_authoring.clear_claims(
+            _hue_claims(settings, current_frame=False), rows=hue_rows,
+        ))
 
 
 def _make_grade(source=None):
@@ -974,6 +1188,7 @@ def _make_grade(source=None):
                 return grade
             _copy_linear(_linear_controls(source), grade.pg_linear)
             _copy_tone(_tone_controls(source), grade.pg_tone)
+            _copy_color(_color_controls(source), grade.pg_color)
     except BaseException:
         if grade.users == 0:
             bpy.data.node_groups.remove(grade)
@@ -985,7 +1200,8 @@ def _animated_values_for_node(node):
     if not _is_per_node_grade_node(node):
         return ()
     return tuple((name, float(getattr(node, name)))
-                 for name in (*_LINEAR_FIELDS, *_ANIMATABLE_TONE_FIELDS))
+                 for name in (*_LINEAR_FIELDS, *_ANIMATABLE_TONE_FIELDS,
+                              *_ANIMATABLE_COLOR_FIELDS))
 
 
 def _insert_node_keyframes(node, fields, frame):
@@ -1038,7 +1254,7 @@ def _kernel_signature(tree_type, settings, working_space):
 
 def _signature(kind, values, working_space):
     payload = json.dumps(
-        (_KERNEL_SCHEMA, kind, working_space, values),
+        (_KERNEL_SCHEMA, COLOR_RESOLUTION_SCHEMA, kind, working_space, values),
         separators=(",", ":"),
     ).encode("ascii")
     return hashlib.sha256(payload).hexdigest()
@@ -1057,9 +1273,36 @@ def _tone_settings(settings):
     return ToneSettings(tuple(values), float(settings.fit), 203., float(settings.peak_nits))
 
 
-def _grade_settings(owner, working_space):
+def _raw_grade_settings(owner, working_space):
     return Settings(linear=_linear_settings(_linear_controls(owner)),
-                    tone=_tone_settings(_tone_controls(owner)), space=working_space)
+                    tone=_tone_settings(_tone_controls(owner)),
+                    color=_color_settings(_color_controls(owner)), space=working_space)
+
+
+def _grade_settings(owner, working_space):
+    return resolve_settings(_raw_grade_settings(owner, working_space))
+
+
+def _color_settings(settings):
+    def rows(stem, columns):
+        return tuple(tuple(float(getattr(settings, f"{stem}_{column}_{tone}"))
+                           for column in columns) for tone in range(4))
+
+    return ColorSettings(
+        lightness=rows("j", _COLOR_DRIVERS),
+        chroma=rows("c", _COLOR_DRIVERS),
+        adaptance=rows("adaptance", ("a", "b")),
+        lightness_fit=float(settings.lightness_fit),
+        chroma_fit=float(settings.chroma_fit),
+        global_gain=float(settings.global_gain),
+        adaptance_half_saturation=float(settings.adaptance_half_saturation),
+        web=WebSettings(**{
+            field: tuple(tuple(float(getattr(settings, f"web_{family}_{tone}_{handle}"))
+                               for handle in range(6)) for tone in range(4))
+            for family, field in (("chroma", "log_chroma"), ("hue", "hue_degrees"),
+                                  ("scale", "log_scale"))
+        }),
+    )
 
 
 def _snapshot_values(settings):
@@ -1067,11 +1310,17 @@ def _snapshot_values(settings):
         settings = Settings(linear=settings)
     linear = settings.linear
     tone = settings.tone
+    color = settings.color
+    color_rows = (*color.lightness, *color.chroma, *color.adaptance,
+                  *color.web.log_chroma, *color.web.hue_degrees, *color.web.log_scale)
     return tuple(float(value).hex() for value in (
         linear.exposure, *linear.source_xy,
         -linear.balance[0], -linear.balance[1],
         *linear.spread, *linear.heading,
         *tone.input_nits, tone.fit, tone.reference_nits, tone.peak_nits,
+        color.lightness_fit, color.chroma_fit, color.global_gain,
+        color.adaptance_half_saturation,
+        *(value for row in color_rows for value in row),
     ))
 
 
@@ -1163,6 +1412,44 @@ def _fallback_kernel(mode, tree_type, *, vector=False):
     except BaseException:
         built.dispose(unlink=True)
         raise
+
+
+# pg-book: technical-report/en#next-policy.resources
+def _retain_fallback_kernel(tree):
+    failures = run_resource_lifecycle(_resource_retirement_operations(tree))
+    if failures:
+        raise ExceptionGroup("Could not retain fallback kernel", list(failures))
+
+
+def _acquire_fallback_kernel(mode, tree_type, *, vector=False, preferred=None):
+    """Find or append a validated fallback and retain it for undo history."""
+    candidates = ([preferred] if preferred is not None else [])
+    candidates.extend(tree for tree in bpy.data.node_groups if tree is not preferred)
+    for tree in candidates:
+        if getattr(tree, "bl_idname", None) != tree_type:
+            continue
+        if not validate_fallback_instance(tree, mode, vector=vector):
+            continue
+        tree[_IDENTITY_KERNEL_KIND if mode == "pending" else _ERROR_KERNEL_KIND] = _KERNEL_SCHEMA
+        tree["_perceptual_grade_tree_type"] = tree_type
+        _retain_fallback_kernel(tree)
+        return tree
+
+    built = _fallback_kernel(mode, tree_type, vector=vector)
+    tree = built.tree
+    try:
+        if not validate_fallback_instance(tree, mode, vector=vector):
+            raise RuntimeError("Appended fallback failed its structure receipt")
+        tree["_perceptual_grade_tree_type"] = tree_type
+        tree[_IDENTITY_KERNEL_KIND if mode == "pending" else _ERROR_KERNEL_KIND] = _KERNEL_SCHEMA
+        _retain_fallback_kernel(tree)
+    except BaseException:
+        built.dispose(unlink=True)
+        raise
+    built.tree = None
+    built.images = ()
+    built.helper_groups = ()
+    return tree
 
 
 def _settings_for_node(node, working_space=None):
@@ -1585,27 +1872,19 @@ def _apply_output_kernel(node, mode):
         # replacement before reconciling its reader and selector topology.
         _set_bake_mode(node, False, reconcile=mode not in {"pending", "error"})
     if mode == "pending":
-        built = _fallback_kernel(
-            "pending", node.id_data.bl_idname,
-            vector=node.inputs.get("Vector") is not None,
-        )
+        fallback_mode = "pending"
     elif mode == "error":
-        built = _fallback_kernel(
-            "error", node.id_data.bl_idname,
-            vector=node.inputs.get("Vector") is not None,
-        )
+        fallback_mode = "error"
     else:
         return
-    try:
-        _replace_node_kernel(node, built.tree, emergency=True)
-    except BaseException:
-        built.dispose(unlink=True)
-        raise
-    # The node now owns the appended datablock; do not retire it with the
-    # temporary instance wrapper.
-    built.tree = None
-    built.images = ()
-    built.helper_groups = ()
+    kernel = _acquire_fallback_kernel(
+        fallback_mode, node.id_data.bl_idname,
+        vector=node.inputs.get("Vector") is not None,
+        preferred=getattr(node, "node_tree", None),
+    )
+    if getattr(node, "node_tree", None) == kernel:
+        return
+    _replace_node_kernel(node, kernel, emergency=True)
 
 
 def _apply_output_effect(node, effects):
@@ -1810,6 +2089,7 @@ def _request_node(node, working_space, snapshots=None):
     if _is_shared_grade_node(node) and node.pg_grade is None:
         _reset_linear(node.pg_linear)
         _reset_tone(node.pg_tone)
+        _reset_color(node.pg_color)
     source = _source_for(node, working_space)
     snapshot = None if snapshots is None else snapshots.get(source)
     if snapshot is None:
@@ -1876,6 +2156,7 @@ def _publication_signature(record, prepared):
     prepared_settings = Settings(
         linear=prepared.linear.settings,
         tone=prepared.tone.settings,
+        color=prepared.color.settings,
         space=prepared.space,
     )
     return _signature(
@@ -2030,6 +2311,10 @@ def _tag_compositor_outputs(records):
     for root in roots.values():
         tag_tree(root)
     for scene in scenes.values():
+        # ID.update_tag() does not request ID_RECALC_COMPOSITOR. Reassert the
+        # unchanged root through its RNA setter to request a live compositor
+        # evaluation, including when the edited Grade is inside a nested tree.
+        scene.compositing_node_group = scene.compositing_node_group
         scene.update_tag()
 
     tagged_areas = set()
@@ -2087,7 +2372,7 @@ def _set_parameter_selector(kernel, bank):
 
 
 def _publish_grade_parameters(source, authorized_records, prepared, *, admitted):
-    """Stage one fixed inactive bank, select it, and deliver its generation."""
+    """Stage a fixed inactive role bundle, select it, and deliver its generation."""
     users = tuple(record for record in authorized_records
                   if record.get("source") is source
                   and _node_stores.get(record["node"].as_pointer()) is record)
@@ -2096,7 +2381,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
     created, context, failures = [], {}, []
     resource = _grade_resources.resource(users[0]["node"], prepared.space)
     settings = Settings(linear=prepared.linear.settings, tone=prepared.tone.settings,
-                        space=prepared.space)
+                        color=prepared.color.settings, space=prepared.space)
     preparation_signature = _preparation_signature(settings, prepared.space)
     old_active = resource.active_bank if resource.active_bank in (0, 1) else 0
     old_generation = resource.generation if resource.generation is not None else 0
@@ -2114,10 +2399,11 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         receipt_before=None, metadata_before=(),
     )
 
-    def make_image(bank):
+    def make_image(bank, role):
+        height, width, _channels = PARAMETER_ROLE_SHAPES[role]
         image = bpy.data.images.new(
-            f"Perceptual Grade parameters bank {bank}",
-            width=PARAMETER_SHAPE[1], height=PARAMETER_SHAPE[0],
+            f"Perceptual Grade {role} bank {bank}",
+            width=width, height=height,
             alpha=True, float_buffer=True,
         )
         image.colorspace_settings.name = "Non-Color"
@@ -2125,34 +2411,67 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         image.use_half_precision = False
         image.file_format = "OPEN_EXR"
         image[PARAMETER_IMAGE] = PARAMETER_SCHEMA
+        image[PARAMETER_ROLE] = role
         image["_perceptual_grade_image"] = True
         return image
 
-    def pack_image(image, pixels, signature):
+    def pack_role(image, role, pixels, content_signature, *, force=False):
+        if (not force
+                and _parameter_role_receipt_matches(image, role, content_signature)):
+            return True
         image[PARAMETER_IMAGE] = PARAMETER_SCHEMA
+        image[PARAMETER_ROLE] = role
         image["_perceptual_grade_image"] = True
         _write_grade_parameters(image, pixels)
         _pack_grade_parameters(image)
         if image.packed_file is None or image.is_dirty:
             return False
-        image[PARAMETER_SIGNATURE] = signature
-        image[PARAMETER_CONTENT_SIGNATURE] = parameter_content_signature(pixels)
-        return True
+        image[PARAMETER_CONTENT_SIGNATURE] = content_signature
+        if role != "parameter" and PARAMETER_SIGNATURE in image:
+            del image[PARAMETER_SIGNATURE]
+        return parameter_image_matches(image, content_signature, bundle=False)
+
+    def pack_bank(primary, parameters, content_signatures, signature, *, force=False):
+        role_images = parameter_bank_images(primary)
+        if not all(pack_role(role_images[role], role, parameters.roles[role],
+                             content_signatures[role], force=force)
+                   for role in PARAMETER_ROLES):
+            return False
+        set_parameter_bundle_signature(primary, content_signatures)
+        primary[PARAMETER_SIGNATURE] = signature
+        return _parameter_image_content_matches(primary)
 
     def stage(_bank, _errors, *, repair=False):
         parameters = prepared.parameters or prepare_parameters(prepared)
+        content_signatures = {
+            role: parameter_content_signature(parameters.roles[role])
+            for role in PARAMETER_ROLES
+        }
         banks = resource.banks
         fresh = banks is None
         if fresh:
             allocated = []
             try:
-                allocated.append(make_image(0))
-                allocated.append(make_image(1))
-                banks = tuple(allocated)
-                # No graph can read this pair yet. Initialize both so a schema
-                # repair can safely install either branch before activation.
-                for image in banks:
-                    if not pack_image(image, parameters.pixels, preparation_signature):
+                primaries = []
+                for bank in (0, 1):
+                    role_images = {}
+                    for role in PARAMETER_ROLES:
+                        image = make_image(bank, role)
+                        allocated.append(image)
+                        role_images[role] = image
+                        if not pack_role(image, role, parameters.roles[role],
+                                         content_signatures[role]):
+                            for allocated_image in allocated:
+                                if allocated_image.users == 0:
+                                    bpy.data.images.remove(allocated_image, do_unlink=True)
+                            return {"clean": False}
+                    primaries.append(bind_parameter_bank(role_images))
+                banks = tuple(primaries)
+                # No graph can read this pair yet. Initialize both complete
+                # bundles before either bank can be selected.
+                for primary in banks:
+                    if not pack_bank(primary, parameters, content_signatures,
+                                     preparation_signature):
                         for allocated_image in allocated:
                             if allocated_image.users == 0:
                                 bpy.data.images.remove(allocated_image, do_unlink=True)
@@ -2164,14 +2483,14 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
                         bpy.data.images.remove(image, do_unlink=True)
                 raise
         elif repair:
-            if (not pack_image(banks[old_active], parameters.pixels,
-                               preparation_signature)
-                    or not pack_image(banks[candidate_bank], parameters.pixels,
-                                      preparation_signature)):
+            if (not pack_bank(banks[old_active], parameters, content_signatures,
+                              preparation_signature, force=True)
+                    or not pack_bank(banks[candidate_bank], parameters, content_signatures,
+                                     preparation_signature, force=True)):
                 return {"clean": False}
         else:
-            if not pack_image(banks[candidate_bank], parameters.pixels,
-                              preparation_signature):
+            if not pack_bank(banks[candidate_bank], parameters, content_signatures,
+                             preparation_signature):
                 return {"clean": False}
 
         context.update(banks=banks, fresh=fresh)
@@ -2209,9 +2528,15 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         )
         verified_banks = (banks if fresh or repair else (banks[candidate_bank],))
         return {"clean": all(
-            not image.is_dirty and image.packed_file is not None
-            and _parameter_image_content_matches(image)
-            for image in verified_banks
+            _parameter_role_receipt_matches(
+                image, role, content_signatures[role],
+            )
+            for primary in verified_banks
+            for role, image in parameter_bank_images(primary).items()
+        ) and all(
+            primary.get(PARAMETER_SIGNATURE) == preparation_signature
+            and parameter_bundle_receipt_matches(primary)
+            for primary in verified_banks
         )}
 
     def select(bank, _errors):
@@ -2246,8 +2571,9 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         resource = context["resource"]
         _grade_resources.publish(resource, candidate_bank, generation)
         resource.trees = context["kernels"]
-        _invalidate_grade_parameters(resource.image)
-        _tag_compositor_outputs(users)
+        active_images = parameter_bank_images(resource.image)
+        for role in PARAMETER_ROLES:
+            _invalidate_grade_parameters(active_images[role])
         context["receipt_before"] = _record_compositor_bindings(users, generation)
         delivery_errors = []
         for record in users:
@@ -2256,6 +2582,9 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
                 event_kind, _publication_signature(record, prepared))))
         if delivery_errors:
             raise ExceptionGroup("Grade installation delivery failed", delivery_errors)
+        # Scene invalidation can start a live evaluation. Publish its generation
+        # and current policy receipts first so it observes this complete bank.
+        _tag_compositor_outputs(users)
         return {"delivered": True}
 
     def restore_selector(bank, _errors):
@@ -2369,18 +2698,29 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
     return tuple(failures)
 
 
-def _linked_from(socket, node, output_name):
-    links = tuple(socket.links)
+def _parameter_link_index(kernel):
+    # RNA socket.links scans every link in the tree. Inspect each edge once
+    # for this validation, without retaining a cache across graph mutations.
+    indexed = {}
+    for link in kernel.links:
+        for socket in (link.from_socket, link.to_socket):
+            indexed.setdefault(socket.as_pointer(), []).append(link)
+    return indexed
+
+
+def _linked_from(indexed, socket, node, output_name):
+    links = indexed.get(socket.as_pointer(), ())
     return (len(links) == 1 and links[0].from_node == node
             and links[0].from_socket == node.outputs[output_name])
 
 
-def _linked_output(socket):
-    links = tuple(socket.links)
+def _linked_output(indexed, socket):
+    links = indexed.get(socket.as_pointer(), ())
     return links[0].from_socket if len(links) == 1 else None
 
 
 def _shader_parameter_samples_valid(kernel, selector, readers):
+    indexed = _parameter_link_index(kernel)
     grouped = {}
     for node in kernel.nodes:
         if not node.get(PARAMETER_SAMPLE_SELECTOR):
@@ -2399,31 +2739,35 @@ def _shader_parameter_samples_valid(kernel, selector, readers):
         if set(group) != {"vector", "alpha"}:
             return False
         vector, alpha = group["vector"], group["alpha"]
+        role = vector.get(PARAMETER_SAMPLE_ROLE)
+        if role not in PARAMETER_ROLES or alpha.get(PARAMETER_SAMPLE_ROLE) != role:
+            return False
         if (vector.bl_idname != "ShaderNodeMix" or vector.data_type != "VECTOR"
                 or vector.factor_mode != "UNIFORM" or not vector.clamp_factor
                 or alpha.bl_idname != "ShaderNodeMix" or alpha.data_type != "FLOAT"
                 or not alpha.clamp_factor
-                or not vector.outputs[1].links):
+                or not indexed.get(vector.outputs[1].as_pointer())):
             return False
-        if not _linked_from(vector.inputs[0], selector, "Value"):
+        if not _linked_from(indexed, vector.inputs[0], selector, "Value"):
             return False
-        if not _linked_from(alpha.inputs[0], selector, "Value"):
+        if not _linked_from(indexed, alpha.inputs[0], selector, "Value"):
             return False
         for socket, bank, output in (
                 (vector.inputs[4], 0, "Color"), (vector.inputs[5], 1, "Color"),
                 (alpha.inputs[2], 0, "Alpha"), (alpha.inputs[3], 1, "Alpha")):
-            source = _linked_output(socket)
-            if (source is None or source.node not in readers[bank]
+            source = _linked_output(indexed, socket)
+            if (source is None or source.node not in readers[bank][role]
                     or source.node.bl_idname != "ShaderNodeTexImage"
                     or source != source.node.outputs[output]):
                 return False
 
     return all(link.to_node.get(PARAMETER_SAMPLE_SELECTOR)
                and link.to_socket == link.to_node.inputs[0]
-               for link in selector.outputs["Value"].links)
+               for link in indexed.get(selector.outputs["Value"].as_pointer(), ()))
 
 
 def _compositor_parameter_samples_valid(kernel, selector, readers):
+    indexed = _parameter_link_index(kernel)
     selectors = tuple(node for node in kernel.nodes
                       if node.get(PARAMETER_SAMPLE_SELECTOR))
     if not selectors:
@@ -2433,6 +2777,7 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
     for sample_selector in selectors:
         sample_id = sample_selector.get(PARAMETER_SAMPLE_ID)
         if (type(sample_id) is not int
+                or sample_selector.get(PARAMETER_SAMPLE_ROLE) not in PARAMETER_ROLES
                 or sample_selector.bl_idname != "CompositorNodeSetAlpha"):
             return False
         sample_ids.append(sample_id)
@@ -2459,16 +2804,17 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
 
     if (set(key[0] for key in map_uvs) != set(sample_ids)
             or set(key[0] for key in separates) != set(sample_ids)
-            or any(len(readers[bank]) != 1 for bank in (0, 1))
+            or any(len(readers[bank][role]) != 1
+                   for bank in (0, 1) for role in PARAMETER_ROLES)
             or any((sample_id, bank) not in map_uvs or (sample_id, bank) not in separates
                    for sample_id in sample_ids for bank in (0, 1))):
         return False
 
     def is_selector_weight(socket):
-        return _linked_from(socket, selector, "Value")
+        return _linked_from(indexed, socket, selector, "Value")
 
     def is_inactive_weight(socket):
-        source = _linked_output(socket)
+        source = _linked_output(indexed, socket)
         if (source is None or source.node.bl_idname != "ShaderNodeMath"
                 or source.node.operation != "SUBTRACT"
                 or source != source.node.outputs["Value"]):
@@ -2476,10 +2822,10 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
         inverse = source.node
         return (not inverse.inputs[0].is_linked
                 and float(inverse.inputs[0].default_value) == 1.0
-                and _linked_from(inverse.inputs[1], selector, "Value"))
+                and _linked_from(indexed, inverse.inputs[1], selector, "Value"))
 
     def is_weighted_channel(socket, sample_id, channel):
-        add_output = _linked_output(socket)
+        add_output = _linked_output(indexed, socket)
         if (add_output is None or add_output.node.bl_idname != "ShaderNodeMath"
                 or add_output.node.operation != "ADD"
                 or add_output != add_output.node.outputs["Value"]):
@@ -2487,14 +2833,14 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
         add = add_output.node
         branches = []
         for input_socket in add.inputs[:2]:
-            multiply_output = _linked_output(input_socket)
+            multiply_output = _linked_output(indexed, input_socket)
             if (multiply_output is None or multiply_output.node.bl_idname != "ShaderNodeMath"
                     or multiply_output.node.operation != "MULTIPLY"
                     or multiply_output != multiply_output.node.outputs["Value"]):
                 return False
             multiply = multiply_output.node
             operands = [
-                (index, _linked_output(multiply.inputs[index]))
+                (index, _linked_output(indexed, multiply.inputs[index]))
                 for index in (0, 1)
             ]
             signal = [(index, source) for index, source in operands
@@ -2516,12 +2862,13 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
 
     for sample_selector in selectors:
         sample_id = sample_selector[PARAMETER_SAMPLE_ID]
-        combine_link = tuple(sample_selector.inputs["Image"].links)
-        alpha_link = tuple(sample_selector.inputs["Alpha"].links)
+        role = sample_selector[PARAMETER_SAMPLE_ROLE]
+        combine_link = indexed.get(sample_selector.inputs["Image"].as_pointer(), ())
+        alpha_link = indexed.get(sample_selector.inputs["Alpha"].as_pointer(), ())
         if (len(combine_link) != 1 or len(alpha_link) != 1
                 or sample_selector.inputs["Type"].default_value
                 not in {"Replace Alpha", "REPLACE_ALPHA"}
-                or not sample_selector.outputs["Image"].links):
+                or not indexed.get(sample_selector.outputs["Image"].as_pointer())):
             return False
         combine_link = combine_link[0]
         combine = combine_link.from_node
@@ -2532,7 +2879,7 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
         for name in ("Red", "Green", "Blue"):
             if not is_weighted_channel(combine.inputs[name], sample_id, name):
                 return False
-        alpha_source = _linked_output(sample_selector.inputs["Alpha"])
+        alpha_source = _linked_output(indexed, sample_selector.inputs["Alpha"])
         if (alpha_source is None or alpha_source.node.bl_idname != "ShaderNodeMath"
                 or alpha_source.node.operation != "ADD"
                 or alpha_source != alpha_source.node.outputs["Value"]
@@ -2544,13 +2891,15 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
         for bank in (0, 1):
             map_uv = map_uvs[(sample_id, bank)]
             separate = separates[(sample_id, bank)]
-            uv_links = tuple(map_uv.inputs["UV"].links)
+            uv_links = indexed.get(map_uv.inputs["UV"].as_pointer(), ())
             if len(uv_links) != 1:
                 return False
             observed_uv = (uv_links[0].from_node, uv_links[0].from_socket)
             if uv_source is None:
                 uv_source = observed_uv
             if (map_uv.bl_idname != "CompositorNodeMapUV"
+                    or map_uv.get(PARAMETER_SAMPLE_ROLE) != role
+                    or separate.get(PARAMETER_SAMPLE_ROLE) != role
                     or map_uv.inputs["Interpolation"].default_value
                     not in {"Nearest", "NEAREST"}
                     or map_uv.inputs["Extension X"].default_value
@@ -2559,8 +2908,9 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
                     not in {"Extend", "EXTEND"}
                     or observed_uv != uv_source
                     or separate.mode != "RGB"
-                    or not _linked_from(map_uv.inputs["Image"], readers[bank][0], "Image")
-                    or not _linked_from(separate.inputs["Image"], map_uv, "Image")):
+                    or not _linked_from(
+                        indexed, map_uv.inputs["Image"], readers[bank][role][0], "Image")
+                    or not _linked_from(indexed, separate.inputs["Image"], map_uv, "Image")):
                 return False
 
     return True
@@ -2579,12 +2929,16 @@ def _parameter_kernel_receipt_current(kernel):
         if (len(images) != 2 or images[0] is None or images[1] is None
                 or images[0] == images[1]):
             return False
-        if any(
-                image.get(PARAMETER_IMAGE) != PARAMETER_SCHEMA
-                or tuple(image.size) != (PARAMETER_SHAPE[1], PARAMETER_SHAPE[0])
-                or not image.as_pointer() or image.is_dirty
-                or image.packed_file is None
-                for image in images):
+        role_bundles = tuple(parameter_bank_images(image) for image in images)
+        all_role_images = tuple(
+            bundle[role] for bundle in role_bundles for role in PARAMETER_ROLES
+        )
+        pointers = tuple(image.as_pointer() for image in all_role_images)
+        if (len(set(pointers)) != len(pointers)
+                or not all(parameter_bundle_receipt_matches(image) for image in images)
+                or any(not _parameter_role_receipt_matches(
+                    bundle[role], role,
+                ) for bundle in role_bundles for role in PARAMETER_ROLES)):
             return False
         image = images[active]
         return (kernel.get(PARAMETER_SIGNATURE) is not None
@@ -2605,25 +2959,37 @@ def _parameter_kernel_structure_valid(kernel):
                 or type(generation) is not int or generation < 0):
             return False
         images = tuple(kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
-        if (any(image is None or image.get(PARAMETER_IMAGE) != PARAMETER_SCHEMA
-                or tuple(image.size) != (PARAMETER_SHAPE[1], PARAMETER_SHAPE[0])
-                or not image.as_pointer() for image in images)
+        if (len(images) != 2 or any(image is None for image in images)
                 or images[0] == images[1]):
             return False
+        role_bundles = tuple(parameter_bank_images(image) for image in images)
+        all_role_images = tuple(
+            bundle[role] for bundle in role_bundles for role in PARAMETER_ROLES
+        )
+        pointers = tuple(image.as_pointer() for image in all_role_images)
+        if (len(set(pointers)) != len(pointers)
+                or not all(parameter_bundle_receipt_matches(image) for image in images)
+                or any(not _parameter_role_receipt_matches(
+                    bundle[role], role,
+                ) for bundle in role_bundles for role in PARAMETER_ROLES)):
+            return False
         selectors = []
-        readers = [[], []]
+        readers = [{}, {}]
         for reader in kernel.nodes:
             image = getattr(reader, "image", None)
             if reader.get(PARAMETER_READER):
                 bank = reader.get(PARAMETER_READER_BANK)
-                if bank not in (0, 1) or image != images[bank]:
+                role = reader.get(PARAMETER_READER_ROLE)
+                if (bank not in (0, 1) or role not in PARAMETER_ROLES
+                        or image != role_bundles[bank][role]):
                     return False
-                readers[bank].append(reader)
+                readers[bank].setdefault(role, []).append(reader)
             elif image is not None and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA:
                 return False
             if reader.get(PARAMETER_SELECTOR):
                 selectors.append(reader)
-        if not readers[0] or not readers[1] or len(selectors) != 1:
+        if (any(set(readers[bank]) != set(PARAMETER_ROLES) for bank in (0, 1))
+                or len(selectors) != 1):
             return False
         selector = selectors[0]
         if kernel.bl_idname == SHADER_TREE:
@@ -2667,6 +3033,21 @@ def _parameter_kernel_valid(kernel):
 
 def _parameter_image_content_matches(image):
     return parameter_image_matches(image)
+
+
+def _parameter_role_receipt_matches(image, role, content_signature=None):
+    try:
+        height, width, _channels = PARAMETER_ROLE_SHAPES[role]
+        receipt = image.get(PARAMETER_CONTENT_SIGNATURE)
+        return (image.as_pointer() != 0
+                and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
+                and image.get(PARAMETER_ROLE) == role
+                and tuple(image.size) == (width, height)
+                and not image.is_dirty and image.packed_file is not None
+                and receipt is not None
+                and (content_signature is None or receipt == content_signature))
+    except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return False
 
 
 def _remove_parameter_image(image):
@@ -2837,10 +3218,13 @@ def _resource_retirement_operations(resource, *, image=False):
         try:
             if resource is None or resource.as_pointer() == 0:
                 return {"live": False}
+            fallback = any(resource.get(marker) is not None for marker in (
+                FALLBACK_KERNEL, _IDENTITY_KERNEL_KIND, _ERROR_KERNEL_KIND,
+            ))
             owned = (bool(resource.get("_perceptual_grade_stack_image")
                           or resource.get("_perceptual_grade_image")) if image
                      else (resource.get(_KERNEL_KIND) is not None
-                           or bool(resource.get(FALLBACK_KERNEL))
+                           or fallback
                            or resource.get(_IDENTITY_KERNEL_KIND) is not None
                            or resource.get(_ERROR_KERNEL_KIND) is not None
                            or bool(resource.get(bake_graph.WRAPPER))))
@@ -2854,7 +3238,7 @@ def _resource_retirement_operations(resource, *, image=False):
                                  or (parameter_image
                                      and not _grade_resources.gate.retirement_allowed()))
             return {"live": True, "owned": owned, "users": resource.users,
-                    "protected": protected}
+                    "protected": protected, "retain_for_undo": not image and fallback}
         except ReferenceError:
             return {"live": False}
 
@@ -2874,7 +3258,13 @@ def _resource_retirement_operations(resource, *, image=False):
             if errors:
                 raise ExceptionGroup("Bake live kernel retirement failed", list(errors))
 
-    return {"observe": observe, "evict": evict, "recheck": observe, "remove": remove}
+    def retain():
+        # Undo memfiles retain raw ID references without contributing to users.
+        # Keep old fallback identities even after replacement or node deletion.
+        resource.use_fake_user = True
+
+    return {"observe": observe, "retain": retain, "evict": evict,
+            "recheck": observe, "remove": remove}
 
 
 def _retire_kernels(kernels):
@@ -3351,7 +3741,7 @@ def _gesture_observations(window_key):
     for target in gesture_policy.gesture_targets(_gesture_state, window_key):
         node = _gesture_node(target.node_id)
         if node is not None:
-            observed.append(gesture_policy.Target(target.node_id, _settings_signature_for(node)))
+            observed.append(gesture_policy.Target(target.node_id, _gesture_signature_for(node)))
     return tuple(observed)
 
 
@@ -3448,6 +3838,25 @@ def _settings_signature_for(node):
         return None
 
 
+def _gesture_signature_for(node):
+    """Include ownership-only edits in undo without changing rendering demand."""
+    signature = _settings_signature_for(node)
+    if signature is None:
+        return None
+    if _is_stack_node(node):
+        owners = tuple(entry.grade for entry in node.pg_stack_entries
+                       if entry.enabled and entry.grade is not None)
+    else:
+        owner = node.pg_grade if _is_shared_grade_node(node) else node
+        owners = () if owner is None else (owner,)
+    metadata = tuple(tuple(tuple(
+        None if claim is None else (claim.origin_handle, claim.restore_offset)
+        for claim in row) for row in _hue_claims(_color_controls(owner)))
+        for owner in owners)
+    return hashlib.sha256(json.dumps((signature, metadata), separators=(",", ":"))
+                          .encode("ascii")).hexdigest()
+
+
 def _arm_gesture(window_key, node, position):
     """Explicit adapter entrypoint; native routing supplies its observer token."""
     scene = bpy.context.scene
@@ -3460,7 +3869,7 @@ def _arm_gesture(window_key, node, position):
         undo_owner="adapter",
         auto_key=auto_key, frame=frame,
         targets=tuple(gesture_policy.Target(_gesture_identity(target),
-                                           _settings_signature_for(target))
+                                           _gesture_signature_for(target))
                       for target in _live_gesture_targets(_gesture_related_nodes(node))),
         observed=_gesture_observations(window_key),
     ))
@@ -3686,7 +4095,7 @@ class PG_OT_gesture_router(bpy.types.Operator):
                     "press", window_id=self.window_key, token=self.token,
                     x=int(event.mouse_x), y=int(event.mouse_y), undo_owner="native",
                     targets=tuple(gesture_policy.Target(_gesture_identity(target),
-                                                       _settings_signature_for(target))
+                                                       _gesture_signature_for(target))
                                   for target in targets),
                     observed=_gesture_observations(self.window_key),
                     auto_key=auto_key,
@@ -3842,9 +4251,12 @@ def _all_grade_nodes():
 
 
 @persistent
-def _frame_change_pre(_scene, *_args):
+def _frame_change_pre(scene, *_args):
     global _frame_change_active
     _frame_change_active = True
+    _observe_color_frame(scene)
+    if threading.current_thread() is threading.main_thread():
+        _clear_frame_color_claims(scene)
 
 
 def _frame_reconcile_blocked(scene_identity):
@@ -3863,14 +4275,15 @@ def _frame_change_post(scene, *_args):
     global _frame_change_active, _frame_reconcile_pending
     _frame_change_active = False
     _frame_reconcile_pending = True
+    pointer = scene.as_pointer()
+    _frame_reconcile_scenes[pointer] = scene
     if threading.current_thread() is not threading.main_thread():
         return
     try:
-        pointer = scene.as_pointer()
-        _frame_reconcile_scenes[pointer] = scene
+        nodes = _scene_grade_nodes(scene)
+        _clear_frame_color_claims(scene, nodes)
         if _frame_reconcile_blocked(pointer):
             return
-        nodes = _scene_grade_nodes(scene)
         failures = _refresh_nodes(nodes)
         _reconcile_bake_outputs(nodes)
         _frame_reconcile_scenes.pop(pointer, None)
@@ -3893,11 +4306,13 @@ def _frame_reconcile_tick():
                 if scene is not None:
                     _frame_reconcile_scenes[scene.as_pointer()] = scene
             for pointer, scene in tuple(_frame_reconcile_scenes.items()):
+                nodes = _scene_grade_nodes(scene)
+                _clear_frame_color_claims(scene, nodes)
                 if _frame_reconcile_blocked(pointer):
                     continue
                 try:
                     if scene.as_pointer() == pointer:
-                        _refresh_nodes(_scene_grade_nodes(scene))
+                        _refresh_nodes(nodes)
                 except (AttributeError, ReferenceError, RuntimeError):
                     pass
                 _frame_reconcile_scenes.pop(pointer, None)
@@ -3992,6 +4407,8 @@ def _restore_bake_sources():
 
 @persistent
 def _load_pre(_filepath):
+    _frame_color_keys.clear()
+    _frame_color_invalidations.clear()
     if _bake_manager is not None:
         _bake_manager.cancel_all()
 
@@ -4006,6 +4423,7 @@ def _load_post(_filepath):
             _cleanup_conversion_backups()
             _reset_node_stores()
             _rebuild_output_registry()
+            _clear_frame_color_claims(bpy.context.scene)
             _ensure_all_kernels()
         _reconcile_bake_outputs()
     except PublicationDeferred:
@@ -4043,6 +4461,7 @@ def _undo_redo_reconcile_tick():
         with _restore_bake_sources():
             _reset_node_stores()
             _rebuild_output_registry()
+            _clear_frame_color_claims(bpy.context.scene)
             _ensure_all_kernels()
         _reconcile_bake_outputs()
     except PublicationDeferred:
@@ -4400,6 +4819,32 @@ def _tone_changed(settings, _context):
         _reset_tone(settings)
 
 
+def _color_changed(settings, _context):
+    pointer = settings.as_pointer()
+    if pointer in _syncing:
+        return
+    holder = _holder(settings)
+    if holder is None:
+        return
+    if holder.bl_idname == PGGradeData.bl_idname:
+        _grade_changed(holder)
+        return
+    if _is_per_node_grade_node(holder):
+        _per_node_grade_changed(holder)
+        return
+    if _is_shared_grade_node(holder) and holder.pg_grade is None:
+        _reset_color(settings)
+
+
+def _peak_changed(settings, context):
+    if settings.as_pointer() in _syncing or _frame_change_active:
+        return
+    owner = _holder(settings)
+    if owner is not None:
+        _rebase_color_authoring(owner)
+    _tone_changed(settings, context)
+
+
 def _per_node_grade_changed(node):
     global _frame_reconcile_pending
     if _frame_change_active:
@@ -4453,6 +4898,7 @@ def _selection_changed(node, _context):
     if node.pg_grade is None:
         _reset_linear(node.pg_linear)
         _reset_tone(node.pg_tone)
+        _reset_color(node.pg_color)
     else:
         _grade_changed(node.pg_grade)
         return
@@ -4500,14 +4946,16 @@ def _output_node_from_context(context):
 
 
 def _float_setting(message_id, default, minimum, maximum, precision, update,
-                   *, animatable):
+                   *, animatable, description_id=None, **kwargs):
     options = {"ANIMATABLE"} if animatable else set()
     return FloatProperty(
         name=localization.native(message_id),
         translation_context=localization.CONTEXT,
-        description=localization.native("tooltip." + message_id.removeprefix("property.")),
+        description=localization.native(
+            description_id or "tooltip." + message_id.removeprefix("property.")
+        ),
         default=default, min=minimum, max=maximum, precision=precision,
-        options=options, update=update,
+        options=options, update=update, **kwargs,
     )
 
 
@@ -4552,9 +5000,73 @@ def _tone_setting_properties(*, animatable):
             default="1000",
             items=[(str(peak), localization.native(f"tone.peak.{peak}"), "")
                    for peak in TONE_PEAKS],
-            options=set(), update=_tone_changed,
+            options=set(), update=_peak_changed,
         ),
     }
+
+
+def _color_setting_properties(*, animatable):
+    fields = {}
+    for family in ("j", "c"):
+        for tone in range(4):
+            for driver in _COLOR_DRIVERS:
+                if family == "j":
+                    limit = ((20.0, 20.0, 30.0, 50.0)[tone]
+                             if driver in {"a", "b"} else
+                             (_J_LOW_LIMITS if driver == "low" else _J_HIGH_LIMITS)[tone])
+                else:
+                    limit = (16.0 if driver == "high" else
+                             (4.0, 2.0, 1.0, 1.0)[tone]
+                             if driver in {"a", "b"} else 4.0)
+                name = f"{family}_{driver}_{tone}"
+                fields[name] = _float_setting(
+                    "property." + family + "_" + driver, 0.0, -limit, limit,
+                    1 if family == "j" else 2, _color_changed, animatable=animatable,
+                    description_id=f"tooltip.{family}_{driver}",
+                )
+    for name, label, tooltip in (("lightness_fit", "j_fit", "tooltip.j_fit"),
+                                 ("chroma_fit", "c_fit", "tooltip.c_fit")):
+        options = {"ANIMATABLE"} if animatable else set()
+        fields[name] = IntProperty(
+            name=localization.native("property." + label),
+            translation_context=localization.CONTEXT,
+            description=localization.native(tooltip), default=0, min=-2, max=6,
+            options=options, update=_color_changed,
+        )
+    fields["global_gain"] = _float_setting(
+        "property.global_gain", 0.0, -3.0, 3.0, 2,
+        _color_changed, animatable=animatable,
+    )
+    fields["adaptance_half_saturation"] = _float_setting(
+        "property.adaptance_half_saturation", 0.25, 0.05, 1.0, 2,
+        _color_changed, animatable=animatable,
+    )
+    for tone in range(4):
+        for axis in ("a", "b"):
+            name = f"adaptance_{axis}_{tone}"
+            getter, setter = _color_authoring_setter(name, tone, ("a", "b").index(axis),
+                                                    hue=False)
+            span = (4.0, 10.0, 20.0, 25.0)[tone]
+            fields[name] = _float_setting(
+                "property.adaptance_" + axis, 0.0, -1e6, 1e6, 2,
+                _color_changed, animatable=animatable, step=1,
+                soft_min=-span, soft_max=span, get=getter, set=setter,
+            )
+        for family, limit, precision in (("chroma", 16.0, 3), ("hue", 360.0, 2),
+                                         ("scale", 8.0, 2)):
+            for handle in range(6):
+                name = f"web_{family}_{tone}_{handle}"
+                callbacks = {}
+                if family == "hue":
+                    getter, setter = _color_authoring_setter(name, tone, handle, hue=True)
+                    callbacks = {"get": getter, "set": setter}
+                fields[name] = _float_setting(
+                    "property.web_" + family, 0.0, -limit, limit, precision,
+                    _color_changed, animatable=animatable,
+                    description_id="tooltip.web_" + family,
+                    **callbacks,
+                )
+    return fields
 
 
 class PGLinearSettings(bpy.types.PropertyGroup):
@@ -4565,6 +5077,10 @@ class PGToneSettings(bpy.types.PropertyGroup):
     __annotations__ = _tone_setting_properties(animatable=False)
 
 
+class PGColorSettings(bpy.types.PropertyGroup):
+    __annotations__ = _color_setting_properties(animatable=False)
+
+
 class PGGradeData(bpy.types.NodeTree):
     bl_idname = "PGGradeData"
     bl_label = localization.native("node.grade.title")
@@ -4573,6 +5089,7 @@ class PGGradeData(bpy.types.NodeTree):
 
     pg_linear: PointerProperty(type=PGLinearSettings)
     pg_tone: PointerProperty(type=PGToneSettings)
+    pg_color: PointerProperty(type=PGColorSettings)
 
     @classmethod
     def poll(cls, _context):
@@ -4659,6 +5176,97 @@ def _draw_tone_settings(node, layout):
     column.prop(settings, "peak_nits")
     column.label(text=localization.tr("label.reference"))
     column.operator(PG_OT_reset_tone.bl_idname, icon="LOOP_BACK")
+
+
+def _color_settings_for_node(node):
+    if _is_stack_node(node):
+        grade = _stack_active_grade(node)
+        return (grade, grade.pg_color if grade is not None else None)
+    if _is_shared_grade_node(node):
+        grade = node.pg_grade
+        return (grade, grade.pg_color if grade is not None else node.pg_color)
+    return (node, _color_controls(node))
+
+
+def _color_family_fields(family):
+    if family in {"j", "c"}:
+        return tuple(f"{family}_{driver}_{tone}"
+                     for tone in range(4) for driver in _COLOR_DRIVERS) + (
+                         "lightness_fit" if family == "j" else "chroma_fit",
+                     ) + (("global_gain",) if family == "c" else ())
+    if family == "adaptance":
+        return ("adaptance_half_saturation",) + tuple(
+            f"adaptance_{axis}_{tone}" for tone in range(4) for axis in ("a", "b")
+        )
+    return tuple(f"web_{kind}_{tone}_{handle}"
+                 for tone in range(4) for handle in range(6)
+                 for kind in ("chroma", "hue", "scale"))
+
+
+def _draw_color_family(node, layout, family):
+    layout.context_pointer_set("pg_stack_node" if _is_stack_node(node) else "pg_node", node)
+    owner, settings = _color_settings_for_node(node)
+    if settings is None:
+        return
+    column = layout.column()
+    column.enabled = _is_per_node_grade_node(node) or owner is not None
+    raw = resolved = None
+    if owner is not None and family in {"adaptance", "warp"}:
+        raw = _raw_grade_settings(owner, "Linear Rec.709")
+        resolved = resolve_settings(raw)
+    if family in {"j", "c"}:
+        for tone, tone_name in enumerate(_COLOR_TONES):
+            box = column.box()
+            box.label(text=localization.tr("tone." + tone_name))
+            for driver in _COLOR_DRIVERS:
+                box.prop(settings, f"{family}_{driver}_{tone}",
+                         text=localization.tr("property." + driver), slider=True)
+        fit = "lightness_fit" if family == "j" else "chroma_fit"
+        column.prop(settings, fit, slider=True)
+        if family == "c":
+            column.prop(settings, "global_gain", slider=True)
+    elif family == "adaptance":
+        column.prop(settings, "adaptance_half_saturation", slider=True)
+        for tone, tone_name in enumerate(_COLOR_TONES):
+            box = column.box()
+            box.label(text=localization.tr("tone." + tone_name))
+            row = box.row(align=True)
+            row.prop(settings, f"adaptance_a_{tone}", text="a", slider=True)
+            row.prop(settings, f"adaptance_b_{tone}", text="b", slider=True)
+            if raw is not None and raw.color.adaptance[tone] != resolved.color.adaptance[tone]:
+                _draw_color_notice(row, "label.color_limited", "tooltip.adaptance_limited")
+    else:
+        for tone, tone_name in enumerate(_COLOR_TONES):
+            box = column.box()
+            box.label(text=localization.tr("tone." + tone_name))
+            header = box.row(align=True)
+            header.label(text="")
+            for kind in ("chroma", "hue", "scale"):
+                header.label(text=localization.tr("property.web_" + kind))
+            for handle, handle_name in enumerate(_WEB_HANDLES):
+                row = box.row(align=True)
+                row.label(text=localization.tr("handle." + handle_name))
+                for kind in ("chroma", "hue", "scale"):
+                    row.prop(settings, f"web_{kind}_{tone}_{handle}", text="", slider=True)
+                    if kind == "hue":
+                        claim = _hue_claims(settings)[tone][handle]
+                        if claim is not None:
+                            _draw_color_notice(row, "label.color_auto", "tooltip.hue_auto",
+                                               owner=localization.tr(
+                                                   "handle." + _WEB_HANDLES[claim.origin_handle]))
+                        if (raw is not None and raw.color.web.hue_degrees[tone][handle]
+                                != resolved.color.web.hue_degrees[tone][handle]):
+                            _draw_color_notice(row, "label.color_limited", "tooltip.hue_limited")
+    op = column.operator(PG_OT_reset_color.bl_idname, icon="LOOP_BACK")
+    op.family = family.upper()
+
+
+def _draw_color_notice(layout, label, tooltip, **values):
+    indicator = layout.row(align=True)
+    indicator.enabled = False
+    op = indicator.operator(PG_OT_color_notice.bl_idname,
+                            text=localization.tr(label), emboss=False)
+    op.detail = localization.tr(tooltip, **values)
 
 
 class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
@@ -4771,6 +5379,7 @@ class PGShaderGrade(bpy.types.ShaderNodeCustomGroup):
     bl_translation_context = localization.CONTEXT
     pg_linear: PointerProperty(type=PGLinearSettings)
     pg_tone: PointerProperty(type=PGToneSettings)
+    pg_color: PointerProperty(type=PGColorSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
                               update=_selection_changed)
     pg_bake_image: PointerProperty(
@@ -4825,6 +5434,7 @@ class PGCompositorGrade(bpy.types.CompositorNodeCustomGroup):
     bl_translation_context = localization.CONTEXT
     pg_linear: PointerProperty(type=PGLinearSettings)
     pg_tone: PointerProperty(type=PGToneSettings)
+    pg_color: PointerProperty(type=PGColorSettings)
     pg_grade: PointerProperty(type=PGGradeData, poll=_poll_grade_data,
                               update=_selection_changed)
     pg_bake_image: PointerProperty(
@@ -4881,6 +5491,7 @@ class PGShaderGradePerNode(bpy.types.ShaderNodeCustomGroup):
     __annotations__ = (
         _linear_setting_properties(animatable=True)
         | _tone_setting_properties(animatable=True)
+        | _color_setting_properties(animatable=True)
     )
 
     def init(self, _context):
@@ -4909,6 +5520,7 @@ class PGCompositorGradePerNode(bpy.types.CompositorNodeCustomGroup):
     __annotations__ = (
         _linear_setting_properties(animatable=True)
         | _tone_setting_properties(animatable=True)
+        | _color_setting_properties(animatable=True)
     )
 
     def init(self, _context):
@@ -5132,6 +5744,59 @@ class PG_OT_reset_tone(bpy.types.Operator):
             return {"CANCELLED"}
         _reset_tone(grade.pg_tone)
         _grade_changed(grade)
+        return {"FINISHED"}
+
+
+class PG_OT_color_notice(bpy.types.Operator):
+    bl_idname = "perceptual_grade.color_notice"
+    bl_label = localization.native("label.color_auto")
+    bl_options = {"INTERNAL"}
+
+    detail: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+
+    @classmethod
+    def description(cls, _context, properties):
+        return properties.detail
+
+    def execute(self, _context):
+        return {"CANCELLED"}
+
+
+class PG_OT_reset_color(bpy.types.Operator):
+    bl_idname = "perceptual_grade.reset_color"
+    bl_label = localization.native("operator.reset_color")
+    bl_description = localization.native("action.reset_color_description")
+    bl_translation_context = localization.CONTEXT
+    bl_options = {"REGISTER", "UNDO"}
+
+    family: EnumProperty(
+        options={"HIDDEN", "SKIP_SAVE"},
+        items=(("J", localization.native("panel.color_j"), ""),
+               ("C", localization.native("panel.color_c"), ""),
+               ("ADAPTANCE", localization.native("panel.color_adaptance"), ""),
+               ("WARP", localization.native("panel.color_warp"), "")),
+    )
+
+    @classmethod
+    def poll(cls, context):
+        node = _output_node_from_context(context)
+        if _is_per_node_grade_node(node):
+            return True
+        return (_stack_active_grade(node) if _is_stack_node(node)
+                else getattr(node, "pg_grade", None)) is not None
+
+    def execute(self, context):
+        node = _output_node_from_context(context)
+        if not _is_output_node(node):
+            return {"CANCELLED"}
+        owner, settings = _color_settings_for_node(node)
+        if settings is None or owner is None:
+            return {"CANCELLED"}
+        _reset_color(settings, _color_family_fields(self.family.lower()))
+        if _is_per_node_grade_node(node):
+            _per_node_grade_changed(node)
+        else:
+            _grade_changed(owner)
         return {"FINISHED"}
 
 
@@ -5473,6 +6138,47 @@ class PG_PT_tone(bpy.types.Panel):
             _draw_tone_settings(node, self.layout)
 
 
+class _PGColorPanel:
+    bl_space_type = "NODE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = localization.native("panel.category")
+    bl_translation_context = localization.CONTEXT
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return PG_PT_linear.poll(context)
+
+    def draw(self, context):
+        node = _output_node_from_context(context)
+        if _is_output_node(node):
+            _draw_color_family(node, self.layout, self.color_family)
+
+
+class PG_PT_color_j(_PGColorPanel, bpy.types.Panel):
+    bl_idname = "PG_PT_color_j"
+    bl_label = localization.native("panel.color_j")
+    color_family = "j"
+
+
+class PG_PT_color_c(_PGColorPanel, bpy.types.Panel):
+    bl_idname = "PG_PT_color_c"
+    bl_label = localization.native("panel.color_c")
+    color_family = "c"
+
+
+class PG_PT_color_adaptance(_PGColorPanel, bpy.types.Panel):
+    bl_idname = "PG_PT_color_adaptance"
+    bl_label = localization.native("panel.color_adaptance")
+    color_family = "adaptance"
+
+
+class PG_PT_color_warp(_PGColorPanel, bpy.types.Panel):
+    bl_idname = "PG_PT_color_warp"
+    bl_label = localization.native("panel.color_warp")
+    color_family = "warp"
+
+
 def convert_grade_node(node, target_kind):
     """Replace a Grade's ownership while retaining its graph and current values."""
     if not _is_grade_node(node) or target_kind not in {"NODE", "DATABLOCK"}:
@@ -5485,10 +6191,13 @@ def convert_grade_node(node, target_kind):
         return node
 
     owner = node.pg_grade if _is_shared_grade_node(node) else node
-    values = (_LINEAR_DEFAULTS | TONE_DEFAULTS) if owner is None else {
+    claims = (color_authoring.EMPTY_CLAIMS if owner is None
+              else _hue_claims(_color_controls(owner)))
+    values = (_LINEAR_DEFAULTS | TONE_DEFAULTS | _COLOR_DEFAULTS) if owner is None else {
         name: getattr(controls, name)
         for controls, fields in ((_linear_controls(owner), _LINEAR_FIELDS),
-                                 (_tone_controls(owner), _TONE_FIELDS))
+                                 (_tone_controls(owner), _TONE_FIELDS),
+                                 (_color_controls(owner), _COLOR_FIELDS))
         for name in fields
     }
     snapshot = _kernel_snapshot(node)
@@ -5549,12 +6258,16 @@ def convert_grade_node(node, target_kind):
                 replacement.pg_grade = grade
         destination = grade if grade is not None else replacement
         for controls, fields in ((_linear_controls(destination), _LINEAR_FIELDS),
-                                 (_tone_controls(destination), _TONE_FIELDS)):
+                                 (_tone_controls(destination), _TONE_FIELDS),
+                                 (_color_controls(destination), _COLOR_FIELDS)):
             with _suspend(controls):
                 for field in fields:
                     setattr(controls, field, values[field])
+        _consume_color_authoring(_color_controls(destination),
+                                 color_authoring.Effects(claims=claims))
 
-        removed = (*_LINEAR_FIELDS, *_TONE_FIELDS) if target_kind == "DATABLOCK" else ()
+        removed = ((*_LINEAR_FIELDS, *_TONE_FIELDS, *_COLOR_FIELDS)
+                   if target_kind == "DATABLOCK" else ())
         target_mapping = {}
         if target_kind == "DATABLOCK":
             target_mapping = {
@@ -5562,6 +6275,8 @@ def convert_grade_node(node, target_kind):
                    for field in _LINEAR_FIELDS},
                 **{field: (grade, "pg_tone." + field)
                    for field in _TONE_FIELDS},
+                **{field: (grade, "pg_color." + field)
+                   for field in _COLOR_FIELDS},
             }
         else:
             target_mapping = {
@@ -5571,6 +6286,9 @@ def convert_grade_node(node, target_kind):
                 **{"pg_grade.pg_tone." + field:
                    (tree, replacement.path_from_id(field))
                    for field in _TONE_FIELDS},
+                **{"pg_grade.pg_color." + field:
+                   (tree, replacement.path_from_id(field))
+                   for field in _COLOR_FIELDS},
             }
         animation = NodeAnimationConversion(
             tree, node, replacement, removed_properties=removed,
@@ -5801,6 +6519,8 @@ def _register_handlers():
 
 
 def _unregister_handlers():
+    _frame_color_keys.clear()
+    _frame_color_invalidations.clear()
     for collection, callback in reversed(tuple(_registered_handlers)):
         try:
             while callback in collection:
@@ -5820,6 +6540,7 @@ def register():
     classes = (
         PGLinearSettings,
         PGToneSettings,
+        PGColorSettings,
         PGGradeData,
         PGStackEntry,
         PGShaderGradeStack,
@@ -5836,6 +6557,8 @@ def register():
         PG_OT_match_white,
         PG_OT_reset_directions,
         PG_OT_reset_tone,
+        PG_OT_color_notice,
+        PG_OT_reset_color,
         PG_OT_add_grade,
         PG_OT_convert_grade,
         PG_OT_add_stack,
@@ -5844,6 +6567,10 @@ def register():
         PG_OT_gesture_router,
         PG_PT_linear,
         PG_PT_tone,
+        PG_PT_color_j,
+        PG_PT_color_c,
+        PG_PT_color_adaptance,
+        PG_PT_color_warp,
     )
     try:
         localization.register()

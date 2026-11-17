@@ -1,6 +1,6 @@
 # Evaluation and interpolation
 
-The current analytic reference is `libraries/perceptual-grade-reference`. Its Stage 3 evaluates lightness/chroma rows → Warp hue/chroma → selective Adaptance → H–K repair → common positive Scale. The frozen Blender implementation and the archived 1.23.2 DCTL retain their own ordering and controls. Next Blender has not exposed Warp yet; its future implementation must follow the corrected reference.
+The current analytic reference is `libraries/perceptual-grade-reference`. Its Stage 3 evaluates lightness/chroma rows → Warp hue/chroma and positive Scale selection → selective Adaptance → H–K repair → Scale on the repaired state. The archived 1.23.2 DCTL and frozen Blender product retain their historical controls and ordering. Next Blender now exposes the reference Stage 3 numeric controls and follows the guard-before-Scale order.
 
 ## From appearance to RGB
 
@@ -23,6 +23,6 @@ A LUT samples the complete function of its selected profile. Input repair, Stage
 A completed table is valid only for the settings and model that produced it. Its signature includes model version, size, sampling space, address constants and every control that changes the function. A changed function requires a replacement table.
 
 - **A stale table must never be presented as current.** A last-good result may remain visible with an updating indication. If the current kernel cannot be built or recovered, fail visibly with magenta output preserving alpha.
-- **A preview is identified as a preview.** A coarse table may update during interaction, while final rendering requires the completed current result. Nested 33³/65³ grids reuse their shared vertices exactly.
+- **A preview is identified as a preview.** A coarse table may update during interaction, while final rendering requires the completed current result. The 33³ grid uses every other 65³ coordinate. Reference baking reuses the shared samples; the Next GPU helper evaluates the two resolutions separately.
 
 The [Next Blender policy machines](../development/next-policies.md) document the current product's publication and render-preflight contract. The [runtime architecture](../development/architecture.md) and legacy inverse implementation sections retain historical behavior under their stated scope.

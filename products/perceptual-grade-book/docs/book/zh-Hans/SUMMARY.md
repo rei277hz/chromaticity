@@ -9,10 +9,10 @@
   - [线性](guide/linear.md)
   - [影调](guide/tone.md)
   - [色彩](guide/color.md)
-- [共享与复用调色](guide/shared-grades.md)
-- [选择工作白点](guide/working-white.md)
-- [反向调色与调色堆栈](guide/inverse-stack.md)
-- [Blender 中的渲染方式](guide/render-methods.md)
+- [共享与动画 Grade](guide/shared-grades.md)
+- [场景工作空间](guide/working-white.md)
+- [Grade Stack](guide/inverse-stack.md)
+- [渲染与烘焙](guide/render-methods.md)
 
 # 参考
 

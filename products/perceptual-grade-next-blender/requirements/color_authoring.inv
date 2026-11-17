@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": [
+    "new"
+  ],
+  "step": "step",
+  "invariants": {
+    "owner_is_a_handle_or_absent": "state.origin_handle is None or (0 <= state.origin_handle and state.origin_handle < 6)"
+  },
+  "contracts": {
+    "step": {
+      "requires": [
+        "state.origin_handle is None or (0 <= state.origin_handle and state.origin_handle < 6)"
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "same_owner_retains_baseline",
+      "variables": {
+        "owner": "int"
+      },
+      "assume": [
+        "0 <= owner and owner < 6"
+      ],
+      "assert": "step(State(owner),Event(\"push\",owner)) == (State(owner),Effects())"
+    },
+    {
+      "name": "takeover_captures_current_position",
+      "variables": {
+        "previous": "Optional[int]",
+        "owner": "int"
+      },
+      "assume": [
+        "previous is None or (0 <= previous and previous < 6)",
+        "0 <= owner and owner < 6",
+        "previous != owner"
+      ],
+      "assert": "step(State(previous),Event(\"push\",owner)) == (State(owner),Effects(\"capture\"))"
+    },
+    {
+      "name": "manual_detaches_only_this_claim",
+      "variables": {
+        "owner": "int"
+      },
+      "assume": [
+        "0 <= owner and owner < 6"
+      ],
+      "assert": "step(State(owner),Event(\"manual\")) == (State(),Effects(\"clear\"))"
+    },
+    {
+      "name": "restore_requires_current_owner_and_baseline",
+      "variables": {
+        "owner": "int",
+        "requester": "Optional[int]",
+        "at_baseline": "bool"
+      },
+      "assume": [
+        "0 <= owner and owner < 6",
+        "requester != owner or not at_baseline"
+      ],
+      "assert": "step(State(owner),Event(\"restore\",requester,at_baseline)) == (State(owner),Effects())"
+    },
+    {
+      "name": "baseline_completion_releases_claim",
+      "variables": {
+        "owner": "int"
+      },
+      "assume": [
+        "0 <= owner and owner < 6"
+      ],
+      "assert": "step(State(owner),Event(\"restore\",owner,True)) == (State(),Effects(\"clear\"))"
+    },
+    {
+      "name": "clear_removes_claim",
+      "variables": {
+        "owner": "int"
+      },
+      "assume": [
+        "0 <= owner and owner < 6"
+      ],
+      "assert": "step(State(owner),Event(\"clear\")) == (State(),Effects(\"clear\"))"
+    },
+    {
+      "name": "absent_claim_has_no_clear_effect",
+      "variables": {},
+      "assert": "step(new(),Event(\"manual\")) == (new(),Effects()) and step(new(),Event(\"clear\")) == (new(),Effects()) and step(new(),Event(\"restore\",0,True)) == (new(),Effects())"
+    },
+    {
+      "name": "invalid_push_has_no_effect",
+      "variables": {
+        "state": "State",
+        "owner": "Optional[int]"
+      },
+      "assume": [
+        "state.origin_handle is None or (0 <= state.origin_handle and state.origin_handle < 6)",
+        "owner is None or owner < 0 or owner >= 6"
+      ],
+      "assert": "step(state,Event(\"push\",owner)) == (state,Effects())"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "push_restore_and_takeover_are_reachable",
+      "variables": {},
+      "lets": {
+        "pushed": "step(new(),Event(\"push\",0))",
+        "transferred": "step(pushed[0],Event(\"push\",3))",
+        "old_restore": "step(transferred[0],Event(\"restore\",0,True))",
+        "restored": "step(old_restore[0],Event(\"restore\",3,True))"
+      },
+      "assert": "pushed[1] == Effects(\"capture\") and transferred[1] == Effects(\"capture\") and old_restore[1] == Effects() and restored == (new(),Effects(\"clear\"))"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "same_owner_recaptures_baseline",
+      "function": "step",
+      "target": "state.origin_handle == event.origin_handle",
+      "replacement": "False",
+      "detects": [
+        "property.same_owner_retains_baseline"
+      ]
+    },
+    {
+      "name": "old_owner_can_release_claim",
+      "function": "step",
+      "target": "event.origin_handle == state.origin_handle",
+      "replacement": "True",
+      "detects": [
+        "property.restore_requires_current_owner_and_baseline"
+      ]
+    },
+    {
+      "name": "blocked_restore_releases_claim",
+      "function": "step",
+      "target": "event.at_baseline",
+      "replacement": "True",
+      "detects": [
+        "property.restore_requires_current_owner_and_baseline"
+      ]
+    }
+  ]
+}

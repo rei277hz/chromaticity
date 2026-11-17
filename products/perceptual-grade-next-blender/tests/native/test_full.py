@@ -1,13 +1,17 @@
 """Complete native Grade acceptance, independent reference and packed assets."""
 import hashlib
-from dataclasses import replace
+import json
+import os
+from dataclasses import asdict, replace
 from pathlib import Path
+import time
 from unittest import mock
 import unittest
 import bpy
 import numpy as np
 
 from color_tools.kernel import prepare, prepare_linear, ColorSettings, WebSettings
+from color_tools.perceptual_grade_reference import grading
 from color_tools.template_build import graph as graph_module
 from color_tools.template_build.graph import count_nodes, build_group, Graph, BuiltGrade
 from color_tools.kernel.boundary import prepare_boundary
@@ -15,6 +19,15 @@ from tools.perceptual_grade.reports import cases, full_cases, oracle
 from tools.perceptual_grade.reports.evaluate import assess
 from tools.perceptual_grade.reports.full_evaluate import _table_checks
 from tools.perceptual_grade.reports.native import NativeFixture
+
+
+def selected_contexts():
+    context = os.environ.get('PG_FULL_CONTEXT')
+    if context is None:
+        return ('shader', 'compositor')
+    if context not in ('shader', 'compositor'):
+        raise ValueError('PG_FULL_CONTEXT must select shader or compositor')
+    return (context,)
 
 
 def image_receipt(image):
@@ -66,9 +79,10 @@ class FullGradeTests(unittest.TestCase):
         rows = np.resize(np.arange(29, dtype=np.float32), 256)
         values = np.column_stack((rows, np.zeros((256, 2), np.float32), np.ones(256, np.float32)))
         expected = prepared.color.web_table.evaluate(0.)[rows.astype(int)]
-        for context in ('shader', 'compositor'):
+        for context in selected_contexts():
             with self.subTest(context=context):
-                fixture = NativeFixture(prepared, values, context, builder=parameter_row_group)
+                fixture = NativeFixture(prepared, values, context, threads=2,
+                                        builder=parameter_row_group)
                 try:
                     actual = fixture.render()
                     np.testing.assert_array_equal(np.column_stack((actual['rgb'], actual['alpha'])), expected)
@@ -77,7 +91,8 @@ class FullGradeTests(unittest.TestCase):
 
     def test_core_grades_all_spaces_shader_and_compositor(self):
         corpus = [row for row in full_cases.grades()
-                  if row[0] in ('reset', 'all_active', 'saturation', 'all_active_saturation')]
+                  if row[0] in ('reset', 'all_active', 'guard_before_scale',
+                                'saturation', 'all_active_saturation')]
         corpus += [row for row in full_cases.ui_boundaries()
                    if row[0] in ('all_families_max', 'all_families_max_active_tail')]
         prepared_grades = {name: prepare(linear, tone, color=color, boundary=self.boundary)
@@ -85,11 +100,22 @@ class FullGradeTests(unittest.TestCase):
         for space in cases.SPACES:
             values = full_cases.rgba(space, 256)
             for name, linear, tone, color in corpus:
+                reference_started = time.perf_counter()
                 prepared = replace(prepared_grades[name], linear=prepare_linear(linear, space), space=space)
                 expected = oracle.evaluate_full(values[:, :3], linear, tone, color, space)
-                for context in ('shader', 'compositor'):
+                if name == 'saturation':
+                    # Raw overflow is a separate diagnostic from the guarded
+                    # export oracle, whose Color state has already been repaired.
+                    _, reference_tone = oracle.parameters(linear, tone)
+                    raw_color = grading.Color(
+                        grading.ColorSettings(**asdict(color)), grading.Tone(reference_tone),
+                        hk_guard=False).apply_state(expected['tone'])
+                reference_seconds = time.perf_counter()-reference_started
+                for context in selected_contexts():
                     with self.subTest(space=space, case=name, context=context):
-                        fixture = NativeFixture(prepared, values, context)
+                        case_started = time.perf_counter()
+                        fixture = NativeFixture(prepared, values, context, threads=2)
+                        actual = None
                         try:
                             self.assertIs(fixture.built.prepared, prepared)
                             actual = fixture.render()
@@ -110,11 +136,22 @@ class FullGradeTests(unittest.TestCase):
                             if name == 'saturation':
                                 # Four independently decoded source hues provoke
                                 # finite raw energies beyond float32, of both signs.
-                                self.assertTrue(np.all(abs(expected['color'].energy[-4:]) > np.finfo(np.float32).max))
+                                self.assertTrue(np.all(abs(raw_color.energy[-4:]) > np.finfo(np.float32).max))
                                 self.assertTrue(np.all(actual['saturated'][-4:] > .5), actual['saturated'][-4:])
                                 self.assertLessEqual(oracle.metrics(actual['rgb'][-4:], expected['rgb'][-4:])['max_normalized'], 1e-4)
                         finally:
+                            disposal_started = time.perf_counter()
                             fixture.close()
+                            print(json.dumps(dict(
+                                kind='full_grade_case_timing', space=space,
+                                case=name, context=context,
+                                reference_seconds=reference_seconds,
+                                initialization=fixture.initialization_timings,
+                                render_seconds=None if actual is None else actual['seconds'],
+                                readback_seconds=None if actual is None else actual['readback_seconds'],
+                                disposal_seconds=time.perf_counter()-disposal_started,
+                                total_native_seconds=time.perf_counter()-case_started,
+                            )), flush=True)
 
     def test_oversized_graphs_and_construction_cleanup(self):
         prepared = prepare(color=ColorSettings(web=WebSettings(hue_degrees=((1.,)*6,)*4)),
@@ -131,7 +168,8 @@ class FullGradeTests(unittest.TestCase):
         def fail_after_image(graph, *args, **kwargs):
             pack_image(graph, *args, **kwargs)
             raise RuntimeError('Injected construction failure after image allocation')
-        for context in ('ShaderNodeTree', 'CompositorNodeTree'):
+        for selected in selected_contexts():
+            context = {'shader': 'ShaderNodeTree', 'compositor': 'CompositorNodeTree'}[selected]
             with self.subTest(context=context, outcome='oversized_allowed'):
                 baseline = resources()
                 with mock.patch.object(graph_module, 'count_nodes', side_effect=oversized_count) as counted:
@@ -159,9 +197,9 @@ class FullGradeTests(unittest.TestCase):
         _, linear, tone, color = next(row for row in full_cases.grades() if row[0] == 'all_active')
         values = full_cases.rgba(count=256)
         prepared = prepare(linear, tone, color=color, boundary=self.boundary)
-        for context in ('shader', 'compositor'):
+        for context in selected_contexts():
             with self.subTest(context=context):
-                fixture = NativeFixture(prepared, values, context)
+                fixture = NativeFixture(prepared, values, context, threads=2)
                 try:
                     before = fixture.render()
                     name = fixture.built.tree.name

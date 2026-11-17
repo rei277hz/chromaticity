@@ -1,6 +1,8 @@
 """Exercise the installed extension package in native Blender."""
 
 import atexit
+import asyncio
+from concurrent.futures import Future
 import importlib
 import json
 from pathlib import Path
@@ -152,7 +154,8 @@ def check_per_node_properties(node):
     assert all(name not in node.bl_rna.properties
                for name in ("pg_grade", "pg_linear", "pg_tone"))
     assert nodes._holder(node) == node
-    for field in (*nodes._LINEAR_FIELDS, *nodes._ANIMATABLE_TONE_FIELDS):
+    for field in (*nodes._LINEAR_FIELDS, *nodes._ANIMATABLE_TONE_FIELDS,
+                  *nodes._ANIMATABLE_COLOR_FIELDS):
         value = getattr(node, field)
         path = node.path_from_id(field)
         assert path == node.path_from_id() + "." + field
@@ -191,17 +194,25 @@ def check_per_node_properties(node):
     node.cr_balance = 0.5
     node.fit = 0.25
     node.peak_nits = "2000"
+    node.j_a_1 = 0.25
+    node.adaptance_b_2 = -0.125
+    node.web_hue_1_0 = 15.0
     snapshot = nodes._settings_for_node(node)
     assert snapshot.linear.exposure == 0.75
     assert snapshot.linear.balance == (-0.5, 0.0)
     assert snapshot.tone.fit == 0.25 and snapshot.tone.peak_nits == 2000.0
     assert snapshot.tone.input_nits[2] == node.input_midtones
+    assert snapshot.color.lightness[1][2] == 0.25
+    assert snapshot.color.adaptance[2][1] == -0.125
+    assert snapshot.color.web.hue_degrees[1][0] == 15.0
     copied_grade = nodes._make_grade(node)
     try:
         for field in nodes._LINEAR_FIELDS:
             assert getattr(copied_grade.pg_linear, field) == getattr(node, field)
         for field in nodes._TONE_FIELDS:
             assert getattr(copied_grade.pg_tone, field) == getattr(node, field)
+        for field in nodes._COLOR_FIELDS:
+            assert getattr(copied_grade.pg_color, field) == getattr(node, field)
     finally:
         bpy.data.node_groups.remove(copied_grade)
     assert nodes.PG_OT_reset_directions.execute(None, context) == {"FINISHED"}
@@ -210,6 +221,7 @@ def check_per_node_properties(node):
     assert nodes.PG_OT_reset_tone.execute(None, context) == {"FINISHED"}
     assert nodes._tone_settings(node) == nodes.ToneSettings()
     nodes._reset_linear(node)
+    nodes._reset_color(node)
     assert all(abs(getattr(node, field) - value) < 1e-6
                for field, value in nodes._LINEAR_DEFAULTS.items())
 
@@ -220,10 +232,13 @@ def check_per_node_properties(node):
         assert tuple(tree.nodes).index(node) < tuple(tree.nodes).index(shared)
         assert nodes._holder(shared.pg_linear) == shared
         assert nodes._holder(shared.pg_tone) == shared
+        assert nodes._holder(shared.pg_color) == shared
         shared.pg_linear.exposure = 1.0
         shared.pg_tone.fit = 0.5
+        shared.pg_color.web_hue_1_0 = 15.0
         assert shared.pg_linear.exposure == 0.0
         assert shared.pg_tone.fit == 0.0
+        assert shared.pg_color.web_hue_1_0 == 0.0
     finally:
         tree.nodes.remove(shared)
 
@@ -293,8 +308,16 @@ def parameter_banks(node):
     active = tree.get(nodes.PARAMETER_ACTIVE_BANK)
     assert len(images) == 2 and all(image is not None for image in images)
     assert active in (0, 1)
-    assert all(image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
-               for image in images)
+    bundles = tuple(nodes.parameter_bank_images(image) for image in images)
+    assert all(set(bundle) == set(nodes.PARAMETER_ROLES) for bundle in bundles)
+    assert all(
+        image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
+        and image.get(nodes.PARAMETER_ROLE) == role
+        and tuple(image.size) == tuple(nodes.PARAMETER_ROLE_SHAPES[role][1::-1])
+        and image.packed_file is not None and not image.is_dirty
+        for bundle in bundles for role, image in bundle.items()
+    )
+    assert all(nodes.parameter_bundle_receipt_matches(image) for image in images)
     selectors = [item for item in tree.nodes if item.get(nodes.PARAMETER_SELECTOR)]
     assert len(selectors) == 1, (node.name, selectors)
     selector = selectors[0]
@@ -304,15 +327,24 @@ def parameter_banks(node):
         selected = int(round(float(selector.inputs[0].default_value)))
     assert selected == active, (node.name, active, selected)
     readers = [item for item in node.node_tree.nodes if item.get(nodes.PARAMETER_READER)]
-    observed = {item.get(nodes.PARAMETER_READER_BANK): item.image for item in readers}
-    assert set(observed) == {0, 1}, (node.name, observed)
-    assert all(observed[bank] == images[bank] for bank in (0, 1)), node.name
+    observed = {(item.get(nodes.PARAMETER_READER_BANK),
+                 item.get(nodes.PARAMETER_READER_ROLE)): item.image for item in readers}
+    assert {(bank, role) for bank in (0, 1) for role in nodes.PARAMETER_ROLES} <= set(observed), (
+        node.name, observed,
+    )
+    assert all(observed[bank, role] == bundles[bank][role]
+               for bank, role in observed), node.name
     return images
 
 
 def parameter_image(node):
     banks = parameter_banks(node)
     return banks[node.node_tree[nodes.PARAMETER_ACTIVE_BANK]]
+
+
+def parameter_images(node):
+    return tuple(image for primary in parameter_banks(node)
+                 for image in nodes.parameter_bank_images(primary).values())
 
 
 def assert_grade_current(node):
@@ -331,7 +363,9 @@ def assert_grade_current(node):
         node.node_tree, node.id_data.bl_idname, signature, stack=False
     ), details
     banks = parameter_banks(node)
-    assert all(image.packed_file is not None and not image.is_dirty for image in banks), details
+    assert all(image.packed_file is not None and not image.is_dirty
+               for primary in banks
+               for image in nodes.parameter_bank_images(primary).values()), details
     if node.id_data.bl_idname == nodes.SHADER_TREE:
         group_input = node.node_tree.nodes.get("Group Input")
         group_output = node.node_tree.nodes.get("Group Output")
@@ -352,7 +386,10 @@ def assert_local_grade_resources(identities):
         assert kernel.get(nodes.PARAMETER_OWNER) == owner
         assert not kernel[nodes.PARAMETER_OWNER].is_embedded_data
         assert kernel.get(nodes.PARAMETER_OWNER_NODE) == node_name
-        resources.append((kernel.name, tuple(image.name for image in parameter_banks(node))))
+        resources.append((kernel.name, tuple(
+            image.name for primary in parameter_banks(node)
+            for image in nodes.parameter_bank_images(primary).values()
+        )))
     assert len({kernel for kernel, _image in resources}) == len(identities)
     assert len({images for _kernel, images in resources}) == len(identities)
     return tuple(resources)
@@ -535,6 +572,7 @@ assert nodes.PGCompositorGradePerNode.is_registered
 assert nodes.PGGradeData.is_registered
 assert nodes.PGLinearSettings.is_registered
 assert nodes.PGToneSettings.is_registered
+assert nodes.PGColorSettings.is_registered
 assert nodes.PG_PT_linear.is_registered
 assert nodes.PGShaderGradeStack.is_registered
 assert nodes.PGCompositorGradeStack.is_registered
@@ -593,7 +631,7 @@ first_node_name = first_node.name
 # Deleting and recreating the same local Grade must not reuse removed image
 # wrappers from the previous node's resources. Keep the runtime cache intact.
 removed_kernel_name = first_node.node_tree.name
-removed_image_names = tuple(image.name for image in parameter_banks(first_node))
+removed_image_names = tuple(image.name for image in parameter_images(first_node))
 first_material.node_tree.nodes.remove(first_node)
 del first_node
 assert first_node_name not in first_material.node_tree.nodes
@@ -680,7 +718,7 @@ compositor_node = compositor_tree.nodes.active
 assert_grade_current(compositor_node)
 removed_node_name = compositor_node.name
 removed_kernel_name = compositor_node.node_tree.name
-removed_image_names = tuple(image.name for image in parameter_banks(compositor_node))
+removed_image_names = tuple(image.name for image in parameter_images(compositor_node))
 compositor_tree.nodes.remove(compositor_node)
 del compositor_node
 assert removed_kernel_name not in bpy.data.node_groups
@@ -852,7 +890,7 @@ preparation_threads = []
 kernel_build_threads = []
 parameter_write_threads = []
 preparation_started = threading.Event()
-release_preparation = threading.Event()
+release_preparation = Future()
 runtime = nodes._preparation_runtime
 original_prepare = runtime.prepare
 original_kernel_builder = nodes._kernel
@@ -860,10 +898,12 @@ original_parameter_writer = nodes._write_grade_parameters
 
 
 async def record_prepare(payload):
-    settings = payload.linear
-    preparation_threads.append((threading.get_ident(), settings.exposure))
+    preparation_threads.append((threading.get_ident(), payload))
     preparation_started.set()
-    assert release_preparation.wait(10), "preparation worker was not released"
+    # The Grade lane is an async aggregate on the sole coordinator loop.
+    # Blocking that loop on a threading.Event can time out while the host is
+    # still checking shared consumers, causing retries of identical work.
+    await asyncio.wrap_future(release_preparation)
     return await original_prepare(payload)
 
 
@@ -880,27 +920,32 @@ def record_parameter_write(image, pixels):
 runtime.prepare = record_prepare
 nodes._kernel = record_kernel_build
 nodes._write_grade_parameters = record_parameter_write
-shared_grade.pg_linear.exposure = 1.0
-assert wait_for_receipt(preparation_started, "wait for Grade preparation start"), (
-    "preparation did not start on a worker"
-)
-assert shader_node.pg_linear.exposure == 0.0
-assert compositor_node.pg_linear.exposure == 0.0
-for node in (shader_node, compositor_node):
-    assert node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
-    assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
-    assert node.get(nodes._NODE_PENDING) == "status.showing_last_good"
-assert_grade_graph(shader_graph)
-assert_grade_graph(compositor_graph)
-release_preparation.set()
-reconcile_for_render(bpy.context.scene)
-failures = nodes._drain_preparations()
-assert not failures, failures
-runtime.prepare = original_prepare
-nodes._kernel = original_kernel_builder
-nodes._write_grade_parameters = original_parameter_writer
+try:
+    shared_grade.pg_linear.exposure = 1.0
+    assert wait_for_receipt(preparation_started, "wait for Grade preparation start"), (
+        "preparation did not start on a worker"
+    )
+    assert shader_node.pg_linear.exposure == 0.0
+    assert compositor_node.pg_linear.exposure == 0.0
+    for node in (shader_node, compositor_node):
+        assert node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
+        assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
+        assert node.get(nodes._NODE_PENDING) == "status.showing_last_good"
+    assert_grade_graph(shader_graph)
+    assert_grade_graph(compositor_graph)
+    release_preparation.set_result(None)
+    reconcile_for_render(bpy.context.scene)
+    failures = nodes._drain_preparations()
+    assert not failures, failures
+finally:
+    if not release_preparation.done():
+        release_preparation.set_result(None)
+    runtime.prepare = original_prepare
+    nodes._kernel = original_kernel_builder
+    nodes._write_grade_parameters = original_parameter_writer
 assert len(preparation_threads) == 1, preparation_threads
-assert all(thread != main_thread for thread, _exposure in preparation_threads)
+assert all(thread != main_thread for thread, _settings in preparation_threads)
+assert preparation_threads[0][1] == nodes._grade_settings(shared_grade, nodes._working_space())
 assert not kernel_build_threads, kernel_build_threads
 shared_parameter_image = parameter_image(shader_node)
 assert parameter_banks(shader_node) == shared_parameter_banks
@@ -964,6 +1009,57 @@ assert any(node.bl_idname == "ShaderNodeTexImage"
            and "Tone" in node.label
            for node in shader_node.node_tree.nodes)
 
+# All Color families participate in the shared snapshot and one publication
+# generation across Shader and Compositor, without changing topology or IDs.
+color_users = (*shared_shader_nodes, shader_node, compositor_node, shared_compositor_node)
+color_kernels = tuple(node.node_tree.as_pointer() for node in color_users)
+color_images = tuple(image.as_pointer() for image in parameter_images(shader_node))
+shared_grade.pg_color.j_a_1 = 0.125
+shared_grade.pg_color.c_high_2 = -0.0625
+shared_grade.pg_color.adaptance_a_1 = 0.125
+shared_grade.pg_color.web_hue_1_0 = 12.0
+shared_grade.pg_color.web_scale_2_1 = 0.125
+reconcile_for_render(bpy.context.scene)
+assert not nodes._drain_preparations()
+shared_color_settings = nodes._grade_settings(shared_grade, nodes._working_space())
+assert shared_color_settings.color.web.hue_degrees[1][0] == 12.0
+assert tuple(node.node_tree.as_pointer() for node in color_users) == color_kernels
+assert tuple(image.as_pointer() for image in parameter_images(shader_node)) == color_images
+assert len({node.node_tree[nodes.PARAMETER_GENERATION] for node in color_users}) == 1
+for node in color_users:
+    assert_grade_current(node)
+    assert node.node_tree[nodes._KERNEL_SIGNATURE] == nodes._signature(
+        node.id_data.bl_idname, nodes._snapshot_values(shared_color_settings),
+        nodes._working_space(),
+    )
+
+# The inactive bank already holds the preceding Web payload. Changing only
+# Linear twice must reuse every unchanged Color role in both candidate banks.
+for exposure in (1.0625, 1.125):
+    shared_grade.pg_linear.exposure = exposure
+    reconcile_for_render(bpy.context.scene)
+    assert not nodes._drain_preparations()
+role_uploads = []
+original_color_writer = nodes._write_grade_parameters
+
+def record_color_upload(image, pixels):
+    role_uploads.append(image[nodes.PARAMETER_ROLE])
+    return original_color_writer(image, pixels)
+
+nodes._write_grade_parameters = record_color_upload
+try:
+    shared_grade.pg_color.web_hue_1_0 = 14.0
+    reconcile_for_render(bpy.context.scene)
+    assert not nodes._drain_preparations()
+finally:
+    nodes._write_grade_parameters = original_color_writer
+# The candidate bank still has the first exposure, so its scalar role must
+# catch up along with Web. All other Color roles already match and are reused.
+assert set(role_uploads) == {"parameter", "web"}, role_uploads
+for node in color_users:
+    assert_grade_current(node)
+assert shared_grade.pg_color.web_hue_1_0 == 14.0
+
 # Material node trees are included in shared Grade updates.
 material = bpy.data.materials.new("Grade Material Test")
 material.use_nodes = True
@@ -1007,7 +1103,7 @@ assert independent_node.node_tree.get(nodes._KERNEL_SIGNATURE) == (
 # relinking that same Grade must build fresh resources from its saved settings.
 removed_node_name = independent_node.name
 removed_kernel_name = independent_node.node_tree.name
-removed_image_names = tuple(image.name for image in parameter_banks(independent_node))
+removed_image_names = tuple(image.name for image in parameter_images(independent_node))
 shader_tree.nodes.remove(independent_node)
 del independent_node, independent_image
 assert removed_kernel_name not in bpy.data.node_groups
@@ -1067,6 +1163,24 @@ for corruption in ("unmarked", "misbound", "misbound_tracked"):
     corrupt_kernel.use_fake_user = False
     assert not nodes._retire_kernels((corrupt_kernel,))
 
+# A different, valid role image cannot satisfy the marked reader's binding.
+corrupt_kernel = independent_node.node_tree
+corrupt_kernel.use_fake_user = True
+role_reader = next(item for item in corrupt_kernel.nodes
+                   if item.get(nodes.PARAMETER_READER)
+                   and item.get(nodes.PARAMETER_READER_ROLE) == "color")
+role_bank = role_reader[nodes.PARAMETER_READER_BANK]
+role_reader.image = nodes.parameter_bank_images(
+    corrupt_kernel[nodes.PARAMETER_BANK_BINDINGS[role_bank]])["web"]
+assert not nodes._parameter_kernel_valid(corrupt_kernel)
+nodes._node_stores.pop(independent_node.as_pointer())
+assert not nodes._refresh_nodes((independent_node,))
+assert not nodes._drain_preparations()
+assert_grade_current(independent_node)
+assert independent_node.node_tree != corrupt_kernel
+corrupt_kernel.use_fake_user = False
+assert not nodes._retire_kernels((corrupt_kernel,))
+
 # Readiness must prove that each published selector actually chooses the two
 # parameter branches, rather than trusting reader metadata alone.
 shader_kernel = independent_node.node_tree
@@ -1119,7 +1233,7 @@ assert nodes._parameter_kernel_valid(compositor_kernel)
 
 # Native removal can invalidate an image without going through node teardown.
 # A fresh reconciliation must reject the cached wrapper and repair the Grade.
-removed_images = parameter_banks(independent_node)
+removed_images = parameter_images(independent_node)
 for removed_image in removed_images:
     bpy.data.images.remove(removed_image, do_unlink=True)
 del removed_image, removed_images
@@ -1132,7 +1246,7 @@ assert_grade_current(independent_node)
 # Recover an already-poisoned cache even when no installed kernel remains for
 # ordinary replacement retirement to invalidate the removed resource wrappers.
 removed_kernel = independent_node.node_tree
-removed_images = parameter_banks(independent_node)
+removed_images = parameter_images(independent_node)
 bpy.data.node_groups.remove(removed_kernel, do_unlink=True)
 for removed_image in removed_images:
     bpy.data.images.remove(removed_image)
@@ -1233,6 +1347,8 @@ saved_parameter_pixels = np.asarray(
 saved_parameter_signature = parameter_image(shared_shader_nodes[0]).get(
     nodes.PARAMETER_SIGNATURE
 )
+saved_color_values = {field: getattr(shared_grade.pg_color, field)
+                      for field in nodes._COLOR_FIELDS}
 saved_local_resources = assert_local_grade_resources(local_grade_identities)
 
 with tempfile.TemporaryDirectory(prefix="perceptual-grade-recovery-") as temp:
@@ -1275,6 +1391,8 @@ new_signature = nodes._kernel_signature(
 assert len({node.node_tree.as_pointer() for node in shared_shader_nodes}) == 1
 assert all(node.node_tree.get(nodes._KERNEL_SIGNATURE) == new_signature
            for node in shared_shader_nodes)
+assert {field: getattr(shared_grade.pg_color, field)
+        for field in nodes._COLOR_FIELDS} == saved_color_values
 assert shared_shader_nodes[0].node_tree.name == saved_shared_kernel_name
 # Repairing the partially saved shared group may rewrite its inactive bank;
 # the active bank's signature and numerical content must survive.
@@ -1406,6 +1524,9 @@ nodes._apply_output_effect = original_output_effect
 _start_timing_section("Stack builds and gestures")
 stack_grade = nodes._make_grade()
 stack_grade.pg_linear.exposure = 0.5
+stack_grade.pg_color.j_a_1 = 0.125
+stack_grade.pg_color.adaptance_b_2 = -0.0625
+stack_grade.pg_color.web_hue_2_3 = 15.0
 shader_stack = nodes.create_stack_node(shader_tree)
 shader_entry = shader_stack.pg_stack_entries.add()
 shader_entry.key = "shader-forward"
@@ -1445,6 +1566,9 @@ assert nodes._stack_grade_ids(shader_stack) == (stack_grade.as_pointer(),)
 assert nodes._stack_signature(
     nodes._settings_for_node(shader_stack), nodes._working_space()
 ) == shader_stack.node_tree.get(nodes._KERNEL_SIGNATURE)
+assert nodes._settings_for_node(shader_stack)[0].color.lightness[1][2] == 0.125
+assert nodes._settings_for_node(shader_stack)[0].color.adaptance[2][1] == -0.0625
+assert nodes._settings_for_node(shader_stack)[0].color.web.hue_degrees[2][3] == 15.0
 shader_stack_graph = connect_grade_graph(shader_tree, shader_stack)
 compositor_stack_graph = connect_grade_graph(
     compositor_tree, compositor_stack, compositor=True
@@ -2473,15 +2597,17 @@ undo_grade_name = undo_node.pg_grade.name
 assert bpy.ops.ed.undo_push(message="Gesture undo baseline") == {"FINISHED"}
 
 
-def commit_test_gesture(node, window_key, exposure):
+def commit_test_gesture(node, window_key, exposure, hue):
     nodes._arm_gesture(window_key, node, (0, 0))
     token = nodes._gesture_token(window_key)
     nodes._activate_gesture(window_key, token)
     assert node.pg_grade is not None
     settings = node.pg_grade.pg_linear
+    color = node.pg_grade.pg_color
     settings.exposure = exposure
+    color.web_hue_1_0 = hue
     nodes._end_gesture(window_key, token)
-    del settings
+    del settings, color
 
 
 @_timings.timed("undo reconciliation")
@@ -2504,7 +2630,7 @@ def reconcile_after_test_undo(node_name):
     del node
 
 
-commit_test_gesture(undo_node, 9001, 0.5)
+commit_test_gesture(undo_node, 9001, 0.5, 15.0)
 assert undo_node.pg_grade is not None
 assert bpy.ops.ed.undo_push(message="First Grade gesture") == {"FINISHED"}
 del undo_node, undo_tree
@@ -2515,17 +2641,19 @@ undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
 assert undo_node.pg_grade is not None
 assert undo_node.pg_grade.name == undo_grade_name
 assert abs(undo_node.pg_grade.pg_linear.exposure) < 1e-6
+assert abs(undo_node.pg_grade.pg_color.web_hue_1_0) < 1e-6
 del undo_node
 reconcile_after_test_undo(undo_node_name)
 
 undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
-commit_test_gesture(undo_node, 9002, 0.625)
+commit_test_gesture(undo_node, 9002, 0.625, 15.0)
 assert undo_node.pg_grade is not None
 first_grade_name = undo_node.pg_grade.name
 assert bpy.ops.ed.undo_push(message="First of two Grade gestures") == {"FINISHED"}
 undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
-commit_test_gesture(undo_node, 9003, 1.0)
+commit_test_gesture(undo_node, 9003, 1.0, 30.0)
 assert abs(undo_node.pg_grade.pg_linear.exposure - 1.0) < 1e-6
+assert abs(undo_node.pg_grade.pg_color.web_hue_1_0 - 30.0) < 1e-6
 assert bpy.ops.ed.undo_push(message="Second of two Grade gestures") == {"FINISHED"}
 del undo_node
 with _timings.operation("native undo second gesture"):
@@ -2534,6 +2662,7 @@ undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
 assert undo_node.pg_grade is not None
 assert undo_node.pg_grade.name == first_grade_name
 assert abs(undo_node.pg_grade.pg_linear.exposure - 0.625) < 1e-6
+assert abs(undo_node.pg_grade.pg_color.web_hue_1_0 - 15.0) < 1e-6
 del undo_node
 reconcile_after_test_undo(undo_node_name)
 with _timings.operation("native undo first gesture"):
@@ -2542,6 +2671,7 @@ undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
 assert undo_node.pg_grade is not None
 assert undo_node.pg_grade.name == undo_grade_name
 assert abs(undo_node.pg_grade.pg_linear.exposure) < 1e-6
+assert abs(undo_node.pg_grade.pg_color.web_hue_1_0) < 1e-6
 del undo_node
 reconcile_after_test_undo(undo_node_name)
 undo_node = bpy.data.node_groups[undo_tree_name].nodes[undo_node_name]
@@ -2593,6 +2723,7 @@ assert not nodes.PGCompositorGradePerNode.is_registered
 assert not nodes.PGGradeData.is_registered
 assert not nodes.PGLinearSettings.is_registered
 assert not nodes.PGToneSettings.is_registered
+assert not nodes.PGColorSettings.is_registered
 assert not nodes.PG_OT_convert_grade.is_registered
 assert not nodes.PG_PT_linear.is_registered
 assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)

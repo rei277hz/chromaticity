@@ -54,12 +54,19 @@ def parameter_banks(node):
     else:
         selected = int(round(float(selector.inputs[0].default_value)))
     assert selected == active, (node.name, active, selected)
+    bundles = tuple(nodes.parameter_bank_images(primary) for primary in banks)
+    assert all(set(bundle) == set(nodes.PARAMETER_ROLES) for bundle in bundles)
+    assert all(nodes.parameter_bundle_receipt_matches(primary) for primary in banks)
     assert all(image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA
-               for image in banks)
+               and image.get(nodes.PARAMETER_ROLE) == role
+               and image.packed_file is not None and not image.is_dirty
+               for bundle in bundles for role, image in bundle.items())
     readers = [item for item in tree.nodes if item.get(nodes.PARAMETER_READER)]
-    observed = {item.get(nodes.PARAMETER_READER_BANK): item.image for item in readers}
-    assert set(observed) == {0, 1}, (node.name, observed)
-    assert all(observed[bank] == banks[bank] for bank in (0, 1)), node.name
+    observed = {(item.get(nodes.PARAMETER_READER_BANK),
+                 item.get(nodes.PARAMETER_READER_ROLE)): item.image for item in readers}
+    assert {(bank, role) for bank in (0, 1) for role in nodes.PARAMETER_ROLES} <= set(observed)
+    assert all(observed[bank, role] == bundles[bank][role]
+               for bank, role in observed), node.name
     return banks
 
 
@@ -75,9 +82,10 @@ def assert_clean_shared_image(users):
         state = nodes._node_stores[node.as_pointer()]["state"]
         assert nodes.node_policy.output_allowed(state), (node.name, state)
         assert not node.get(nodes._NODE_ERROR)
-    for image in banks[0]:
-        assert image.packed_file is not None
-        assert not image.is_dirty, "Grade publication left an unsaved parameter image"
+    for primary in banks[0]:
+        for image in nodes.parameter_bank_images(primary).values():
+            assert image.packed_file is not None
+            assert not image.is_dirty, "Grade publication left an unsaved parameter image"
     return parameter_image(users[0])
 
 
@@ -173,6 +181,12 @@ saved_pixels = np.asarray(image.pixels[:], dtype=np.float32)
 saved_banks = parameter_banks(shader)
 saved_bank_names = tuple(bank.name for bank in saved_banks)
 saved_bank_pixels = tuple(np.asarray(bank.pixels[:], dtype=np.float32) for bank in saved_banks)
+saved_roles = tuple(
+    (role, image.name, np.asarray(image.pixels[:], dtype=np.float32),
+     image[nodes.PARAMETER_CONTENT_SIGNATURE])
+    for primary in saved_banks
+    for role, image in nodes.parameter_bank_images(primary).items()
+)
 saved_active_bank = nodes._kernel_for_node(shader)[nodes.PARAMETER_ACTIVE_BANK]
 grade_name = grade.name
 material_name = material.name
@@ -197,6 +211,12 @@ assert tuple(bank.name for bank in restored_banks) == saved_bank_names
 assert all(not bank.is_dirty and bank.packed_file is not None for bank in restored_banks)
 for bank, pixels in zip(restored_banks, saved_bank_pixels):
     np.testing.assert_array_equal(bank.pixels[:], pixels)
+restored_roles = tuple((role, image) for primary in restored_banks
+                       for role, image in nodes.parameter_bank_images(primary).items())
+for (role, image), (saved_role, name, pixels, signature) in zip(restored_roles, saved_roles):
+    assert role == saved_role and image.name == name
+    assert image[nodes.PARAMETER_CONTENT_SIGNATURE] == signature
+    np.testing.assert_array_equal(image.pixels[:], pixels)
 assert nodes._kernel_for_node(shader)[nodes.PARAMETER_ACTIVE_BANK] == saved_active_bank
 assert parameter_image(shader) == parameter_image(compositor)
 np.testing.assert_array_equal(parameter_image(shader).pixels[:], saved_pixels)
@@ -212,6 +232,8 @@ for fail_invalidation in (False, True):
     image = assert_clean_shared_image(users)
     image.use_fake_user = True
     previous_banks = parameter_banks(shader)
+    previous_role_images = tuple(image for primary in previous_banks
+                                 for image in nodes.parameter_bank_images(primary).values())
     previous_bank_pointers = tuple(
         bank.as_pointer() for bank in previous_banks
     )
@@ -221,24 +243,26 @@ for fail_invalidation in (False, True):
     tag_attempts, installation_receipts, invalidation_errors = [], [], []
 
     def observing_invalidation(candidate):
-        signature = candidate.get(nodes.PARAMETER_SIGNATURE)
+        primary = parameter_image(shader)
+        signature = primary.get(nodes.PARAMETER_SIGNATURE)
         assert candidate.as_pointer() != image.as_pointer()
-        assert candidate in previous_banks
+        assert candidate in previous_role_images
+        assert candidate == nodes.parameter_bank_images(primary)[candidate[nodes.PARAMETER_ROLE]]
         assert signature != previous_signature
         assert all(nodes._kernel_for_node(node).get(nodes.PARAMETER_SIGNATURE) == signature
                    for node in users)
-        assert all(parameter_image(node) == candidate for node in users)
+        assert all(parameter_image(node) == primary for node in users)
         assert all(parameter_banks(node) == previous_banks for node in users)
         assert candidate.packed_file is not None and not candidate.is_dirty
         assert not installation_receipts, installation_receipts
-        tag_attempts.append(candidate.as_pointer())
+        tag_attempts.append((candidate.as_pointer(), candidate[nodes.PARAMETER_ROLE]))
         if fail_invalidation:
             raise RuntimeError("simulated Grade image invalidation failure")
         original_invalidation(candidate)
 
     def observing_dispatch(node, event, *args, **kwargs):
         if event.kind == "installation_result" and event.error is None:
-            assert len(tag_attempts) == 1, tag_attempts
+            assert [role for _pointer, role in tag_attempts] == list(nodes.PARAMETER_ROLES)
             installation_receipts.append(node.as_pointer())
         return original_dispatch(node, event, *args, **kwargs)
 
@@ -257,7 +281,7 @@ for fail_invalidation in (False, True):
         nodes._invalidate_grade_parameters = original_invalidation
         nodes._dispatch = original_dispatch
         nodes._publish_grade_parameters = original_publication
-    assert len(tag_attempts) == 1, tag_attempts
+    assert len(tag_attempts) == (1 if fail_invalidation else len(nodes.PARAMETER_ROLES)), tag_attempts
     assert image.get(nodes.PARAMETER_SIGNATURE) == previous_signature
     np.testing.assert_array_equal(image.pixels[:], previous_pixels)
     assert image.packed_file is not None and not image.is_dirty
@@ -344,6 +368,45 @@ for fail_count, silent in ((1, False), (1, True)):
     reconcile()
     assert_clean_shared_image(users)
 assert not bpy.ops.image.save_all_modified.poll()
+
+# Fail after scalar, Color, and Web payloads have staged but before the
+# Adaptance role finishes. The active complete bundle must remain immutable;
+# no selector or successful node receipt may publish that partial candidate.
+image = assert_clean_shared_image(users)
+active_roles = tuple(nodes.parameter_bank_images(image).items())
+active_snapshots = tuple((role, target, np.asarray(target.pixels[:], dtype=np.float32),
+                          target[nodes.PARAMETER_CONTENT_SIGNATURE])
+                         for role, target in active_roles)
+for _role, target in active_roles:
+    target.use_fake_user = True
+bundle_writes = []
+original_writer = nodes._write_grade_parameters
+
+def fail_adaptance_upload(target, pixels):
+    role = target[nodes.PARAMETER_ROLE]
+    bundle_writes.append(role)
+    original_writer(target, pixels)
+    if role == "adaptance":
+        raise RuntimeError("simulated final Grade role upload failure")
+
+nodes._write_grade_parameters = fail_adaptance_upload
+try:
+    grade.pg_color.j_a_1 = 0.125
+    grade.pg_color.web_hue_1_0 = 12.0
+    grade.pg_color.adaptance_a_1 = 0.125
+    reconcile()
+finally:
+    nodes._write_grade_parameters = original_writer
+assert bundle_writes[-1] == "adaptance" and "color" in bundle_writes, bundle_writes
+for role, target, pixels, signature in active_snapshots:
+    np.testing.assert_array_equal(target.pixels[:], pixels)
+    assert not target.is_dirty and target[nodes.PARAMETER_CONTENT_SIGNATURE] == signature, role
+    target.use_fake_user = False
+for node in users:
+    assert not nodes.node_policy.output_allowed(nodes._node_stores[node.as_pointer()]["state"])
+    assert nodes._kernel_for_node(node).get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+reconcile()
+assert_clean_shared_image(users)
 
 # Failure presentation and unused-resource cleanup must not hide a transaction's
 # causal error or prevent the other shared consumer from failing closed.

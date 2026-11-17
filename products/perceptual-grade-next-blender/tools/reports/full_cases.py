@@ -23,6 +23,14 @@ def saturation_grade():
         web=WebSettings(log_chroma=((16.,)*6,)*4,log_scale=((8.,)*6,)*4))
 
 
+def guard_before_scale_grade():
+    """An active Adaptance/Scale request that distinguishes repair order."""
+    return ColorSettings(
+        global_gain=2.,
+        adaptance=((3., -1.), (-2., 2.), (4., 1.), (-3., -2.)),
+        web=WebSettings(log_chroma=((.5,)*6,)*4, log_scale=((2.,)*6,)*4))
+
+
 def maximum_grade():
     """All Color families at authored UI extremes, with valid cyclic hues."""
     return ColorSettings(
@@ -49,6 +57,7 @@ def grades():
     for name in ('log_chroma','hue_degrees','log_scale'):
         yield 'web_'+name,linear,tone,ColorSettings(web=WebSettings(**{name:getattr(base.web,name)}))
     yield 'all_active',list(cases.grades())[5][1],list(cases.grades())[5][2],base
+    yield 'guard_before_scale',linear,tone,guard_before_scale_grade()
     yield 'saturation',linear,tone,saturation_grade()
     combined = next(row for row in cases.grades() if row[0] == 'combined')
     yield 'all_active_saturation', combined[1], combined[2], replace(base,

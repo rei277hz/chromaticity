@@ -12,6 +12,7 @@ python_test(
         "generated-assets": "//products/perceptual-grade-book/generators:assets",
         "diagram-assets": "//products/perceptual-grade-book/diagrams:assets",
         "policy-figures.json": "//products/perceptual-grade-book/diagrams:manifest",
+        "generators.BUCK": "//products/perceptual-grade-book/generators:publication_sources",
         "cdn-assets": "//products/perceptual-grade-book/cdn:assets",
         "data-downloads": "//products/perceptual-grade-book:data_downloads",
         "tool-pins.bzl": "//products/perceptual-grade-book:tool_pins",

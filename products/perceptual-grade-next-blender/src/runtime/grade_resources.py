@@ -6,10 +6,11 @@ from typing import Optional
 from ..kernel.stage2_bindings import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_GENERATION,
     PARAMETER_IMAGE, PARAMETER_READER, PARAMETER_READER_BANK,
-    PARAMETER_SELECTOR,
+    PARAMETER_READER_ROLE, PARAMETER_ROLE, PARAMETER_SELECTOR,
 )
 from ..kernel.stage2_parameters import (
-    PARAMETER_SCHEMA, PARAMETER_SHAPE,
+    PARAMETER_SCHEMA, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
+    parameter_bank_images, parameter_bundle_receipt_matches,
 )
 from ..policy import resources as resource_policy
 from .publication import PublicationDeferred, PublicationGate
@@ -26,10 +27,27 @@ class GradeResource:
     active_bank: Optional[int] = None
     generation: Optional[int] = None
     trees: dict = field(default_factory=dict)
+    retiring_images: Optional[tuple[object, ...]] = None
 
     @property
     def images(self):
-        return () if self.banks is None else self.banks
+        if self.retiring_images is not None:
+            return self.retiring_images
+        if self.banks is None:
+            return ()
+        images = []
+        for primary in self.banks:
+            try:
+                bundle = parameter_bank_images(primary)
+            except (AttributeError, ReferenceError, RuntimeError):
+                # External ID deletion also removes its role bindings. Keep
+                # the wrapper available for eviction without dereferencing it;
+                # surviving native readers protect their remaining images.
+                images.append(primary)
+                continue
+            images.extend(image for role in PARAMETER_ROLES
+                          if (image := bundle.get(role)) is not None)
+        return tuple(images)
 
     @property
     def image(self):
@@ -166,8 +184,7 @@ class GradeResources:
             generation = tree.get(PARAMETER_GENERATION)
             valid_banks = (
                 len(banks) == 2 and banks[0] is not None and banks[1] is not None
-                and not cls._same_image(banks[0], banks[1])
-                and all(cls._valid_image(image) for image in banks)
+                and cls._valid_pair(banks)
             )
             observation = resource_policy.Adoption(
                 owner_matches=tree.get(OWNER) == owner,
@@ -191,13 +208,41 @@ class GradeResources:
             pass
         return None
 
-    @staticmethod
-    def _valid_image(image):
+    @classmethod
+    def _valid_image(cls, image, role):
         try:
+            shape = PARAMETER_ROLE_SHAPES[role]
             return (image.as_pointer() != 0
                     and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
-                    and tuple(image.size) == (PARAMETER_SHAPE[1], PARAMETER_SHAPE[0]))
+                    and image.get(PARAMETER_ROLE) == role
+                    and tuple(image.size) == (shape[1], shape[0]))
         except (AttributeError, ReferenceError, RuntimeError, TypeError):
+            return False
+
+    @classmethod
+    def _valid_bundle(cls, primary):
+        try:
+            images = parameter_bank_images(primary)
+            if set(images) != set(PARAMETER_ROLES):
+                return False
+            values = tuple(images[role] for role in PARAMETER_ROLES)
+            pointers = tuple(image.as_pointer() for image in values)
+            return (all(pointers) and len(set(pointers)) == len(PARAMETER_ROLES)
+                    and all(cls._valid_image(image, role)
+                            for role, image in zip(PARAMETER_ROLES, values))
+                    and parameter_bundle_receipt_matches(primary))
+        except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
+            return False
+
+    @classmethod
+    def _valid_pair(cls, banks):
+        try:
+            if len(banks) != 2 or not all(cls._valid_bundle(image) for image in banks):
+                return False
+            pointers = tuple(image.as_pointer() for primary in banks
+                             for image in parameter_bank_images(primary).values())
+            return len(set(pointers)) == 2 * len(PARAMETER_ROLES)
+        except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
             return False
 
     @staticmethod
@@ -228,12 +273,17 @@ class GradeResources:
             observed = set()
             for reader in readers:
                 bank = reader.get(PARAMETER_READER_BANK)
-                if (bank not in (0, 1)
-                        or not GradeResources._same_image(
-                            getattr(reader, "image", None), banks[bank])):
+                role = reader.get(PARAMETER_READER_ROLE)
+                if bank not in (0, 1) or role not in PARAMETER_ROLES:
                     return False
-                observed.add(bank)
-            return observed == {0, 1}
+                bundle = parameter_bank_images(banks[bank])
+                if not GradeResources._same_image(
+                        getattr(reader, "image", None), bundle.get(role)):
+                    return False
+                observed.add((bank, role))
+            return observed == {
+                (bank, role) for bank in (0, 1) for role in PARAMETER_ROLES
+            }
         except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
             return False
 
@@ -257,8 +307,7 @@ class GradeResources:
 
     def set_banks(self, resource, banks, active_bank, generation):
         banks = tuple(banks)
-        if (len(banks) != 2 or self._same_image(banks[0], banks[1])
-                or not all(self._valid_image(image) for image in banks)
+        if (not self._valid_pair(banks)
                 or not self._valid_bank_index(active_bank)
                 or type(generation) is not int or generation < 0):
             raise ValueError("Grade resources require two valid banks and a selector")
@@ -267,6 +316,7 @@ class GradeResources:
         resource.banks = banks
         resource.active_bank = active_bank
         resource.generation = generation
+        resource.retiring_images = None
         self._serial = max(self._serial, generation)
 
     def publish(self, resource, bank, generation):
@@ -315,11 +365,14 @@ class GradeResources:
 
     def reclaim(self, resource, remove_image):
         """Delete a pair only after every tracked reader tree has been retired."""
-        if resource.banks is None or resource.trees:
+        if (resource.banks is None and resource.retiring_images is None) or resource.trees:
             return ()
         failures = []
         removed = set()
-        for image in tuple(resource.banks):
+        if resource.retiring_images is None:
+            resource.retiring_images = tuple(resource.images)
+        images = resource.retiring_images
+        for image in images:
             try:
                 pointer = image.as_pointer()
             except (AttributeError, ReferenceError, RuntimeError):
@@ -343,10 +396,11 @@ class GradeResources:
                 failures.append(RuntimeError("Grade parameter bank removal was not confirmed"))
             else:
                 removed.add(id(image))
-        if not failures and len(removed) == len(resource.banks):
+        if not failures and len(removed) == len(images):
             resource.banks = None
             resource.active_bank = None
             resource.generation = None
+            resource.retiring_images = None
         return tuple(failures)
 
     def reclaim_all(self, remove_image):
@@ -373,6 +427,7 @@ class GradeResources:
         """Evict every cache reference before a helper image is deleted."""
         for resource in self._resources.values():
             if any(self._same_image(bank, image) for bank in resource.images):
+                resource.retiring_images = tuple(resource.images)
                 resource.banks = None
                 resource.active_bank = None
                 resource.generation = None

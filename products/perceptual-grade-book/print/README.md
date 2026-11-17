@@ -8,10 +8,11 @@ There is no second Markdown renderer, and generated documents are not edited
 by hand.
 
 The books are maintained for the latest Perceptual Grade. The Technical Report's
-model chapters follow the current reference. Some User Manual chapters, host
-captures, and runtime engineering material still describe 1.23.2 and are
-identified accordingly. The title pages do not label the whole collection as
-1.23.2.
+model chapters follow the current reference, and the User Manual describes Next
+node workflows and its numeric Stage 3 controls. Some report engineering
+chapters and recorded measurements still describe 1.23.2 and are identified
+accordingly. The title pages do not label the whole collection as 1.23.2. The
+manual retains a labeled legacy ZIP link and does not offer a Next ZIP.
 
 ## Build and Check
 
@@ -54,7 +55,7 @@ corrupting both visible glyphs and copied text. The renderer excludes the EPUB's
 sharded CJK stylesheet from its in-memory PDF document.
 
 The remote test checks embedded fonts, Chinese Unicode extraction (including
-`选择工作白点`), and agreement between the User Manual PDF Unicode map
+`场景工作空间`), and agreement between the User Manual PDF Unicode map
 and embedded glyph IDs. The Technical Report remains English-only. EPUB retains
 its existing fonts.
 Release still requires a visual review of Chinese line breaks, punctuation, and
@@ -62,7 +63,7 @@ dense paragraphs at A4 width; text extraction cannot judge those page-level
 details.
 
 The optional `:review` target renders the Chinese User Manual's cover and pages
-containing “选择工作白点” (“Choose a working white”), together with their
+containing “场景工作空间” (“Scene working spaces”), together with their
 adjacent pages, to PNG using pinned PDFium. Its `review.json` records the PDF
 hash and physical page numbers. This is a raster review without OCR.
 The `:policy_review` target renders every page of the English Next policy
@@ -121,4 +122,7 @@ the policy anchors in both editions, including PDF named destinations.
 
 Fonts, KaTeX, and their notices are pinned build inputs. The derived document
 copies only referenced local images; historical downloads link to the published
-site. Do not add animation, video, or script-driven controls to print content.
+site. No published book format includes animated images or animation provenance.
+The original video recordings and generation targets remain in the build graph
+for future work. Do not add animation, video, or script-driven controls to print
+content.

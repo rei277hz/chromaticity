@@ -25,6 +25,20 @@ source_tree(
     visibility = ["PUBLIC"],
 )
 
+source_tree(
+    name = "next_handbook_audit_sources",
+    srcs = {
+        path.removeprefix("docs/book/"): path
+        for path in glob([
+            "docs/book/src/README.md",
+            "docs/book/src/guide/*.md",
+            "docs/book/zh-Hans/README.md",
+            "docs/book/zh-Hans/guide/*.md",
+        ])
+    },
+    visibility = ["PUBLIC"],
+)
+
 export_file(
     name = "technical_report_audit_manifest",
     src = "technical-report-audit.json",

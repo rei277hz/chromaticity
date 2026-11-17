@@ -11,7 +11,7 @@ import pypdfium2 as pdfium
 from lxml import html
 
 
-REGRESSION_PHRASE = "选择工作白点"
+REGRESSION_PHRASE = "场景工作空间"
 CHARTS = {
     "linear-basis", "tone-curves", "tone-saturation", "color-tone-weights",
     "color-drivers", "color-hue-concentration", "guard-boundary", "guard-energy",

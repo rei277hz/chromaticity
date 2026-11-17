@@ -76,8 +76,9 @@ PALETTE = np.asarray([
     (0, 0, 1, .66), (4, 0, 0, 1), (0, 16, 1, .4), (32, .1, 4, .8),
     (.01, .5, 1, .9), (1, 1, 0, .3), (.5, .5, 1, .7),
     (.125, .25, .5, 1), (-1e-8, 1e-8, 0, .5),
+    (np.inf, .3, .4, .5), (.2, np.nan, .4, .75), (.2, .3, -np.inf, 1.),
 ], dtype=np.float32)
-CONFIGS = ("reset", "exposure", "tone", "anchors")
+CONFIGS = ("reset", "exposure", "tone", "anchors", "color")
 SCENE_TREE = "Interactive Grade Root"
 NESTED_TREE = "Nested Grade Consumer"
 MATERIAL = "Shared Shader Consumer"
@@ -118,9 +119,12 @@ def parameter_image(node):
         selected = int(round(float(selector.inputs[0].default_value)))
     assert selected == active
     readers = [item for item in tree.nodes if item.get(nodes.PARAMETER_READER)]
-    observed = {item.get(nodes.PARAMETER_READER_BANK): item.image for item in readers}
-    assert set(observed) == {0, 1}
-    assert all(observed[bank] == banks[bank] for bank in (0, 1))
+    observed = {(item.get(nodes.PARAMETER_READER_BANK),
+                 item.get(nodes.PARAMETER_READER_ROLE)): item.image for item in readers}
+    assert {(bank, role) for bank in (0, 1) for role in nodes.PARAMETER_ROLES} <= set(observed)
+    assert all(observed[bank, role] == nodes.parameter_bank_images(banks[bank])[role]
+               for bank, role in observed)
+    assert all(nodes.parameter_bundle_receipt_matches(primary) for primary in banks)
     return banks[active]
 
 
@@ -144,6 +148,8 @@ def configure(name):
         setattr(grade.pg_linear, field, value)
     for field, value in nodes.TONE_DEFAULTS.items():
         setattr(grade.pg_tone, field, value)
+    for field, value in nodes._COLOR_DEFAULTS.items():
+        setattr(grade.pg_color, field, value)
     if name != "reset":
         grade.pg_linear.exposure = .5 if name == "exposure" else 1.
     if name == "tone":
@@ -152,6 +158,16 @@ def configure(name):
         for field, value in zip(nodes.TONE_LEVEL_FIELDS, (.2, 8., 40., 235., 1150.)):
             setattr(grade.pg_tone, field, value)
         grade.pg_tone.fit = 2.
+    elif name == "color":
+        grade.pg_tone.fit = .25
+        grade.pg_color.j_a_1 = .0625
+        grade.pg_color.c_high_2 = -.0625
+        grade.pg_color.global_gain = .03125
+        grade.pg_color.adaptance_a_1 = .0625
+        grade.pg_color.adaptance_b_2 = -.03125
+        grade.pg_color.web_hue_1_0 = 12.
+        grade.pg_color.web_chroma_1_2 = .0625
+        grade.pg_color.web_scale_2_3 = .125
 
 
 def setup():
@@ -247,13 +263,13 @@ if phase == "exercise":
     tasks = [(name, device, precision) for device, precision in (
         ("GPU", "AUTO"), ("CPU", "FULL"), ("GPU", "FULL"),
     ) for name in CONFIGS]
-    tasks.append(("anchors", "GPU", "AUTO"))
+    tasks.append(("color", "GPU", "AUTO"))
     reference_rows = None
 else:
     reference_rows = json.loads((report_path.parent / "exercise.json").read_text())
     bpy.app.handlers.load_post.insert(0, observe_loaded_schema)
     bpy.ops.wm.open_mainfile(filepath=str(BLEND))
-    tasks = [("anchors", "GPU", "AUTO"), ("reset", "GPU", "AUTO")]
+    tasks = [("color", "GPU", "AUTO"), ("reset", "GPU", "AUTO")]
     result["settings_preserved"] = list(grade_settings()) == reference_rows["saved_settings"]
     assert result["settings_preserved"]
     assert result["loaded_schema"] == [3, 3, 3], result
@@ -279,6 +295,9 @@ def pixel_error(actual, expected):
 
 def check_pixels(pixels, device, precision):
     assert np.isfinite(pixels).all(), pixels.tolist()
+    invalid = ~np.isfinite(PALETTE[:, :3]).all(axis=1)
+    np.testing.assert_array_equal(pixels[invalid, :3],
+                                  np.tile((1., 0., 1.), (int(invalid.sum()), 1)))
     if device == "GPU" and precision == "AUTO":
         # One binary16 ULP at the source alpha, including zero/subnormals.
         half = PALETTE[:, 3].astype(np.float16)
@@ -345,8 +364,18 @@ def tick():
     global expected_settings, automatic_updates
     try:
         now = time.monotonic()
-        assert now - wait_started < 40, ("Viewer did not automatically update", phase,
-                                        tasks[index], stage, len(events), floor)
+        if now - wait_started >= 40:
+            users = consumers()
+            diagnostic = {
+                "task": tasks[index], "stage": stage, "event_floor": floor,
+                "last_events": events[-3:], "expected_settings": expected_settings,
+                "node_states": [repr(nodes._record_for(node)["state"]) for node in users],
+                "pending_preparation": bool(nodes._preparation_runtime.pending),
+                "pending_resources": bool(nodes._grade_resources.pending),
+                "viewers": [(image.name, tuple(image.size)) for image in bpy.data.images
+                            if image.type == "COMPOSITING"],
+            }
+            raise AssertionError(("Viewer did not automatically update", phase, diagnostic))
         name, device, precision = tasks[index]
         scene = bpy.context.scene
         if stage == "apply":

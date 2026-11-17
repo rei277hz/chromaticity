@@ -131,9 +131,9 @@ class ColorPreparationTests(unittest.TestCase):
         self.assertEqual(built.coefficient_table.cells, 8192)
         self.assertEqual(built.coefficient_table.pixels.shape, (2, 8193, 4))
         self.assertEqual(built.coefficient_table.pixels.nbytes, 262176)
-        self.assertEqual(built.adaptance_table.cells, 3072)
-        self.assertEqual(built.adaptance_table.pixels.shape, (1, 3073, 4))
-        self.assertEqual(built.adaptance_table.pixels.nbytes, 49168)
+        self.assertEqual(built.adaptance_table.cells, 32768)
+        self.assertEqual(built.adaptance_table.pixels.shape, (4, 8193, 4))
+        self.assertEqual(built.adaptance_table.pixels.nbytes, 524352)
         obsolete_cells = {'Color coefficients': 131072, 'Web parameters': 32768,
                           'Web toes': 1280, 'Adaptance parameters': 16384}
         originals = {table.name: table for table in built.tables}
@@ -265,10 +265,10 @@ class ColorPreparationTests(unittest.TestCase):
         self.assertFalse(hasattr(prepared, 'adaptance_interior_table'))
         self.assertEqual([table.name for table in prepared.tables], ['Adaptance parameters'])
         self.assertEqual(compact.mapping, 'response_compact')
-        self.assertEqual(compact.cells, 3072)
+        self.assertEqual(compact.cells, 32768)
         # Retain the frozen near-pole witness as a raw Compact diagnostic.
-        # The fixed layout is admitted by full-grade HDR, not a local precision
-        # assertion that would silently restore the removed representation.
+        # The fixed layout retains strict extreme-grade final-output gates;
+        # this diagnostic does not restore the removed representation.
         h = np.array((47.1189113567, 20.4547993876, 48.6231110572))
         logs, k = prepared.adaptation_parameters(h)
         exact = np.column_stack((logs, np.log(k)))
