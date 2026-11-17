@@ -6,7 +6,7 @@ deployment ZIP, see the [current book build guide](https://github.com/rei277hz/c
 The current build regenerates derived media from source and keeps historical
 release downloads as verified attachments.
 
-The User Manual and Technical Report are independent mdBooks with declared Buck2 inputs for chapters, recordings, screenshots, numerical figures and runtime assets. Reader scripts and generated media are local; KaTeX equations and the text and code fonts load from pinned CDN resources. The User Manual introduction uses the local WebP demonstration. The Bilibili player proof of concept remains commented out in its Markdown source until a real video is ready. Validation retains the exact player URL allowlist for future use.
+The User Manual and Technical Report are independent mdBooks with declared Buck2 inputs for chapters, screenshots, numerical figures and runtime assets. Reader scripts and published static media are local; KaTeX equations and the text and code fonts load from pinned CDN resources. No book format publishes animated images. The original introduction and paired-recording producers and source recordings remain available as separate targets for future video work; their animations, stills, and animation manifests are absent from the site, deployment ZIP, PDFs, and EPUBs. The Next-scoped `handbook_audit` consumes those completed artifacts to check this boundary and the retained legacy ZIP link.
 
 ## Edit and build
 
@@ -136,20 +136,28 @@ buck2 test //:documentation_favicon //:documentation_site
 
 ## Replace the introduction recording
 
+This is a retained build-only producer, not part of the current publication.
+The User Manual no longer displays its generated WebP or print still. Its
+recording and trim configuration remain available for future video work.
+
 Replace docs/media/intro/match-three-images.mp4 with your final recording of matching three differently lit images. The supplied Timeline 1.mp4 occupies this required path as a dummy source. The recording is one complete composition; the build does not rearrange it into the paired tutorial layout.
 
-The //:book_intro action reads docs/data/intro-video.json. It explicitly interprets Rec.709 primaries, the BT.709 YCbCr matrix, limited video range and a Gamma 2.4 transfer, then converts to sRGB and embeds an sRGB profile in the WebP. The transfer interpretation does not depend on the MP4's unspecified transfer metadata. Set range explicitly to full if a replacement export uses full-range levels.
+The `//products/perceptual-grade-book/generators:intro` action reads docs/data/intro-video.json. It explicitly interprets Rec.709 primaries, the BT.709 YCbCr matrix, limited video range and a Gamma 2.4 transfer, then converts to sRGB and embeds an sRGB profile in the WebP. The transfer interpretation does not depend on the MP4's unspecified transfer metadata. Set range explicitly to full if a replacement export uses full-range levels.
 
-The WebP keeps the source dimensions and playback speed, loops indefinitely, and has no audio. Optional start and end values trim the recording in seconds; null end means its recorded end. Frame durations follow the original frame rate, with millisecond rounding distributed across frames. The default quality is 90 to keep the animation practical to download; quality and lossless are explicit encoding settings. A separate lossless still is used only for printing.
+The WebP keeps the source dimensions and playback speed, loops indefinitely, and has no audio. Optional start and end values trim the recording in seconds; null end means its recorded end. Frame durations follow the original frame rate, with millisecond rounding distributed across frames. The default quality is 90; quality and lossless are explicit encoding settings. A separate lossless still remains a producer output. Neither output is included in any book format.
 
 ``` sh
-buck2 build //:book_intro '//:docs_deploy[zip]' --show-full-output
-buck2 test //:documentation_intro //:documentation_site
+buck2 build --remote-only //products/perceptual-grade-book/generators:intro --show-output
 ```
 
-Missing, corrupt, empty or incorrectly configured sources fail before producing an animation. Replace the MP4 or edit its trim settings, then rebuild the site.
+Missing, corrupt, empty or incorrectly configured sources fail before producing an animation. Replace the MP4 or edit its trim settings, then rebuild this separate producer. A normal site build does not consume its outputs.
 
 ## Replace paired recordings
+
+The `//products/perceptual-grade-book/generators:demos` target is also retained
+separately from publication. The following capture plan documents its historical
+control set; it must be revised before a future Next video is presented as a
+current demonstration.
 
 Each demonstration consumes two square MOV screen recordings containing the image and the Perceptual Grade extension’s gizmo in Blender. Example A is SDR, Example B is HDR. Both recordings are Rec.709 gamut with Rec.709-A transfer; the recording of HDR footage is still a display-referred screen recording, not a PQ or HLG video master.
 
@@ -185,7 +193,7 @@ Edit docs/data/demos.json. Start and end are seconds on that file’s timeline; 
 
 Both trimmed clips start together at playback time zero. Each keeps its elapsed time; the shorter side holds its last frame until the longer side finishes. The default 700 ms final hold gives the viewer time to inspect the result, then the pair loops from the beginning. There is no reverse playback or speed matching. Choose trims around the complete gesture to make the loop easy to follow.
 
-The output settings select a 640-pixel square per side at 20 fps. Frame-rate resampling does not slow or accelerate the operation. A clip may contain up to 60 seconds after trimming. The output has a static first-frame companion for printing. On-screen demonstrations always animate, with infinite looping encoded in the WebP; there is no playback selector.
+The output settings select a 640-pixel square per side at 20 fps. Frame-rate resampling does not slow or accelerate the operation. A clip may contain up to 60 seconds after trimming. The producer emits a static first-frame companion and an infinitely looping WebP. Neither is a current book asset.
 
 ### Interpret color explicitly
 
@@ -193,11 +201,10 @@ The pinned imageio-ffmpeg 0.6.0 wheel supplies the FFmpeg binary. The build does
 
 The pipeline decodes to 16-bit RGB, interprets Rec.709-A as a 1.961 power transfer, then applies the piecewise sRGB encoding before quantizing for WebP. Rec.709 and sRGB share primaries and D65 white, so no primary matrix change is needed. An sRGB ICC profile is embedded. The explicit interpretation overrides reliance on ambiguous QuickTime transfer tags. Blender’s [OCIO configuration](https://github.com/blender/blender/blob/main/release/datafiles/colormanagement/config.ocio) is the reference for the Rec.709-A exponent.
 
-The already-rendered screen image is converted for browsers; this step neither re-grades the footage nor applies another HDR tone map. The build writes source hashes, independent trims, decoded frame counts, durations, conversion settings and FFmpeg version to assets/demos/manifest.json in the site.
+The already-rendered screen image is converted for browsers; this step neither re-grades the footage nor applies another HDR tone map. The producer writes source hashes, independent trims, decoded frame counts, durations, conversion settings and FFmpeg version to its output manifest. This animation manifest is not included in the site or other book formats.
 
 ``` sh
-buck2 build //:book_demos '//:docs_deploy[zip]' --show-full-output
-buck2 test //:documentation_demos //:documentation_site
+buck2 build --remote-only //products/perceptual-grade-book/generators:demos --show-output
 ```
 
 The MOV test generates real lossless MOV fixtures and checks color conversion, trim timing, original speed, end holds, loop metadata, ICC, deterministic output and missing-source errors, including an entirely absent pair.

@@ -4,6 +4,7 @@
 - A last-good result may lag while a replacement is being built. Never present a partial or stale result as current.
 - If a Grade kernel cannot be updated or recovered, never silently bypass the Grade or keep rendering its stale output as if it were current. Fail closed with a visible error and magenta output that preserves alpha; stop a render when the host provides a reliable way to do so.
 - Reconcile derived Grade kernels after file load and before rendering.
+- Blender `ID.users == 0` does not prove that undo history has released an ID. Keep published pending/error fallback node groups retained with a policy-authorized fake user; reuse only freshly manifest-validated groups and never reclaim published or legacy fallbacks during ordinary cleanup.
 
 # State Machine Design
 

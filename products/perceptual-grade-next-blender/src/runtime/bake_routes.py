@@ -15,6 +15,8 @@ import json
 import math
 from pathlib import Path
 
+from ..kernel.color_ui import COLOR_FIELDS
+
 
 SCHEMA = 1
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
@@ -406,8 +408,10 @@ def _grade_settings(node):
 def _grade_values(owner):
     linear = getattr(owner, "pg_linear", owner)
     tone = getattr(owner, "pg_tone", owner)
+    color = getattr(owner, "pg_color", owner)
     return (tuple((name, _plain(getattr(linear, name))) for name in LINEAR_FIELDS),
-            tuple((name, _plain(getattr(tone, name))) for name in TONE_FIELDS))
+            tuple((name, _plain(getattr(tone, name))) for name in TONE_FIELDS),
+            tuple((name, _plain(getattr(color, name))) for name in COLOR_FIELDS))
 
 
 def _absolute_path(host, path, library=None):

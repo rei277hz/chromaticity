@@ -57,17 +57,26 @@ class AppearanceSockets:
     @cached_property
     def magnitude(self):
         g = self.graph
+        if getattr(g, '_color_energy_scale', 1.) != 1.:
+            return g.hypot(self.J_A, g.mul(math.sqrt(66.), g.sqrt(self.chroma)))
         return g.sqrt(g.madd(self.J_A, self.J_A, g.mul(66, self.chroma)))
 
     @cached_property
     def H(self):
         g = self.graph
-        base = g.sqrt(g.mul(66, self.chroma))
+        if getattr(g, '_color_energy_scale', 1.) == 1.:
+            base = g.sqrt(g.mul(66, self.chroma))
+        else:
+            base = g.mul(math.sqrt(66.), g.sqrt(self.chroma))
         return g.select(g.lt(self.J_A, 0), g.sub(g.mul(2, base), self.magnitude), self.magnitude)
 
     @cached_property
     def energy(self):
-        return self.graph.mul(self.J_A, self.graph.abs(self.J_A))
+        scale = getattr(self.graph, "_color_energy_scale", 1.0)
+        if scale == 1.0:
+            return self.graph.mul(self.J_A, self.graph.abs(self.J_A))
+        normalized = self.graph.div(self.J_A, math.sqrt(scale))
+        return self.graph.mul(normalized, self.graph.abs(normalized))
 
     @cached_property
     def q(self):
@@ -808,9 +817,9 @@ def build_group(prepared, tree_type="ShaderNodeTree", *, name="Perceptual Grade 
 
         if export or prepared.color.active:
             state = graph.encode_cones(graph.matrix(source.outputs['Color'], prepared.linear_to_cones))
-            state = graph.color(graph.tone(state))
+            state = graph.color(graph.tone(state), guarded=export)
             if export:
-                decoded = graph.output_guard(graph.hk_guard(state))
+                decoded = graph.output_guard(state)
             else:
                 raw = graph.decode_coordinates(state.J_A, state.a, state.b)
                 decoded = DecodeSockets(raw.color, raw.valid, raw.pole_margin, state.saturated)

@@ -18,6 +18,7 @@ from typing import Mapping, Optional
 from .stage2_bindings import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_GENERATION,
     PARAMETER_IMAGE, PARAMETER_READER, PARAMETER_READER_BANK,
+    PARAMETER_READER_ROLE, PARAMETER_ROLE,
     PARAMETER_SAMPLE_BANK, PARAMETER_SAMPLE_ID, PARAMETER_SAMPLE_KIND,
     PARAMETER_SAMPLE_SELECTOR, PARAMETER_SELECTOR,
     TEMPLATE_KIND as TEMPLATE_KIND_KEY,
@@ -25,8 +26,10 @@ from .stage2_bindings import (
     TEMPLATE_VARIANT as TEMPLATE_VARIANT_KEY,
 )
 from .stage2_parameters import (
-    PARAMETER_CONTENT_SIGNATURE, PARAMETER_SCHEMA, PARAMETER_SHAPE,
-    parameter_content_signature, parameter_image_matches, prepare_parameters,
+    PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
+    PARAMETER_SCHEMA, PARAMETER_SHAPE, bind_parameter_bank,
+    parameter_bank_images, parameter_content_signature,
+    parameter_image_matches, prepare_parameters,
 )
 
 
@@ -292,8 +295,8 @@ def _interface_receipt(item):
     )
 
 
-def structure_digest(tree):
-    """Digest topology and effective node settings, excluding bank selection."""
+def structure_receipt(tree):
+    """Inspect topology and effective settings, excluding bank selection."""
     validate_color_defaults(tree)
     try:
         interface = tuple(
@@ -343,12 +346,20 @@ def structure_digest(tree):
              link.to_node.name, tuple(link.to_node.inputs).index(link.to_socket))
             for link in tree.links
         ))
-        payload = json.dumps(
-            {"tree_type": tree.bl_idname, "interface": interface,
-             "nodes": tuple(nodes), "links": links},
-            sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-        ).encode("utf-8")
+        return {"tree_type": tree.bl_idname, "interface": interface,
+                "nodes": tuple(nodes), "links": links}
     except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
+        raise TemplateAssetError("Could not inspect template structure") from error
+
+
+def structure_digest(tree):
+    """Digest topology and effective node settings, excluding bank selection."""
+    try:
+        payload = json.dumps(
+            structure_receipt(tree), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
         raise TemplateAssetError("Could not inspect template structure") from error
     return _digest(payload)
 
@@ -639,7 +650,6 @@ def _make_image(name, pixels, marker=None, *, retire=None):
 
 def _parameter_banks(prepared, supplied, *, retire=None):
     parameters = prepared.parameters or prepare_parameters(prepared)
-    signature = parameter_content_signature(parameters.pixels)
     if supplied is not None:
         # A publication transaction can bind the old active bank and a newly
         # staged candidate before its selector operation is authorized.  Both
@@ -648,39 +658,56 @@ def _parameter_banks(prepared, supplied, *, retire=None):
         banks = tuple(supplied)
         if len(banks) != 2 or banks[0] == banks[1]:
             raise TemplateAssetError("Grade templates require two distinct parameter banks")
-        for image in banks:
+        borrowed = []
+        for primary in banks:
             try:
-                valid = (
-                    image.library is None
-                    and image.source in {"FILE", "GENERATED"}
-                    and image.is_float
-                    and image.packed_file is not None
-                    and not image.is_dirty
-                    and image.colorspace_settings.name == "Non-Color"
-                    and image.alpha_mode == "CHANNEL_PACKED"
-                    and not image.use_half_precision
-                    and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
-                    and tuple(image.size) == (PARAMETER_SHAPE[1], PARAMETER_SHAPE[0])
-                    and parameter_image_matches(image)
-                )
+                bundle = parameter_bank_images(primary)
+                valid = (set(bundle) == set(PARAMETER_ROLES)
+                         and len({image.as_pointer() for image in bundle.values()
+                                  if image is not None}) == len(PARAMETER_ROLES)
+                         and parameter_image_matches(primary))
+                for role, image in bundle.items():
+                    valid = valid and (
+                        image.library is None
+                        and image.source in {"FILE", "GENERATED"}
+                        and image.is_float
+                        and image.packed_file is not None
+                        and not image.is_dirty
+                        and image.colorspace_settings.name == "Non-Color"
+                        and image.alpha_mode == "CHANNEL_PACKED"
+                        and not image.use_half_precision
+                        and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
+                        and image.get(PARAMETER_ROLE) == role
+                        and tuple(image.size) == tuple(PARAMETER_ROLE_SHAPES[role][1::-1])
+                    )
+                borrowed.extend(bundle[role] for role in PARAMETER_ROLES)
             except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
                 valid = False
             if not valid:
                 raise TemplateAssetError("Grade template parameter bank is invalid")
-        return banks, banks
+        return banks, tuple(borrowed)
     banks = []
+    created = []
     try:
         for bank in (0, 1):
-            banks.append(_make_image(
-                f"Perceptual Grade parameters bank {bank}", parameters.pixels,
-                marker={PARAMETER_IMAGE: PARAMETER_SCHEMA,
-                        PARAMETER_CONTENT_SIGNATURE: signature,
-                        "_perceptual_grade_image": True},
-                retire=retire,
-            ))
+            role_images = {}
+            for role in PARAMETER_ROLES:
+                pixels = parameters.roles[role]
+                signature = parameter_content_signature(pixels)
+                image = _make_image(
+                    f"Perceptual Grade {role} bank {bank}", pixels,
+                    marker={PARAMETER_IMAGE: PARAMETER_SCHEMA,
+                            PARAMETER_ROLE: role,
+                            PARAMETER_CONTENT_SIGNATURE: signature,
+                            "_perceptual_grade_image": True},
+                    retire=retire,
+                )
+                role_images[role] = image
+                created.append(image)
+            banks.append(bind_parameter_bank(role_images))
         return tuple(banks), ()
     except BaseException:
-        for image in banks:
+        for image in created:
             _retire("image", image, retire)
         raise
 
@@ -694,9 +721,8 @@ def instantiate_grade(prepared, tree_type, parameter_images=None, active_bank=0,
     store = _STORE if store is None else store
     if (getattr(prepared, "table", None) is None
             or getattr(prepared, "boundary", None) is None
-            or getattr(prepared.color, "active", True)
             or prepared.tone.reference != 203.):
-        raise TemplateAssetError("Grade templates require complete neutral-Color Stage 2 preparation")
+        raise TemplateAssetError("Grade templates require complete Tone and boundary preparation")
     prepare_parameters(prepared)
     _check_context(store._contract()[0], prepared)
     _check_context(store._contract()[0], prepared.boundary)
@@ -707,7 +733,8 @@ def instantiate_grade(prepared, tree_type, parameter_images=None, active_bank=0,
     images, borrowed = list(appended.images), []
     try:
         banks, borrowed_banks = _parameter_banks(prepared, parameter_images, retire=retire)
-        images.extend(banks)
+        images.extend(image for primary in banks
+                      for image in parameter_bank_images(primary).values())
         borrowed.extend(borrowed_banks)
         boundary_nodes = record.slots.get(SLOT_BOUNDARY, ())
         source = next((tree.nodes[name].image for name in boundary_nodes
@@ -718,16 +745,22 @@ def instantiate_grade(prepared, tree_type, parameter_images=None, active_bank=0,
         # The freshly appended boundary image is already private to this tree.
         boundary = source
         boundary["_perceptual_grade_image"] = True
-        _bind(tree, record, {
-            SLOT_PARAMETER_0: banks[0], SLOT_PARAMETER_1: banks[1],
-            SLOT_BOUNDARY: boundary,
-        })
+        bindings = {SLOT_PARAMETER_0: banks[0], SLOT_PARAMETER_1: banks[1],
+                    SLOT_BOUNDARY: boundary}
+        for bank, primary in enumerate(banks):
+            for role, image in parameter_bank_images(primary).items():
+                bindings[f"{role}:{bank}"] = image
+        _bind(tree, record, bindings)
         for bank, image in enumerate(banks):
             tree[PARAMETER_BANK_BINDINGS[bank]] = image
             for node in tree.nodes:
-                if node.get(TEMPLATE_SLOT) == f"parameter:{bank}":
+                slot = node.get(TEMPLATE_SLOT)
+                if slot == f"parameter:{bank}" or (
+                        isinstance(slot, str) and slot.endswith(f":{bank}")
+                        and slot.split(":", 1)[0] in PARAMETER_ROLES):
                     node[PARAMETER_READER] = True
                     node[PARAMETER_READER_BANK] = bank
+                    node[PARAMETER_READER_ROLE] = slot.split(":", 1)[0]
         tree[PARAMETER_ACTIVE_BANK] = active_bank
         tree[PARAMETER_GENERATION] = generation
         selector = next((node for node in tree.nodes if node.get(PARAMETER_SELECTOR)), None)
@@ -868,6 +901,32 @@ def instantiate_fallback(mode, tree_type, *, vector=False, store=None, retire=No
         raise
 
 
+def validate_fallback_instance(tree, mode, *, vector=False, store=None):
+    """Validate one retained pending/error fallback against its manifest receipt."""
+    try:
+        if (tree is None or tree.library is not None
+                or tree.get(FALLBACK_KERNEL) != 1):
+            return False
+        if tree.get(FALLBACK_MODE) != mode:
+            return False
+        if tree.bl_idname == "CompositorNodeTree" and vector:
+            return False
+        store = _STORE if store is None else store
+        variant = TemplateVariant(
+            "fallback", tree.bl_idname, mode=mode, vector=bool(vector),
+        )
+        record = store.record(variant)
+        _validate_tree(tree, record)
+        sockets = tuple(
+            item for item in tree.interface.items_tree
+            if item.item_type == "SOCKET" and item.in_out == "INPUT"
+        )
+        return ("Vector" in {item.name for item in sockets}) == bool(vector)
+    except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError,
+            TemplateAssetError):
+        return False
+
+
 def validate_stack_instance(tree, *, store=None):
     """Check a saved Stack instance's topology and complete atlas binding."""
     from .lut import (ATLAS_WIDTH, atlas_height, basis, basis_pixels,
@@ -969,5 +1028,6 @@ __all__ = (
     "TemplateAssetError", "TemplateInstance", "TemplateRecord", "TemplateStore",
     "TemplateVariant", "instantiate_grade", "instantiate_stack",
     "instantiate_wrapper", "instantiate_fallback", "load_manifest", "reset_cache", "shader_source",
-    "structure_digest", "validate_stack_instance",
+    "structure_digest", "structure_receipt", "validate_fallback_instance",
+    "validate_stack_instance",
 )

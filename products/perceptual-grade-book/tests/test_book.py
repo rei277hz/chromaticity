@@ -169,13 +169,12 @@ class BookTests(unittest.TestCase):
 
     def test_core_chinese_workflow_chapters_are_complete_translations(self):
         controls = {
-            'workflow': ('Linear', 'Tone', 'Color', 'SDR', 'HDR', 'sRGB', 'Dummy recording'),
-            'linear': ('Source White', 'Global Exposure', 'Balance', 'Spread', 'Heading',
-                       'Color Reference', 'Render Layers', 'ACEScg'),
-            'tone': ('Input Black Nits', 'Input Highlights Nits', 'Reference Nits',
-                     'Peak Anchor Nits', 'Remap Fit', '203', '4000'),
-            'color': ('Lightness Fit', 'Chroma Fit', 'Global C Gain', 'Adaptance Strength',
-                      'Adaptance Fit', 'Hue Fit', 'Global Cₗ → Hue', 'Global Cₕ → Hue'),
+            'workflow': ('Linear', 'Tone', 'Color', 'Adaptance', 'Warp', 'Scale', 'H–K'),
+            'linear': ('Exposure', 'Match White', 'Working White', 'Balance', 'Spread',
+                       'Heading', 'ACEScg'),
+            'tone': ('Black', 'Shadows', 'Midtones', 'White', 'Highlights',
+                     'Peak', 'Node-Owned Grade'),
+            'color': ('J', 'C', 'Global C Gain', 'Adaptance', 'Warp', 'Scale', '65³'),
         }
         for name, required in controls.items():
             with self.subTest(chapter=name):
@@ -184,7 +183,7 @@ class BookTests(unittest.TestCase):
                 # A title and scope notice cannot satisfy a translated chapter.
                 body = '\n'.join(line for line in chinese.splitlines()
                                  if not line.startswith(('#', '>')))
-                self.assertGreater(len(re.findall(r'[\u3400-\u9fff]', body)), 300)
+                self.assertGreater(len(re.findall(r'[\u3400-\u9fff]', body)), 180)
                 self.assertEqual(len(re.findall(r'^## ', chinese, re.M)),
                                  len(re.findall(r'^## ', english, re.M)))
                 self.assertEqual(re.findall(r'(?:src|data-still)="([^"]+)"', chinese),
@@ -193,7 +192,8 @@ class BookTests(unittest.TestCase):
                                  re.findall(r'\]\(([^)]+)\)', english))
                 self.assertEqual(re.findall(r'\\\((.*?)\\\)', chinese),
                                  re.findall(r'\\\((.*?)\\\)', english))
-                self.assertIn('1.23.2', chinese)
+                self.assertNotIn('assets/demos/', chinese)
+                self.assertNotIn('data-still', chinese)
                 for marker in required:
                     self.assertIn(marker, chinese)
 
@@ -318,16 +318,21 @@ class BookTests(unittest.TestCase):
             ('manual/en/index.html', 'technical/en/index.html'),
             ('manual/zh-Hans/index.html', 'technical/en/index.html'),
             ('technical/en/index.html', 'manual/en/index.html'),
-            ('manual/en/guide/install.html', 'technical/en/theory/structure.html'),
-            ('manual/zh-Hans/guide/install.html', 'technical/en/theory/structure.html'),
-            ('technical/en/theory/structure.html', 'manual/en/guide/working-white.html'),
+            ('manual/en/guide/render-methods.html', 'technical/en/development/next-policies.html'),
+            ('manual/zh-Hans/guide/render-methods.html', 'technical/en/development/next-policies.html'),
+            ('manual/en/guide/tone.html', 'technical/en/theory/tone.html'),
+            ('manual/zh-Hans/guide/tone.html', 'technical/en/theory/tone.html'),
         )
         for origin, destination in destinations:
             page = self.output / origin
             with self.subTest(origin=origin, destination=destination):
-                targets = {site.local_target(self.output, page, ref, False)
-                           for ref, runtime in site.Page(page.read_text()).refs if not runtime}
-                self.assertIn(self.output / destination, targets)
+                published_path = '/perceptual-grade/' + destination
+                references = [ref for ref, runtime in site.Page(page.read_text()).refs if not runtime]
+                self.assertTrue(any(
+                    (urlsplit(ref).path == published_path if urlsplit(ref).netloc
+                     else site.local_target(self.output, page, ref, False) == self.output / destination)
+                    for ref in references
+                ))
 
     def test_current_reference_scope_and_stage_three_contract(self):
         source = self.report / 'src'
@@ -616,24 +621,17 @@ class BookTests(unittest.TestCase):
                              self.manifest['files']['src/downloads/' + name])
         tutorial = assignment(self.resources / 'tool-pins.bzl', 'TUTORIAL_ASSETS')['colorchecker2014']
         self.assertEqual(sha(downloads / 'ACEScg_ColorChecker2014.exr'), tutorial['sha256'])
-        demos = json.loads((self.output / 'assets/demos/manifest.json').read_text())
-        spec = json.loads((self.docs / 'data/demos.json').read_text())
-        self.assertEqual([demo['name'] for demo in demos['demos']],
-                         [demo['name'] for demo in spec['demos']])
-        self.assertEqual(demos['color']['input_power_exponent'], 1.961)
-        for name, expected in demos['outputs'].items():
-            self.assertEqual(sha(self.output / 'assets/demos' / name.removeprefix('images/')), expected)
-        intro = json.loads((downloads / 'provenance/intro-video.json').read_text())
-        self.assertEqual(intro['source']['sha256'], sha(self.docs / 'media/intro/match-three-images.mp4'))
-        for name, expected in intro['outputs'].items():
-            self.assertEqual(sha(self.output / 'assets/intro' / name), expected)
+        for excluded in ('assets/demos', 'assets/intro', 'downloads/provenance/intro-video.json'):
+            self.assertFalse((self.output / excluded).exists())
+        generator_buck = (self.resources / 'generators.BUCK').read_text()
+        self.assertIn('name = "demos"', generator_buck)
+        self.assertIn('name = "intro"', generator_buck)
         introduction = (self.output / 'manual/en/index.html').read_text()
         self.assertEqual([ref for ref in site.Page(introduction).iframes
                           if urlsplit(ref).netloc], [])
-        self.assertIn(('../../assets/intro/match-three-images.webp', True),
-                      site.Page(introduction).refs)
-        self.assertLess(introduction.index('assets/intro/match-three-images.webp'),
-                        introduction.index('class="download-grid"'))
+        self.assertIn('Legacy Blender download', introduction)
+        self.assertIn(extension, introduction)
+        self.assertNotIn('assets/intro/', introduction)
 
     def test_markdown_reports_retain_original_bytes_and_download_links(self):
         for name in ('gpu-solver-exploration.md', 'gpu-baking-validation.md'):

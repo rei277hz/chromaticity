@@ -9,9 +9,11 @@ import bpy
 def _settings(nodes, owner):
     linear = owner if nodes._is_per_node_grade_node(owner) else owner.pg_linear
     tone = owner if nodes._is_per_node_grade_node(owner) else owner.pg_tone
+    color = owner if nodes._is_per_node_grade_node(owner) else owner.pg_color
     return {field: getattr(controls, field)
             for controls, fields in ((linear, nodes._LINEAR_FIELDS),
-                                     (tone, nodes._TONE_FIELDS))
+                                     (tone, nodes._TONE_FIELDS),
+                                     (color, nodes._COLOR_FIELDS))
             for field in fields}
 
 
@@ -93,6 +95,25 @@ def _menu(nodes, tree, node):
             bpy.data.node_groups.remove(unrelated)
 
 
+def _adaptance_limits(nodes, node, assert_grade_current):
+    owner = node if nodes._is_per_node_grade_node(node) else node.pg_grade
+    controls = nodes._color_controls(owner)
+    for row, span in enumerate((4.0, 10.0, 20.0, 25.0)):
+        for axis in ("a", "b"):
+            prop = controls.bl_rna.properties[f"adaptance_{axis}_{row}"]
+            assert (prop.soft_min, prop.soft_max, prop.step) == (-span, span, 1.0)
+            assert (prop.hard_min, prop.hard_max) == (-1000000.0, 1000000.0)
+    controls.adaptance_a_1 = 1000000.0
+    controls.adaptance_b_1 = -1000000.0
+    raw = nodes._raw_grade_settings(owner, "Linear Rec.709")
+    assert raw == nodes.resolve_settings(raw), raw.color.adaptance[1]
+    assert abs(controls.adaptance_a_1) < 1000000.0
+    assert abs(controls.adaptance_b_1) < 1000000.0
+    assert_grade_current(node)
+    controls.adaptance_a_1 = 0.0
+    controls.adaptance_b_1 = 0.0
+
+
 def _round_trip(nodes, tree, assert_grade_current):
     shared = nodes.create_node(tree)
     shared.name = 'Convert "Grade" \\ safely'
@@ -102,11 +123,13 @@ def _round_trip(nodes, tree, assert_grade_current):
         shared.pg_linear.exposure = 1.5
     local = nodes.convert_grade_node(shared, "NODE")
     _assert_values(_settings(nodes, local), neutral)
+    _adaptance_limits(nodes, local, assert_grade_current)
     _menu(nodes, tree, local)
     shared = nodes.convert_grade_node(local, "DATABLOCK")
     assert shared.pg_grade is not None
     _assert_values(_settings(nodes, shared.pg_grade), neutral)
     original_grade = shared.pg_grade
+    _adaptance_limits(nodes, shared, assert_grade_current)
     with nodes._suspend(original_grade.pg_linear):
         original_grade.pg_linear.exposure = 0.625
         original_grade.pg_linear.cr_balance = 0.125
@@ -114,6 +137,18 @@ def _round_trip(nodes, tree, assert_grade_current):
     with nodes._suspend(original_grade.pg_tone):
         original_grade.pg_tone.fit = 0.25
         original_grade.pg_tone.peak_nits = "4000"
+    with nodes._suspend(original_grade.pg_color):
+        original_grade.pg_color.j_a_1 = 0.5
+        original_grade.pg_color.c_high_2 = -0.125
+        original_grade.pg_color.adaptance_a_1 = 0.25
+        original_grade.pg_color.web_scale_1_0 = 0.0625
+    original_grade.pg_color.web_hue_1_0 = 180.0
+    claims = nodes._hue_claims(original_grade.pg_color)
+    assert any(claim is not None for row in claims for claim in row), claims
+    copied_grade = nodes._make_grade(original_grade)
+    assert nodes._hue_claims(copied_grade.pg_color) == claims
+    _assert_values(_settings(nodes, copied_grade), _settings(nodes, original_grade))
+    bpy.data.node_groups.remove(copied_grade)
     expected = _settings(nodes, original_grade)
     other = nodes.create_node(tree)
     other.pg_grade = original_grade
@@ -148,6 +183,7 @@ def _round_trip(nodes, tree, assert_grade_current):
     local = tree.nodes[original_name]
     assert nodes._is_per_node_grade_node(local)
     _assert_values(_settings(nodes, local), expected)
+    assert nodes._hue_claims(local) == claims
     assert other.pg_grade == original_grade
     local.exposure = 0.875
     assert original_grade.pg_linear.exposure == 0.625
@@ -157,6 +193,7 @@ def _round_trip(nodes, tree, assert_grade_current):
     assert shared.pg_grade != original_grade
     assert other.pg_grade == original_grade
     _assert_values(_settings(nodes, shared.pg_grade), expected)
+    assert nodes._hue_claims(shared.pg_grade.pg_color) == claims
     assert shared.name == original_name and tree.nodes.active == shared
     assert shared.parent == parent and tuple(shared.location) == (25.0, -75.0)
     assert shared.label == "Preserved conversion label" and shared.width == 305
@@ -197,6 +234,7 @@ def _round_trip(nodes, tree, assert_grade_current):
     assert injected
     assert _edges(tree) == original_edges, (_edges(tree), original_edges)
     _assert_values(_settings(nodes, shared.pg_grade), expected)
+    assert nodes._hue_claims(shared.pg_grade.pg_color) == claims
 
 
 def _animated_snapshot(nodes, tree, assert_grade_current):
@@ -208,11 +246,14 @@ def _animated_snapshot(nodes, tree, assert_grade_current):
         scene.frame_set(frame)
         local.exposure = value
         assert local.keyframe_insert(data_path="exposure", frame=frame)
+        local.web_hue_1_0 = value * 0.25
+        assert local.keyframe_insert(data_path="web_hue_1_0", frame=frame)
         local.location.x = 10 + value * 10
         assert local.keyframe_insert(data_path="location", index=0, frame=frame)
         sibling.cr_balance = value * 0.125
         assert sibling.keyframe_insert(data_path="cr_balance", frame=frame)
     grade_path = local.path_from_id("exposure")
+    color_path = local.path_from_id("web_hue_1_0")
     location_path = local.path_from_id("location")
     sibling_path = sibling.path_from_id("cr_balance")
     animation = tree.animation_data
@@ -295,8 +336,10 @@ def _animated_snapshot(nodes, tree, assert_grade_current):
     assert tuple(shared.location) == location
     assert animation.action != original_action
     assert grade_path not in _paths(animation.action, animation.action_slot)
+    assert color_path not in _paths(animation.action, animation.action_slot)
     assert {location_path, sibling_path} <= _paths(animation.action, animation.action_slot)
     assert grade_path in _paths(original_action, original_slot)
+    assert color_path in _paths(original_action, original_slot)
     assert other_tree.animation_data.action == original_action
     assert strip.action != nla_action
     assert track.mute
@@ -369,6 +412,7 @@ def prepare_persistence(nodes, trees):
         shared.pg_grade = nodes._make_grade()
         shared.pg_grade.pg_linear.exposure = 0.4375
         shared.pg_grade.pg_tone.fit = 0.375
+        shared.pg_grade.pg_color.global_gain = 0.0625
         local = nodes.convert_grade_node(shared, "NODE")
         local.name = "Saved converted animated Grade"
         assert local.keyframe_insert(data_path="exposure", frame=frame)

@@ -1,22 +1,31 @@
-"""Complete fixed Linear/Tone graphs driven by two parameter image banks."""
+"""Complete fixed Grade graphs driven by two five-role parameter banks."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 from .graph import Graph, BuiltGrade, TREE_TYPES, count_nodes
+from .parameter_color import ParameterColorGraph
 from .guard_graph import compositor_stage2_output_guard
+from ..kernel.color_prepare import prepare_color
 from ..kernel.stage2_parameters import (
     MATRIX_RED_SLOT, MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT,
     TONE_SCALARS_SLOT, TONE_DOMAIN_SLOT, OUTPUT_MATRIX_ROW_SLOTS,
     PARAMETER_CONTENT_SIGNATURE,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, parameter_content_signature,
-    parameter_image_matches, prepare_parameters,
+    parameter_image_matches, prepare_parameters, parameter_bank_images,
+    bind_parameter_bank, PARAMETER_ROLES,
 )
 from ..kernel.stage2_bindings import (
     PARAMETER_IMAGE, PARAMETER_BANK_BINDINGS, PARAMETER_BINDING,
     PARAMETER_ACTIVE_BANK, PARAMETER_GENERATION, PARAMETER_SELECTOR,
     PARAMETER_SAMPLE_SELECTOR, PARAMETER_SAMPLE_ID, PARAMETER_SAMPLE_KIND,
     PARAMETER_SAMPLE_BANK, PARAMETER_READER, PARAMETER_READER_BANK,
+    PARAMETER_READER_ROLE, PARAMETER_SAMPLE_ROLE, PARAMETER_ROLE,
 )
+
+
+class ParameterGraph(ParameterColorGraph, Graph):
+    pass
 
 
 class ParameterBindings:
@@ -27,15 +36,20 @@ class ParameterBindings:
         if active_bank not in (0, 1):
             raise ValueError("Stage 2 active bank must be 0 or 1")
         if images is None:
-            images = tuple(graph._packed_image(
-                parameters.pixels, key=("stage2_parameters", bank),
-                label=f"Perceptual Grade parameters bank {bank}",
-            ) for bank in (0, 1))
-            for image in images:
-                image[PARAMETER_IMAGE] = PARAMETER_SCHEMA
-                image[PARAMETER_CONTENT_SIGNATURE] = parameter_content_signature(
-                    parameters.pixels,
-                )
+            banks = []
+            for bank in (0, 1):
+                bundle = {}
+                for role, pixels in parameters.roles.items():
+                    image = graph._packed_image(
+                        pixels, key=('grade_parameters', bank, role),
+                        label=f'Perceptual Grade {role} bank {bank}',
+                    )
+                    image[PARAMETER_IMAGE] = PARAMETER_SCHEMA
+                    image[PARAMETER_ROLE] = role
+                    image[PARAMETER_CONTENT_SIGNATURE] = parameter_content_signature(pixels)
+                    bundle[role] = image
+                banks.append(bind_parameter_bank(bundle))
+            images = tuple(banks)
         else:
             images = tuple(images)
             if len(images) != 2 or images[0] == images[1]:
@@ -44,8 +58,9 @@ class ParameterBindings:
                 if (image.get(PARAMETER_IMAGE) != PARAMETER_SCHEMA
                         or tuple(image.size) != (PARAMETER_SHAPE[1], PARAMETER_SHAPE[0])):
                     raise ValueError("Invalid shared Stage 2 parameter image")
-                if image not in graph.images:
-                    graph.images.append(image)
+                for role_image in parameter_bank_images(image).values():
+                    if role_image is not None and role_image not in graph.images:
+                        graph.images.append(role_image)
         if len(images) != 2:
             raise ValueError("Stage 2 requires exactly two parameter banks")
         for image in images:
@@ -54,6 +69,7 @@ class ParameterBindings:
                     or not parameter_image_matches(image)):
                 raise ValueError("Invalid Stage 2 parameter bank")
         self.images = images
+        self.bundles = tuple(parameter_bank_images(image) for image in images)
         self.active_bank = active_bank
         self.sample_id = 0
         selector_type = ("ShaderNodeValue" if graph.tree.bl_idname == "ShaderNodeTree"
@@ -67,13 +83,14 @@ class ParameterBindings:
             self.selector_node.inputs[1].default_value = 0.0
         self.selector = self.selector_node.outputs["Value"]
         if graph.tree.bl_idname == "CompositorNodeTree":
-            self.sources = []
-            for bank, image in enumerate(self.images):
-                source = graph.node("CompositorNodeImage", f"Grade parameters bank {bank}")
-                source.image = image
-                source[PARAMETER_READER] = True
-                source[PARAMETER_READER_BANK] = bank
-                self.sources.append(source)
+            self.sources = {}
+            for role in PARAMETER_ROLES:
+                self.sources[role] = []
+                for bank, bundle in enumerate(self.bundles):
+                    source = graph.node('CompositorNodeImage', f'Grade {role} bank {bank}')
+                    source.image = bundle[role]
+                    self._tag_reader(source, bank, role)
+                    self.sources[role].append(source)
         self.selector_node[PARAMETER_SELECTOR] = True
         scalars, high = self.sample(TONE_SCALARS_SLOT)
         black, span, slope = graph.split(scalars)
@@ -85,14 +102,23 @@ class ParameterBindings:
         uv = self.graph.vector(((slot + .5) / PARAMETER_SHAPE[1], .5, 1.))
         return self.sample_uv(uv, label=f"Grade parameter slot {slot}")
 
-    def sample_uv(self, uv, *, label="Grade parameter texel"):
+    @staticmethod
+    def _tag_reader(node, bank, role):
+        node[PARAMETER_READER] = True
+        node[PARAMETER_READER_BANK] = bank
+        node[PARAMETER_READER_ROLE] = role
+
+    def sample_uv(self, uv, *, label="Grade parameter texel", role='parameter'):
         graph = self.graph
         sample_id = self.sample_id
         self.sample_id += 1
         if graph.tree.bl_idname == "ShaderNodeTree":
-            branches = [graph._sample_shader_uv(
-                image, uv, "Closest", f"{label} bank {bank}"
-            ) for bank, image in enumerate(self.images)]
+            branches = []
+            for bank, bundle in enumerate(self.bundles):
+                branch = graph._sample_shader_uv(
+                    bundle[role], uv, 'Closest', f'{label} bank {bank}',
+                )
+                branches.append(branch)
             low, high = branches
             selected = (graph.vselect(self.selector, high[0], low[0]),
                         graph.select(self.selector, high[1], low[1]))
@@ -100,10 +126,11 @@ class ParameterBindings:
                 value.node[PARAMETER_SAMPLE_SELECTOR] = True
                 value.node[PARAMETER_SAMPLE_ID] = sample_id
                 value.node[PARAMETER_SAMPLE_KIND] = kind
+                value.node[PARAMETER_SAMPLE_ROLE] = role
             return selected
 
         samples = []
-        for bank, source in enumerate(self.sources):
+        for bank, source in enumerate(self.sources[role]):
             sample = graph.node(
                 "CompositorNodeMapUV", f"{label} bank {bank}",
             )
@@ -114,6 +141,7 @@ class ParameterBindings:
             graph.connect(uv, sample.inputs["UV"])
             sample[PARAMETER_SAMPLE_ID] = sample_id
             sample[PARAMETER_SAMPLE_BANK] = bank
+            sample[PARAMETER_SAMPLE_ROLE] = role
             separate = graph.node(
                 "CompositorNodeSeparateColor", f"{label} bank {bank} channels",
             )
@@ -121,6 +149,7 @@ class ParameterBindings:
             graph.connect(sample.outputs["Image"], separate.inputs["Image"])
             separate[PARAMETER_SAMPLE_ID] = sample_id
             separate[PARAMETER_SAMPLE_BANK] = bank
+            separate[PARAMETER_SAMPLE_ROLE] = role
             samples.append(tuple(separate.outputs[name]
                                  for name in ("Red", "Green", "Blue", "Alpha")))
 
@@ -139,7 +168,32 @@ class ParameterBindings:
         graph.connect(selected[3], set_alpha.inputs["Alpha"])
         set_alpha[PARAMETER_SAMPLE_SELECTOR] = True
         set_alpha[PARAMETER_SAMPLE_ID] = sample_id
+        set_alpha[PARAMETER_SAMPLE_ROLE] = role
         return set_alpha.outputs["Image"], selected[3]
+
+    def sample_field(self, role, table, coordinate, row):
+        """Interpolate nearest level-zero texels along the field's scalar axis."""
+        graph = self.graph
+        height, width, _ = table.pixels.shape
+        if table.segments > 1:
+            segment = graph.minimum(table.segments - 1,
+                graph.op('FLOOR', graph.div(coordinate, table.segment_cells)))
+            coordinate = graph.sub(coordinate, graph.mul(segment, table.segment_cells))
+            row = graph.madd(row, table.segments, segment)
+        coordinate = graph.clamp(coordinate, 0., width - 1.)
+        low = graph.op('FLOOR', coordinate)
+        high = graph.minimum(width - 1., graph.add(low, 1.))
+        fraction = graph.sub(coordinate, low)
+
+        def sample(x):
+            uv = graph.vector((graph.madd(1. / width, x, .5 / width),
+                               graph.madd(1. / height, row, .5 / height), 1.))
+            color, alpha = self.sample_uv(uv, role=role, label='Grade ' + role)
+            return (*graph.split(color), alpha)
+
+        left, right = sample(low), sample(high)
+        return tuple(graph.madd(fraction, graph.sub(b, a), a)
+                     for a, b in zip(left, right))
 
     @property
     def image(self):
@@ -169,40 +223,27 @@ def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,
     if tree_type not in TREE_TYPES:
         raise ValueError("Grade nodes require a Shader or Compositor tree")
     if prepared.table is None or prepared.boundary is None:
-        raise ValueError("Stage 2 requires a complete Tone table and boundary")
-    if prepared.color.active:
-        raise ValueError("Stage 2 does not support Color adjustments")
+        raise ValueError("Grade requires a complete Tone table and boundary")
+    if not prepared.color.full_fields:
+        prepared = replace(prepared, color=prepare_color(
+            prepared.color.settings, prepared.tone, full_fields=True,
+            previous=prepared.color), full_fields=True)
     parameters = prepared.parameters or prepare_parameters(prepared)
     if parameter_image is not None:
         if parameter_images is not None:
             raise ValueError("Pass parameter_images or parameter_image, not both")
-        parameter_images = (parameter_image,)
+        raise ValueError("Grade requires two complete five-role parameter banks")
     elif parameter_images is not None:
         parameter_images = tuple(parameter_images)
     import bpy
 
     tree = bpy.data.node_groups.new(name, tree_type)
-    graph = Graph(tree, prepared)
+    graph = ParameterGraph(tree, prepared)
     borrowed_images = ()
     try:
-        if parameter_images is not None and len(parameter_images) == 1:
-            # Preserve the old builder seam for callers migrating from one image.
-            # The second bank is owned by this graph and initialized from the same
-            # complete parameter snapshot.
-            borrowed_image, = parameter_images
-            expected = parameter_content_signature(parameters.pixels)
-            if not parameter_image_matches(borrowed_image, expected):
-                raise ValueError("Borrowed Stage 2 parameter image does not match the prepared values")
-            borrowed_image[PARAMETER_CONTENT_SIGNATURE] = expected
-            parameter_images = (borrowed_image, graph._packed_image(
-                parameters.pixels, key=("stage2_parameters", 1),
-                label="Perceptual Grade parameters bank 1",
-            ))
-            borrowed_images = (borrowed_image,)
-            parameter_images[1][PARAMETER_IMAGE] = PARAMETER_SCHEMA
-            parameter_images[1][PARAMETER_CONTENT_SIGNATURE] = expected
-        elif parameter_images is not None:
-            borrowed_images = tuple(parameter_images)
+        if parameter_images is not None:
+            borrowed_images = tuple(image for bank in parameter_images
+                                    for image in parameter_bank_images(bank).values())
         graph.parameters = ParameterBindings(
             graph, parameters, parameter_images, active_bank=active_bank,
         )
@@ -236,13 +277,10 @@ def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,
         output.is_active_output = True
         appearance = graph.encode_cones(graph.parameters.matrix(source.outputs["Color"]))
         toned = graph.tone(appearance, force=True)
-        if tree_type == "CompositorNodeTree":
-            # Without Color adjustments, positive energy needs no H-K repair;
-            # nonpositive energy already exports black. Carry signed J_A to
-            # avoid squared-energy overflow in interactive half-float images.
-            decoded = compositor_stage2_output_guard(graph, toned)
-        else:
-            decoded = graph.output_guard(graph.hk_guard(graph.guard_input(toned)))
+        guarded = graph.color_and_guard(toned)
+        decoded = (compositor_stage2_output_guard(graph, guarded, source=source.outputs["Color"],
+                                                 retained_tone=toned)
+                   if tree_type == "CompositorNodeTree" else graph.output_guard(guarded))
         if tree_type == "ShaderNodeTree":
             color, alpha = decoded.color, source.outputs["Alpha"]
         else:
@@ -266,12 +304,14 @@ def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,
             ):
                 graph.connect(value, output.inputs[socket_name])
         for node in tree.nodes:
-            image = getattr(node, "image", None)
-            if image in graph.parameters.images:
-                bank = next(index for index, candidate in enumerate(graph.parameters.images)
-                            if candidate == image)
-                node[PARAMETER_READER] = True
-                node[PARAMETER_READER_BANK] = bank
+            image = getattr(node, 'image', None)
+            if image is None:
+                continue
+            for bank, bundle in enumerate(graph.parameters.bundles):
+                for role, candidate in bundle.items():
+                    if image == candidate:
+                        graph.parameters._tag_reader(node, bank, role)
+                        break
         tree["_perceptual_grade_stage2_complete"] = True
         return BuiltGrade(tree, tuple(graph.images), tuple(graph.helper_groups),
                           prepared, count_nodes(tree, graph.images),

@@ -110,6 +110,7 @@ class BakeRouteTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, str(root))
         cls.module = importlib.import_module("grade_bake_routes_test.runtime.bake_routes")
+        cls.color_ui = importlib.import_module("grade_bake_routes_test.kernel.color_ui")
 
     @classmethod
     def tearDownClass(cls):
@@ -140,9 +141,11 @@ class BakeRouteTests(unittest.TestCase):
         self.grade = self.make_grade(self.tree)
 
     def make_grade(self, tree, name="Grade", kind=None):
+        owner = settings()
+        owner.pg_color = SimpleNamespace(**self.color_ui.COLOR_DEFAULTS)
         return Node(tree, kind or ("PGCompositorGrade" if tree.bl_idname == "CompositorNodeTree" else "PGShaderGrade"),
                     name, inputs=(("Color", (.1, .2, .3, 1.)), ("Alpha", 1.), ("Vector", (0., 0., 0.))),
-                    outputs=(("Color", None), ("Alpha", None)), pg_grade=settings(),
+                    outputs=(("Color", None), ("Alpha", None)), pg_grade=owner,
                     pg_bake_image=None, pg_use_bake=False, pg_bake_width=32, pg_bake_height=16)
 
     def texture(self, tree=None, name="Texture", image=None):
@@ -287,10 +290,67 @@ class BakeRouteTests(unittest.TestCase):
 
     def test_stack_uses_semantic_entries(self):
         self.grade.bl_idname = "PGShaderGradeStack"
-        self.grade.pg_stack_entries = [SimpleNamespace(grade=settings(), enabled=True)]
+        self.grade.pg_stack_entries = [SimpleNamespace(grade=self.grade.pg_grade, enabled=True)]
         first = self.module.describe(self.grade, self.context)["signature"]
         self.grade.pg_stack_entries[0].grade.pg_tone.fit = .5
         self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
+
+    def assert_color_edit_invalidates(self, controls, names):
+        baseline = self.module.describe(self.grade, self.context)
+        for name in names:
+            with self.subTest(field=name):
+                previous = getattr(controls, name)
+                setattr(controls, name, previous + .125)
+                try:
+                    changed = self.module.describe(self.grade, self.context)
+                    for key in ("signature", "receipt_signature", "observation_signature"):
+                        self.assertNotEqual(baseline[key], changed[key], key)
+                    preview = self.module.preview(self.grade, self.context)
+                    self.assertEqual(preview["receipt_signature"], changed["receipt_signature"])
+                    self.assertEqual(self.module.observe(self.grade, self.context)["signature"],
+                                     changed["observation_signature"])
+                finally:
+                    setattr(controls, name, previous)
+        self.assertEqual(self.module.describe(self.grade, self.context)["receipt_signature"],
+                         baseline["receipt_signature"])
+
+    def test_every_color_control_changes_request_and_persisted_bake_receipt(self):
+        self.assert_color_edit_invalidates(self.grade.pg_grade.pg_color,
+                                          self.color_ui.COLOR_FIELDS)
+
+    def test_upstream_and_stack_color_edits_change_bake_identity(self):
+        names = ("j_a_1", "c_high_2", "lightness_fit", "chroma_fit", "global_gain",
+                 "adaptance_half_saturation", "adaptance_b_3",
+                 "web_chroma_0_0", "web_hue_1_2", "web_scale_3_5")
+        for kind in ("PGShaderGrade", "PGShaderGradePerNode", "PGShaderGradeStack"):
+            with self.subTest(upstream=kind):
+                self.grade.inputs.get("Color").links.clear()
+                upstream = self.make_grade(self.tree, name=kind)
+                owner = upstream.pg_grade
+                upstream.bl_idname = kind
+                if kind in self.module.PER_NODE_TYPES:
+                    upstream.pg_grade = None
+                    upstream.__dict__.update(vars(owner.pg_linear))
+                    upstream.__dict__.update(vars(owner.pg_tone))
+                    upstream.__dict__.update(vars(owner.pg_color))
+                    controls = upstream
+                else:
+                    controls = owner.pg_color
+                if kind in self.module.STACK_TYPES:
+                    upstream.pg_stack_entries = [SimpleNamespace(grade=owner, enabled=True)]
+                link(upstream, "Color", self.grade, "Color")
+                self.assert_color_edit_invalidates(controls, names)
+
+        self.grade.inputs.get("Color").links.clear()
+        self.grade.bl_idname = "PGShaderGradeStack"
+        entry = SimpleNamespace(grade=self.grade.pg_grade, enabled=True)
+        self.grade.pg_stack_entries = [entry]
+        self.assert_color_edit_invalidates(entry.grade.pg_color, names)
+        entry.enabled = False
+        baseline = self.module.describe(self.grade, self.context)["receipt_signature"]
+        entry.grade.pg_color.web_hue_1_2 = 12.
+        self.assertEqual(self.module.describe(self.grade, self.context)["receipt_signature"],
+                         baseline)
 
     def test_grade_interface_receipt_uses_public_socket_names(self):
         texture = self.texture()
@@ -716,6 +776,7 @@ class BakeRouteTests(unittest.TestCase):
         link(upstream, "Color", self.grade, "Color")
         first = self.module.describe(self.grade, self.context)
         upstream.pg_grade.pg_linear.exposure = 1.
+        upstream.pg_grade.pg_color.web_hue_1_2 = 12.
         self.assertEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
         self.assertFalse(first["upstream"])
         upstream.pg_bake_image["_pg_next_bake_operation"] = "rebake"

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from functools import cached_property
 import math
 from numbers import Real
+from typing import Optional
 
 
 TAU = 2 * math.pi
@@ -28,8 +29,9 @@ class ColorSockets:
     source_chroma: object
     source_energy: object
     saturated: object = 0.
-    chroma_value: object = None
-    offset_value: object = None
+    chroma_value: Optional[object] = None
+    offset_value: Optional[object] = None
+    ja_value: Optional[object] = None
 
     @cached_property
     def chroma(self):
@@ -38,7 +40,10 @@ class ColorSockets:
     @cached_property
     def J_A(self):
         g = self.graph
-        return g.mul(g.sign(self.energy), g.sqrt(g.abs(self.energy)))
+        if self.ja_value is not None:
+            return self.ja_value
+        return g.mul(g.mul(g.sign(self.energy), g.sqrt(g.abs(self.energy))),
+                     math.sqrt(g._color_energy_scale))
 
     @property
     def ja(self):
@@ -56,7 +61,7 @@ class ColorSockets:
             return self.offset_value
         base = g.mul(SQRT_HK, g.sqrt(self.chroma))
         magnitude = g._color_magnitude(self.energy, self.chroma)
-        return g.div(self.energy, g.add(magnitude, base))
+        return g._color_offset(self.energy, magnitude, base)
 
 
 def _active(values):
@@ -65,6 +70,28 @@ def _active(values):
 
 class ColorGraph:
     """Mixin using Graph's cached arithmetic and caller-owned image sampling."""
+
+    _color_full_topology = False
+
+    @property
+    def _color_energy_scale(self):
+        return 1.0
+
+    def _color_setting(self, name):
+        return getattr(self.prepared.color.settings, name)
+
+    def _color_enabled(self, name):
+        color = self.prepared.color
+        if name in ('lightness', 'chroma', 'adaptance', 'web'):
+            return float(getattr(color, name + '_active'))
+        return float(_active(getattr(color.settings.web, name)))
+
+    def _color_route(self, enabled, yes, no):
+        return replace(yes, **{name: self.select(enabled, getattr(yes, name), getattr(no, name))
+                              for name in ('H', 'a', 'b', 'energy', 'saturated')},
+                       chroma_value=self.select(enabled, yes.chroma, no.chroma),
+                       offset_value=self.select(enabled, yes.offset, no.offset),
+                       ja_value=self.select(enabled, yes.J_A, no.J_A))
 
     @cached_property
     def _color_source_height(self):
@@ -178,21 +205,26 @@ class ColorGraph:
         return self.select(self.lt(energy, 0.), self.sub(self.mul(2., base), magnitude), magnitude)
 
     def _color_magnitude(self, energy, chroma):
-        """sqrt(|E|+66C) without overflowing either weighted term.
+        """sqrt(|E|+66C), using a scaled E carrier for Compositor trees."""
+        if self._color_energy_scale == 1.:
+            absolute = self.abs(energy)
+            if self._color_safe or self._color_bounded('C', 'pre_adaptance_C', limit=2.**96):
+                return self.sqrt(self.madd(66., chroma, absolute))
+            scale = self.maximum(absolute, chroma)
+            normalized = self.madd(66., self.div(chroma, scale), self.div(absolute, scale))
+            return self.mul(self.sqrt(scale), self.sqrt(normalized))
+        absolute = self.mul(self.sqrt(self.abs(energy)),
+                            math.sqrt(self._color_energy_scale))
+        base = self.mul(SQRT_HK, self.sqrt(chroma))
+        return self.hypot(absolute, base)
 
-        The normalized sum is at most 67. Its square root and the square
-        root of the finite scale therefore remain directly representable.
-        """
-        absolute = self.abs(energy)
-        # Stage handoffs carry finite (possibly saturated) E. With C<2^96,
-        # 66C<2^103, half the final float32 ULP; even |E|=FLT_MAX therefore
-        # rounds to a finite sum. This avoids unnecessary scaled arithmetic
-        # when only the unchanged float64 energy bound exceeds float32.
-        if self._color_safe or self._color_bounded('C', 'pre_adaptance_C', limit=2.**96):
-            return self.sqrt(self.madd(66., chroma, absolute))
-        scale = self.maximum(absolute, chroma)
-        normalized = self.madd(66., self.div(chroma, scale), self.div(absolute, scale))
-        return self.mul(self.sqrt(scale), self.sqrt(normalized))
+    def _color_offset(self, energy, magnitude, base):
+        root_scale = math.sqrt(self._color_energy_scale)
+        if root_scale == 1.:
+            return self.div(energy, self.add(magnitude, base))
+        denominator = self.add(self.div(magnitude, root_scale),
+                               self.div(base, root_scale))
+        return self.mul(root_scale, self.div(energy, denominator))
 
     def _color_carry(self, state, height, chroma):
         """Stable signed H/C change, without subtracting rounded squares.
@@ -207,8 +239,10 @@ class ColorGraph:
         db = self.mul(66., self.div(self.sub(chroma, old_c), self.add(new_b, old_b)))
         dh = self.sub(height, state.H)
         offset = self.add(state.offset, self.sub(dh, db))
-        energy, flag = self._color_mul(offset, self.add(self.abs(offset), self.mul(2., new_b)),
-                                       'pre_adaptance_energy')
+        root_scale = math.sqrt(self._color_energy_scale)
+        left = self.div(offset, root_scale)
+        right = self.div(self.add(self.abs(offset), self.mul(2., new_b)), root_scale)
+        energy, flag = self._color_mul(left, right, 'pre_adaptance_energy')
         changed = self.maximum(self.lt(0., self.abs(dh)), self.lt(0., self.abs(db)))
         return (self.safe_select(changed, energy, state.energy),
                 self._color_flag(state.saturated, self.mul(changed, flag)), offset)
@@ -222,7 +256,9 @@ class ColorGraph:
             visibility_den = self.sqrt(visible_square)
             visibility = self.div(c2, visible_square)
         else:
-            r = self.mul(35./75., self.sqrt(self.abs(state.source_energy)))
+            r = self.mul(35./75., self.mul(
+                math.sqrt(self._color_energy_scale),
+                self.sqrt(self.abs(state.source_energy))))
             scale = self.maximum(c, r)
             cn, rn = self.div(c, scale), self.div(r, scale)
             c2, r2 = self.mul(cn, cn), self.mul(rn, rn)
@@ -236,39 +272,48 @@ class ColorGraph:
 
     def _color_terms(self, state):
         prepared = self.prepared.color
-        if not (prepared.lightness_active or prepared.chroma_active):
+        if not (self._color_full_topology or prepared.lightness_active or prepared.chroma_active):
             return state
-        chroma_fields = _active(prepared.settings.chroma)
-        if prepared.lightness_active or chroma_fields:
+        chroma_fields = self._color_full_topology or _active(prepared.settings.chroma)
+        if self._color_full_topology or prepared.lightness_active or chroma_fields:
             x = self._color_height(prepared.coefficient_table, state.tonal_h)
             drivers = self._color_drivers(state)
         h, a, b, flag = state.H, state.a, state.b, state.saturated
-        if prepared.lightness_active:
+        if self._color_full_topology or prepared.lightness_active:
             values = self.sample_field(prepared.coefficient_table, x, 0)
-            h = self.add(h, self._color_dot4(values, drivers))
-        if prepared.chroma_active:
-            exponent = prepared.settings.global_gain
+            h = self.select(self._color_enabled('lightness'),
+                            self.add(h, self._color_dot4(values, drivers)), h)
+        if self._color_full_topology or prepared.chroma_active:
+            exponent = self._color_setting('global_gain')
             if chroma_fields:
                 values = self.sample_field(prepared.coefficient_table, x, 1)
                 exponent = self.add(exponent, self._color_dot4(values, drivers))
-            upper = prepared.settings.global_gain + max(
+            upper = math.inf if self._color_full_topology else prepared.settings.global_gain + max(
                 max(abs(row[0]), abs(row[1])) + math.hypot(*row[2:])
                 for row in prepared.settings.chroma)
             gain, fs = self._color_exp(exponent, upper, 2.)
             a, fa = self._color_mul(a, gain)
             b, fb = self._color_mul(b, gain)
-            flag = self._color_flag(flag, fs, fa, fb)
+            enabled = self._color_enabled('chroma')
+            a, b = self.select(enabled, a, state.a), self.select(enabled, b, state.b)
+            flag = self.select(enabled, self._color_flag(flag, fs, fa, fb), flag)
         chroma, chroma_flag = self._color_norm_result(a, b)
         flag = self._color_flag(flag, chroma_flag)
         energy, fe, offset = self._color_carry(state, h, chroma)
         # Original black is fixed even when tonal lightness coefficients exist.
         nonblack = self.lt(0., state.tonal_h)
-        return replace(state, H=self.safe_select(nonblack, h, state.H),
+        result = replace(state, H=self.safe_select(nonblack, h, state.H),
                        a=self.safe_select(nonblack, a, state.a),
                        b=self.safe_select(nonblack, b, state.b),
                        energy=self.safe_select(nonblack, energy, state.energy),
-                       chroma_value=chroma, offset_value=offset,
+                       chroma_value=chroma, offset_value=offset, ja_value=None,
                        saturated=self._color_flag(state.saturated, self.mul(nonblack, self._color_flag(flag, fe))))
+        changed = self.mul(nonblack, self.maximum(
+            self.lt(0., self.abs(self.sub(h, state.H))),
+            self.lt(0., self.abs(self.sub(chroma, state.chroma)))))
+        result = replace(result, ja_value=self.select(changed, result.J_A, state.J_A))
+        return self._color_route(self.maximum(self._color_enabled('lightness'),
+                                               self._color_enabled('chroma')), result, state)
 
     def _color_sector(self, angle, angles):
         local = self.add(self.op('FLOORED_MODULO', self.sub(angle, angles[0]), TAU), angles[0])
@@ -294,7 +339,7 @@ class ColorGraph:
 
     def _color_web(self, state):
         prepared = self.prepared.color
-        if not prepared.web_active:
+        if not (self._color_full_topology or prepared.web_active):
             return state, 1., 0.
         table = prepared.web_table
         x = self._color_height(table, state.tonal_h)
@@ -302,9 +347,9 @@ class ColorGraph:
         toes = self.sample_field(toe_table, self._color_height(toe_table, state.tonal_h), 0)
         angle = self.op('ARCTAN2', state.b, state.a)
         out_angle = angle
-        hue_active = _active(prepared.settings.web.hue_degrees)
-        chroma_active = _active(prepared.settings.web.log_chroma)
-        scale_active = _active(prepared.settings.web.log_scale)
+        hue_active = self._color_full_topology or _active(prepared.settings.web.hue_degrees)
+        chroma_active = self._color_full_topology or _active(prepared.settings.web.log_chroma)
+        scale_active = self._color_full_topology or _active(prepared.settings.web.log_scale)
         c = state.chroma
         if hue_active:
             angles = self._color_field(table, x, 'angles')
@@ -316,7 +361,8 @@ class ColorGraph:
             value = self.madd(u, self.add(slope, self.mul(self.mul(u, u),
                     self.madd(u, self.madd(u, c5, c4), c3))), target)
             fade = self._color_smoother(self.div(c, toes[0]))
-            out_angle = self.madd(fade, self.sub(value, local), angle)
+            out_angle = self.select(self._color_enabled('hue_degrees'),
+                                    self.madd(fade, self.sub(value, local), angle), angle)
         c1, scale, flag = c, 1., state.saturated
         if chroma_active or scale_active:
             targets = self._color_field(table, x, 'target_angles')
@@ -336,16 +382,20 @@ class ColorGraph:
                 gs0, gs1, _, _ = self.sample_field(table, x, self.add(row, 1.))
                 scale_log = self.madd(blend, self.sub(gs1, gs0), gs0)
             if chroma_active:
-                upper = math.log(2.)*max(v for row in prepared.settings.web.log_chroma for v in row)-math.log(.9)
+                upper = math.inf if self._color_full_topology else math.log(2.)*max(v for row in prepared.settings.web.log_chroma for v in row)-math.log(.9)
                 gc, fg = self._color_exp(chroma_log, max(0., upper))
                 c1, fc = self._color_radial(c, gc, toes[1])
-                flag = self._color_flag(flag, fg, fc)
+                enabled = self._color_enabled('log_chroma')
+                c1 = self.select(enabled, c1, c)
+                flag = self.select(enabled, self._color_flag(flag, fg, fc), flag)
             if scale_active:
-                upper = math.log(2.)*max(v for row in prepared.settings.web.log_scale for v in row)-math.log(.9)
+                upper = math.inf if self._color_full_topology else math.log(2.)*max(v for row in prepared.settings.web.log_scale for v in row)-math.log(.9)
                 gs, fg = self._color_exp(scale_log, max(0., upper))
                 c2, fc = self._color_radial(c1, gs, toes[2])
-                scale = self.select(self.lt(0., c1), self.div(c2, c1), 1.)
-                scale_flag = self._color_flag(fg, fc)
+                scale = self.select(self._color_enabled('log_scale'),
+                                    self.select(self.lt(0., c1), self.div(c2, c1), 1.), 1.)
+                scale_flag = self.select(self._color_enabled('log_scale'),
+                                         self._color_flag(fg, fc), 0.)
             else:
                 scale_flag = 0.
         else:
@@ -355,18 +405,25 @@ class ColorGraph:
             a = self.mul(c1, self.op('COSINE', out_angle))
             b = self.mul(c1, self.op('SINE', out_angle))
             same = self.op('COMPARE', out_angle, angle, 0.)
+            same = self.maximum(same, self.sub(1., self._color_enabled('hue_degrees')))
             a = self.select(same, self.mul(state.a, radial), a)
             b = self.select(same, self.mul(state.b, radial), b)
         else:
             a, b = self.mul(state.a, radial), self.mul(state.b, radial)
         if chroma_active:
             energy, fe, offset = self._color_carry(state, state.H, c1)
-            flag = self._color_flag(flag, fe)
+            enabled = self._color_enabled('log_chroma')
+            energy = self.select(enabled, energy, state.energy)
+            offset = self.select(enabled, offset, state.offset)
+            flag = self.select(enabled, self._color_flag(flag, fe), flag)
         else:
             energy = state.energy
             offset = state.offset_value
-        return replace(state, a=a, b=b, energy=energy, saturated=flag,
-                       chroma_value=c1, offset_value=offset), scale, scale_flag
+        result = replace(state, a=a, b=b, energy=energy, saturated=flag,
+                         chroma_value=c1, offset_value=offset, ja_value=None)
+        changed = self.lt(0., self.abs(self.sub(c1, c)))
+        result = replace(result, ja_value=self.select(changed, result.J_A, state.J_A))
+        return self._color_route(self._color_enabled('web'), result, state), scale, scale_flag
 
     def _color_response_vector(self, responses, gains):
         """The three independent response maps evaluated by vector nodes."""
@@ -384,7 +441,11 @@ class ColorGraph:
         if self._color_bounded('transformed_response'):
             z, fz, overflow_flag = self.vdiv(u, gains), 0., 0.
         else:
-            threshold = self.vscale(u, 1/3.4028232635611926e38)
+            # A reciprocal float32 maximum is subnormal. Native Blender
+            # flushes that socket literal to zero while appending a library;
+            # two normal factors preserve both the graph and its threshold.
+            threshold = self.vscale(self.vscale(u, 2.**-64),
+                                    2.**64/3.4028232635611926e38)
             safe_gain = self.vop('MAXIMUM', gains, threshold)
             z, fz = self.vsaturate(self.vdiv(u, safe_gain))
             overflow = self.vop('MAXIMUM', self.vop('SIGN', self.vsub(threshold, gains)), zero)
@@ -403,9 +464,17 @@ class ColorGraph:
 
     def _color_response_delta(self, responses, logs, gains, log_bound):
         """Transport small response changes without subtracting full cones."""
-        if not self._color_bounded('transformed_response'):
+        protected = not self._color_bounded('transformed_response')
+        if protected:
             transformed, flag = self._color_response_vector(responses, gains)
-            return self.vsub(transformed, responses), flag
+            original_logs = logs
+            # A broad authored range may require representational protection,
+            # while the frozen reach makes this particular log tiny. Retain
+            # its analytic delta: subtracting full responses would erase it
+            # before H-K repair amplifies the small signed-energy change.
+            logs = self.vop('MINIMUM', self.vop('MAXIMUM', logs, (-.1,)*3), (.1,)*3)
+            gains = self.vop('POWER', (math.e,)*3, logs)
+            log_bound = .1
         zero, one = (0.,)*3, (1.,)*3
         # expm1's sixth-degree Taylor form has error below 3e-11 on [-.1,.1].
         polynomial = (1/720.,)*3
@@ -430,17 +499,124 @@ class ColorGraph:
                           self.vadd(one, self.vadd(u, z)))
         outer = self.vmul(self.vop('SIGN', responses), outer)
         mask = self.vop('SIGN', self.vsub(relative, one))
-        return self.vselect_components(mask, outer, inside), 0.
+        delta = self.vselect_components(mask, outer, inside)
+        if protected:
+            small_log = self.vop('SIGN', self.vsub((.1,)*3, self.vop('ABSOLUTE', original_logs)))
+            return self.vselect_components(small_log, delta, self.vsub(transformed, responses)), flag
+        return delta, 0.
+
+    def _color_polynomial_delta(self, coefficients, value, delta):
+        """P(value+delta)-P(value), without subtracting close polynomials."""
+        current, change = coefficients[0], 0.
+        shifted = self.add(value, delta)
+        for coefficient in coefficients[1:]:
+            change = self.madd(change, shifted, self.mul(current, delta))
+            current = self.madd(current, value, coefficient)
+        return change
+
+    def _color_power_delta(self, relative, exponent):
+        """(1+r)^p-1 on the small relative-change branch."""
+        relative = self.clamp(relative, -.01, .01)
+        coefficients, coefficient = [], 1.
+        for order in range(1, 9):
+            coefficient *= (exponent-order+1)/order
+            coefficients.append(coefficient)
+        value = coefficients[-1]
+        for coefficient in reversed(coefficients[:-1]):
+            value = self.madd(value, relative, coefficient)
+        return self.mul(relative, value)
+
+    def _color_adaptance_controls(self):
+        color = self.prepared.color
+        return tuple(color.anchors), tuple(float(any(value != 0. for value in row))
+                                           for row in color.settings.adaptance)
+
+    def _color_adaptance_support(self, height):
+        """Preserve exactly zero cardinal intervals across linear atlas cells."""
+        anchors, flags = self._color_adaptance_controls()
+        enabled = flags[-1]
+        for index in reversed(range(3)):
+            interval = self.maximum(flags[index], flags[index+1])
+            enabled = self.select(self.lt(height, anchors[index+1]), interval, enabled)
+        enabled = self.select(self.lt(height, anchors[0]), flags[0], enabled)
+        for anchor, flag in zip(anchors, flags):
+            enabled = self.select(self.op('COMPARE', height, anchor, 0.), flag, enabled)
+        return enabled
+
+    def _color_adaptance_height(self, state, direct, achromatic, opponent_scale,
+                                eccentricity, da, du, dw, factor_log):
+        """Carry reflected H through a small response change without cancellation.
+
+        H can be hundreds while sqrt(66C) is hundreds of millions. Rebuilding
+        it from rounded E and C discards an authoritative coordinate. Analytic
+        relative differences retain the small Adaptance request instead.
+        """
+        c = state.chroma
+        ca, sa = self.div(state.a, c), self.div(state.b, c)
+        requested_ua = self.div(self.div(du, opponent_scale), c)
+        requested_ub = self.div(self.div(dw, opponent_scale), c)
+        # Both candidates are evaluated by Blender Mix nodes. Keep this
+        # small-change candidate finite even when the direct branch wins.
+        # Eligibility still uses the original, unclamped response changes.
+        ua = self.clamp(requested_ua, -.01, .01)
+        ub = self.clamp(requested_ub, -.01, .01)
+        radius_square_delta = self.madd(ua, ua, self.madd(ub, ub,
+            self.mul(2., self.madd(ca, ua, self.mul(sa, ub)))))
+        radius = self.sqrt(self.add(1., radius_square_delta))
+        radius_delta = self.div(radius_square_delta, self.add(radius, 1.))
+        dc = self.div(self.madd(-1., self.mul(ca, radius_delta), ua), radius)
+        ds = self.div(self.madd(-1., self.mul(sa, radius_delta), ub), radius)
+        dp = self._color_polynomial_delta((.2312, -.5388, -.2828, .3459, 1.0547), ca, dc)
+        dq = self._color_polynomial_delta((.0768, .154, -.1, -.186), ca, dc)
+        shifted = self.add(ca, dc)
+        q = self.madd(self.madd(self.madd(.0768, shifted, .154), shifted, -.1), shifted, -.186)
+        eccentricity_delta = self.add(dp, self.madd(sa, dq, self.mul(ds, q)))
+        eccentricity_relative = self.div(eccentricity_delta, eccentricity)
+        chroma_relative = self.add(radius_delta,
+            self.madd(radius_delta, eccentricity_relative, eccentricity_relative))
+        log = self.clamp(factor_log, -.1, .1)
+        exponential = 1/math.factorial(9)
+        for order in range(8, 0, -1):
+            exponential = self.madd(exponential, log, 1/math.factorial(order))
+        factor_delta = self.mul(log, exponential)
+        chroma_relative = self.add(chroma_relative,
+            self.madd(chroma_relative, factor_delta, factor_delta))
+        requested_achromatic_relative = self.div(da, achromatic)
+        achromatic_relative = self.clamp(requested_achromatic_relative, -1., 1.)
+        achromatic_relative = self.add(achromatic_relative,
+            self.madd(achromatic_relative, factor_delta, factor_delta))
+        energy_relative = self._color_power_delta(achromatic_relative, 2*self.prepared.gamma)
+        base = self.mul(SQRT_HK, self.sqrt(c))
+        magnitude = self._color_magnitude(state.energy, c)
+        er = self.div(self.mul(math.sqrt(self._color_energy_scale), self.sqrt(self.abs(state.energy))), magnitude)
+        cr = self.div(base, magnitude)
+        square_relative = self.madd(self.mul(er, er), energy_relative,
+                                    self.mul(self.mul(cr, cr), chroma_relative))
+        magnitude_delta = self.mul(magnitude,
+            self.div(square_relative, self.add(self.sqrt(self.add(1., square_relative)), 1.)))
+        base_delta = self.mul(base,
+            self.div(chroma_relative, self.add(self.sqrt(self.add(1., chroma_relative)), 1.)))
+        height_delta = self.select(self.lt(state.energy, 0.),
+            self.madd(2., base_delta, self.mul(-1., magnitude_delta)), magnitude_delta)
+        stable = self.add(state.H, height_delta)
+        small = self.mul(self.lt(self.abs(achromatic_relative), .01),
+                         self.lt(self.abs(chroma_relative), .01))
+        small = self.mul(small, self.mul(self.lt(self.abs(factor_log), .1),
+            self.mul(self.lt(self.abs(requested_ua), .01), self.lt(self.abs(requested_ub), .01))))
+        small = self.mul(small, self.lt(self.abs(requested_achromatic_relative), 1.))
+        small = self.mul(small, self.mul(self.lt(0., self.abs(achromatic)), self.lt(0., c)))
+        return self.select(small, stable, direct)
 
     def _color_adaptance(self, state):
         prepared = self.prepared.color
-        if not prepared.adaptance_active:
+        if not (self._color_full_topology or prepared.adaptance_active):
             return state
         table = prepared.adaptance_table
         s = self.mul(math.sqrt(self.prepared.aw/(3.05*400.)),
                      self.power(self.mul(.01, state.tonal_h), 1/(2*self.prepared.gamma)))
         x = self.mul(table.cells, self.div(s, self.add(1., s)))
-        fields = self.sample_field(table, x, 0)
+        support = self._color_adaptance_support(state.tonal_h)
+        fields = tuple(self.mul(support, value) for value in self.sample_field(table, x, 0))
         if self._color_source_squares_safe:
             a2 = self.mul(prepared.settings.adaptance_half_saturation**2, self.abs(state.source_energy))
             c2 = self.mul(state.source_chroma, state.source_chroma)
@@ -448,8 +624,9 @@ class ColorGraph:
             an, cn = self.div(a2, scale), self.div(c2, scale)
             a4, c4 = self.mul(an, an), self.mul(cn, cn)
         else:
-            reach_a = self.mul(prepared.settings.adaptance_half_saturation,
-                               self.sqrt(self.abs(state.source_energy)))
+            reach_a = self.mul(self._color_setting('adaptance_half_saturation'),
+                self.mul(math.sqrt(self._color_energy_scale),
+                         self.sqrt(self.abs(state.source_energy))))
             scale = self.maximum(reach_a, state.source_chroma)
             an, cn = self.div(reach_a, scale), self.div(state.source_chroma, scale)
             a2, c2 = self.mul(an, an), self.mul(cn, cn)
@@ -458,21 +635,25 @@ class ColorGraph:
         # Each atlas channel is convexly interpolated; its maximum is an exact
         # bound on the represented coefficient, independent of pixel values.
         logs = self.vscale(self.vector(fields[:3]), reach)
-        log_bound = float(abs(table.pixels[..., :3]).max())
+        log_bound = math.inf if self._color_full_topology else float(abs(table.pixels[..., :3]).max())
         gain_vector = (self.vector(tuple(self.op('EXPONENT', value) for value in self.split(logs)))
                        if log_bound > 1 else self.vop('POWER', (math.e,)*3, logs))
-        maximum_log = max(0., float(table.pixels[..., :3].max()))
+        maximum_log = math.inf if self._color_full_topology else max(0., float(table.pixels[..., :3].max()))
         if maximum_log < 88.:
             gain_flag = 0.
         else:
             gain_vector, gain_flag = self.vsaturate(gain_vector)
-        factor, factor_flag = self._color_exp(self.mul(reach, fields[3]),
-                                            max(0., float(table.pixels[..., 3].max())))
+        factor_log = self.mul(reach, fields[3])
+        factor, factor_flag = self._color_exp(factor_log,
+                                            math.inf if self._color_full_topology else max(0., float(table.pixels[..., 3].max())))
         eccentricity, _ = self._eccentricity(state.a, state.b,
             robust=not self._color_bounded('pre_adaptance_C', limit=2.**58))
+        input_eccentricity = eccentricity
         opponent_scale = self.div(self.prepared.aw/1204., eccentricity)
         achromatic = self.mul(self.prepared.aw/100.**(1/self.prepared.gamma),
-                             self.mul(self.sign(state.energy), self.power(self.abs(state.energy), 1/(2*self.prepared.gamma))))
+            self.mul(self.sign(state.energy), self.mul(
+                self.power(self.abs(state.energy), 1/(2*self.prepared.gamma)),
+                self._color_energy_scale**(1/(2*self.prepared.gamma)))))
         # Keep the common neutral response separate until the last addition.
         # Scaling rounded opponent components before a cancelling row dot can
         # lose enough cone precision to amplify near the exterior pole.
@@ -514,7 +695,10 @@ class ColorGraph:
         b, fb = self._color_mul(w, chroma_factor)
         ja, fj = self._color_positive_mul(100., self.power(self.div(self.abs(ac), self.prepared.aw), self.prepared.gamma),
                                  'post_adaptance_H')
-        energy, fe = self._color_positive_mul(ja, ja, 'post_adaptance_energy')
+        root_scale = math.sqrt(self._color_energy_scale)
+        normalized_ja = self.div(ja, root_scale)
+        energy, fe = self._color_positive_mul(
+            normalized_ja, normalized_ja, 'post_adaptance_energy')
         energy = self.mul(self.sign(ac), energy)
         # A calibrated neutral carries the original achromatic energy exactly.
         neutral = self.mul(self.sub(1., self.lt(0., state.source_chroma)),
@@ -522,13 +706,22 @@ class ColorGraph:
         energy = self.safe_select(neutral, state.energy, energy)
         chroma, chroma_flag = self._color_norm_result(a, b)
         height = self._color_h(energy, chroma)
-        active = self.mul(self.lt(0., reach), self.lt(0., state.tonal_h))
+        height = self._color_adaptance_height(state, height, achromatic,
+            opponent_scale, input_eccentricity, da, du, dw, factor_log)
+        log_components = self.split(self.vop('ABSOLUTE', logs))
+        changed_log = self.maximum(self.abs(factor_log), self.maximum(
+            log_components[0], self.maximum(log_components[1], log_components[2])))
+        active = self.mul(self.lt(0., changed_log), self.lt(0., state.tonal_h))
         changed = self._color_flag(*flags, fac, fu, fw, fa, fb, fj, fe, chroma_flag)
-        return replace(state, H=self.safe_select(active, height, state.H),
+        result = replace(state, H=self.safe_select(active, height, state.H),
                        a=self.safe_select(active, a, state.a), b=self.safe_select(active, b, state.b),
                        energy=self.safe_select(active, energy, state.energy),
                        chroma_value=self.select(active, chroma, state.chroma), offset_value=None,
+                       ja_value=self.safe_select(active,
+                           self.safe_select(neutral, state.J_A, self.mul(self.sign(ac), ja)),
+                           state.J_A),
                        saturated=self._color_flag(state.saturated, self.mul(active, changed)))
+        return self._color_route(self._color_enabled('adaptance'), result, state)
 
     def _color_input(self, appearance):
         if appearance.graph is not self:
@@ -537,29 +730,42 @@ class ColorGraph:
         return ColorSockets(self, appearance.H, appearance.a, appearance.b, source_energy,
                              source_energy, appearance.magnitude, appearance.chroma, source_energy,
                              getattr(appearance, 'saturated', 0.), appearance.chroma,
-                             self.div(source_energy, self.add(appearance.magnitude,
-                                      self.mul(SQRT_HK, self.sqrt(appearance.chroma)))))
+                             self._color_offset(source_energy, appearance.magnitude,
+                                      self.mul(SQRT_HK, self.sqrt(appearance.chroma))),
+                             appearance.J_A)
 
-    def color(self, appearance):
+    def color(self, appearance, *, guarded=False):
         state = self._color_input(appearance)
         prepared = self.prepared.color
-        if not prepared.active:
-            return state
+        if not (self._color_full_topology or prepared.active):
+            return self.hk_guard(state) if guarded else state
         state = self._color_terms(state)
         state, scale, scale_flag = self._color_web(state)
         state = self._color_adaptance(state)
-        if _active(prepared.settings.web.log_scale):
+        if guarded:
+            repaired = self.hk_guard(state)
+            state = replace(state, H=repaired.H, a=repaired.a, b=repaired.b,
+                            energy=repaired.energy, saturated=repaired.saturated,
+                            chroma_value=repaired.chroma, offset_value=None,
+                            ja_value=repaired.J_A)
+        if self._color_full_topology or _active(prepared.settings.web.log_scale):
             state = self._color_scale(state, scale, scale_flag)
         return state
+
+    def color_and_guard(self, appearance):
+        """Repair frozen post-Tone energy once, before applying final Web Scale."""
+        return self.color(appearance, guarded=True)
 
     def _color_scale(self, state, scale, scale_flag=0.):
         a, fa = self._color_mul(state.a, scale)
         b, fb = self._color_mul(state.b, scale)
         energy, fe1 = self._color_mul(state.energy, scale, 'energy')
         energy, fe2 = self._color_mul(energy, scale, 'energy')
+        ja, fj = self._color_mul(state.J_A, scale, 'H')
         chroma, chroma_flag = self._color_norm_result(a, b)
         height = self._color_h(energy, chroma)
         same = self.op('COMPARE', scale, 1., 0.)
         return replace(state, H=self.select(same, state.H, height), a=a, b=b, energy=energy,
-                       chroma_value=chroma, offset_value=None,
-                       saturated=self._color_flag(state.saturated, scale_flag, fa, fb, fe1, fe2, chroma_flag))
+                       chroma_value=self.select(same, state.chroma, chroma), offset_value=None,
+                       ja_value=ja,
+                       saturated=self._color_flag(state.saturated, scale_flag, fa, fb, fe1, fe2, fj, chroma_flag))

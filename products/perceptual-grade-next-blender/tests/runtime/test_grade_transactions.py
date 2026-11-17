@@ -5,6 +5,7 @@ from importlib.resources import files
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 import zipfile
 
@@ -79,7 +80,8 @@ class GradeTransactionTests(unittest.TestCase):
                 del sys.modules[name]
         cls.directory.cleanup()
 
-    def retirement(self, *, failure=None, fresh_users=0, invalid=False, disposal=False):
+    def retirement(self, *, failure=None, fresh_users=0, invalid=False, disposal=False,
+                   retain_for_undo=False):
         calls = []
         cache = {"tree"}
         removed = []
@@ -91,7 +93,8 @@ class GradeTransactionTests(unittest.TestCase):
                     raise RuntimeError(name + " failed")
                 if name in ("observe", "recheck"):
                     return {"live": not invalid, "owned": True,
-                            "users": fresh_users if name == "recheck" else 0}
+                            "users": fresh_users if name == "recheck" else 0,
+                            "retain_for_undo": retain_for_undo}
                 if name == "evict":
                     cache.clear()
                 if name == "remove":
@@ -101,7 +104,7 @@ class GradeTransactionTests(unittest.TestCase):
 
         errors = self.resources.run_resource_lifecycle(
             {name: operation(name) for name in
-             ("fence", "detach", "observe", "evict", "recheck", "remove")},
+             ("fence", "detach", "observe", "retain", "evict", "recheck", "remove")},
             disposal=disposal,
         )
         return calls, cache, removed, errors
@@ -112,6 +115,17 @@ class GradeTransactionTests(unittest.TestCase):
         self.assertFalse(cache)
         self.assertEqual(removed, ["tree"])
         self.assertEqual(errors, ())
+
+    def test_undo_retention_never_evicts_or_removes_even_when_retention_fails(self):
+        for failure in (None, "retain"):
+            with self.subTest(failure=failure):
+                calls, cache, removed, errors = self.retirement(
+                    retain_for_undo=True, failure=failure)
+                self.assertEqual(calls, ["observe", "retain"])
+                self.assertEqual(cache, {"tree"})
+                self.assertFalse(removed)
+                self.assertEqual(tuple(map(str, errors)),
+                                 ("retain failed",) if failure else ())
 
     def test_resource_failure_and_late_survivor_retain_native_resource(self):
         for failure in ("fence", "evict", "recheck"):
@@ -146,7 +160,17 @@ class GradeTransactionTests(unittest.TestCase):
 
     def test_image_eviction_removes_every_dependent_cache_entry(self):
         cache = self.cache.GradeResources(None)
-        image, other, spare = object(), object(), object()
+
+        def bank():
+            primary = SimpleNamespace()
+            roles = {
+                "_perceptual_grade_parameter_role_" + role: SimpleNamespace()
+                for role in ("color", "web", "web_toe", "adaptance")
+            }
+            primary.get = roles.get
+            return primary
+
+        image, other, spare = bank(), bank(), bank()
         first = self.cache.GradeResource(
             banks=(image, other), active_bank=0, generation=1,
             trees={"shader": object()})

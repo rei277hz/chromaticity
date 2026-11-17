@@ -1,4 +1,4 @@
-"""Native parity while a fixed Stage 2 graph receives new parameter snapshots."""
+"""Native parity while a fixed Grade graph receives complete parameter bundles."""
 
 from dataclasses import replace
 from functools import partial
@@ -8,14 +8,17 @@ import unittest
 import bpy
 import numpy as np
 
-from color_tools.kernel import ColorSettings, LinearSettings, Settings, ToneSettings, prepare, prepare_tone
+from color_tools.kernel import LinearSettings, Settings, ToneSettings, prepare, prepare_tone
 from color_tools.kernel.boundary import prepare_boundary
+from color_tools.kernel.stage2_parameters import (
+    PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLES, parameter_bank_images,
+    parameter_content_signature, prepare_parameters, set_parameter_bundle_signature,
+)
 from color_tools.template_build.stage2_graph import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_IMAGE,
     build_stage2_group,
 )
-from color_tools.kernel.stage2_parameters import prepare_parameters
-from tools.perceptual_grade.reports import cases, oracle
+from tools.perceptual_grade.reports import cases, full_cases, oracle
 from tools.perceptual_grade.reports.native import NativeFixture
 
 
@@ -23,6 +26,24 @@ def complete_prepared(settings, boundary):
     base = prepare(settings.linear, settings.tone, settings.space, color=settings.color)
     tone = prepare_tone(settings.tone, full_fields=True)
     return replace(base, tone=tone, boundary=boundary)
+
+
+def write_parameter_bundle(primary, parameters):
+    images = parameter_bank_images(primary)
+    signatures = {}
+    for role in PARAMETER_ROLES:
+        image, pixels = images[role], parameters.roles[role]
+        if tuple(image.size) != (pixels.shape[1], pixels.shape[0]):
+            raise AssertionError("Parameter role Image shape changed: " + role)
+        image.pixels.foreach_set(pixels.ravel())
+        image.update()
+        image.pack()
+        if image.packed_file is None or image.is_dirty:
+            raise AssertionError("Parameter role Image is not a clean packed receipt: " + role)
+        signature = parameter_content_signature(pixels)
+        image[PARAMETER_CONTENT_SIGNATURE] = signature
+        signatures[role] = signature
+    set_parameter_bundle_signature(primary, signatures)
 
 
 def _default(value):
@@ -70,6 +91,7 @@ class Stage2UpdateTests(unittest.TestCase):
                 tone=ToneSettings(input_nits=(0., 5., 45., 230., 1300.), fit=-1.),
             ),
             Settings(linear=LinearSettings(exposure=.25), tone=ToneSettings()),
+            Settings(color=full_cases.guard_before_scale_grade()),
             Settings(),
         )
 
@@ -79,7 +101,7 @@ class Stage2UpdateTests(unittest.TestCase):
             with self.subTest(context=context):
                 prepared_initial = complete_prepared(updates[0], boundary)
                 fixture = NativeFixture(
-                    prepared_initial, values, context,
+                    prepared_initial, values, context, threads=2,
                     builder=partial(build_stage2_group, diagnostics=True),
                 )
                 try:
@@ -91,14 +113,19 @@ class Stage2UpdateTests(unittest.TestCase):
                         built.tree[key] for key in PARAMETER_BANK_BINDINGS
                     )
                     self.assertEqual(len(parameter_images), 2)
+                    self.assertEqual(len(marked_images), 10)
+                    bank_images = tuple(
+                        image for primary in parameter_images
+                        for image in parameter_bank_images(primary).values()
+                    )
                     self.assertEqual(
                         {image.as_pointer() for image in marked_images},
-                        {image.as_pointer() for image in parameter_images},
+                        {image.as_pointer() for image in bank_images},
                     )
                     active_bank = built.tree[PARAMETER_ACTIVE_BANK]
                     parameter_image = parameter_images[active_bank]
                     tree_pointer = built.tree.as_pointer()
-                    image_pointers = tuple(image.as_pointer() for image in parameter_images)
+                    image_pointers = tuple(image.as_pointer() for image in bank_images)
                     inventory = native_inventory(built.tree)
                     image_ids = tuple(image.as_pointer() for image in built.images)
                     group_ids = tuple(group.as_pointer() for group in bpy.data.node_groups)
@@ -106,13 +133,12 @@ class Stage2UpdateTests(unittest.TestCase):
                     for settings in updates:
                         prepared = complete_prepared(settings, prepared_initial.boundary)
                         parameters = prepare_parameters(prepared)
-                        parameter_image.pixels.foreach_set(parameters.pixels.ravel())
-                        parameter_image.update()
+                        write_parameter_bundle(parameter_image, parameters)
 
                         actual = fixture.render()
                         expected = oracle.evaluate_full(
                             values[:, :3], settings.linear, settings.tone,
-                            ColorSettings(), settings.space,
+                            settings.color, settings.space,
                         )
                         metrics = oracle.metrics(actual["rgb"], expected["rgb"])
                         self.assertLessEqual(metrics["max_normalized"], 1e-4,
@@ -124,7 +150,8 @@ class Stage2UpdateTests(unittest.TestCase):
 
                         self.assertEqual(built.tree.as_pointer(), tree_pointer)
                         self.assertEqual(
-                            tuple(image.as_pointer() for image in parameter_images),
+                            tuple(image.as_pointer() for primary in parameter_images
+                                  for image in parameter_bank_images(primary).values()),
                             image_pointers,
                         )
                         self.assertEqual(built.tree[PARAMETER_ACTIVE_BANK], active_bank)
@@ -148,40 +175,41 @@ class Stage2UpdateTests(unittest.TestCase):
             linear=LinearSettings(exposure=.4, source_xy=(.34, .36)),
             tone=ToneSettings(input_nits=(0., 7., 45., 203., 1000.),
                               fit=1., peak_nits=2000.),
+            color=full_cases.guard_before_scale_grade(),
         )
         parameters = prepare_parameters(complete_prepared(settings, boundary))
         fixture = NativeFixture(
-            initial, values, "compositor",
+            initial, values, "compositor", threads=2,
             builder=partial(build_stage2_group, diagnostics=True),
         )
         try:
             parameter_images = tuple(
                 image for image in fixture.built.images if image.get(PARAMETER_IMAGE)
             )
-            self.assertEqual(len(parameter_images), 2)
+            self.assertEqual(len(parameter_images), 10)
             active_bank = fixture.built.tree[PARAMETER_ACTIVE_BANK]
-            parameter_image = parameter_images[active_bank]
-            parameter_image.pixels.foreach_set(parameters.pixels.ravel())
-            parameter_image.update()
-            parameter_image.pack()
+            primary = fixture.built.tree[PARAMETER_BANK_BINDINGS[active_bank]]
+            write_parameter_bundle(primary, parameters)
             before = fixture.render()
-            image_name = parameter_image.name
-            bank_names = tuple(image.name for image in parameter_images)
+            image_names = tuple(image.name for image in parameter_images)
             tree_name = fixture.built.tree.name
             fixture.input_image.pack()
             filename = Path(fixture.directory.name) / "stage2-updated.blend"
             bpy.ops.wm.save_as_mainfile(filepath=str(filename))
             bpy.ops.wm.open_mainfile(filepath=str(filename))
 
-            restored = bpy.data.images[image_name]
-            self.assertIsNotNone(restored.packed_file)
             restored_tree = bpy.data.node_groups[tree_name]
             restored_banks = tuple(restored_tree[key] for key in PARAMETER_BANK_BINDINGS)
-            self.assertEqual(tuple(image.name for image in restored_banks), bank_names)
-            self.assertEqual(restored_banks[active_bank], restored)
-            pixels = np.empty(parameters.pixels.size, dtype=np.float32)
-            restored.pixels.foreach_get(pixels)
-            np.testing.assert_array_equal(pixels, parameters.pixels.ravel())
+            restored_images = tuple(
+                image for bank in restored_banks
+                for image in parameter_bank_images(bank).values()
+            )
+            self.assertEqual(tuple(image.name for image in restored_images), image_names)
+            for role, image in parameter_bank_images(restored_banks[active_bank]).items():
+                self.assertIsNotNone(image.packed_file)
+                pixels = np.empty(parameters.roles[role].size, dtype=np.float32)
+                image.pixels.foreach_get(pixels)
+                np.testing.assert_array_equal(pixels, parameters.roles[role].ravel())
             after = fixture.render()
             for name in ("rgb", "alpha", "embedded_alpha", "valid", "margin", "saturated"):
                 np.testing.assert_array_equal(after[name], before[name])

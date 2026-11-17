@@ -11,6 +11,7 @@ EMITTER_MODULES = frozenset({
     "kernel.graph", "kernel.color_graph", "kernel.guard_graph",
     "kernel.stage2_graph", "kernel.persistent", "kernel.lut_graph",
     "kernel.stack_graph", "kernel.wrapper_graph", "kernel.lut_shader_emitter",
+    "kernel.parameter_color", "kernel.compositor_output",
 })
 
 
@@ -159,7 +160,7 @@ class PackageTests(unittest.TestCase):
                        if name.startswith("policy/") and name.endswith(".py")
                        and name != "policy/__init__.py"}
         self.assertEqual(proved, shipped)
-        self.assertEqual(len(proved), 11)
+        self.assertEqual(len(proved), 12)
 
 
 if __name__ == "__main__":

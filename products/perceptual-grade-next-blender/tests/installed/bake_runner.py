@@ -578,7 +578,7 @@ old_live = nodes.bake_graph.live_tree(shader.node_tree)
 old_signature = old_live.get(nodes._KERNEL_SIGNATURE)
 old_wrapper = shader.node_tree
 assert shader.pg_use_bake and nodes._bake_toggle_available(shader)
-grade_data.pg_linear.exposure = 0.375
+grade_data.pg_color.global_gain = 0.375
 assert not shader.pg_use_bake
 assert not nodes._bake_toggle_available(shader)
 assert not bake_toggle_enabled(shader, shader_context(material, scene, node=shader))
@@ -661,7 +661,7 @@ stale.pg_grade = stale_grade
 link_source(shader_tree, stale, source, uv=True)
 wait_ready(stale)
 nodes._bake_request(stale, shader_context(material, scene, obj, stale))
-stale_grade.pg_linear.exposure = .75
+stale_grade.pg_color.adaptance_a_1 = .75
 nodes._bake_tick()
 assert not stale.pg_use_bake and stale.pg_bake_image is None
 assert nodes._bake_manager._node_key(stale) not in nodes._bake_manager.jobs
@@ -696,6 +696,7 @@ scene.compositing_node_group = stack_tree
 entry_context = SimpleNamespace(pg_stack_node=stack)
 assert nodes.PG_OT_stack_action.execute(SimpleNamespace(action="ADD"), entry_context) == {"FINISHED"}
 assert nodes.PG_OT_new_stack_grade.execute(SimpleNamespace(index=0), entry_context) == {"FINISHED"}
+stack.pg_stack_entries[0].grade.pg_color.web_scale_1_0 = .125
 stack_tree.links.new(stack.outputs["Color"], stack_output.inputs["Image"])
 try:
     wait_ready(stack, stack=True)

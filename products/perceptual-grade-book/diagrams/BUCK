@@ -83,6 +83,7 @@ book_generate(
         "07_gesture_sequence": "src/assets/illustrations/next-policy/07-gesture-sequence.svg",
         "08_render_preflight_sequence": "src/assets/illustrations/next-policy/08-render-preflight-sequence.svg",
         "09_bake_sequence": "src/assets/illustrations/next-policy/09-bake-sequence.svg",
+        "10_color_authoring_sequence": "src/assets/illustrations/next-policy/10-color-authoring-sequence.svg",
     },
     tool = ":renderer",
     visibility = ["PUBLIC"],

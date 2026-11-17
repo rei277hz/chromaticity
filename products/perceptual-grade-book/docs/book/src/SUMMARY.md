@@ -9,10 +9,10 @@
   - [Linear](guide/linear.md)
   - [Tone](guide/tone.md)
   - [Color](guide/color.md)
-- [Share and reuse Grades](guide/shared-grades.md)
-- [Choose a working white](guide/working-white.md)
-- [Inverse grading and Grade Stacks](guide/inverse-stack.md)
-- [Render methods in Blender](guide/render-methods.md)
+- [Share and animate Grades](guide/shared-grades.md)
+- [Scene working spaces](guide/working-white.md)
+- [Grade Stacks](guide/inverse-stack.md)
+- [Render and bake](guide/render-methods.md)
 
 # Reference
 

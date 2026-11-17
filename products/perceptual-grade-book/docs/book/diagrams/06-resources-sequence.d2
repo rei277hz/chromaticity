@@ -14,17 +14,27 @@ opt node disposal: {
   }
 }
 opt fence succeeded or ordinary retirement: {
-  retirement: "loop [observe, evict, recheck, remove]\nadvance only when each receipt authorizes the next step" {
-    policy -> consumer: "observe / evict / recheck / remove"
-    consumer -> blender: "read facts / evict / reread facts / remove"
-    blender -> consumer: "fresh facts or operation receipt"
-    consumer -> policy: "Event(live, owned, users, protected, failed)"
-  }
-  alt eligibility: {
-    removed: "eviction succeeded; fresh recheck still eligible" {
-      policy -> consumer: "terminal; removal attempted"
+  policy -> consumer: "observe"
+  consumer -> blender: "read current facts"
+  blender -> consumer: "live, owned, users, protected, retain_for_undo"
+  consumer -> policy: "Event(facts or failed)"
+  alt observed lifetime: {
+    undo_retained: "live, owned, retain_for_undo" {
+      policy -> consumer: "retain"
+      consumer -> blender: "set fake user"
+      consumer -> policy: "operation receipt"
+      policy -> consumer: "terminal; no eviction or removal"
     }
-    retained: "stopped before removal; earlier failure or ineligible" {
+    removal_candidate: "not live or eligible" {
+      retirement: "loop [evict, recheck, remove]\nadvance only on an authorizing receipt" {
+        policy -> consumer: "evict / recheck / remove"
+        consumer -> blender: "evict / reread facts / remove"
+        blender -> consumer: "fresh facts or operation receipt"
+        consumer -> policy: "Event(facts or failed)"
+      }
+      policy -> consumer: "terminal; removal only if fresh recheck eligible"
+    }
+    retained: "failed observation or live and ineligible" {
       policy -> consumer: "terminal; no removal effect"
     }
   }

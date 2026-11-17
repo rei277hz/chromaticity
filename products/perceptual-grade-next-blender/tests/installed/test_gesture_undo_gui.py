@@ -90,9 +90,19 @@ class GestureUndoGuiTests(unittest.TestCase):
                 details = output[-16000:] + "\n" + json.dumps(data, indent=2)
                 if (root / "xvfb.log").exists():
                     details += "\nXvfb:\n" + (root / "xvfb.log").read_text()[-8000:]
+                crash = Path(tempfile.gettempdir()) / "blender.crash.txt"
+                if process.returncode and crash.is_file():
+                    details += "\nNative crash:\n" + crash.read_text(errors="replace")[-24000:]
                 self.assertEqual(process.returncode, 0, details)
                 self.assertTrue(data.get("passed"), details)
-                self.assertEqual(data.get("push_results"), [True, True, True], details)
+                self.assertEqual(data.get("push_results"), [True] * 5, details)
+                self.assertEqual(data.get("fallback_pool"), {
+                    "repeated_reconciliation": True,
+                    "shared_readers_and_removal": True,
+                    "pending_live_pending": True,
+                    "save_load": True,
+                }, details)
+                self.assertGreaterEqual(data.get("cycle_checks", 0), 20, details)
                 self.assertEqual(data.get("undo_states"), [
                     {"grade": "present", "exposure": 0.0},
                     {"grade": "present", "exposure": 0.625},

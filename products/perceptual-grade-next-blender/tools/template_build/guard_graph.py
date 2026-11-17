@@ -1,7 +1,8 @@
 """Native H-K export repair and actual-decoder AP1 boundary projection."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 import math
+from typing import Optional
 from ..kernel.boundary import P, INVERSE, prepare_boundary
 
 
@@ -14,12 +15,19 @@ class GuardedSockets:
     energy: object
     reference_energy: object
     saturated: object = 0.
-    chroma_value: object = None
+    chroma_value: Optional[object] = None
+    ja_value: Optional[object] = None
 
     @cached_property
     def chroma(self): return self.chroma_value if self.chroma_value is not None else self.graph.hypot(self.a,self.b)
     @cached_property
-    def J_A(self): return self.graph.mul(self.graph.sign(self.energy),self.graph.sqrt(self.graph.abs(self.energy)))
+    def J_A(self):
+        g = self.graph
+        if self.ja_value is not None:
+            return self.ja_value
+        return g.mul(
+            self.graph.mul(self.graph.sign(self.energy), self.graph.sqrt(self.graph.abs(self.energy))),
+            math.sqrt(getattr(self.graph, '_color_energy_scale', 1.)))
     @cached_property
     def q(self): return self.graph.vector((self.H,self.a,self.b))
 
@@ -40,11 +48,18 @@ def hk_guard(g,state):
     h,a,b,e,e0=state.H,state.a,state.b,state.energy,state.reference_energy
     flag=getattr(state,'saturated',0.)
     c=state.chroma if hasattr(state,"chroma") else g.hypot(a,b)
+    energy_scale=getattr(g,'_color_energy_scale',1.)
+    root_scale=math.sqrt(energy_scale)
+    if energy_scale != 1.:
+        h=g.div(h,root_scale)
+        c=g.div(c,energy_scale)
     known=hasattr(state,"source_chroma")
     safe=known and g._color_bounded("H",limit=2.**60)
     x,x_flag=(g.mul(h,h),0.) if safe else g.saturate(g.mul(h,h))
     base=g.mul(math.sqrt(66),g.sqrt(c))
-    u=state.offset if hasattr(state,"offset") else g.div(e,g.add(g.hypot(g.sqrt(g.abs(e)),base),base))
+    u=(g.div(state.offset,root_scale) if hasattr(state,"offset") and energy_scale != 1.
+       else state.offset if hasattr(state,"offset")
+       else g.div(e,g.add(g.hypot(g.sqrt(g.abs(e)),base),base)))
     absolute=g.abs(u);twice_base=g.mul(2,base)
     ratio=g.div(g.sub(twice_base,absolute),g.add(twice_base,absolute))
     d=g.select(g.lt(e,0),g.mul(e,ratio),e)
@@ -69,8 +84,10 @@ def hk_guard(g,state):
     flag=g.maximum(flag,g.mul(active,g.maximum(x_flag,new_flag)))
     new_c=g.minimum(c,g.maximum(0,g.div(g.sub(new_x,repaired),66)))
     gain=g.select(active,g.div(new_c,c),1.)
-    return GuardedSockets(g,g.select(active,g.sqrt(new_x),h),g.mul(a,gain),g.mul(b,gain),
-                          g.select(active,repaired,e),e0,flag,g.select(active,new_c,c))
+    return GuardedSockets(g,g.select(active,g.mul(g.sqrt(new_x),root_scale),state.H),
+                          g.mul(a,gain),g.mul(b,gain),g.select(active,repaired,e),e0,flag,
+                          g.mul(g.select(active,new_c,c),energy_scale),
+                          g.select(active,g.mul(g.sqrt(repaired),root_scale),state.J_A))
 
 
 def _boundary(g):
@@ -144,12 +161,29 @@ def output_guard(g,state):
     return _output_projection(g,state,data,t,deficit,e,square)
 
 
-def compositor_stage2_output_guard(g,state):
-    """Project Color-free Stage 2 without transporting squared energy.
+def _retained_tone_responses(g,tone):
+    """Retain the raw basis only when Color and H-K are semantic identities."""
+    # Without authored Color changes, nonnegative post-Tone energy never
+    # invokes H-K: its threshold is E*H²/(E+H²) <= E. Negative H independently
+    # disables repair. Test signed coordinates, never rounded energy equality.
+    active=g.maximum(g._color_enabled('lightness'),g.maximum(
+        g._color_enabled('chroma'),g.maximum(g._color_enabled('adaptance'),
+                                           g._color_enabled('web'))))
+    repair_possible=g.mul(g.lt(tone.J_A,0.),g.sub(1.,g.lt(tone.H,0.)))
+    retain=g.mul(g.sub(1.,active),g.sub(1.,repair_possible))
+    from .graph import INVERSE_OPPONENT
+    raw=g.vector((tone.achromatic,tone.raw_a,tone.raw_b))
+    return retain,tuple(g.dot(raw,row) for row in INVERSE_OPPONENT)
+
+
+def compositor_stage2_output_guard(g,state,*,source=None,retained_tone=None):
+    """Project the scaled Stage 3 carrier through signed J_A.
 
     Interactive GPU compositing can materialize any shared arithmetic result
-    in a half-float image. J_A and its distance to white fit that transport;
-    white energy and even the subtraction preceding its normalization do not.
+    in a half-float image. Stage 3 carries energy divided by a fixed scale;
+    J_A and its distance to white avoid reconstructing an unscaled energy
+    image during projection. Reject observed nonfinite source/state/output;
+    finite saturation remains a separate representational diagnostic.
     """
     if state.graph is not g: raise ValueError('Guard sockets belong to another Graph')
     data=_boundary(g)
@@ -161,10 +195,22 @@ def compositor_stage2_output_guard(g,state):
     hi=float(data.pixels.dtype.type(data.white));lo=data.white-hi
     delta_j=g.clamp(g.add(g.div(g.sub(hi,bounded),data.white),lo/data.white))
     deficit=g.mul(delta_j,g.sub(2.,delta_j))
-    return _output_projection(g,state,data,t,deficit,j,data.white)
+    # Identity paths avoid a second rounded power and hue reconstruction in
+    # the compositor's half-image carriers; legality and projection still run.
+    direct_responses=(None if retained_tone is None
+                      else _retained_tone_responses(g,retained_tone))
+    result=_output_projection(g,state,data,t,deficit,j,data.white,
+                              retained_responses=direct_responses,half_recovery=True)
+    from .compositor_output import finite_color
+    observed=(state.H,state.a,state.b,state.chroma,state.energy,state.reference_energy)
+    if source is not None:
+        observed=(*observed,*g.split(source))
+    color,valid=finite_color(g,result.color,observed=observed,valid=result.valid)
+    return replace(result,color=color,valid=valid)
 
 
-def _output_projection(g,state,data,t,deficit,endpoint,white_point):
+def _output_projection(g,state,data,t,deficit,endpoint,white_point,*,retained_responses=None,
+                       half_recovery=False):
     """Shared actual-decoder projection from bounded solver coordinates."""
     rw=data.response_white
     small=g.minimum(.1,deficit)
@@ -191,8 +237,13 @@ def _output_projection(g,state,data,t,deficit,endpoint,white_point):
     direction=g.split(direction_vector)
     neutral=g.mul(rw,t)
     direct_responses=tuple(g.madd(chroma,d,neutral) for d in direction)
+    if retained_responses is not None:
+        retain,responses=retained_responses
+        direct_responses=tuple(g.select(retain,raw,reconstructed)
+                               for raw,reconstructed in zip(responses,direct_responses))
     max_response=g.maximum(g.abs(direct_responses[0]),g.maximum(g.abs(direct_responses[1]),g.abs(direct_responses[2])))
-    direct_native=_native(g,_inverse_vector(g,g.vector(direct_responses)),data.matrix)
+    direct_cones=_inverse_vector(g,g.vector(direct_responses))
+    direct_native=_native(g,direct_cones,data.matrix)
     legal=g.mul(g.lt(max_response,400),_legal(g,direct_native))
     hue=g.op('ARCTAN2',sa,ca)
     hue=g.sub(g.div(hue,2*math.pi),g.op('FLOOR',g.div(hue,2*math.pi)))
@@ -256,6 +307,24 @@ def _output_projection(g,state,data,t,deficit,endpoint,white_point):
     native=_native(g,_inverse_vector(g,g.vector(final_responses)),data.matrix)
     native=g.vselect(g.lt(.5,t),_white_decode(g,t,radius,direction_vector,data,physical_delta),native)
     final_legal=_legal(g,native)
+    if half_recovery:
+        # The first inward allowance protects float32 roots. GPU Auto can
+        # materialize the decode in half images and round that root across a
+        # cube face. Retry a slightly smaller radius only after the actual
+        # first decode failed, and accept it only after the same legal check.
+        # Primary legal results, including Full's strict RGB path, stay exact.
+        retry_radius=g.mul(radius,.99609375)
+        retry_responses=tuple(g.madd(retry_radius,d,neutral) for d in direction)
+        retry_native=_native(g,_inverse_vector(g,g.vector(retry_responses)),data.matrix)
+        retry_native=g.vselect(g.lt(.5,t),
+            _white_decode(g,t,retry_radius,direction_vector,data,physical_delta),retry_native)
+        retry_legal=_legal(g,retry_native)
+        retry=g.mul(g.sub(1.,final_legal),retry_legal)
+        native=g.vselect(retry,retry_native,native)
+        radius=g.select(retry,retry_radius,radius)
+        final_responses=tuple(g.select(retry,smaller,first)
+                              for smaller,first in zip(retry_responses,final_responses))
+        final_legal=g.maximum(final_legal,retry_legal)
     # A final decoded check is authoritative. A rare ill-conditioned corner
     # uses the interior neutral rather than returning an illegal RGB value.
     neutral_fraction=g.div(g.mul(t,400-rw),g.sub(400,neutral))
@@ -273,6 +342,19 @@ def _output_projection(g,state,data,t,deficit,endpoint,white_point):
     parameters=getattr(g,'parameters',None)
     color=(parameters.output_matrix(native) if parameters is not None
            else _linear_map(g,native,g.prepared.from_cones@data.inverse))
+    if retained_responses is not None and parameters is not None:
+        # Compose uniform parameter rows before touching spatial cone values.
+        # This is the same AP1-to-scene map as above, but avoids transporting
+        # a half-precision AP1 intermediate on a retained, legal Tone decode.
+        # The AP1 decode still determines cube legality and endpoint policy.
+        from ..kernel.stage2_parameters import OUTPUT_MATRIX_ROW_SLOTS
+        rows=tuple(g.vector(tuple(g.dot(parameters.sample(slot)[0],data.matrix[:,index])
+                                  for index in range(3)))
+                   for slot in OUTPUT_MATRIX_ROW_SLOTS)
+        retained_color=g.vector(tuple(g.dot(direct_cones,row) for row in rows))
+        retain=g.mul(retained_responses[0],g.mul(legal,
+                     g.mul(positive,g.sub(1.,white))))
+        color=g.vselect(retain,retained_color,color)
     trial_max=g.maximum(g.abs(final_responses[0]),g.maximum(g.abs(final_responses[1]),g.abs(final_responses[2])))
     returned_max=g.select(legal,max_response,g.select(final_legal,trial_max,neutral))
     returned_max=g.mul(positive,g.select(white,rw,returned_max))

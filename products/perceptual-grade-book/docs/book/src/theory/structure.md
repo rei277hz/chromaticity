@@ -2,7 +2,7 @@
 
 Stage 1 is a linear color transform. The reference then repairs the input into its native AP1 cube and encodes it in modCAM16. Tone and Color operate on appearance coordinates; RGB export applies cube containment and decoding after Stage 3. This chapter introduces that representation, especially the coordinates used by the Color controls.
 
-This part describes the current analytic model in `libraries/perceptual-grade-reference`. Archived 1.23.2 controls, instructions and measurements are identified separately. The frozen Blender implementation retains its earlier Warp ordering; Next Blender has not implemented Warp yet and will use the corrected reference. Product features and historical releases therefore need their own scope labels.
+This part describes the current analytic model in `libraries/perceptual-grade-reference`. Archived 1.23.2 controls, instructions and measurements are identified separately. The frozen Blender implementation retains its earlier Warp ordering; Next Blender follows the reference's Adaptance → H–K repair → Scale order. Product features and historical releases still need their own scope labels.
 
 modCAM16 is a revised color appearance model in the CAM16 family. It describes how a color looks under specified viewing conditions, separating lightness, chromatic strength and hue. Perceptual Grade uses its revised relationships and Helmholtz–Kohlrausch compensation, which accounts for chroma’s contribution to perceived lightness.
 

@@ -53,6 +53,7 @@ source_tree(
         "src/**/*.py",
         "tools/build_node_templates.py",
         "tools/generate_node_templates.py",
+        "tools/handbook_audit.py",
         "tools/template_build/**/*.py",
         "examples/publication_compare/**/*.py",
         "README.md",
@@ -217,6 +218,19 @@ python_library(
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "color_authoring_runtime",
+    srcs = {
+        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
+        "runtime/color_authoring.py": PREFIX + "runtime/color_authoring.py",
+        "policy/__init__.py": PREFIX + "policy/__init__.py",
+        "policy/color_authoring.py": PREFIX + "policy/color_authoring.py",
+    },
+    base_module = "color_tools",
+    visibility = ["PUBLIC"],
+    deps = [":kernel_code"],
 )
 
 python_library(
@@ -463,6 +477,8 @@ invariant_proof(
         "removal_ignores_live_users",
     ],
     required_properties = [
+        "undo_retained_resources_are_not_removed",
+        "undo_retention_prevents_deletion",
         "deletion_requires_eviction_and_fresh_eligibility",
         "only_eviction_receipt_reaches_recheck",
         "live_users_prevent_deletion",
@@ -617,7 +633,32 @@ invariant_proof(
     visibility = ["PUBLIC"],
 )
 
+invariant_proof(
+    name = "proof_color_authoring",
+    required_mutations = [
+        "same_owner_recaptures_baseline",
+        "old_owner_can_release_claim",
+        "blocked_restore_releases_claim",
+    ],
+    required_properties = [
+        "same_owner_retains_baseline",
+        "takeover_captures_current_position",
+        "manual_detaches_only_this_claim",
+        "restore_requires_current_owner_and_baseline",
+        "baseline_completion_releases_claim",
+        "clear_removes_claim",
+        "absent_claim_has_no_clear_effect",
+        "invalid_push_has_no_effect",
+    ],
+    required_witnesses = ["push_restore_and_takeover_are_reachable"],
+    requirements = "requirements/color_authoring.inv",
+    runtime_source = "policy/color_authoring.py",
+    source = POLICY_PREFIX + "color_authoring.py",
+    visibility = ["PUBLIC"],
+)
+
 POLICY_PROOFS = [
+    ":proof_color_authoring",
     ":proof_bake",
     ":proof_bank_publication",
     ":proof_compositor_publication",
@@ -722,6 +763,17 @@ python_library(
     base_module = "product_build",
     visibility = ["PUBLIC"],
     deps = ["//products/perceptual-grade-book:reference_parsing"],
+)
+
+python_library(
+    name = "handbook_audit_code",
+    srcs = {"handbook_audit.py": "tools/handbook_audit.py"},
+    base_module = "product_build",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//products/perceptual-grade-book/print:pypdf",
+        "//third_party:pillow",
+    ],
 )
 
 python_binary(

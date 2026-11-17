@@ -75,23 +75,20 @@ def evaluate_full(rgb, linear, tone, color, space):
     Deliberately compose the reference's stage APIs rather than Model.forward,
     whose entry adapter includes the excluded LUT input projection.
 
-    Color's default H-K guard runs before its final Scale. Disable that internal
-    guard here so the oracle applies exactly one H-K repair after Scale, before
-    the cube boundary guard.
+    The reference Color stage owns the H-K-before-Scale policy. This oracle
+    delegates that complete Stage 3 transition to its guarded implementation,
+    then applies only the independent RGB cube containment at export.
     """
     from color_tools.perceptual_grade_reference.cube_guard import guard as cube_guard
-    from color_tools.perceptual_grade_core.model.hk_guard import guard as hk_guard
     lp, tp = parameters(linear, tone)
     cp = grading.ColorSettings(**asdict(color))
-    reference = model.Model(model.Settings(linear=lp, tone=tp, color=cp), space,
-                            hk_guard=False)
+    reference = model.Model(model.Settings(linear=lp, tone=tp, color=cp), space)
     before = evaluate(rgb, linear, tone, space)
     toned = before['tone']
-    raw = reference.color.apply_state(toned)
+    graded = reference.color.apply_state(toned)
     reference_energy = toned.ja*abs(toned.ja)
-    hq, he = hk_guard(raw.q, raw.energy, reference_energy)
     boundary = exact_boundary(reference)
-    bq, be, native = cube_guard(boundary, hq, he)
+    bq, be, native = cube_guard(boundary, graded.q, graded.energy)
     to_scene = reference.xyz_to_rgb @ reference.cones_to_xyz @ np.linalg.inv(boundary.matrix)
     # Preserve the neutral contribution, as the native adapter does.
     output = native[..., 1, None]+(native-native[..., 1, None]) @ to_scene.T
@@ -99,7 +96,8 @@ def evaluate_full(rgb, linear, tone, color, space):
     margin = 400-np.max(abs(responses), axis=-1)
     valid = np.isfinite(output).all(axis=-1) & (margin > 0)
     return dict(rgb=output, linear=before['linear'], encoded=before['encoded'], tone=toned,
-                color=raw, reference_energy=reference_energy, hk_q=hq, hk_energy=he,
+                color=graded, reference_energy=reference_energy,
+                hk_q=graded.q, hk_energy=graded.energy,
                 boundary_q=bq, boundary_energy=be, native_rgb=native, to_scene=to_scene,
                 responses=responses, valid=valid, margin=margin,
                 well_conditioned=valid.copy(), guarded=True)

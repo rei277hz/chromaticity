@@ -1,4 +1,4 @@
-"""Whole-snapshot storage and numerical obligations for the Stage 2 atlas."""
+"""Whole-snapshot storage and numerical obligations for Grade role bundles."""
 
 from dataclasses import replace
 import math
@@ -7,22 +7,73 @@ import unittest
 import numpy as np
 
 from color_tools.kernel import (
-    ColorSettings, LinearSettings, ToneSettings, prepare, prepare_tone,
+    ColorSettings, LinearSettings, ToneSettings, WebSettings, prepare,
+    prepare_tone,
 )
 from color_tools.kernel.boundary import prepare_boundary
 from color_tools.kernel.settings import SPACES
 from color_tools.kernel.stage2_parameters import (
+    ADAPTANCE_ANCHORS_SLOT, ADAPTANCE_SUPPORT_SLOT,
     MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT, MATRIX_RED_SLOT,
+    COLOR_FLAGS_SLOT, COLOR_ROLE_FIELDS, COLOR_SCALARS_SLOT, PARAMETER_BUNDLE_SIGNATURE,
+    PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLE_SHAPES, PARAMETER_ROLES,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, PreparedParameters,
     LAST_PARAMETER_SLOT, TONE_DOMAIN_SLOT, TONE_JET_COUNT, TONE_SCALARS_SLOT,
-    prepare_parameters,
+    bind_parameter_bank, parameter_bundle_receipt_matches, parameter_bundle_signature,
+    parameter_content_signature,
+    parameter_image_matches,
+    prepare_parameters, set_parameter_bundle_signature,
     OUTPUT_MATRIX_ROW_SLOTS,
+)
+from color_tools.kernel.stage2_bindings import (
+    PARAMETER_IMAGE, PARAMETER_ROLE, PARAMETER_ROLE_BINDING,
 )
 
 
-def complete(linear=LinearSettings(), tone=ToneSettings(), space="Linear Rec.709"):
-    prepared = prepare(linear, tone, space)
-    return replace(prepared, tone=prepare_tone(tone, full_fields=True))
+def complete(linear=LinearSettings(), tone=ToneSettings(), space="Linear Rec.709",
+             color=ColorSettings()):
+    return prepare(linear, tone, space, color=color, full_fields=True)
+
+
+class PixelBuffer:
+    def __init__(self, values):
+        self.values = np.asarray(values, dtype=np.float32)
+
+    def foreach_get(self, output):
+        output[:] = self.values.ravel()
+
+
+class Image(dict):
+    def __init__(self, pointer, role, values):
+        super().__init__()
+        self.pointer = pointer
+        self.live = True
+        self.is_dirty = False
+        self.packed_file = object()
+        self.values = np.asarray(values, dtype=np.float32)
+        self.pixels = PixelBuffer(self.values)
+        self.size = (self.values.shape[1], self.values.shape[0])
+        self[PARAMETER_IMAGE] = PARAMETER_SCHEMA
+        self[PARAMETER_ROLE] = role
+        self[PARAMETER_CONTENT_SIGNATURE] = parameter_content_signature(self.values)
+
+    def as_pointer(self):
+        return self.pointer if self.live else 0
+
+
+def image_bundle(start, offset):
+    images = {
+        role: Image(start + index, role, np.full(shape, offset + index, np.float32))
+        for index, (role, shape) in enumerate(PARAMETER_ROLE_SHAPES.items())
+    }
+    primary = images["parameter"]
+    for role, image in images.items():
+        if role != "parameter":
+            primary[PARAMETER_ROLE_BINDING + role] = image
+    signatures = {role: image[PARAMETER_CONTENT_SIGNATURE]
+                  for role, image in images.items()}
+    bind_parameter_bank(images, signatures)
+    return primary, images
 
 
 class Stage2ParameterTests(unittest.TestCase):
@@ -35,9 +86,107 @@ class Stage2ParameterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             result.pixels.flags.writeable = True
         source = result.pixels.copy()
-        copied = PreparedParameters(source)
+        fields = {role: values.copy() for role, values in result.fields.items()}
+        copied = PreparedParameters(source, fields=fields)
         source.fill(7.)
         np.testing.assert_array_equal(copied.pixels, result.pixels)
+        for role, values in fields.items():
+            values.fill(7.)
+            np.testing.assert_array_equal(copied.fields[role], result.fields[role])
+        with self.assertRaises(TypeError):
+            copied.fields["color"] = fields["color"]
+
+    def test_complete_role_bundle_is_owned_immutable_and_matches_authored_settings(self):
+        settings = ColorSettings(
+            lightness=((1., 2., 3., 4.),) * 4,
+            chroma=((.1, .2, .3, .4),) * 4,
+            adaptance=((1., -1.),) * 4,
+            global_gain=.5,
+            web=WebSettings(hue_degrees=((2.,) * 6,) * 4,
+                            log_chroma=((.25,) * 6,) * 4,
+                            log_scale=((-.5,) * 6,) * 4),
+        )
+        result = prepare_parameters(complete(color=settings))
+        self.assertEqual(tuple(result.roles), PARAMETER_ROLES)
+        self.assertEqual(set(result.fields), set(COLOR_ROLE_FIELDS))
+        self.assertEqual(result.roles["parameter"].shape, PARAMETER_SHAPE)
+        for role in PARAMETER_ROLES[1:]:
+            values = result.roles[role]
+            self.assertEqual(values.shape, PARAMETER_ROLE_SHAPES[role])
+            self.assertEqual(values.dtype, np.float32)
+            self.assertFalse(values.flags.writeable)
+            with self.assertRaises(ValueError):
+                values.flags.writeable = True
+        flags = result.pixels[0, COLOR_FLAGS_SLOT]
+        np.testing.assert_array_equal(flags, (1., 1., 1., 1.))
+        scalars = result.pixels[0, COLOR_SCALARS_SLOT]
+        np.testing.assert_array_equal(scalars[:2], (.5, .25))
+        self.assertGreater(float(result.roles["web"].max()), 0.)
+
+    def test_prepared_parameters_rejects_missing_mixed_or_malformed_role_fields(self):
+        result = prepare_parameters(complete())
+        with self.assertRaisesRegex(ValueError, "every Color role"):
+            PreparedParameters(result.pixels)
+        missing = dict(result.fields)
+        missing.pop("web_toe")
+        with self.assertRaisesRegex(ValueError, "every Color role"):
+            PreparedParameters(result.pixels, fields=missing)
+        mixed = dict(result.fields)
+        mixed["web"] = np.zeros(PARAMETER_ROLE_SHAPES["color"], dtype=np.float32)
+        with self.assertRaisesRegex(ValueError, "Invalid Grade parameter field: web"):
+            PreparedParameters(result.pixels, fields=mixed)
+        nonfinite = dict(result.fields)
+        nonfinite["adaptance"] = np.array(result.fields["adaptance"], copy=True)
+        nonfinite["adaptance"][0, 0, 0] = np.nan
+        with self.assertRaisesRegex(ValueError, "Invalid Grade parameter field: adaptance"):
+            PreparedParameters(result.pixels, fields=nonfinite)
+
+    def test_adaptance_cardinal_support_is_packed_without_epsilon_thresholds(self):
+        settings = ColorSettings(adaptance=((1e-20, 0.), (0., 0.), (0., -1.), (0., 0.)))
+        prepared = complete(color=settings)
+        pixels = prepare_parameters(prepared).pixels[0]
+        np.testing.assert_array_equal(pixels[ADAPTANCE_ANCHORS_SLOT],
+                                      np.asarray(prepared.color.anchors, np.float32))
+        np.testing.assert_array_equal(pixels[ADAPTANCE_SUPPORT_SLOT], (1., 0., 1., 0.))
+
+    def test_parameter_image_receipt_rejects_mixed_role_generation(self):
+        first, first_roles = image_bundle(100, 0.)
+        second, second_roles = image_bundle(200, 10.)
+        self.assertTrue(parameter_image_matches(first))
+        self.assertTrue(parameter_image_matches(second))
+
+        first[PARAMETER_ROLE_BINDING + "web"] = second_roles["web"]
+        self.assertFalse(parameter_image_matches(first))
+        first[PARAMETER_ROLE_BINDING + "web"] = first_roles["web"]
+
+        self.assertEqual(len(first[PARAMETER_BUNDLE_SIGNATURE]), 64)
+        first_roles["web"][PARAMETER_CONTENT_SIGNATURE] = "0" * 64
+        self.assertFalse(parameter_image_matches(first))
+
+    def test_bundle_signature_update_stamps_all_roles_after_staging(self):
+        primary, images = image_bundle(300, 0.)
+        signatures = {role: image[PARAMETER_CONTENT_SIGNATURE]
+                      for role, image in images.items()}
+        receipt = set_parameter_bundle_signature(primary, signatures)
+        self.assertEqual(primary[PARAMETER_BUNDLE_SIGNATURE], receipt)
+        self.assertTrue(all(image[PARAMETER_BUNDLE_SIGNATURE] == receipt
+                            for image in images.values()))
+        for image in images.values():
+            image.pixels.foreach_get = lambda _output: self.fail("metadata check read pixels")
+        self.assertTrue(parameter_bundle_receipt_matches(primary))
+        signatures["color"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "contents do not match"):
+            set_parameter_bundle_signature(primary, signatures)
+
+    def test_bundle_signature_is_ordered_by_role_and_requires_complete_receipts(self):
+        signatures = {role: str(index) * 64
+                      for index, role in enumerate(PARAMETER_ROLES)}
+        expected = parameter_bundle_signature(signatures)
+        self.assertEqual(parameter_bundle_signature(dict(reversed(tuple(signatures.items())))),
+                         expected)
+        signatures.pop("web_toe")
+        with self.assertRaisesRegex(ValueError, "every role"):
+            parameter_bundle_signature(signatures)
 
     def test_matrix_preserves_the_existing_neutral_decomposition(self):
         prepared = complete(LinearSettings(
@@ -94,7 +243,6 @@ class Stage2ParameterTests(unittest.TestCase):
             replace(prepared, tone=replace(prepared.tone, table=replace(prepared.table, cells=2048))),
             replace(prepared, linear=replace(prepared.linear, linear_to_cones=np.full((3, 3), np.inf))),
             replace(prepared, linear=replace(prepared.linear, linear_to_cones=np.full((3, 3), 2e38))),
-            replace(prepared, color=replace(prepared.color, settings=ColorSettings(global_gain=.2))),
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 prepare_parameters(invalid)

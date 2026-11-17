@@ -78,7 +78,7 @@ class GradePreparationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(prepared.tone.table)
         self.assertFalse(prepared.tone.active)
-        self.assertFalse(prepared.color.full_fields)
+        self.assertTrue(prepared.color.full_fields)
         self.assertEqual(set(event[1] for event in traces), {
             "linear", "tone", "boundary", "join",
         })

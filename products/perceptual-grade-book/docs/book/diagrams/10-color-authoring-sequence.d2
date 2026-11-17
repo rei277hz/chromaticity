@@ -1,0 +1,53 @@
+shape: sequence_diagram
+
+host: "Blender adapter"
+runtime: "Authoring composer"
+policy: "Per-handle policy"
+settings: "Settings / claims"
+
+host -> runtime: "edit; current settings and sparse claims"
+runtime -> runtime: "pin edit; solve cyclic 4-degree gaps"
+loop displaced handle: {
+  runtime -> policy: "push(origin_handle)"
+  policy -> runtime: "capture / no effect"
+  runtime -> runtime: "capture current offset when authorized; move handle"
+}
+runtime -> runtime: "solve all owned restorations together under valid gaps"
+loop handle claimed by this origin: {
+  runtime -> policy: "restore(origin_handle, at_baseline)"
+  policy -> runtime: "clear matched claim / retain blocked claim"
+}
+runtime -> host: "Effects(settings, claims)"
+host -> settings: "apply both authorized replacements in one edit scope"
+host -> host: "compare math signature and separate undo fingerprint"
+opt effective math changed: {
+  host -> host: "request normal Grade / Stack preparation"
+}
+
+alt other authoring events: {
+  manual: "manual edit of displaced handle" {
+    host -> runtime: "manual(handle); begin at current position"
+    runtime -> policy: "manual"
+    policy -> runtime: "clear only this claim"
+  }
+  peak: "Peak changed" {
+    host -> runtime: "clear claims; resolve hues and Adaptance together"
+  }
+  frame: "actual node-owned frame / subframe changed" {
+    host -> runtime: "clear node-owned claims; shared claims survive"
+  }
+}
+
+opt invalid animated sample: {
+  host -> runtime: "resolve sampled values for evaluation"
+  runtime -> runtime: "closest squared-angle projection; radial Adaptance limit"
+  runtime -> host: "effective settings + derived Limited indication"
+  host -> host: "prepare effective result; never rewrite keys"
+}
+
+**.style.font-size: 44
+(** -> **)[*].style.font-size: 44
+**.style.font-color: "#111827"
+**.style.italic: false
+(** -> **)[*].style.font-color: "#111827"
+(** -> **)[*].style.italic: false

@@ -26,7 +26,7 @@ def may_adopt(observation: Adoption) -> bool:
 @dataclass(frozen=True)
 class State:
     phase: Literal["disposal", "retirement", "fence", "detach", "observe",
-                   "evict", "recheck", "remove", "terminal"]
+                   "retain", "evict", "recheck", "remove", "terminal"]
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class Event:
     owned: bool = False
     users: int = 0
     protected: bool = False
+    retain_for_undo: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,8 @@ def new_retirement() -> State:
 
 
 def eligible(event: Event) -> bool:
-    return event.live and event.owned and event.users == 0 and not event.protected
+    return (event.live and event.owned and event.users == 0
+            and not event.protected and not event.retain_for_undo)
 
 
 def step(state: State, event: Event) -> tuple[State, Effects]:
@@ -72,8 +74,12 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
     if state.phase == "observe":
         if event.failed:
             return State("terminal"), Effects()
+        if event.live and event.owned and event.retain_for_undo:
+            return State("retain"), Effects("retain")
         if not event.live or eligible(event):
             return State("evict"), Effects("evict")
+        return State("terminal"), Effects()
+    if state.phase == "retain":
         return State("terminal"), Effects()
     if state.phase == "evict":
         if event.failed:

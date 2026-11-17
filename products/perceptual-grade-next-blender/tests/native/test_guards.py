@@ -66,6 +66,25 @@ class GuardTests(TestCase):
             self.assertLessEqual(q_error,1e-5)
             self.assertLessEqual(float(np.max(abs(actual['valid']-energy)/(1+abs(energy)))),1e-5)
 
+    def test_native_hk_zero_reference_energy_and_signed_bypass(self):
+        values,expected,energy=hk_probes(reference_energy=0.)
+        np.testing.assert_array_equal(expected[:3],values[:3,:3])
+        np.testing.assert_array_equal(energy[:2],[0.,100.])
+        self.assertLess(energy[2],0.)
+        self.assertEqual(energy[3],0.)
+        for context in ('shader','compositor'):
+            for mode in ('hk','hk_color'):
+                with self.subTest(context=context,mode=mode):
+                    fixture=NativeFixture(self.prepared,values,context,
+                        builder=guard_builder(mode,reference_energy=0.))
+                    try: actual=fixture.render()
+                    finally: fixture.close()
+                    self.assertLessEqual(metrics(actual['rgb'],expected)['max_normalized'],1e-5)
+                    self.assertLessEqual(float(np.max(abs(actual['valid']-energy)/(1+abs(energy)))),1e-5)
+                    np.testing.assert_array_equal(actual['rgb'][:3],values[:3,:3])
+                    np.testing.assert_array_equal(actual['valid'][:2],[0.,100.])
+                    self.assertEqual(actual['valid'][3],0.)
+
     def test_native_boundary_internal_and_rgb_gates(self):
         b=self.boundary;probes=boundary_probes(b,self.reference)
         values,energy,c,expected_radius,radial,native=(probes[name] for name in

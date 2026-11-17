@@ -1,4 +1,4 @@
-"""Run the bundled-template native suite under Blender 5.2.4."""
+"""Run a bundled-template suite in a pinned native Blender executable."""
 
 from importlib.resources import files
 from contextlib import nullcontext
@@ -13,8 +13,8 @@ import unittest
 from ..installed.gui_support import configure_software_graphics, virtual_display
 
 
-class TemplateLTSHostTests(unittest.TestCase):
-    def test_template_suite_under_pinned_lts_blender(self):
+class TemplateHostTests(unittest.TestCase):
+    def test_template_suite_under_pinned_blender(self):
         resources = files("tests.perceptual_grade_blender")
         blender = Path(str(resources / "blender" / (
             "Blender.app/Contents/MacOS/Blender" if sys.platform == "darwin" else "blender"
@@ -27,6 +27,8 @@ class TemplateLTSHostTests(unittest.TestCase):
                 "python_paths": [path for path in sys.path
                                  if path and Path(path).exists()],
                 "test_module": os.environ["PG_TEMPLATE_TEST_MODULE"],
+                "blender_version": [int(part) for part in os.environ.get(
+                    "PG_TEMPLATE_BLENDER_VERSION", "5.2.4").split(".")],
             }), encoding="utf-8")
             environment = {
                 key: value for key, value in os.environ.items()

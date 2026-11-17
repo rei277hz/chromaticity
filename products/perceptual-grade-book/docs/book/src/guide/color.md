@@ -1,79 +1,71 @@
 # Color
 
-> **Preserved release:** this usage chapter and its captures describe 1.23.2 and still lag the latest model. See [Understanding the model](../theory/structure.md) for the current reference; these controls do not describe Next’s future Warp implementation.
+Color is Stage 3. It adjusts appearance after Linear and Tone, with smooth
+controls across tone, chroma, and hue. The sidebar separates the numeric controls
+into **J**, **C**, **Adaptance**, and **Warp**.
 
-Keep the Linear and Tone results. Each operation below adds to the preceding one in both examples; do not reset between recordings. A stays SDR, B stays HDR. In Resolve, use the named Perceptual Grade DCTL sliders given beside each demonstration.
+## J and C response
 
-Select a tone with its curve dot, S/M/W/H label or waveform indicator. The curve height is the strength of an adjustment, not a final pixel value. Cₗ favors lower-chroma colors and Cₕ favors higher-chroma colors, with smooth weights. The scope shows the selected input-tone region after grading.
+J changes perceptual lightness response and C changes chroma response. Each
+family has four tone anchors: Shadows, Midtones, White, and Highlights. At each
+anchor, low/high chroma weights adjust the radial contribution, while a/b values
+adjust opponent directions. The fit controls shape the blending across tone;
+Global C Gain applies an overall chroma multiplier.
 
-## Lightness J curve: two tones in each image
+Use small values first. J changes can alter contrast or emphasize a subject;
+changes to C can strengthen or quiet color. Inspect neutrals and saturated
+colors while adjusting, because a large adjustment can affect colors beyond the
+intended subject.
 
-Choose Lightness J and the Cₗ curve. In A, open Shadows and give White a little more presence. In B, open Midtones and restrain Highlights. Both images use the same kind of handle twice, on two tonal regions, to serve different purposes.
+## Selective Adaptance
 
-<figure class="grade-demo">
-<img src="../assets/demos/color-j.webp" data-still="../assets/demos/color-j-still.webp" alt="Lightness J: A adjusts Shadows and White; B adjusts Midtones and Highlights." loading="lazy">
-<figcaption>Lightness J: A adjusts Shadows and White; B adjusts Midtones and Highlights.</figcaption>
-</figure>
+Adaptance assigns a/b target coordinates at Shadows, Midtones, White, and
+Highlights. Its saturation parameter sets where the correction reaches half
+influence. Use it for a targeted appearance shift across selected tonal ranges;
+it is not the Linear white-balance control.
 
-DCTL sliders: A uses Shadows Cₗ → J and White Cₗ → J; B uses Midtones Cₗ → J and Highlights Cₗ → J. Choose the corresponding Cₕ → J slider when working on higher-chroma colors instead. Lightness Fit controls how broadly the tonal coefficients blend.
+The two coordinates form one radial destination. Next shortens an out-of-range
+request along its direction so the calibrated cone responses remain valid;
+it does not clip a and b independently. **Limited** marks a sampled request
+whose effective destination must be shortened, such as an animated value.
+The normal slider spans are ±4, ±10, ±20, and ±25 for Shadows, Midtones, White,
+and Highlights, with a 0.01 drag increment. Typed values are not rounded to
+that increment. These are editing spans; the valid radial
+boundary depends on the tone anchor. A nonfinite request fails visibly.
 
-## Lightness J and Chroma C curves: one shared tone
+## Warp color web
 
-Select Midtones in both examples. Adjust the Cₗ → J curve, then switch to Chroma C and adjust Cₗ → C without changing that tone selection. A can lift a muted subject and add color; B can lower an overly prominent midtone and soften its color. The two receivers work together on the same tonal region.
+Warp supplies six cyclic color handles—red, yellow, green, cyan, blue, and
+magenta—at each of the four tone anchors. Chroma values are log2 changes in
+stops. Hue values are the stored degree offsets. Scale values are also in stops
+and determine the common positive scale used after the H–K repair. The controls
+interpolate around the cyclic web and between tone anchors. The current UI has
+numeric fields and does not provide a draggable diagram.
 
-<figure class="grade-demo">
-<img src="../assets/demos/color-jc-curves.webp" data-still="../assets/demos/color-jc-curves-still.webp" alt="Both examples select Midtones and combine the Lightness J and Chroma C curves." loading="lazy">
-<figcaption>Both examples select Midtones and combine the Lightness J and Chroma C curves.</figcaption>
-</figure>
+Neighboring destination hues keep at least 4° of cyclic separation, including
+the magenta-to-red seam. An edit pins the selected hue and pushes neighbors
+when needed, in either direction around the web. **Auto** marks a hue moved
+by that edit; its tooltip identifies the initiating hue. Later edits of that
+initiating hue solve its automatic return positions together, approaching each
+saved position as far as the neighboring gaps allow. A blocked return stays
+pending. Editing one of those hues yourself starts from its current position
+and detaches only that hue from the earlier automatic adjustment.
 
-DCTL sliders: Midtones Cₗ → J and Midtones Cₗ → C. The corresponding higher-chroma controls are Midtones Cₕ → J and Midtones Cₕ → C. In a fully weighted chroma contribution, +1 doubles C and −1 halves it. Chroma Fit shapes the tonal reach; Global C Gain changes chroma across all tones.
+Changing Peak clears the automatic return relationships and resolves the new
+hue geometry and Adaptance limits together. Shared Grades keep their automatic
+relationships across frame changes. A node-owned Grade clears them when the
+actual frame or subframe changes. If interpolated animation violates the hue
+gaps, evaluation projects the angles into the valid range and shows **Limited**; it does
+not rewrite stored values or keyframes.
 
-## Lightness J and Chroma C a/b pads: one shared tone
+Review the entire image after changing Warp. Its evaluation uses frozen
+post-Tone selectors, then performs J/C response, Warp hue/chroma and Scale
+selection, selective Adaptance, H–K repair, and finally applies Scale to the
+repaired opponent coordinates and Scale squared to signed energy. This order preserves the
+reference model's guard-before-Scale contract. RGB cube containment is a
+separate output-boundary operation.
 
-Keep Midtones selected in both images. In the Lightness J pad, move the handle to raise one hue direction while lowering its opposite. Switch to Chroma C and shape the color strength along the same direction. A might emphasize a subject against its background; B might reduce a competing color while retaining the subject. These are paired J and C adjustments to the same tone in each image.
-
-<figure class="grade-demo">
-<img src="../assets/demos/color-jc-pads.webp" data-still="../assets/demos/color-jc-pads-still.webp" alt="Both examples use the Midtones a/b pads to combine directional lightness and chroma changes." loading="lazy">
-<figcaption>Both examples use the Midtones a/b pads to combine directional lightness and chroma changes.</figcaption>
-</figure>
-
-DCTL sliders: Midtones a → J, Midtones b → J, Midtones a → C and Midtones b → C. Diagonal pad movement combines a and b. On the extension’s pads, +a points upward and +b points leftward, matching its vectorscope orientation.
-
-## Adaptance pad: two tones in each image
-
-Choose Adaptance. In A, reduce a cast in Shadows, then refine White. In B, correct Midtones, then refine Highlights. Watch a surface that should stay near-neutral in each region while moving each tone’s pad handle.
-
-<figure class="grade-demo">
-<img src="../assets/demos/color-adaptance.webp" data-still="../assets/demos/color-adaptance-still.webp" alt="Adaptance: A adjusts Shadows and White; B adjusts Midtones and Highlights." loading="lazy">
-<figcaption>Adaptance: A adjusts Shadows and White; B adjusts Midtones and Highlights.</figcaption>
-</figure>
-
-In the DCTL, A uses Shadows Adaptance a, Shadows Adaptance b, White Adaptance a and White Adaptance b. B uses Midtones Adaptance a, Midtones Adaptance b, Highlights Adaptance a and Highlights Adaptance b.
-
-Adaptance Strength controls the amount and chroma protection; Adaptance Fit controls the tonal blend. The pad’s mean cross and confidence range describe sampled near-neutral pixels, enlarged 5× to make small casts visible.
-
-## Hue concentration pad: two tones in each image
-
-Choose Hue and use its a/b concentration pad. In A, gather a distracting spread of hues in Shadows, then refine White. In B, gather hues in Midtones, then refine Highlights. Concentration draws hues toward the chosen direction and opens their spacing on the opposite side.
-
-<figure class="grade-demo">
-<img src="../assets/demos/color-hue-pad.webp" data-still="../assets/demos/color-hue-pad-still.webp" alt="Hue concentration: A adjusts Shadows and White; B adjusts Midtones and Highlights." loading="lazy">
-<figcaption>Hue concentration: A adjusts Shadows and White; B adjusts Midtones and Highlights.</figcaption>
-</figure>
-
-DCTL sliders: A uses Shadows Hue Concentration a, Shadows Hue Concentration b, White Hue Concentration a and White Hue Concentration b. B uses Midtones Hue Concentration a, Midtones Hue Concentration b, Highlights Hue Concentration a and Highlights Hue Concentration b.
-
-## Hue rotation: two tones in each image
-
-Use the Hue rotation curve to turn colors together within a tone region. In A, steer Shadows toward one palette and White toward another. In B, steer Midtones and Highlights independently. Rotation turns the hue wheel; the preceding concentration operation changes the spacing around it.
-
-<figure class="grade-demo">
-<img src="../assets/demos/color-hue-rotation.webp" data-still="../assets/demos/color-hue-rotation-still.webp" alt="Hue rotation: A adjusts Shadows and White; B adjusts Midtones and Highlights." loading="lazy">
-<figcaption>Hue rotation: A adjusts Shadows and White; B adjusts Midtones and Highlights.</figcaption>
-</figure>
-
-DCTL sliders: Shadows Hue and White Hue for A; Midtones Hue and Highlights Hue for B. Hue Fit controls how both rotation and concentration blend across tonal regions. Revisit the complete image after each adjustment, with all earlier work retained.
-
-## Try a broader creative grade
-
-Experiment with Global Cₗ → Hue and Global Cₕ → Hue yourself. They rotate lower- and higher-chroma colors with smooth weights across all tones. Combine them with the tonal controls to explore a more stylized palette.
+Node-owned Grades expose their Stage 3 values to Blender keyframing. Shared
+Grades and Stack entries remain static. A Stack samples all enabled forward
+Grades into a single 33³ preview and then a 65³ final transform; see [Grade
+Stacks](inverse-stack.md).

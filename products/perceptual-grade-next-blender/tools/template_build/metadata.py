@@ -4,8 +4,6 @@ from ..kernel.node_templates import (
     BAKE_LIVE,
     BAKE_READER,
     PARAMETER_BANK_BINDINGS,
-    PARAMETER_IMAGE,
-    PARAMETER_SCHEMA,
     SLOT_BOUNDARY,
     SLOT_LIVE,
     SLOT_LUT,
@@ -28,6 +26,7 @@ from ..kernel.node_templates import (
     structure_digest,
 )
 from ..kernel.stage2_bindings import TEMPLATE_SCHEMA as TEMPLATE_MARKER_SCHEMA
+from ..kernel.stage2_parameters import parameter_bank_images
 
 
 def _tag_node(node, role):
@@ -40,11 +39,16 @@ def _discover_slots(tree, kind):
         image = getattr(node, "image", None)
         role = node.get(TEMPLATE_SLOT)
         if role is None and image is not None:
-            if image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA:
-                for bank, key in enumerate(PARAMETER_BANK_BINDINGS):
-                    if image == tree.get(key):
-                        role = f"parameter:{bank}"
+            for bank, key in enumerate(PARAMETER_BANK_BINDINGS):
+                primary = tree.get(key)
+                if primary is None:
+                    continue
+                for role_name, candidate in parameter_bank_images(primary).items():
+                    if image == candidate:
+                        role = f"{role_name}:{bank}"
                         break
+                if role is not None:
+                    break
             if role is None and (
                     image.get("perceptual_grade_nodes_field_role") == "boundary_seed"
                     or node.label == "AP1 boundary root seed"):

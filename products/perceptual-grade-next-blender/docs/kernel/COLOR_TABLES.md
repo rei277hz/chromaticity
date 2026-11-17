@@ -1,21 +1,92 @@
 # Native Color parameter fields
 
-## Current schema-5 layout and absolute HDR error — 2026-10-30
+## Current Stage 3 contract — 2026-11-17
 
-**Implementation and absolute HDR reassessment are complete.** The native
-runtime now uses Tone **256**, Color coefficients **8,192** and Compact
-Adaptance **3,072** cells together, with Web parameters **4,096**, Web toes
-**1,536** and the fixed **513 × 321** output boundary. Tone Fit accepts
-**[-2, 2]**; the separate Color fits retain **[-2, 6]**. The current corpus
-replaces Tone fit-3 stress settings with fit 2 and excludes the fit-3 endpoint
-case; historical fit-3 receipts remain historical. Layout schema **5** requires
-rebuilding obsolete persistent trees and rejects obsolete Tone/Color payload
-reuse. This combined promotion follows the user's explicit size choices.
+Next uses **field layout schema 6** and **parameter schema 4**. Adaptance has
+one fixed **32,768-cell** Compact field packed into **8193 × 4 RGBA32F**
+pixels (**524,352 bytes per bank**). A complete five-role settings bank is
+**2,916,976 bytes**; the pair uses **5,833,952 bytes** (about **5.56 MiB**),
+excluding the shared output-boundary image. Runtime never chooses a smaller
+Adaptance layout from the authored settings. The other fixed role dimensions
+remain scalar/Tone 512 × 1, Color 8193 × 2, Web 4097 × 32 and toes 1537 × 1.
 
-Current resident payload is **5,076,560 RGBA32F bytes / 4.841 MiB**, including
-its **2,634,768-byte** fixed boundary, or **2,441,792 bytes / 2.329 MiB without
-that boundary**. Runtime Tone retains its 512-texel packing width: 256 cells
-occupy 512 × 1, whereas the preceding diagnostic candidate used 257 × 1.
+The Stage 3 implementation preserves exact-zero Adaptance support, stable
+reflected-H response differences, and reference H–K repair **before** the final
+Web Scale. It carries J_A explicitly through disabled stages and inactive
+repair; positive Scale multiplies J_A directly and energy by its square.
+The production Compositor can retain Tone's response basis only when Color is
+inactive and H–K is provably inactive, retaining actual cube legality and
+endpoint policy. Uniform output conversion composes before spatial decode.
+An illegal projected decode gets one radius retry at `0.99609375`, accepted
+only after actual decoded legality; an already-legal result stays unchanged.
+These adaptations add no texture role, schema, or policy machine.
+
+Final default-path acceptance passed in build
+`d1006e84-e3fb-4683-aa36-d9ededfe5d21`: five source-emitted Shader methods in
+423.640 s, five Compositor methods in 422.974 s, and five Stack GPU checks in
+190.122 s. The optional production-Compositor refinements do not affect these
+default paths. The unchanged normalized RGB limit is `1e-4`.
+Live build `252b9488-83c2-49de-8943-8f509bc7e8f0` passed the installed
+Compositor fixture in 61.382 s (16 exercise frames, 12 automatic updates,
+signed/HDR/nonfinite colors, alpha, two reload-repair frames, and normal exit),
+all 18 source-carrier live evaluations in 226.453 s, and five transport checks,
+with four remote commands and zero local commands. Auto retains 0.01 and Full
+`1e-4` acceptance. These are correctness-workload timings, not edit latency.
+
+The parameterized static suite splits the current Stage 3 methods across
+interface, Shader, Compositor, and extreme targets; publication/save-load keeps
+its separate two-method target. Basic guarded parity retains 3 ppm with an
+independent `1e-4` RGB gate. The extended active-Color extreme test retains
+5 ppm binding parity against an equivalent-arithmetic protected baseline,
+with three independent `1e-4` oracle gates; it is distinct from the older
+achromatic-only 3 ppm diagnostic. All these sections pass, including extreme
+build `82e081c4-17e1-4921-a756-8daa18cfbd14` (390.0 s action).
+The full installed suite passed on Blender 5.3/LTS in 223.659/224.968 s,
+including removed-primary recovery and normal exit. Final frozen-asset build
+`40fc9dd3-66b5-452b-9bbb-cf052870b80e` passed both shipped numerical gates
+(26.850/27.219 s), all 13 template behavior methods (43.297 s), three bpy
+receipt methods (56.718 s), and three native receipt methods (62.664 s,
+plus one build-only check in 65.173 s). Exact receipts cover all 12 groups.
+No schema-5 timing is relabeled as a schema-6 measurement.
+
+The final measured 12-group library is **3,688,385 bytes**; its runtime manifest
+is **9,464 bytes**, and its bundled Stack shader is **67,226 bytes**, before ZIP
+compression. The **7,896,941-byte** detailed structure report is a build-only
+diagnostic and is excluded from the extension ZIP. Stored Grade Shader and
+Compositor kernels contain 1,795/3,042 nodes and 3,099/5,402 links; Stack kernels
+contain 214/238 nodes and 320/356 links. These counts do not measure evaluation
+speed.
+
+The authoritative layouts are in
+[`src/kernel/layouts.py`](../../src/kernel/layouts.py); the five-role bank
+contract is in
+[`src/kernel/stage2_parameters.py`](../../src/kernel/stage2_parameters.py).
+See the [product README](../../README.md) and
+[Technical Report](../../../perceptual-grade-book/docs/book/src/development/next-policies.md)
+for current publication and output behavior.
+
+All studies below retain their original source identities, numeric results,
+failure witnesses and receipt paths. References to “current” within those
+historical studies mean the source/layout used in that study, not today's
+schema-6 product. In particular, the schema-5 3,072-cell layout and its
+2,441,792-byte inventory do not describe the current settings bank.
+
+## Historical schema-5 layout and absolute HDR error — 2026-10-30
+
+**This schema-5 implementation and absolute HDR reassessment were complete.**
+The measured native runtime used Tone **256**, Color coefficients **8,192** and
+Compact Adaptance **3,072** cells together, with Web parameters **4,096**, Web toes
+**1,536** and the fixed **513 × 321** output boundary. Tone Fit accepted
+**[-2, 2]**; the separate Color fits retained **[-2, 6]**. That corpus
+replaced Tone fit-3 stress settings with fit 2 and excluded the fit-3 endpoint
+case; historical fit-3 receipts remain historical. Layout schema **5** required
+rebuilding obsolete persistent trees and rejected obsolete Tone/Color payload
+reuse. This combined promotion followed the user's explicit size choices.
+
+The measured schema-5 payload was **5,076,560 RGBA32F bytes / 4.841 MiB**,
+including its **2,634,768-byte** fixed boundary, or **2,441,792 bytes / 2.329 MiB without
+that boundary**. Tone retained its 512-texel packing width: 256 cells
+occupied 512 × 1, whereas the preceding diagnostic candidate used 257 × 1.
 
 | Texture | Cells | Width × height | RGBA32F bytes |
 |---|---:|---|---:|
@@ -74,7 +145,7 @@ passes **86 test methods across nine Buck2 targets**: 40 layout, 30 tool and
 16 native/persistent/gate-policy methods.
 
 The preceding schema-4 generation, complete-preparation and prepared-edit
-timings remain historical measurements; they are not current schema-5 costs.
+timings remain historical measurements; they do not measure schema 5 or 6.
 Accuracy-run durations are not performance evidence.
 
 `color_prepare.py` prepares the reference Color schema without importing the old
@@ -91,7 +162,7 @@ by native nodes. Preparation provides exact host functions `terms(H)`,
 ## Historical schema-4 layout reduction study
 
 These retained results describe the preceding schema-4 sources and layouts.
-They are not current schema-5 timing or combined-layout acceptance evidence.
+They do not establish schema-5 or schema-6 timing or combined-layout acceptance.
 
 Twelve independent reductions were measured from the fixed schema-4
 Compact-only layouts. All other fields retain their current sizes for each
@@ -155,33 +226,40 @@ sensitivity denominators remain historical.
 
 ## Current layouts and admission
 
-The user-directed schema-5 Compact-only implementation uses Tone **256**,
+The schema-6 Compact-only implementation uses Tone **256**,
 Color coefficients **8,192**, Web parameters **4,096**, Web toes **1,536**
-and Compact Adaptance **3,072** cells. It has no Interior table. The actual
-RGBA32F payload is **5,076,560 bytes**, or **2,441,792 without the fixed
-boundary**. Runtime Tone is packed at 512 × 1 (8,192 bytes); the schema-4
-sensitivity candidate used a different diagnostic 257 × 1 packing.
+and Compact Adaptance **32,768** cells. It has no Interior table. The five-role
+RGBA32F payload is **2,916,976 bytes per bank**, or **5,833,952 bytes** for both
+banks, excluding the shared boundary. Runtime Tone is packed at 512 × 1
+(8,192 bytes); Adaptance is 8193 × 4 (524,352 bytes per bank). The schema-4
+sensitivity candidate used a different diagnostic 257 × 1 Tone packing.
 
 These image dimensions are fixed for the lifetime of a prepared tree.
-Rebuild schema-4 trees. Immutable preparation rejects obsolete Tone sizes,
-Color capacities and layout schemas; matching schema-5 payloads are reused.
-The Tone control domain is now `[-2,2]`; Color fits retain `[-2,6]`.
+Obsolete trees must be rebuilt. Immutable preparation rejects obsolete Tone
+sizes, Color capacities and layout schemas; only matching schema-6 field
+payloads are reusable. Parameter schema 4 adds tonal anchors and authored
+Adaptance-row activity flags inside the unchanged 512 × 1 scalar image.
+Those values preserve exact-zero cardinal support without epsilon masking.
+The Tone control domain is `[-2,2]`; Color fits retain `[-2,6]`.
 
-The user-authorized maximum signed HDR worsening of **0.05 fractional 10-bit
-codes** admits Color coefficients and Compact Adaptance, as well as the
-separately scoped existing Web-toe policy. For those roles, scalar and local
-precision remain measured diagnostics with their original raw limits and
-pass/fail values. Safety, finiteness, significant sign, final RGB, containment,
-validity/saturation flags and the original node budget remain requirements.
-Other field roles retain their scalar/local admission policies. HDR uses the
-pinned ACES 2.0 HDR-1000 / Rec.2100-PQ view with PQ once; signed worsening is
-`max(abs(candidate-reference)) - max(abs(baseline-reference))` per pixel.
+The historical **0.05 fractional 10-bit-code** HDR-worsening studies below
+remain evidence for their own source/layout identities; they do not certify
+the new combined layout. The current extreme-control RGB gate remains
+`max(abs(actual-reference)) / (1 + max(abs(reference))) <= 1e-4`.
+Final source-emitted Shader/Compositor, Stack GPU, static parameter sections,
+the complete installed suite, and live Compositor Auto/Full acceptance pass in
+the builds recorded above. The final shipped-template numerical and exact
+cross-host receipt gates also pass in the separately recorded frozen-asset run.
+Scalar/local diagnostics, finiteness, significant sign, containment, alpha,
+validity/saturation flags and the original node budget retain their separate
+scopes; a final RGB pass cannot certify every intermediate.
 
 Both native graph builders use Compact Adaptance for all three calibrated
 log gains and `log(k)`, for every authored adjustment and tonal height.
 There is no gain threshold, Interior coordinate map or representation fallback.
 The compact endpoint retains the analytic exterior normalization limit.
-All-active preparation and persistent initialization allocate one Adaptance image.
+All-active preparation provides one Adaptance role payload. Runtime publishes
+it with the other four roles through the shared two-bank publication policy.
 
 ## Historical schema-4 Compact-only comparison
 
@@ -221,7 +299,8 @@ ordinary image linear filtering does not preserve the parameter-field contract.
   duplicating the 29-row angular/radial atlas. One logical toe sample uses two
   nearest texel fetches in Shader or one bilinear Map UV operation in Compositor,
   with no exponential decoding.
-- Adaptance: one row contains three calibrated log gains and `log(k)`. Set
+- Adaptance: one semantic row contains three calibrated log gains and `log(k)`,
+  segmented into four physical rows for the fixed 32,768-cell grid. Set
   `s=sqrt(aw/(3.05*400))*(H/100)**(1/(2*gamma))`; coordinate is
   `s/(1+s)*cells`. The endpoint at compact infinity uses the exact exterior
   normalization limit. It does not freeze normalization above the last anchor.
@@ -256,8 +335,9 @@ introduced.
 Adaptance's calibrated response transform can amplify small parameter
 interpolation errors. Independent native-stage measurements remain necessary
 alongside parameter-field diagnostics; field accuracy alone cannot describe a
-smaller resolution. Compact Adaptance admission follows the authorized HDR
-rule above. Strong controls must be measured on the same Compact path as
+smaller resolution. Historical Compact HDR admissions are scoped to their
+recorded source/layout; current acceptance retains the strict RGB gate above.
+Strong controls must be measured on the same Compact path as
 ordinary controls; there is no second field whose samples can mask its error.
 
 Historically, the dual-table implementation selected a linear-height Interior

@@ -52,6 +52,7 @@ def _copy_tree(source, destination):
     source, destination = Path(source), Path(destination)
     if not source.is_dir():
         raise ValueError(f"Missing declared print resource directory: {source}")
+    destination.mkdir(parents=True, exist_ok=True)
     for path in sorted(source.rglob("*")):
         if path.is_symlink():
             raise ValueError(f"Print resources may not contain symlinks: {path}")

@@ -1,4 +1,4 @@
-"""Run a template test module inside the pinned LTS Blender runtime."""
+"""Run a template test module inside a pinned native Blender runtime."""
 
 import importlib
 import json
@@ -11,8 +11,10 @@ def main():
     config = json.loads(Path(sys.argv[sys.argv.index("--") + 1]).read_text())
     bpy = __import__("bpy")
     __import__("numpy")
-    if tuple(bpy.app.version) != (5, 2, 4):
-        raise RuntimeError(f"Template LTS tests require Blender 5.2.4, got {bpy.app.version_string}")
+    expected_version = tuple(config.get("blender_version", (5, 2, 4)))
+    if tuple(bpy.app.version) != expected_version:
+        raise RuntimeError(
+            f"Template tests require Blender {expected_version}, got {bpy.app.version_string}")
     for entry in config["python_paths"]:
         if entry and entry not in sys.path:
             sys.path.append(entry)

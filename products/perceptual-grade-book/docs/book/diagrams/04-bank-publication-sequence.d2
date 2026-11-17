@@ -2,7 +2,7 @@ shape: sequence_diagram
 
 consumer: "Publication consumer"
 policy: "Bank policy"
-blender: "Blender banks / nodes"
+blender: "Blender role banks / nodes"
 
 consumer -> policy: "begin(admitted, active, candidate)"
 opt active bank invalid: {
@@ -13,12 +13,24 @@ opt active bank invalid: {
 }
 publication: "loop [stage or repair, select, deliver; stop on failure]" {
   policy -> consumer: "action(candidate)"
+  opt stage or repair: {
+    consumer -> blender: "stage five roles; reuse clean matching payloads"
+    blender -> consumer: "complete bundle packing and content receipts"
+  }
   opt stage needs a replacement kernel: {
-    consumer -> blender: "append template; bind two banks"
+    consumer -> blender: "append template; bind two complete role banks"
     blender -> consumer: "complete candidate or failure"
   }
-  consumer -> blender: "pack / select with readback / install"
-  blender -> consumer: "packing / selector / delivery receipt"
+  opt select: {
+    consumer -> blender: "select whole bundle with readback / install"
+    blender -> consumer: "selector receipt"
+  }
+  opt deliver: {
+    consumer -> blender: "invalidate all five active role Images"
+    consumer -> consumer: "record bound generation; dispatch installation results"
+    consumer -> blender: "reassert unchanged scene root through RNA setter"
+    blender -> consumer: "live compositor recalc requested / delivery receipt"
+  }
   consumer -> policy: "staged / selected / delivered"
 }
 opt selection or delivery failed: {

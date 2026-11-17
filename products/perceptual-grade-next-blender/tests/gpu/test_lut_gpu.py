@@ -1,4 +1,4 @@
-"""Actual GPU Stage 1/2 Stack evaluation and native lookup parity."""
+"""Actual GPU full Grade Stack evaluation and native lookup parity."""
 
 import asyncio
 from dataclasses import replace
@@ -12,11 +12,12 @@ import numpy as np
 
 from color_tools.kernel import lut
 from color_tools.template_build.stage2_graph import build_stage2_group
-from color_tools.kernel.settings import LinearSettings, Settings, ToneSettings
+from color_tools.kernel.settings import ColorSettings, LinearSettings, Settings, ToneSettings
 from color_tools.lut_gpu import StackGPUBackend
 from color_tools.runtime.grade_preparation import GradePreparer
 from tools.perceptual_grade.reports.native import NativeFixture
 from tools.perceptual_grade.reports.oracle import evaluate_full
+from tools.perceptual_grade.reports.full_cases import guard_before_scale_grade
 from .gpu_support import initialize
 
 
@@ -98,6 +99,7 @@ class LUTGPUComputeTests(unittest.TestCase):
         settings = (Settings(
             linear=LinearSettings(exposure=.25, source_xy=(.31, .34)),
             tone=ToneSettings(input_nits=(0., 5., 38., 225., 1200.), fit=.25),
+            color=guard_before_scale_grade(),
         ),)
         receipts, prepared = self.bake(settings, space="Linear Rec.2020")
         cube = receipts["full"]
@@ -125,6 +127,27 @@ class LUTGPUComputeTests(unittest.TestCase):
                 "expected": expected[index].tolist(),
             })
             np.testing.assert_allclose(actual["alpha"], values[:, 3], rtol=0, atol=1e-6)
+
+    def test_ordered_color_grades_guard_before_scale_in_both_resolutions(self):
+        settings = (
+            Settings(color=guard_before_scale_grade()),
+            Settings(color=ColorSettings(
+                lightness=((1., -2., .5, -.25),)*4,
+                chroma=((.1, -.2, .05, -.1),)*4)),
+        )
+        receipts, _ = self.bake(settings, progressive=True)
+        ids = np.array(((0, 0, 0), (4, 8, 12), (8, 12, 20), (16, 16, 16),
+                        (20, 28, 32), (32, 40, 48), (64, 64, 64)))
+        expected = lut.axis()[ids]
+        for item in settings:
+            expected = evaluate_full(expected, item.linear, item.tone, item.color, "ACEScg")["rgb"]
+        for quality, indices in (("preview", ids//2), ("full", ids)):
+            with self.subTest(quality=quality):
+                actual = receipts[quality].values[tuple(indices.T)]
+                normalized = np.max(abs(actual-expected), axis=-1)/(1+np.max(abs(expected), axis=-1))
+                self.assertLessEqual(float(np.max(normalized)),1e-4)
+        np.testing.assert_array_equal(receipts["preview"].values,
+                                      receipts["full"].values[::2,::2,::2])
 
     def test_compute_unavailability_and_dispatch_failure_have_no_cpu_fallback(self):
         backend = StackGPUBackend()

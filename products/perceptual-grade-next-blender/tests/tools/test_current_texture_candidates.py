@@ -23,7 +23,7 @@ class CurrentTextureCandidatesTests(unittest.TestCase):
         layout = candidates.baseline_layout(self.base)
         self.assertEqual({key: value for key, value in layout.items() if key != 'Output boundary'},
                          {'Tone':256, 'Color coefficients':8192, 'Web parameters':4096,
-                          'Web toes':1536, 'Adaptance parameters':3072})
+                          'Web toes':1536, 'Adaptance parameters':32768})
         self.assertEqual((layout['Output boundary']['width'], layout['Output boundary']['height']), (513,321))
         specs = candidates.selection()
         self.assertEqual(len(specs), 9)

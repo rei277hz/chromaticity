@@ -37,7 +37,10 @@ def generate(packages, output_dir):
     from color_tools.kernel.prepare import prepare, prepare_tone
     from color_tools.kernel.settings import SPACES, ToneSettings
     from color_tools.kernel.stage2_bindings import PARAMETER_BANK_BINDINGS, PARAMETER_IMAGE
+    from color_tools.kernel.stage2_bindings import PARAMETER_ROLE_BINDING
+    from color_tools.kernel.stage2_parameters import PARAMETER_ROLES, parameter_bank_images
     from color_tools.kernel.node_templates import SCHEMA as TEMPLATE_MANIFEST_SCHEMA
+    from color_tools.kernel.node_templates import TEMPLATE_VARIANT, structure_receipt
     from color_tools.template_build.lut_shader_emitter import grade_source
     from color_tools.template_build.metadata import describe_template, tag_template
     from color_tools.template_build.stack_graph import build_stack_group
@@ -70,15 +73,24 @@ def generate(packages, output_dir):
             if image.get(PARAMETER_IMAGE) is None:
                 image["perceptual_grade_nodes_field_role"] = "boundary_seed"
         record = tag_template(built.tree, key, "grade")
-        parameter_images = set()
+        parameter_primaries = [built.tree[key] for key in PARAMETER_BANK_BINDINGS]
+        parameter_images = [
+            image
+            for primary in parameter_primaries
+            for image in parameter_bank_images(primary).values()
+        ]
         for bank in (0, 1):
-            for name in record["slots"][f"parameter:{bank}"]:
-                reader = built.tree.nodes[name]
-                parameter_images.add(reader.image)
-                reader.image = None
+            for role in PARAMETER_ROLES:
+                for name in record["slots"].get(f"{role}:{bank}", ()):
+                    built.tree.nodes[name].image = None
         for binding in PARAMETER_BANK_BINDINGS:
             if binding in built.tree:
                 del built.tree[binding]
+        for primary in parameter_primaries:
+            for role in PARAMETER_ROLES:
+                binding_key = PARAMETER_ROLE_BINDING + role
+                if binding_key in primary:
+                    del primary[binding_key]
         for image in parameter_images:
             if image.users != 0:
                 raise RuntimeError("Grade template retained a parameter Image")
@@ -158,6 +170,10 @@ def generate(packages, output_dir):
         "asset_sha256": {path.name: _sha256(path)
                          for path in (blend_path, shader_path, manifest_path)},
         "variants": variants,
+        "structure_receipts": {
+            tree[TEMPLATE_VARIANT]: structure_receipt(tree)
+            for tree in roots
+        },
     })
 
 

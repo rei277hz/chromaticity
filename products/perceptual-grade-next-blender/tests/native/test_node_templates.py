@@ -14,9 +14,11 @@ import numpy as np
 from color_tools.kernel import node_templates
 from color_tools.kernel.stage2_bindings import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_GENERATION,
-    PARAMETER_READER, PARAMETER_READER_BANK, PARAMETER_SELECTOR,
+    PARAMETER_READER, PARAMETER_READER_BANK, PARAMETER_READER_ROLE, PARAMETER_SELECTOR,
 )
-from color_tools.kernel.stage2_parameters import prepare_parameters
+from color_tools.kernel.stage2_parameters import (
+    PARAMETER_ROLES, parameter_bank_images, prepare_parameters,
+)
 from color_tools.kernel.lut import basis, basis_pixels, stack_config_pixels
 
 from .template_support import SPACES, TREE_TYPES, complete_prepared, stack_prepared
@@ -47,12 +49,22 @@ class NodeTemplateTests(unittest.TestCase):
         self.assertEqual(tree[PARAMETER_ACTIVE_BANK], active)
         self.assertEqual(tree[PARAMETER_GENERATION], generation)
         self.assertNotEqual(banks[0], banks[1])
+        parameters = prepare_parameters(prepared)
         for bank in banks:
-            np.testing.assert_array_equal(image_pixels(bank), prepare_parameters(prepared).pixels)
+            images = parameter_bank_images(bank)
+            self.assertEqual(set(images), set(PARAMETER_ROLES))
+            self.assertEqual(len({image.as_pointer() for image in images.values()}),
+                             len(PARAMETER_ROLES))
+            for role, image in images.items():
+                np.testing.assert_array_equal(image_pixels(image), parameters.roles[role])
         readers = tuple(node for node in tree.nodes if node.get(PARAMETER_READER))
         self.assertEqual({node[PARAMETER_READER_BANK] for node in readers}, {0, 1})
+        self.assertEqual({(node[PARAMETER_READER_BANK], node[PARAMETER_READER_ROLE])
+                          for node in readers},
+                         {(bank, role) for bank in (0, 1) for role in PARAMETER_ROLES})
         for reader in readers:
-            self.assertEqual(reader.image, banks[reader[PARAMETER_READER_BANK]])
+            bank, role = reader[PARAMETER_READER_BANK], reader[PARAMETER_READER_ROLE]
+            self.assertEqual(reader.image, parameter_bank_images(banks[bank])[role])
         selector, = (node for node in tree.nodes if node.get(PARAMETER_SELECTOR))
         value = (selector.outputs["Value"].default_value if tree.bl_idname == "ShaderNodeTree"
                  else selector.inputs[0].default_value)
@@ -131,11 +143,22 @@ class NodeTemplateTests(unittest.TestCase):
                 vectors = (False, True) if tree_type == "ShaderNodeTree" else (False,)
                 for vector in vectors:
                     with self.subTest(mode=mode, tree_type=tree_type, vector=vector):
+                        before = (set(bpy.data.node_groups), set(bpy.data.images))
                         built = node_templates.instantiate_fallback(
                             mode, tree_type, vector=vector,
                         )
                         try:
                             tree = built.tree
+                            self.assertTrue(node_templates.validate_fallback_instance(
+                                tree, mode, vector=vector,
+                            ))
+                            self.assertFalse(node_templates.validate_fallback_instance(
+                                tree, "error" if mode == "pending" else "pending",
+                                vector=vector,
+                            ))
+                            self.assertFalse(node_templates.validate_fallback_instance(
+                                tree, mode, vector=not vector,
+                            ))
                             self.assertEqual(tree.get(node_templates.FALLBACK_KERNEL), 1)
                             self.assertEqual(tree.get(node_templates.FALLBACK_MODE), mode)
                             inputs = {item.name for item in tree.interface.items_tree
@@ -153,6 +176,108 @@ class NodeTemplateTests(unittest.TestCase):
                                 ))
                         finally:
                             built.dispose(unlink=True)
+                        self.assertEqual((set(bpy.data.node_groups), set(bpy.data.images)), before)
+
+    def test_fallback_validation_rejects_invalid_context_without_allocating_ids(self):
+        before = (set(bpy.data.node_groups), set(bpy.data.images))
+        self.assertFalse(node_templates.validate_fallback_instance(None, "pending"))
+        for mode, tree_type, vector in (
+                ("current", "ShaderNodeTree", False),
+                ("pending", "CompositorNodeTree", True)):
+            with self.subTest(constructor=(mode, tree_type, vector)):
+                with self.assertRaises(node_templates.TemplateAssetError):
+                    node_templates.instantiate_fallback(mode, tree_type, vector=vector)
+                self.assertEqual((set(bpy.data.node_groups), set(bpy.data.images)), before)
+        built = node_templates.instantiate_fallback("pending", "ShaderNodeTree")
+        try:
+            retained = (set(bpy.data.node_groups), set(bpy.data.images))
+            for mode in (None, "", "current"):
+                with self.subTest(mode=mode):
+                    self.assertFalse(node_templates.validate_fallback_instance(built.tree, mode))
+            built.tree[node_templates.FALLBACK_MODE] = "current"
+            self.assertFalse(node_templates.validate_fallback_instance(built.tree, "current"))
+            self.assertEqual((set(bpy.data.node_groups), set(bpy.data.images)), retained)
+        finally:
+            built.dispose(unlink=True)
+        self.assertEqual((set(bpy.data.node_groups), set(bpy.data.images)), before)
+
+    def test_fallback_validation_rejects_changed_markers_and_graph_contract(self):
+        def change_interface(tree):
+            socket = next(item for item in tree.interface.items_tree
+                          if item.item_type == "SOCKET" and item.in_out == "INPUT"
+                          and item.name == "Color")
+            socket.name = "Changed Color"
+
+        def change_interface_default(tree):
+            socket = next(item for item in tree.interface.items_tree
+                          if item.item_type == "SOCKET" and item.in_out == "INPUT"
+                          and item.name == "Color")
+            socket.default_value = (0.0, 0.0, 0.0, 0.5)
+
+        def change_links(tree):
+            tree.links.remove(next(iter(tree.links)))
+
+        def change_topology(tree):
+            tree.nodes.new("NodeReroute")
+
+        def change_effective_default(tree):
+            magenta = next(node for node in tree.nodes
+                           if node.bl_idname in {"ShaderNodeCombineColor",
+                                                 "CompositorNodeCombineColor"})
+            magenta.inputs["Red"].default_value = 0.5
+
+        marker_changes = {
+            "missing_kernel_marker": (node_templates.FALLBACK_KERNEL, None),
+            "wrong_kernel_marker": (node_templates.FALLBACK_KERNEL, 0),
+            "wrong_mode": (node_templates.FALLBACK_MODE, "current"),
+            "wrong_schema": (node_templates.TEMPLATE_SCHEMA, -1),
+            "wrong_kind": (node_templates.TEMPLATE_KIND, "grade"),
+            "wrong_variant": (node_templates.TEMPLATE_VARIANT, "invalid"),
+            "wrong_template_mode": (node_templates.TEMPLATE_MODE, "current"),
+            "wrong_template_vector": (node_templates.TEMPLATE_VECTOR, None),
+        }
+        for mode in ("pending", "error"):
+            for tree_type in TREE_TYPES:
+                vectors = (False, True) if tree_type == "ShaderNodeTree" else (False,)
+                for vector in vectors:
+                    changes = {
+                        "interface": change_interface,
+                        "interface_default": change_interface_default,
+                        "links": change_links,
+                        "topology": change_topology,
+                    }
+                    if mode == "error":
+                        changes["effective_default"] = change_effective_default
+                    for name, (key, value) in marker_changes.items():
+                        if name == "missing_kernel_marker":
+                            changes[name] = lambda tree, key=key: tree.__delitem__(key)
+                        else:
+                            value = not vector if name == "wrong_template_vector" else value
+                            changes[name] = lambda tree, key=key, value=value: tree.__setitem__(
+                                key, value,
+                            )
+                    for change, mutate in changes.items():
+                        with self.subTest(mode=mode, tree_type=tree_type,
+                                          vector=vector, change=change):
+                            before = (set(bpy.data.node_groups), set(bpy.data.images))
+                            built = node_templates.instantiate_fallback(
+                                mode, tree_type, vector=vector,
+                            )
+                            try:
+                                self.assertTrue(node_templates.validate_fallback_instance(
+                                    built.tree, mode, vector=vector,
+                                ))
+                                mutate(built.tree)
+                                retained = (set(bpy.data.node_groups), set(bpy.data.images))
+                                self.assertFalse(node_templates.validate_fallback_instance(
+                                    built.tree, mode, vector=vector,
+                                ))
+                                self.assertEqual((set(bpy.data.node_groups), set(bpy.data.images)),
+                                                 retained)
+                            finally:
+                                built.dispose(unlink=True)
+                            self.assertEqual((set(bpy.data.node_groups), set(bpy.data.images)),
+                                             before)
 
     def test_receipt_uses_effective_defaults(self):
         prepared = complete_prepared()
@@ -291,7 +416,8 @@ class NodeTemplateTests(unittest.TestCase):
         banks = tuple(first.tree[key] for key in PARAMETER_BANK_BINDINGS)
         second = node_templates.instantiate_grade(prepared, "CompositorNodeTree",
                                                   parameter_images=banks, active_bank=1)
-        bank_names = tuple(image.name for image in banks)
+        bank_names = tuple(image.name for bank in banks
+                           for image in parameter_bank_images(bank).values())
         try:
             self.assertEqual(tuple(second.tree[key] for key in PARAMETER_BANK_BINDINGS), banks)
             second.dispose()
@@ -432,7 +558,11 @@ class NodeTemplateTests(unittest.TestCase):
             for image in restored_banks:
                 self.assertIsNone(image.library)
                 self.assertIsNotNone(image.packed_file)
-                np.testing.assert_array_equal(image_pixels(image), prepare_parameters(prepared).pixels)
+                for role, member in parameter_bank_images(image).items():
+                    self.assertIsNone(member.library)
+                    self.assertIsNotNone(member.packed_file)
+                    np.testing.assert_array_equal(image_pixels(member),
+                                                  prepare_parameters(prepared).roles[role])
             replacement = node_templates.instantiate_grade(prepared, "ShaderNodeTree")
             try:
                 self.assertNotEqual(replacement.tree, restored)

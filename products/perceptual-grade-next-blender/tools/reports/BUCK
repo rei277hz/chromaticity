@@ -3,6 +3,22 @@ load("//build_defs:artifacts.bzl", "generate")
 TOOL_PREFIX = ""
 
 python_library(
+    name = "color_transport_sources",
+    srcs = {
+        "cases.py": "cases.py",
+        "full_cases.py": "full_cases.py",
+        "oracle.py": "oracle.py",
+    },
+    base_module = "tools.perceptual_grade.reports",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//libraries/perceptual-grade-reference:model_code",
+        "//products/perceptual-grade-next-blender:kernel_preparation",
+        "//third_party:numpy",
+    ],
+)
+
+python_library(
     name = "template_fixture_sources",
     srcs = {
         "native.py": "native.py",
@@ -29,7 +45,19 @@ python_library(
     base_module = "tools.perceptual_grade.reports",
     visibility = ["PUBLIC"],
     deps = [
-        "//products/perceptual-grade-next-blender:kernel_runtime",
+        "//products/perceptual-grade-next-blender:kernel_preparation",
+        "//third_party:numpy",
+    ],
+)
+
+python_library(
+    name = "native_fixture_sources",
+    srcs = ["native.py"],
+    base_module = "tools.perceptual_grade.reports",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//products/perceptual-grade-next-blender:template_build",
+        "//third_party:bpy",
         "//third_party:numpy",
     ],
 )
