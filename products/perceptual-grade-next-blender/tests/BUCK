@@ -921,7 +921,10 @@ python_test(
 
 python_test(
     name = "handbook_audit",
-    srcs = ["packaging/test_handbook_audit.py"],
+    srcs = [
+        "packaging/test_handbook_audit.py",
+        "packaging/test_handbook_browser.py",
+    ],
     base_module = "tests.perceptual_grade_blender",
     resources = {
         "book_sources": "//products/perceptual-grade-book:next_handbook_audit_sources",
@@ -935,7 +938,10 @@ python_test(
         "print-exports/technical-report/pdf": "//products/perceptual-grade-book:technical-report[pdf]",
         "print-exports/technical-report/epub": "//products/perceptual-grade-book:technical-report[epub]",
     },
-    deps = ["//products/perceptual-grade-next-blender:handbook_audit_code"],
+    deps = [
+        "//products/perceptual-grade-book/diagrams:browser_fixtures",
+        "//products/perceptual-grade-next-blender:handbook_audit_code",
+    ],
 )
 
 python_test(

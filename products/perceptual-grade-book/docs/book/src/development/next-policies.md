@@ -132,6 +132,16 @@ clears claims and resolves the new hue geometry and radial Adaptance limits in
 one transaction. Reset, copy, conversion, load, and undo adapters must preserve
 this ownership boundary rather than writing metadata on their own.
 
+The 24 hue controls and eight Adaptance axis controls have custom RNA
+getters/setters backed by explicit ID-property keys. Blender's native
+`is_property_set()` and `property_unset()` do not describe or clear that
+storage. Reset therefore removes those keys explicitly, while ordinary Color
+properties retain native RNA handling. The authoring effect consumer records
+the actual key presence before a write and restores it on failure: an absent
+key remains absent rather than becoming an explicitly stored default.
+Ownership metadata stays inside the existing transaction and clear effects;
+this storage repair adds no policy state or numerical signature field.
+
 Animation uses a different admission path. Invalid sampled hue rows are
 projected to the unique closest feasible lifted angles under squared-angle
 distance. The repair solve uses a 4.0001° gap before float32 storage, then

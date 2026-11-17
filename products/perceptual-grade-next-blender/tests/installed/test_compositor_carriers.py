@@ -35,10 +35,15 @@ class CompositorCarrierTests(unittest.TestCase):
             environment.update(
                 BLENDER_USER_CONFIG=str(root / "config"),
                 OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", PYTHONDONTWRITEBYTECODE="1",
+                # llvmpipe has its own pool; OpenMP's limit does not bound it.
+                LP_NUM_THREADS="2",
             )
             with virtual_display(resources, root, environment):
                 process = subprocess.Popen([
                     str(blender), "--factory-startup", "--disable-autoexec",
+                    # These 6x8 probes must not claim every worker CPU while
+                    # other native acceptance tests run in parallel.
+                    "--threads", "2",
                     "--python-exit-code", "1", "--python", str(runner), "--",
                     str(configuration),
                 ], cwd=root, env=environment, stdout=subprocess.PIPE,
@@ -48,7 +53,9 @@ class CompositorCarrierTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     output, _ = process.communicate(timeout=10)
-                    self.fail("Live carrier probe timed out\n" + output[-20000:])
+                    saved_report = report.read_text() if report.exists() else "No carrier report was written."
+                    self.fail("Live carrier probe timed out\n" + output[-20000:]
+                              + "\nCarrier report:\n" + saved_report)
             data = json.loads(report.read_text()) if report.exists() else {}
             details = output[-20000:] + "\n" + json.dumps(data, indent=2)
             print(details, flush=True)

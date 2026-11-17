@@ -6,6 +6,93 @@ Choose validation around the behavior you changed. Numerical tests isolate equat
 
 A failing reproduction should identify the host version, input interpretation, grade, render method and device. Run the focused gate first, then the related integration gates. Report measured results with their workload and settings, so another contributor can reproduce them.
 
+## Main CI follow-up after Stage 3
+
+[GitHub run `44146241261`](https://github.com/rei277hz/chromaticity/actions/runs/44146241261)
+tested merged commit `5a2cf26636c1`. Lint and both selected build targets
+passed, while the test inventory reported 62/66 passing targets. The four
+remaining targets represent three failing test processes and one dependency
+build failure:
+
+| Target | Observed failure | Repair boundary |
+|---|---|---|
+| `color_stages`, `persistent_color_stages` | The shared isolated appearance fixture omitted `J_A`, producing 174 repeated `AttributeError` reports before numerical comparison. | Derive the fixture's `J_A` from its carried float32 signed energy. |
+| `installed` | An unbound shared node retained `web_hue_1_0 = 15` after its settings callback should have restored neutral controls. | Reset explicit backing keys for custom hue and Adaptance properties. |
+| `handbook_audit` | Diagram Chromium aborted with `Socket path too long`; the audit process never started. | Give the browser a private short temporary directory. |
+
+The isolated Color handoff carries unscaled `E` in alpha. Its achromatic
+coordinate is `sign(E) * sqrt(abs(E))`, matching the independent reference
+state. Recovering it from rounded H and chroma would discard energy that the
+fixture intentionally carries separately. Both generic and persistent suites
+use this handoff; their unguarded Terms → Web → Adaptance → Scale comparisons
+retain their original precision, finiteness, saturation, and signed-energy
+checks. Production H–K-before-Scale evaluation is a separate gate.
+
+The installed failure also identifies a user-visible Reset defect. In pinned
+Blender 5.3, registering custom float getters/setters clears `PROP_IDPROPERTY`
+([`rna_define.cc`](https://github.com/blender/blender/blob/02f0899d78e3/source/blender/makesrna/intern/rna_define.cc#L3362)).
+For those properties, `is_property_set()` does not describe the manually
+stored key, and `property_unset()` does not remove it
+([`rna_access.cc`](https://github.com/blender/blender/blob/02f0899d78e3/source/blender/makesrna/intern/rna_access.cc#L7149)).
+The storage adapter therefore checks key presence and explicitly removes the
+24 hue and eight Adaptance axis backing values. Other Color properties retain
+native RNA reset behavior. Authoring rollback uses the same presence contract
+so a failed edit restores both values and the distinction between an absent
+key and an explicitly stored default. Installed regressions cover unbound
+neutrality, complete and family resets, unrelated settings and claims, and
+rollback after a failure following value writes.
+
+The browser failure depended on the execution path: GitHub's inherited
+`/workspace/buck-out/ci/tmp/.../book_generate/assets` directory plus Chromium's
+generated `SingletonSocket` exceeded the Linux Unix-socket path limit. Earlier
+remote workers used shorter temporary roots. The browser adapter supplies a
+private `/tmp/pg-d2-*` directory through the child environment while preserving
+pinned fonts and libraries. `packaging/test_handbook_browser.py` exercises real
+Chromium font/geometry checks with a deliberately long inherited path and
+checks private-directory isolation and cleanup, including launch failure.
+It runs within the existing Next `handbook_audit` target.
+
+The broader repair run exposed another installed-fixture ordering defect.
+`conversion_checks.py:_adaptance_limits` changes settings that schedule
+asynchronous kernel preparation, then asks its supplied callback to assert
+current output. The standalone `conversion_runner.py` callback drains that
+preparation first; the full installed runner's callback only asserts readiness.
+The shared check now explicitly drains and checks preparation failures before
+asserting readiness, so both callers test the same completed publication.
+
+That parallel run also timed out the live compositor-carrier process after
+four of its 18 rows, all in the GPU/AUTO workload. The incomplete report does
+not establish a shutdown defect or prove worker contention as the cause.
+The harness now caps Blender at two threads and llvmpipe's separate pool with
+`LP_NUM_THREADS=2`, while retaining the existing one-thread OpenMP and BLAS
+limits. All 18 tasks, the 40-second task threshold, the 240-second process
+threshold, numerical acceptance, and normal process-exit requirement remain.
+A timeout includes the saved partial report for diagnosis. The revised probe
+passed all 18 rows in 116.475 seconds with normal exit. This establishes
+acceptance of the bounded-thread fixture, not a controlled measurement of the
+earlier timeout's cause.
+
+The 62/66 result is the pre-repair GitHub record. Repair validation on
+2026-11-18 used Buck2 `--remote-only` and the unchanged explicit 66-target Next
+selection. The first broad pass (`75d35ef8`) passed 64/66 and exposed the two
+additional fixture issues above. After their repair, build
+`c405df87-03b7-4b4b-9b76-8820b4c26e5f` passed all 66 distinct test targets,
+reusing unchanged passing results and executing the affected targets remotely.
+It recorded seven remote commands and zero local commands. This is remote
+workspace acceptance; a subsequent GitHub run is a separate receipt.
+
+| Acceptance scope | Receipt | Result |
+|---|---|---|
+| Isolated Color, generic and persistent | `5becb784` | Nine methods each, 252.426 / 1099.117 seconds; 54 remote commands, zero local. |
+| Complete installed suite, Blender 5.3 / 5.2.4 | `c7beb653` (shared execution with `c405df87`) | 153.036 / 148.730 seconds, including all new custom-storage checks. |
+| Current/LTS animation and GUI undo | `f8629308` | Four lifecycle targets passed; animation bodies 82.534 / 78.107 seconds, undo 16.997 / 17.061 seconds. This earlier command's installed targets failed before the conversion-fixture repair. |
+| Policy proofs and extension build | `54a93cce` | Both selected builds passed; 27 remote commands, zero local. |
+| Technical Report and handbook artifacts | `c405df87` | 15 report checks and five handbook checks, including real Chromium geometry under long inherited temporary paths. |
+| Changed Next BUCK formatting | `7cec7ad1` | Pinned buildifier 10.2.0 passed remotely; the temporary validation target was removed. |
+
+No numerical tolerance, timeout, normal-exit requirement, or selected target
+was removed or relaxed by these repairs.
+
 ## Current Next Color authoring validation
 
 Color authoring has separate ownership, numerical, and native host contracts.

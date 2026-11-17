@@ -109,6 +109,7 @@ def _adaptance_limits(nodes, node, assert_grade_current):
     assert raw == nodes.resolve_settings(raw), raw.color.adaptance[1]
     assert abs(controls.adaptance_a_1) < 1000000.0
     assert abs(controls.adaptance_b_1) < 1000000.0
+    assert not nodes._drain_preparations()
     assert_grade_current(node)
     controls.adaptance_a_1 = 0.0
     controls.adaptance_b_1 = 0.0

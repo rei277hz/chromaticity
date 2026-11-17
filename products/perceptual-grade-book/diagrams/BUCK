@@ -100,11 +100,9 @@ export_file(
     src = "check_labels.mjs",
 )
 
-python_test(
-    name = "label_geometry",
-    srcs = ["test_check_labels.py"],
+python_library(
+    name = "browser_fixtures",
     base_module = "pg_book_diagram_tests",
-    labels = ["docs"],
     deps = [":support"],
     resources = {
         "check_labels.mjs": "check_labels.mjs",
@@ -115,4 +113,13 @@ python_test(
         "native-runtime": ":native_runtime",
         "fonts": "//products/perceptual-grade-book/print:pdf_fonts",
     },
+    visibility = ["//products/perceptual-grade-next-blender/tests:handbook_audit"],
+)
+
+python_test(
+    name = "label_geometry",
+    srcs = ["test_check_labels.py"],
+    base_module = "pg_book_diagram_tests",
+    labels = ["docs"],
+    deps = [":browser_fixtures"],
 )

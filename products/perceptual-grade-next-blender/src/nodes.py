@@ -203,6 +203,8 @@ _ANIMATABLE_TONE_FIELDS = tuple(name for name in _TONE_FIELDS if name != "peak_n
 _COLOR_TONES = ("shadows", "midtones", "white", "highlights")
 _WEB_HANDLES = ("red", "yellow", "green", "cyan", "blue", "magenta")
 _ANIMATABLE_COLOR_FIELDS = _COLOR_FIELDS
+_COLOR_CUSTOM_FIELDS = frozenset(name for name in _COLOR_FIELDS
+                                if name.startswith(("web_hue_", "adaptance_a_", "adaptance_b_")))
 _J_LOW_LIMITS = (30.0, 50.0, 100.0, 200.0)
 _J_HIGH_LIMITS = (100.0, 200.0, 400.0, 700.0)
 
@@ -1007,6 +1009,20 @@ def _observe_color_frame(scene):
     _frame_color_keys[pointer] = frame
 
 
+def _color_property_is_set(settings, name):
+    # Custom RNA getters/setters are not native ID properties: Blender reports
+    # them as set even when our explicitly managed backing key is absent.
+    return name in settings if name in _COLOR_CUSTOM_FIELDS else settings.is_property_set(name)
+
+
+def _unset_color_property(settings, name):
+    if name in _COLOR_CUSTOM_FIELDS:
+        if name in settings:
+            del settings[name]
+    elif settings.is_property_set(name):
+        settings.property_unset(name)
+
+
 # pg-book: technical-report/en#next-policy.color-authoring
 def _consume_color_authoring(settings, effects):
     """Apply the complete policy-authorized edit, with one rollback boundary."""
@@ -1021,7 +1037,9 @@ def _consume_color_authoring(settings, effects):
                       for axis, value in zip(("a", "b"), values))
     writes = tuple((name, value) for name, value in writes
                    if float(getattr(settings, name)) != value)
-    previous = tuple((name, settings.is_property_set(name), getattr(settings, name))
+    previous = tuple((name, _color_property_is_set(settings, name),
+                      settings[name] if name in _COLOR_CUSTOM_FIELDS and name in settings
+                      else getattr(settings, name))
                      for name, _value in writes)
     metadata = tuple((key, settings.get(key)) for key in (_HUE_CLAIMS, _HUE_CLAIM_FRAME))
 
@@ -1056,9 +1074,12 @@ def _consume_color_authoring(settings, effects):
         except BaseException:
             for name, was_set, value in previous:
                 if was_set:
-                    setattr(settings, name, value)
+                    if name in _COLOR_CUSTOM_FIELDS:
+                        settings[name] = value
+                    else:
+                        setattr(settings, name, value)
                 else:
-                    settings.property_unset(name)
+                    _unset_color_property(settings, name)
             restore_metadata()
             raise
 
@@ -1166,8 +1187,7 @@ def _copy_color(source, target):
 def _reset_color(settings, fields=_COLOR_FIELDS):
     with _suspend(settings):
         for name in fields:
-            if settings.is_property_set(name):
-                settings.property_unset(name)
+            _unset_color_property(settings, name)
     hue_rows = tuple(sorted({int(name.split("_")[2]) for name in fields
                              if name.startswith("web_hue_")}))
     if hue_rows:

@@ -1,5 +1,6 @@
 """Installed Blender checks for explicit Grade creation and adjustment UI."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 
@@ -100,6 +101,103 @@ def _check_color_sidebar(nodes, context, owner, *, enabled):
     assert sidebar.operator_states == [
         (nodes.PG_OT_reset_color.bl_idname, enabled) for _panel in panels
     ]
+
+
+def check_color_storage(nodes, node):
+    """Exercise native RNA reset and rollback for custom Color backing keys."""
+    context = SimpleNamespace(pg_node=node, space_data=SimpleNamespace(edit_tree=node.id_data))
+    owner, settings = nodes._color_settings_for_node(node)
+    custom = tuple(name for name in nodes._COLOR_FIELDS
+                   if name.startswith(("web_hue_", "adaptance_a_", "adaptance_b_")))
+    assert len(custom) == 32
+    claims = tuple(tuple(nodes.color_authoring.Claim(0, 0.0) if handle == 1 else None
+                         for handle in range(6)) for _row in range(4))
+
+    def seed():
+        with nodes._suspend(settings):
+            for name in custom:
+                setattr(settings, name, 1.0 if name.startswith("web_hue_") else 0.125)
+            settings.j_low_0 = 3.0
+            settings.adaptance_half_saturation = 0.5
+            settings.web_chroma_0_0 = 0.25
+            settings.web_scale_0_0 = 0.5
+        nodes._consume_color_authoring(settings, nodes.color_authoring.Effects(claims=claims))
+
+    def values():
+        return {name: getattr(settings, name) for name in nodes._COLOR_FIELDS}
+
+    def backing():
+        return {name: settings[name] for name in custom if name in settings}
+
+    seed()
+    nodes._reset_color(settings)
+    assert values() == nodes._COLOR_DEFAULTS
+    assert not backing()
+    assert nodes._hue_claims(settings, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
+    assert nodes._HUE_CLAIMS not in settings and nodes._HUE_CLAIM_FRAME not in settings
+
+    seed()
+    before = values()
+    assert nodes.PG_OT_reset_color.execute(SimpleNamespace(family="ADAPTANCE"), context) == {"FINISHED"}
+    reset_fields = set(nodes._color_family_fields("adaptance"))
+    for name, value in before.items():
+        assert getattr(settings, name) == (nodes._COLOR_DEFAULTS[name] if name in reset_fields else value)
+    assert all(name not in settings for name in custom if name.startswith("adaptance_"))
+    assert nodes._hue_claims(settings, current_frame=False) == claims
+
+    # Resetting one hue row must not detach ownership in another row.
+    nodes._reset_color(settings, tuple(f"web_hue_1_{handle}" for handle in range(6)))
+    after_claims = nodes._hue_claims(settings, current_frame=False)
+    assert after_claims[1] == (None,) * 6 and after_claims[2] == claims[2]
+    assert all(getattr(settings, f"web_hue_1_{handle}") == 0.0 for handle in range(6))
+    assert settings.web_hue_2_1 == before["web_hue_2_1"]
+
+    with nodes._suspend(settings):
+        settings.adaptance_a_0 = 0.25
+    before = values()
+    assert nodes.PG_OT_reset_color.execute(SimpleNamespace(family="WARP"), context) == {"FINISHED"}
+    reset_fields = set(nodes._color_family_fields("warp"))
+    for name, value in before.items():
+        assert getattr(settings, name) == (nodes._COLOR_DEFAULTS[name] if name in reset_fields else value)
+    assert all(name not in settings for name in custom if name.startswith("web_hue_"))
+    assert nodes._hue_claims(settings, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
+
+    # A failure after the value writes must restore backing-key presence and
+    # original payloads, including values not round-tripped through float32 RNA.
+    for existing_claims in (False, True):
+        nodes._reset_color(settings)
+        with nodes._suspend(settings):
+            settings["web_hue_0_0"] = 1.234567890123456
+            settings["adaptance_a_0"] = 0.1234567890123456
+        if existing_claims:
+            nodes._consume_color_authoring(settings, nodes.color_authoring.Effects(claims=claims))
+        before_values, before_backing = values(), backing()
+        metadata = {key: settings.get(key) for key in (nodes._HUE_CLAIMS, nodes._HUE_CLAIM_FRAME)}
+        raw = nodes._raw_grade_settings(owner, "Linear Rec.709")
+        changed = replace(raw, color=replace(raw.color,
+            adaptance=((0.5, 0.75),) * 4,
+            web=replace(raw.color.web, hue_degrees=((2.0,) * 6,) * 4)))
+        original_dumps = nodes.json.dumps
+
+        def fail_serialization(*_args, **_kwargs):
+            raise RuntimeError("simulated Color claim serialization failure")
+
+        nodes.json.dumps = fail_serialization
+        try:
+            try:
+                nodes._consume_color_authoring(settings, nodes.color_authoring.Effects(
+                    settings=changed, claims=claims))
+            except RuntimeError as error:
+                assert str(error) == "simulated Color claim serialization failure"
+            else:
+                raise AssertionError("Color authoring failure was not propagated")
+        finally:
+            nodes.json.dumps = original_dumps
+        assert backing() == before_backing
+        assert values() == before_values
+        assert {key: settings.get(key) for key in metadata} == metadata
+    nodes._reset_color(settings)
+    assert values() == nodes._COLOR_DEFAULTS and not backing()
 
 
 def check_grade_ui(nodes, tree):
@@ -235,6 +333,7 @@ def check_grade_ui(nodes, tree):
         assert nodes.PG_OT_reset_color.execute(reset, context) == {"FINISHED"}
         assert grade.pg_color.j_low_0 == 0.0
         assert grade.pg_color.c_high_2 == 3.0
+        check_color_storage(nodes, node)
 
         assert nodes.PG_OT_unlink_grade.execute(None, context) == {"FINISHED"}
         sidebar = Layout()

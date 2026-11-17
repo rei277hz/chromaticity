@@ -30,14 +30,18 @@ def browser_environment(native_runtime, fonts):
     # Chromium still needs an initialized platform font catalog when every SVG
     # label uses an embedded font. An empty host catalog can reject valid font
     # data. This catalog is pinned and separate from the SVG's checked fonts.
-    with tempfile.TemporaryDirectory(prefix="pg-diagram-fontconfig-") as temporary:
+    # Buck's action TMPDIR can exceed Chromium's Unix-socket path budget once
+    # its SingletonSocket suffix is appended. Keep this child process's scratch
+    # directory short, private, and scoped to the browser's lifetime.
+    with tempfile.TemporaryDirectory(prefix="pg-d2-", dir="/tmp") as temporary:
         config = Path(temporary) / "fonts.conf"
         config.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">'
                           '<fontconfig><dir>' + escape(str(fonts.resolve())) + '</dir>'
                           '<cachedir>' + escape(temporary) + '</cachedir></fontconfig>')
         yield dict(os.environ,
                    LD_LIBRARY_PATH=str(native_runtime.resolve() / "usr/lib/x86_64-linux-gnu"),
-                   FONTCONFIG_FILE=str(config))
+                   FONTCONFIG_FILE=str(config),
+                   TMPDIR=temporary, TMP=temporary, TEMP=temporary)
 
 
 def accessible_svg(path, figure):

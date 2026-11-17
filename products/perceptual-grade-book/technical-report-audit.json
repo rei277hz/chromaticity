@@ -139,7 +139,7 @@
     {
       "path": "development/next-policies.md",
       "scope": "next",
-      "review": "Documents current Next policy machines and adapters, including Color authoring claims/effects, signature/undo separation, frame/Peak lifecycle, and the existing resource policy's undo-retention branch. Describes six manifest-validated persistent fallback variants, policy-authorized fake-user protection, retained historical helpers, and failed-unpublished cleanup; resource state/sequence diagrams include retention. Scalar proof boundaries remain separate from numerical and native lifetime acceptance. Existing coverage includes complete five-role Stage 2/3 publication, fixed schema 6 Adaptance storage, fresh link indexing, compositor recalculation, exact template receipts and measured assets, finite routing, semantic J_A carry, conditional legal projection, and native Image/UV bake freshness.",
+      "review": "Documents current Next policy machines and adapters, including Color authoring claims/effects, signature/undo separation, frame/Peak lifecycle, and the existing resource policy's undo-retention branch. Describes six manifest-validated persistent fallback variants, policy-authorized fake-user protection, retained historical helpers, and failed-unpublished cleanup; resource state/sequence diagrams include retention. Scalar proof boundaries remain separate from numerical and native lifetime acceptance. Existing coverage includes complete five-role Stage 2/3 publication, fixed schema 6 Adaptance storage, fresh link indexing, compositor recalculation, exact template receipts and measured assets, finite routing, semantic J_A carry, conditional legal projection, and native Image/UV bake freshness. Defines explicit custom-RNA backing-key presence and reset/rollback restoration inside existing authoring boundaries.",
       "evidence": [
         "products/perceptual-grade-next-blender/src/policy/color_authoring.py",
         "products/perceptual-grade-next-blender/requirements/color_authoring.inv",
@@ -167,7 +167,9 @@
         "products/perceptual-grade-next-blender/tests/installed/image_save_runner.py",
         "products/perceptual-grade-next-blender/tests/installed/test_image_save_gui.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_bake_routes.py",
-        "products/perceptual-grade-next-blender/tests/runtime/test_bake_manager.py"
+        "products/perceptual-grade-next-blender/tests/runtime/test_bake_manager.py",
+        "products/perceptual-grade-next-blender/tests/installed/runner.py",
+        "products/perceptual-grade-next-blender/tests/installed/stack_ui_checks.py"
       ],
       "remaining_work": []
     },
@@ -226,13 +228,14 @@
     {
       "path": "development/documentation.md",
       "scope": "mixed",
-      "review": "Covers current book authoring, source-to-anchor references, the static publication boundary and retained video producers, while retaining historical authoring and capture instructions.",
+      "review": "Covers current book authoring, source-to-anchor references, the static publication boundary and retained video producers, while retaining historical authoring and capture instructions. Documents private short-lived browser temporary directories and the Next-scoped long-path regression for diagram font/geometry checking.",
       "evidence": [
         "products/perceptual-grade-book/tools/book_refs.py",
         "products/perceptual-grade-book/tools/assemble.py",
         "products/perceptual-grade-next-blender/tools/handbook_audit.py",
         "products/perceptual-grade-next-blender/tests/packaging/test_handbook_audit.py",
-        "products/perceptual-grade-next-blender/README.md"
+        "products/perceptual-grade-next-blender/README.md",
+        "products/perceptual-grade-next-blender/tests/packaging/test_handbook_browser.py"
       ],
       "remaining_work": [
         "Remove legacy manual/runtime capture procedures and replace any remaining v1.23.2 authoring assumptions with the current report workflow."
@@ -241,7 +244,7 @@
     {
       "path": "development/testing.md",
       "scope": "mixed",
-      "review": "Separates Color authoring proof/runtime/numerical/native acceptance from earlier Stage 3 receipts. Records LTS recursive native undo crashes, exact pinned Blender source links, the inferred raw-ID address-reuse mechanism, and the six-variant fallback-lifetime repair contract without treating pre-repair passing retries as fix evidence. Current native parameter gates preserve all methods and limits: basic parity is 3 ppm, active-Color extreme parity is 5 ppm against equivalent arithmetic, and three outputs face independent 1e-4 oracle gates. Production-template, exact cross-host receipt, effective-Full final-render, and actual live-Viewer half-precision acceptance remain separate.",
+      "review": "Separates Color authoring proof/runtime/numerical/native acceptance from earlier Stage 3 receipts. Records LTS recursive native undo crashes, exact pinned Blender source links, the inferred raw-ID address-reuse mechanism, and the six-variant fallback-lifetime repair contract without treating pre-repair passing retries as fix evidence. Current native parameter gates preserve all methods and limits: basic parity is 3 ppm, active-Color extreme parity is 5 ppm against equivalent arithmetic, and three outputs face independent 1e-4 oracle gates. Production-template, exact cross-host receipt, effective-Full final-render, and actual live-Viewer half-precision acceptance remain separate. Records the merged-main 62/66 CI result separately from earlier focused receipts, including the missing isolated J_A fixture field, custom-RNA reset/rollback defect, and Chromium Unix-socket path overflow. Records the newly exposed conversion-fixture preparation ordering defect and partial carrier timeout, preserving all task, time, numerical, and normal-exit checks without claiming contention as proven. Separates the passing 66-target remote workspace acceptance, current/LTS lifecycle results, two selected builds, and narrow formatting receipt from the original GitHub run.",
       "evidence": [
         "products/perceptual-grade-next-blender/tests/BUCK",
         "products/perceptual-grade-next-blender/requirements/color_authoring.inv",
@@ -265,7 +268,14 @@
         "products/perceptual-grade-next-blender/tests/installed/test_gesture_undo_gui.py",
         "products/perceptual-grade-next-blender/tests/installed/compositor_carriers_runner.py",
         "products/perceptual-grade-next-blender/tests/installed/test_compositor_carriers.py",
-        "products/perceptual-grade-next-blender/tests/installed/test_bake_installed.py"
+        "products/perceptual-grade-next-blender/tests/installed/test_bake_installed.py",
+        "products/perceptual-grade-next-blender/tests/native/test_color_stages.py",
+        "products/perceptual-grade-next-blender/tests/native/test_persistent_color_stages.py",
+        "products/perceptual-grade-next-blender/tests/installed/runner.py",
+        "products/perceptual-grade-next-blender/tests/installed/conversion_checks.py",
+        "products/perceptual-grade-next-blender/tests/installed/conversion_runner.py",
+        "products/perceptual-grade-next-blender/tests/installed/stack_ui_checks.py",
+        "products/perceptual-grade-next-blender/tests/packaging/test_handbook_browser.py"
       ],
       "remaining_work": [
         "Remove v1.23.2 test procedures and measurements, then replace them with current Next evidence before deleting the legacy sections."

@@ -8,6 +8,16 @@ release downloads as verified attachments.
 
 The User Manual and Technical Report are independent mdBooks with declared Buck2 inputs for chapters, screenshots, numerical figures and runtime assets. Reader scripts and published static media are local; KaTeX equations and the text and code fonts load from pinned CDN resources. No book format publishes animated images. The original introduction and paired-recording producers and source recordings remain available as separate targets for future video work; their animations, stills, and animation manifests are absent from the site, deployment ZIP, PDFs, and EPUBs. The Next-scoped `handbook_audit` consumes those completed artifacts to check this boundary and the retained legacy ZIP link.
 
+Policy diagrams use the declared D2 renderer and Chromium to measure embedded
+font and label geometry. The browser receives a private short `/tmp/pg-d2-*`
+directory through its child `TMPDIR`, `TMP`, and `TEMP` environment. Buck action
+paths can otherwise make Chromium's Unix-socket filename too long on CI.
+The context also owns the pinned font catalog and cache and removes temporary
+files after success or failure; the parent environment remains unchanged.
+The Next handbook audit includes a real browser regression with long inherited
+temporary paths. The [CI diagnosis](testing.md#main-ci-follow-up-after-stage-3)
+distinguishes this dependency build failure from an artifact-audit assertion.
+
 ## Edit and build
 
 The maintained publication now contains two books. The User Manual uses

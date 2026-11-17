@@ -148,6 +148,9 @@ def assert_not_animatable(owner, data_path):
         assert not inserted, (owner, data_path)
 
 
+stack_ui_checks = runpy.run_path(str(Path(__file__).with_name("stack_ui_checks.py")))
+
+
 def check_per_node_properties(node):
     tree = node.id_data
     node.name = 'Per-Node "Grade" \\ controls'
@@ -224,6 +227,8 @@ def check_per_node_properties(node):
     nodes._reset_color(node)
     assert all(abs(getattr(node, field) - value) < 1e-6
                for field, value in nodes._LINEAR_DEFAULTS.items())
+    assert all(getattr(node, field) == value for field, value in nodes._COLOR_DEFAULTS.items())
+    stack_ui_checks["check_color_storage"](nodes, node)
 
     # Nested settings must still find their shared node when a per-node Grade
     # occurs earlier in the same tree's node collection.
@@ -239,6 +244,14 @@ def check_per_node_properties(node):
         assert shared.pg_linear.exposure == 0.0
         assert shared.pg_tone.fit == 0.0
         assert shared.pg_color.web_hue_1_0 == 0.0
+        custom = tuple(name for name in nodes._COLOR_FIELDS
+                       if name.startswith(("web_hue_", "adaptance_a_", "adaptance_b_")))
+        assert len(custom) == 32
+        for name in custom:
+            setattr(shared.pg_color, name, 15.0 if name.startswith("web_hue_") else 0.125)
+            assert getattr(shared.pg_color, name) == 0.0, name
+            assert name not in shared.pg_color, name
+        assert nodes._hue_claims(shared.pg_color) == nodes.color_authoring.EMPTY_CLAIMS
     finally:
         tree.nodes.remove(shared)
 
@@ -1575,7 +1588,6 @@ compositor_stack_graph = connect_grade_graph(
 )
 assert_grade_graph(shader_stack_graph)
 assert_grade_graph(compositor_stack_graph)
-stack_ui_checks = runpy.run_path(str(Path(__file__).with_name("stack_ui_checks.py")))
 for tree in (shader_tree, compositor_tree):
     stack_ui_checks["check_grade_ui"](nodes, tree)
     stack_ui_checks["check_stack_ui"](nodes, tree)
