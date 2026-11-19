@@ -2,7 +2,6 @@ direction: down
 
 idle: "idle"
 repair_gate: "repair_gate"
-repair_stage: "repair_stage"
 stage: "stage"
 select: "select"
 deliver: "deliver"
@@ -13,21 +12,20 @@ terminal: "terminal" {
 }
 
 idle -> fail: "begin [invalid or denied]\n/ fail_closed"
-idle -> stage: "begin [admitted, active valid]"
+idle -> stage: "begin [admitted, active valid]\n/ stage"
 idle -> repair_gate: "begin [admitted, active invalid]\n/ fail_closed"
-repair_gate -> repair_gate: "closed [failed]\n/ fail_closed"
-repair_gate -> repair_stage: "closed [success]\n/ repair"
+repair_gate -> repair_gate: "closed [first failure]\n/ fail_closed"
+repair_gate -> terminal: "closed [second failure]\n/ indeterminate"
+repair_gate -> stage: "closed [success]\n/ repair"
 stage -> select: "staged [success, five roles clean]"
 stage -> fail: "staged [failed or unclean]\n/ fail_closed"
-repair_stage -> select: "staged [success, five roles clean]"
-repair_stage -> fail: "staged [failed or unclean]\n/ fail_closed"
 select -> deliver: "selected [one selector, matching]"
 select -> restore_selector: "selected [failed or mismatch]"
-deliver -> terminal: "delivered [success]"
+deliver -> terminal: "delivered [success]\n/ committed"
 deliver -> restore_selector: "delivered [failed]"
 restore_selector -> fail: "restored\n/ fail_closed"
-fail -> fail: "closed [failed]\n/ fail_closed"
-fail -> terminal: "closed [success]"
+fail -> fail: "closed [first failure]\n/ fail_closed"
+fail -> terminal: "closed [success] / failed_closed\nclosed [second failure] / indeterminate"
 
 **.style.font-size: 32
 (** -> **)[*].style.font-size: 24

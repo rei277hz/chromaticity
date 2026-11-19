@@ -51,7 +51,7 @@ class BankPublicationRuntimeTests(unittest.TestCase):
             return run
 
         result = self.runner(
-            0, 1,
+            0,
             {name: operate(name) for name in (
                 "stage", "repair", "select", "deliver", "restore_selector",
                 "fail_closed",
@@ -83,7 +83,7 @@ class BankPublicationRuntimeTests(unittest.TestCase):
             return {"delivered": True}
 
         result = self.runner(
-            0, 1,
+            0,
             {"stage": lambda *_args: self.fail("ordinary stage must not run"),
              "repair": repair, "select": select, "deliver": deliver,
              "restore_selector": lambda *_args: {}, "fail_closed": fail_closed},
@@ -116,7 +116,7 @@ class BankPublicationRuntimeTests(unittest.TestCase):
             ),
         }
         result = self.runner(
-            0, 1, operations, admitted=True, active_valid=True,
+            0, operations, admitted=True, active_valid=True,
         )
         self.assertEqual(result, self.result_type("failed_closed", ()))
         self.assertEqual(actions, [("select", 1), ("restore", 0), "fail_closed"])
@@ -129,7 +129,7 @@ class BankPublicationRuntimeTests(unittest.TestCase):
             return {"closed": True}
 
         result = self.runner(
-            0, 1,
+            0,
             {"stage": lambda *_args: self.fail("denied work must not stage"),
              "repair": lambda *_args: self.fail("denied work must not repair"),
              "select": lambda *_args: self.fail("denied work must not select"),
@@ -140,6 +140,55 @@ class BankPublicationRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(result, self.result_type("failed_closed", ()))
         self.assertEqual(actions, ["fail_closed"])
+
+    def test_closure_never_invokes_a_third_attempt(self):
+        for active_valid in (True, False):
+            with self.subTest(active_valid=active_valid):
+                actions = []
+
+                def fail_closed(bank, _errors):
+                    actions.append(("fail_closed", bank))
+                    return {"closed": False}
+
+                result = self.runner(
+                    1, {"stage": lambda *_args: {"clean": False},
+                        "fail_closed": fail_closed},
+                    admitted=True, active_valid=active_valid,
+                )
+                self.assertEqual(actions, [("fail_closed", 1), ("fail_closed", 1)])
+                self.assertEqual(result.outcome, "indeterminate")
+                self.assertEqual([str(error) for error in result.errors[-3:]], [
+                    "Grade failure output was not confirmed",
+                    "Grade failure output was not confirmed",
+                    "Could not establish the banked failure output",
+                ])
+
+    def test_repair_and_final_closure_each_allow_a_retry(self):
+        actions = []
+        close_receipts = iter((False, True, False, True))
+
+        def fail_closed(bank, _errors):
+            actions.append(("fail_closed", bank))
+            return {"closed": next(close_receipts)}
+
+        def repair(bank, _errors):
+            actions.append(("repair", bank))
+            return {"clean": False}
+
+        result = self.runner(
+            1, {"repair": repair, "fail_closed": fail_closed},
+            admitted=True, active_valid=False,
+        )
+        self.assertEqual(actions, [
+            ("fail_closed", 1), ("fail_closed", 1), ("repair", 0),
+            ("fail_closed", 1), ("fail_closed", 1),
+        ])
+        self.assertEqual(result.outcome, "failed_closed")
+        self.assertEqual([str(error) for error in result.errors], [
+            "Grade failure output was not confirmed",
+            "Banked helper image could not be packed cleanly",
+            "Grade failure output was not confirmed",
+        ])
 
 
 if __name__ == "__main__":

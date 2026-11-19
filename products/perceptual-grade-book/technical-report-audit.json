@@ -400,11 +400,9 @@
       "anchor": "next-policy.preparation-join",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/policy/preparation_join.py",
         "products/perceptual-grade-next-blender/src/runtime/grade_preparation.py"
       ],
       "evidence": [
-        "products/perceptual-grade-next-blender/tests/policy/test_policy_preparation_join.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_grade_preparation.py"
       ]
     },
@@ -437,46 +435,14 @@
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/policy/bank_publication.py",
-        "products/perceptual-grade-next-blender/src/runtime/bank_publication.py"
+        "products/perceptual-grade-next-blender/src/runtime/bank_publication.py",
+        "products/perceptual-grade-next-blender/src/runtime/image_publication.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_bank_publication.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_bank_publication.py",
+        "products/perceptual-grade-next-blender/tests/runtime/test_grade_transactions.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_parameter_publication.py"
-      ]
-    },
-    {
-      "anchor": "next-policy.parameter-publication",
-      "kind": "comparison",
-      "sources": [
-        "products/perceptual-grade-next-blender/examples/publication_compare/policy/parameter_publication.py",
-        "products/perceptual-grade-next-blender/examples/publication_compare/runtime/parameter_publication.py"
-      ],
-      "evidence": [
-        "products/perceptual-grade-next-blender/examples/publication_compare/tests/test_policy_parameter_publication.py"
-      ]
-    },
-    {
-      "anchor": "next-policy.image-publication",
-      "kind": "comparison",
-      "sources": [
-        "products/perceptual-grade-next-blender/src/policy/image_publication.py",
-        "products/perceptual-grade-next-blender/src/runtime/image_publication.py"
-      ],
-      "evidence": [
-        "products/perceptual-grade-next-blender/tests/policy/test_policy_image_publication.py"
-      ]
-    },
-    {
-      "anchor": "next-policy.compositor-publication",
-      "kind": "mixed",
-      "sources": [
-        "products/perceptual-grade-next-blender/src/policy/compositor_publication.py",
-        "products/perceptual-grade-next-blender/src/runtime/publication.py"
-      ],
-      "evidence": [
-        "products/perceptual-grade-next-blender/tests/policy/test_policy_compositor_publication.py",
-        "products/perceptual-grade-next-blender/tests/runtime/test_publication.py"
       ]
     },
     {
@@ -490,7 +456,8 @@
         "products/perceptual-grade-next-blender/src/runtime/bake_helper.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_graph.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_routes.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_worker.py"
+        "products/perceptual-grade-next-blender/src/runtime/bake_worker.py",
+        "products/perceptual-grade-next-blender/src/runtime/image_publication.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_bake.py",

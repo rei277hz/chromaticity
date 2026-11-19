@@ -16,7 +16,7 @@ closed: "closed" {
 
 stopped -> starting: "launch"
 starting -> probing: "hello"
-probing -> ready: "probe succeeds"
+probing -> ready: "probe succeeds / publish result\n[slot idle on entry]"
 starting -> stopping: "shutdown\n[channel]"
 starting -> terminating: "failure; timeout;\nshutdown\n[no channel]"
 probing -> stopping: "shutdown\n[channel]"

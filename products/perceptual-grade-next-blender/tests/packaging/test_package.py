@@ -56,10 +56,9 @@ class PackageTests(unittest.TestCase):
                 "policy/__init__.py",
                 "policy/helper.py",
                 "policy/resources.py",
-                "policy/image_publication.py",
+                "policy/bank_publication.py",
                 "policy/gesture.py",
                 "policy/preparation.py",
-                "policy/preparation_join.py",
                 "policy/node.py",
                 "policy/bake.py",
                 "kernel/__init__.py",
@@ -83,11 +82,12 @@ class PackageTests(unittest.TestCase):
             self.assertFalse({name.replace(".", "/") + ".py"
                               for name in EMITTER_MODULES}.intersection(names))
             self.assertFalse(any(name in {
+                "policy/compositor_publication.py",
+                "policy/image_publication.py",
                 "policy/parameter_publication.py",
                 "runtime/drag_trace.py",
                 "runtime/drag_diagnostics.py",
                 "runtime/parameter_publication.py",
-                "runtime/publication_compare_diagnostics.py",
             } for name in names))
             self.assertNotIn("runtime/bake_diagnostics.py", names)
             self.assertFalse({
@@ -160,7 +160,6 @@ class PackageTests(unittest.TestCase):
                        if name.startswith("policy/") and name.endswith(".py")
                        and name != "policy/__init__.py"}
         self.assertEqual(proved, shipped)
-        self.assertEqual(len(proved), 12)
 
 
 if __name__ == "__main__":

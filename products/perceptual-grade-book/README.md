@@ -142,16 +142,14 @@ buck2 build --remote-only //products/perceptual-grade-book:book_refs --show-outp
 buck2 test --remote-only //products/perceptual-grade-book/tests:book_refs //products/perceptual-grade-book/tests:book_refs_integration
 ```
 
-The generated `book-refs.json` and `book-refs.txt` scan the declared Next Blender
-Python sources, including the comparison publication example. The supported
-editions are `technical-report/en`, `user-manual/en`, and `user-manual/zh-Hans`.
+The resolver scans the declared Next Blender Python sources and writes
+`book-refs.json` and `book-refs.txt`. The supported editions are
+`technical-report/en`, `user-manual/en`, and `user-manual/zh-Hans`.
 Start `:preview -- --port 8080` through `buck2 run --remote-only` to follow the
 local URLs. Keep explicit anchors after their headings so print and EPUB
 chapter boundaries retain them with the right section.
 Grouped sequence diagrams show events, returned effects, Blender operations,
 and receipts through `opt`, `loop`, `alt`/`else`, and `par` workflow fragments.
-The comparison publication strategies remain explicitly distinguished from
-the production path.
 
 The [Bake section](docs/book/src/development/next-policies.md#next-policy.bake)
 connects the request reducer to native Grade/Stack evaluation and managed Image

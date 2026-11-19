@@ -438,11 +438,8 @@ class BookTests(unittest.TestCase):
         self.assertIn('deliver -> terminal', bank)
         self.assertIn('fail -> terminal', bank)
         absorbing = {
-            '01b-preparation-join.d2': 2,
             '03-helper.d2': 1,
             '04-bank-publication.d2': 1,
-            '05-parameter-publication.d2': 1,
-            '05b-image-publication.d2': 1,
             '06-resources.d2': 1,
             '08-render-preflight.d2': 2,
             '09-bake.d2': 1,

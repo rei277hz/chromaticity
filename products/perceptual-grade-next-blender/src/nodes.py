@@ -72,7 +72,6 @@ from .kernel.color_ui import (
 from .kernel.color_resolution import COLOR_RESOLUTION_SCHEMA, resolve_settings
 from .policy import node as node_policy
 from .policy import bake as bake_policy
-from .policy import render_preflight as render_preflight_policy
 from .runtime import gesture_coordinator as gesture_policy
 from .runtime import color_authoring
 from .runtime.preparation import PreparationRuntime
@@ -304,7 +303,7 @@ def _set_bake_mode(node, enabled, *, reconcile=True):
         bool(enabled), signature, signature, _bake_image_valid(node),
         None if record is None else record["state"].error,
     )
-    enabled = policy.use_bake
+    enabled = policy.mode == "baked"
     pointer = node.as_pointer()
     _bake_mode_updates.add(pointer)
     try:
@@ -648,7 +647,7 @@ def _bake_request(node, context):
             _ensure_bake_wrapper(node)
         node[_BAKE_CONTEXT] = json.dumps(_bake_context(route), separators=(",", ":"))
         write_metadata(((node, _BAKE_ERROR, None),))
-        generation = _bake_manager.request(
+        _bake_manager.request(
             node, route, _publish_bake, _bake_current_signature,
             activate_callback=_bake_activate, rollback_callback=_bake_rollback,
             failure_callback=_bake_failure,
@@ -658,7 +657,6 @@ def _bake_request(node, context):
         # First requests, published bakes, and manually disabled bakes all
         # keep the same per-source baseline until their receipt retires.
     _ensure_bake_timer()
-    return generation
 
 
 def _bake_image_changed(node, _context):
@@ -765,8 +763,9 @@ def _consume_bake_invalidations():
             )
             if output.revoke_receipt:
                 _write_bake_receipt(node, None)
-            if getattr(node, "pg_use_bake", False) != output.use_bake:
-                _set_bake_mode(node, output.use_bake)
+            enabled = output.mode == "baked"
+            if getattr(node, "pg_use_bake", False) != enabled:
+                _set_bake_mode(node, enabled)
             _bake_sources.forget(pointer)
         _bake_pending_invalidations.discard(pointer)
     return affected
@@ -877,8 +876,9 @@ def _reconcile_bake_outputs_in_scope(nodes=None, *, exact=True):
             _write_bake_receipt(node, None)
             _bake_sources.forget(node.as_pointer())
             _bake_pending_invalidations.discard(node.as_pointer())
-        if output.use_bake != using_bake:
-            _set_bake_mode(node, output.use_bake)
+        enabled = output.mode == "baked"
+        if enabled != using_bake:
+            _set_bake_mode(node, enabled)
         if output.mode == "error":
             try:
                 record = _record_for(node)
@@ -2405,14 +2405,11 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
     preparation_signature = _preparation_signature(settings, prepared.space)
     old_active = resource.active_bank if resource.active_bank in (0, 1) else 0
     old_generation = resource.generation if resource.generation is not None else 0
-    candidate_bank = 1 - old_active
     generation = _grade_resources.next_generation(resource)
     active_valid = (resource.banks is None
                     or _parameter_image_content_matches(resource.banks[old_active]))
     context.update(
-        resource=resource, banks=resource.banks, old_active=old_active,
-        old_generation=old_generation, candidate_bank=candidate_bank,
-        generation=generation, previous_trees=dict(resource.trees),
+        previous_trees=dict(resource.trees),
         repairing=not active_valid,
         outer_before=tuple((record["node"], _kernel_for_node(record["node"]))
                            for record in users),
@@ -2437,7 +2434,8 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
 
     def pack_role(image, role, pixels, content_signature, *, force=False):
         if (not force
-                and _parameter_role_receipt_matches(image, role, content_signature)):
+                and _parameter_role_receipt_matches(image, role, content_signature)
+                and parameter_image_matches(image, content_signature, bundle=False)):
             return True
         image[PARAMETER_IMAGE] = PARAMETER_SCHEMA
         image[PARAMETER_ROLE] = role
@@ -2459,9 +2457,9 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
             return False
         set_parameter_bundle_signature(primary, content_signatures)
         primary[PARAMETER_SIGNATURE] = signature
-        return _parameter_image_content_matches(primary)
+        return True
 
-    def stage(_bank, _errors, *, repair=False):
+    def stage(candidate_bank, _errors, *, repair=False):
         parameters = prepared.parameters or prepare_parameters(prepared)
         content_signatures = {
             role: parameter_content_signature(parameters.roles[role])
@@ -2490,12 +2488,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
                 # No graph can read this pair yet. Initialize both complete
                 # bundles before either bank can be selected.
                 for primary in banks:
-                    if not pack_bank(primary, parameters, content_signatures,
-                                     preparation_signature):
-                        for allocated_image in allocated:
-                            if allocated_image.users == 0:
-                                bpy.data.images.remove(allocated_image, do_unlink=True)
-                        return {"clean": False}
+                    primary[PARAMETER_SIGNATURE] = preparation_signature
                 _grade_resources.set_banks(resource, banks, old_active, old_generation)
             except BaseException:
                 for image in allocated:
@@ -2508,12 +2501,10 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
                     or not pack_bank(banks[candidate_bank], parameters, content_signatures,
                                      preparation_signature, force=True)):
                 return {"clean": False}
-        else:
-            if not pack_bank(banks[candidate_bank], parameters, content_signatures,
-                             preparation_signature):
-                return {"clean": False}
+        elif not pack_bank(banks[candidate_bank], parameters, content_signatures,
+                           preparation_signature):
+            return {"clean": False}
 
-        context.update(banks=banks, fresh=fresh)
         kernels = dict(resource.trees)
         owner, owner_node = _grade_resources.owner(users[0]["node"])
         tree_types = set(kernels) | {record["node"].id_data.bl_idname for record in users}
@@ -2587,8 +2578,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
             raise RuntimeError("Grade parameter selector readback did not match the staged bank")
         return {"selected_bank": selected.pop()}
 
-    def deliver(_bank, _errors):
-        resource = context["resource"]
+    def deliver(candidate_bank, _errors):
         _grade_resources.publish(resource, candidate_bank, generation)
         resource.trees = context["kernels"]
         active_images = parameter_bank_images(resource.image)
@@ -2671,7 +2661,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         "fail_closed": fail_closed,
     }
     publication = run_bank_publication(
-        old_active, candidate_bank, operations,
+        old_active, operations,
         admitted=admitted,
         active_valid=active_valid,
     )
@@ -4499,10 +4489,10 @@ def _render_pre(scene):
     if _grade_resources is None:
         return
     gate = _grade_resources.gate
-    render_identity = scene.as_pointer()
+    scene_identity = scene.as_pointer()
     with gate.callback():
         ticket = gate.request_render_preflight(
-            render_identity, render_identity, scene.frame_current,
+            scene_identity, scene.frame_current,
             float(scene.frame_subframe).hex(),
         )
     if threading.current_thread() is threading.main_thread():
@@ -4546,22 +4536,23 @@ def _service_render_preflight(*, defer=True):
         try:
             with gate.render_preflight(ticket, defer=defer, deliver_failure=False):
                 try:
+                    request = ticket.state
                     scene = next((candidate for candidate in bpy.data.scenes
-                                  if candidate.as_pointer() == ticket.scene_identity), None)
+                                  if candidate.as_pointer() == request.scene_identity), None)
                     if scene is None:
                         raise RuntimeError("Render scene no longer exists")
-                    if (scene.frame_current != ticket.frame
-                            or float(scene.frame_subframe).hex() != ticket.subframe):
+                    if (scene.frame_current != request.frame
+                            or float(scene.frame_subframe).hex() != request.subframe):
                         raise RuntimeError("Render frame changed before Grade preflight")
                     # Native animation rendering may advance an evaluated scene
                     # copy while the original ID still exposes the previous
                     # frame's RNA values. Re-assert the exact ticket time on
                     # the main-thread scene before reading animated Grade data.
-                    scene.frame_set(ticket.frame, subframe=float.fromhex(ticket.subframe))
+                    scene.frame_set(request.frame, subframe=float.fromhex(request.subframe))
                     _reconcile_bake_outputs(_scene_grade_nodes(scene))
                     nodes, _signatures, signature = _animation_snapshot(scene)
                     failures = []
-                    first_frame = ticket.scene_identity not in _render_validated_scenes
+                    first_frame = request.scene_identity not in _render_validated_scenes
                     failures.extend(_refresh_nodes(
                         nodes, defer_failure_mutations=True))
                     failures.extend(_drain_preparations_in_scope(
@@ -4582,29 +4573,16 @@ def _service_render_preflight(*, defer=True):
                         error = str(relevant[-1])
                         ready = False
                     if not ready:
-                        failure = RuntimeError(error or
+                        raise RuntimeError(error or
                             "Grade output did not become current for this render frame")
-                        effects = ticket.resolve(render_preflight_policy.Event(
-                            "published", ticket.render_identity,
-                            ticket.scene_identity, ticket.frame, ticket.subframe,
-                            ticket.generation, signature=signature,
-                            error=str(failure),
-                        ))
-                        if effects.action != "fail":
-                            raise RuntimeError(effects.error or
-                                               "Render failure was not authorized")
-                    else:
-                        effects = ticket.resolve(render_preflight_policy.Event(
-                            "published", ticket.render_identity,
-                            ticket.scene_identity, ticket.frame, ticket.subframe,
-                            ticket.generation, signature=signature,
-                            published_signature=current_signature,
-                        ))
-                        if effects.action != "release":
-                            raise RuntimeError(effects.error or
-                                               "Grade render preflight was not authorized")
-                        if first_frame:
-                            _render_validated_scenes.add(ticket.scene_identity)
+                    effects = gate.publish_render_preflight(
+                        ticket, scene_identity=scene.as_pointer(),
+                        frame=scene.frame_current,
+                        subframe=float(scene.frame_subframe).hex(),
+                        signature=signature, published_signature=current_signature,
+                    )
+                    if effects.action == "release" and first_frame:
+                        _render_validated_scenes.add(request.scene_identity)
                 except Exception as error:
                     ticket.fail(error)
                     print("Perceptual Grade frame output failed closed:", error)
@@ -4622,15 +4600,13 @@ def _service_render_preflight(*, defer=True):
 def _fail_render_preflight(ticket, error):
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("Render failure reconciliation requires Blender's main thread")
-    effects = ticket.fail(error)
+    ticket.fail(error)
     if ticket.failure_authorized:
         scene = next((candidate for candidate in bpy.data.scenes
-                      if candidate.as_pointer() == ticket.scene_identity), None)
+                      if candidate.as_pointer() == ticket.state.scene_identity), None)
         if scene is not None:
             _block_nodes(_scene_grade_nodes(scene), error)
         _grade_resources.gate.finish_render_preflight_failure(ticket)
-    elif effects.action == "release":
-        ticket.deliver()
 
 
 def _render_preflight_tick():

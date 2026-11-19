@@ -75,9 +75,9 @@ buck2 build --remote-only //products/perceptual-grade-book:book_refs --show-outp
 The output directory contains `book-refs.json` and `book-refs.txt`. They locate
 the source comment, original Markdown heading, generated site page, published
 URL, and local preview URL. Missing or duplicate anchors and malformed comments
-fail the build. The declared input covers Next Blender Python sources and the
-comparison publication example; add markers at the policy and effect-consumer
-contracts that need navigation. Both reports are build artifacts.
+fail the build. The declared input covers Next Blender Python sources. Add
+markers at the policy and effect-consumer contracts that need navigation. Both
+reports are build artifacts.
 
 To follow the local URLs, serve the same generated site:
 

@@ -27,13 +27,6 @@ python_test(
 )
 
 python_test(
-    name = "policy_preparation_join",
-    srcs = ["policy/test_policy_preparation_join.py"],
-    base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
-)
-
-python_test(
     name = "policy_node",
     srcs = [
         "policy/test_policy_node_readiness.py",
@@ -71,13 +64,6 @@ python_test(
 )
 
 python_test(
-    name = "policy_image_publication",
-    srcs = ["policy/test_policy_image_publication.py"],
-    base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
-)
-
-python_test(
     name = "policy_bake",
     srcs = ["policy/test_policy_bake.py"],
     base_module = "tests.perceptual_grade_blender",
@@ -95,13 +81,6 @@ python_test(
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
     },
     deps = ["//third_party:numpy"],
-)
-
-python_test(
-    name = "policy_compositor_publication",
-    srcs = ["policy/test_policy_compositor_publication.py"],
-    base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
 )
 
 python_test(
@@ -955,81 +934,6 @@ python_test(
 )
 
 python_test(
-    name = "publication_compare_package",
-    srcs = ["packaging/test_publication_compare_package.py"],
-    base_module = "tests.perceptual_grade_blender",
-    resources = {
-        "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-        "publication_compare_report.json": "//products/perceptual-grade-next-blender:publication_compare_extension[report]",
-    },
-)
-
-python_test(
-    name = "publication_compare_recorder",
-    srcs = ["packaging/test_publication_compare_recorder.py"],
-    base_module = "tests.perceptual_grade_blender",
-    resources = {
-        "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-    },
-)
-
-python_test(
-    name = "publication_compare_installed",
-    srcs = [
-        "installed/gui_support.py",
-        "installed/test_publication_compare_installed.py",
-    ],
-    base_module = "tests.perceptual_grade_blender",
-    labels = [
-        "installed",
-        "blender",
-        "gui",
-        "acceptance",
-    ],
-    resources = select({
-        "prelude//os:linux": {
-            "blender": "//third_party:blender_native",
-            "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-            "publication_compare_runner.py": "installed/publication_compare_runner.py",
-            "xvfb": "//third_party:xvfb_software_linux",
-        },
-        "prelude//os:macos": {
-            "blender": "//third_party:blender_native",
-            "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-            "publication_compare_runner.py": "installed/publication_compare_runner.py",
-        },
-    }),
-)
-
-python_test(
-    name = "publication_compare_trace_installed",
-    srcs = [
-        "installed/gui_support.py",
-        "installed/test_publication_compare_trace_installed.py",
-    ],
-    base_module = "tests.perceptual_grade_blender",
-    labels = [
-        "installed",
-        "blender",
-        "gui",
-        "acceptance",
-    ],
-    resources = select({
-        "prelude//os:linux": {
-            "blender": "//third_party:blender_native",
-            "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-            "publication_compare_trace_runner.py": "installed/publication_compare_trace_runner.py",
-            "xvfb": "//third_party:xvfb_software_linux",
-        },
-        "prelude//os:macos": {
-            "blender": "//third_party:blender_native",
-            "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-            "publication_compare_trace_runner.py": "installed/publication_compare_trace_runner.py",
-        },
-    }),
-)
-
-python_test(
     name = "install_workspace",
     srcs = ["packaging/test_install_workspace.py"],
     base_module = "tests.perceptual_grade_blender",
@@ -1420,62 +1324,6 @@ python_test(
 )
 
 # Installed compatibility coverage on Blender 5.2.4.
-python_test(
-    name = "publication_compare_installed_lts",
-    srcs = [
-        "installed/gui_support.py",
-        "installed/test_publication_compare_installed.py",
-    ],
-    base_module = "tests.perceptual_grade_blender",
-    labels = [
-        "installed",
-        "blender",
-        "gui",
-        "acceptance",
-    ],
-    resources = select({
-        "prelude//os:linux": {
-            "blender": "//third_party:blender_native_lts",
-            "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-            "publication_compare_runner.py": "installed/publication_compare_runner.py",
-            "xvfb": "//third_party:xvfb_software_linux",
-        },
-        "prelude//os:macos": {
-            "blender": "//third_party:blender_native_lts",
-            "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-            "publication_compare_runner.py": "installed/publication_compare_runner.py",
-        },
-    }),
-)
-
-python_test(
-    name = "publication_compare_trace_installed_lts",
-    srcs = [
-        "installed/gui_support.py",
-        "installed/test_publication_compare_trace_installed.py",
-    ],
-    base_module = "tests.perceptual_grade_blender",
-    labels = [
-        "installed",
-        "blender",
-        "gui",
-        "acceptance",
-    ],
-    resources = select({
-        "prelude//os:linux": {
-            "blender": "//third_party:blender_native_lts",
-            "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-            "publication_compare_trace_runner.py": "installed/publication_compare_trace_runner.py",
-            "xvfb": "//third_party:xvfb_software_linux",
-        },
-        "prelude//os:macos": {
-            "blender": "//third_party:blender_native_lts",
-            "publication_compare.zip": "//products/perceptual-grade-next-blender:publication_compare_extension[zip]",
-            "publication_compare_trace_runner.py": "installed/publication_compare_trace_runner.py",
-        },
-    }),
-)
-
 python_test(
     name = "installed_lts",
     srcs = [

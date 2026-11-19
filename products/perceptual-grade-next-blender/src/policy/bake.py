@@ -16,8 +16,6 @@ class State:
         "publishing", "activating", "terminal",
     ]
     signature: Optional[str] = None
-    generation: Optional[int] = None
-    error: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -27,9 +25,7 @@ class Event:
         "activated", "invalidate", "cancelled", "close",
     ]
     signature: Optional[str] = None
-    generation: Optional[int] = None
     current_signature: Optional[str] = None
-    admitted: bool = False
     successful: bool = False
     error: Optional[str] = None
 
@@ -37,15 +33,12 @@ class Event:
 @dataclass(frozen=True)
 class Effects:
     action: Optional[str] = None
-    signature: Optional[str] = None
-    generation: Optional[int] = None
     error: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class Output:
     mode: Literal["live", "baked", "error"]
-    use_bake: bool
     error: Optional[str] = None
     revoke_receipt: bool = False
 
@@ -67,27 +60,13 @@ def new() -> State:
     return State("idle")
 
 
-def can_enqueue(accepted_count: int, node_busy: bool, admitted: bool) -> bool:
+def can_enqueue(accepted_count: int, node_busy: bool) -> bool:
     """Bound the caller-owned accepted-request queue and reserve one node."""
-    return (0 <= accepted_count < MAX_ACCEPTED and not node_busy and admitted)
-
-
-def _matches(state: State, event: Event) -> bool:
-    return (state.signature is not None and state.generation is not None
-            and event.signature == state.signature
-            and event.generation == state.generation)
+    return 0 <= accepted_count < MAX_ACCEPTED and not node_busy
 
 
 def _current(state: State, event: Event) -> bool:
     return event.current_signature == state.signature
-
-
-def _effects(state: State, action: Optional[str] = None,
-             error: Optional[str] = None) -> Effects:
-    if action is None:
-        return Effects(error=state.error if error is None else error)
-    return Effects(action, state.signature, state.generation,
-                   state.error if error is None else error)
 
 
 def step(state: State, event: Event) -> tuple[State, Effects]:
@@ -96,48 +75,42 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         return state, Effects()
 
     if event.kind == "request":
-        if (state.phase != "idle" or not event.admitted
-                or event.signature is None or event.signature == ""
-                or event.generation is None or event.generation < 1):
+        if (state.phase != "idle"
+                or event.signature is None or event.signature == ""):
             return state, Effects()
-        queued = State("queued", event.signature, event.generation)
-        return queued, _effects(queued, "enqueue")
-
-    if not _matches(state, event):
-        return state, Effects()
+        queued = State("queued", event.signature)
+        return queued, Effects("enqueue")
 
     if event.kind == "start":
-        if state.phase != "queued" or not event.admitted:
+        if state.phase != "queued":
             return state, Effects()
-        running = State("running", state.signature, state.generation)
-        return running, _effects(running, "start")
+        running = State("running", state.signature)
+        return running, Effects("start")
 
     if event.kind == "completed":
         if state.phase not in ("running", "cancelling"):
             return state, Effects()
         if state.phase == "cancelling":
-            terminal = State("terminal", error="Bake request cancelled")
-            return terminal, _effects(state, "discard", terminal.error)
+            terminal = State("terminal")
+            return terminal, Effects("discard", "Bake request cancelled")
         if not event.successful:
             error = ("Bake failed" if event.error is None else event.error)
-            terminal = State("terminal", error=error)
-            return terminal, _effects(state, "retire", terminal.error)
+            terminal = State("terminal")
+            return terminal, Effects("retire", error)
         if not _current(state, event):
             terminal = State("terminal")
-            return terminal, _effects(state, "discard")
-        ready = State("ready", state.signature, state.generation)
+            return terminal, Effects("discard")
+        ready = State("ready", state.signature)
         return ready, Effects()
 
     if event.kind == "publish":
         if state.phase != "ready":
             return state, Effects()
-        if not event.admitted:
-            return state, Effects()
         if not _current(state, event):
             terminal = State("terminal")
-            return terminal, _effects(state, "discard")
-        publishing = State("publishing", state.signature, state.generation)
-        return publishing, _effects(publishing, "publish")
+            return terminal, Effects("discard")
+        publishing = State("publishing", state.signature)
+        return publishing, Effects("publish")
 
     if event.kind == "published":
         if state.phase != "publishing":
@@ -149,30 +122,30 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
                 error = "Bake publication failed"
             else:
                 error = "Bake inputs changed before publication"
-            terminal = State("terminal", error=error)
-            return terminal, _effects(state, "rollback", error)
-        activating = State("activating", state.signature, state.generation)
-        return activating, _effects(activating, "activate")
+            terminal = State("terminal")
+            return terminal, Effects("rollback", error)
+        activating = State("activating", state.signature)
+        return activating, Effects("activate")
 
     if event.kind == "activated":
         if state.phase != "activating":
             return state, Effects()
         if event.successful and _current(state, event):
             terminal = State("terminal")
-            return terminal, _effects(state, "retire")
+            return terminal, Effects("retire")
         error = "Bake activation failed" if event.error is None else event.error
-        terminal = State("terminal", error=error)
-        return terminal, _effects(state, "rollback", error)
+        terminal = State("terminal")
+        return terminal, Effects("rollback", error)
 
     if event.kind == "invalidate":
         if event.current_signature == state.signature:
             return state, Effects()
         if state.phase == "running":
-            cancelling = State("cancelling", state.signature, state.generation)
-            return cancelling, _effects(cancelling, "cancel")
+            cancelling = State("cancelling", state.signature)
+            return cancelling, Effects("cancel")
         if state.phase in ("queued", "ready"):
             terminal = State("terminal")
-            return terminal, _effects(state, "discard")
+            return terminal, Effects("discard")
         if state.phase in ("publishing", "activating"):
             # The transaction owns rollback once publication starts.
             return state, Effects()
@@ -182,15 +155,15 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         if state.phase != "cancelling":
             return state, Effects()
         terminal = State("terminal")
-        return terminal, _effects(state, "retire")
+        return terminal, Effects("retire")
 
     if event.kind == "close":
         if state.phase in ("queued", "ready"):
             terminal = State("terminal")
-            return terminal, _effects(state, "discard")
+            return terminal, Effects("discard")
         if state.phase == "running":
-            cancelling = State("cancelling", state.signature, state.generation)
-            return cancelling, _effects(cancelling, "cancel")
+            cancelling = State("cancelling", state.signature)
+            return cancelling, Effects("cancel")
         return state, Effects()
 
     return state, Effects()
@@ -215,13 +188,14 @@ def output_policy(use_bake: bool, desired_signature: Optional[str],
              and (source_invalidated or (desired_signature is not None
                                         and desired_signature != artifact_signature)))
     if live_error is not None:
-        return Output("error", False, live_error, stale)
+        return Output("error", live_error, stale)
     if not use_bake:
-        return Output("live", False, revoke_receipt=stale)
+        return Output("live", revoke_receipt=stale)
     if not artifact_valid:
-        return Output("error", False, "Bound bake Image is unavailable or invalid", stale)
-    if not bake_toggle_available(desired_signature, artifact_signature, artifact_valid):
-        return Output("live", False, revoke_receipt=stale)
-    return Output("baked", True)
+        return Output("error", "Bound bake Image is unavailable or invalid", stale)
+    if source_invalidated or not bake_toggle_available(
+            desired_signature, artifact_signature, artifact_valid):
+        return Output("live", revoke_receipt=stale)
+    return Output("baked")
 
 

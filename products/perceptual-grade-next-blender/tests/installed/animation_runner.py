@@ -300,6 +300,56 @@ reopened_nodes, reopened_signatures, _ = nodes._animation_snapshot(scene)
 assert shader_node in reopened_nodes and compositor_node in reopened_nodes
 assert nodes._animation_outputs_current(reopened_nodes, reopened_signatures) == (True, None)
 
+# A successful Grade reconciliation must not release a render ticket if the
+# scene subframe changes before publication rereads its live time.
+preflight_gate = nodes._grade_resources.gate
+preflight_time = (scene.frame_current, float(scene.frame_subframe))
+preflight_tickets = []
+time_changed_after_validation = []
+original_request_preflight = preflight_gate.request_render_preflight
+original_outputs_current = nodes._animation_outputs_current
+
+
+def record_preflight(scene_identity, frame, subframe):
+    ticket = original_request_preflight(scene_identity, frame, subframe)
+    preflight_tickets.append(ticket)
+    return ticket
+
+
+def change_time_after_validation(current_nodes, signatures, **kwargs):
+    result = original_outputs_current(current_nodes, signatures, **kwargs)
+    if result[0] and not time_changed_after_validation:
+        time_changed_after_validation.append(True)
+        scene.frame_set(preflight_time[0], subframe=0.75)
+    return result
+
+
+preflight_gate.request_render_preflight = record_preflight
+nodes._animation_outputs_current = change_time_after_validation
+render_lease_started = False
+try:
+    nodes._render_init(scene)
+    render_lease_started = True
+    nodes._render_pre(scene)
+    assert len(preflight_tickets) == 1, preflight_tickets
+    stale_ticket = preflight_tickets[0]
+    assert time_changed_after_validation
+    assert stale_ticket.state.phase == "failed", stale_ticket.state
+    assert stale_ticket.state.error == "Render preflight observation changed", stale_ticket.state
+    assert stale_ticket._finished.is_set(), "Stale render ticket was not released as failed"
+finally:
+    nodes._animation_outputs_current = original_outputs_current
+    preflight_gate.request_render_preflight = original_request_preflight
+    if render_lease_started:
+        nodes._render_finished(scene)
+    scene.frame_set(preflight_time[0], subframe=preflight_time[1])
+failures = nodes._refresh_nodes((shader_node, compositor_node))
+assert not failures, failures
+failures = nodes._drain_preparations()
+assert not failures, failures
+reopened_nodes, reopened_signatures, _ = nodes._animation_snapshot(scene)
+assert nodes._animation_outputs_current(reopened_nodes, reopened_signatures) == (True, None)
+
 # Key insertion failures must be visible on the affected node, then clear after
 # a later successful Auto Key operation.
 gesture_identity = nodes._gesture_identity(shader_node)

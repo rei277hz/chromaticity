@@ -126,7 +126,7 @@ class PolicyVerificationTests(unittest.TestCase):
         requirements = json.loads((resources / "requirements.inv").read_text())
         selected = {
             "terminal_poll_never_touches_transport",
-            "stale_generation_is_ignored",
+            "stale_job_receipt_is_ignored",
             "stale_stage_timeout_has_no_effects",
         }
         checker = Checker(source, requirements)

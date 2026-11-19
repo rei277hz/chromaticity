@@ -12,7 +12,6 @@ class State:
         "stopped", "starting", "probing", "ready", "stopping", "terminating",
         "killing", "unretired", "retiring", "failed", "closed",
     ]
-    generation: int
     probe_id: Optional[int]
     active_id: Optional[int]
     error: Optional[str]
@@ -26,7 +25,6 @@ class Event:
         "cancelled", "cancel", "failure", "shutdown", "exited", "poll",
         "eof", "timeout", "cleanup_result",
     ]
-    generation: int
     job_id: Optional[int] = None
     next_id: Optional[int] = None
     success: bool = False
@@ -46,9 +44,6 @@ class Effects:
     publish_kind: Optional[str] = None
     publish_id: Optional[int] = None
     publish_error: Optional[str] = None
-    probe_publish_kind: Optional[str] = None
-    probe_publish_id: Optional[int] = None
-    probe_publish_error: Optional[str] = None
     send_cancel_id: Optional[int] = None
     send_shutdown: bool = False
     terminate: bool = False
@@ -61,7 +56,7 @@ class Effects:
 
 
 def new() -> State:
-    return State("stopped", 0, None, None, None)
+    return State("stopped", None, None, None)
 
 
 def admitting(state: State) -> bool:
@@ -82,7 +77,7 @@ def close_problem(state: State) -> Optional[str]:
 
 
 def _dispatch_next(state: State, next_id: Optional[int]) -> State:
-    return State(state.phase, state.generation, state.probe_id, next_id,
+    return State(state.phase, state.probe_id, next_id,
                  state.error, state.close_requested)
 
 
@@ -91,12 +86,12 @@ def _failure(state: State, error: Optional[str]) -> tuple[State, Effects]:
     failure = failure if failure is not None else "GPU helper failed"
     if state.phase in ("starting", "probing", "ready", "stopping"):
         return (
-            State("terminating", state.generation, state.probe_id, state.active_id,
+            State("terminating", state.probe_id, state.active_id,
                   failure, state.close_requested),
             Effects(deadline_stage="terminating", terminate=True),
         )
     if state.phase in ("terminating", "killing", "unretired"):
-        return State(state.phase, state.generation, state.probe_id, state.active_id,
+        return State(state.phase, state.probe_id, state.active_id,
                      failure, state.close_requested), Effects()
     return state, Effects()
 
@@ -104,12 +99,12 @@ def _failure(state: State, error: Optional[str]) -> tuple[State, Effects]:
 def _shutdown(state: State, transport: Optional[str]) -> tuple[State, Effects]:
     if transport == "channel":
         return (
-            State("stopping", state.generation, state.probe_id, state.active_id,
+            State("stopping", state.probe_id, state.active_id,
                   state.error, True),
             Effects(deadline_stage="stopping", send_shutdown=True),
         )
     return (
-        State("terminating", state.generation, state.probe_id, state.active_id,
+        State("terminating", state.probe_id, state.active_id,
               state.error, True),
         Effects(deadline_stage="terminating", terminate=True),
     )
@@ -127,25 +122,15 @@ def _exited(state: State, event: Event) -> tuple[State, Effects]:
     error = error if error is not None else "GPU helper exited unexpectedly"
     publish_kind = "cancelled" if planned else "failure"
     publish_error = None if planned else error
-    publish_id = state.active_id
-    probe_publish_kind = None
-    probe_publish_id = None
-    probe_publish_error = None
-    if state.probe_id is not None and state.probe_id != state.active_id:
-        probe_publish_kind = publish_kind
-        probe_publish_id = state.probe_id
-        probe_publish_error = publish_error
+    publish_id = state.active_id if state.active_id is not None else state.probe_id
     return (
-        State("retiring", state.generation, None, None,
+        State("retiring", None, None,
               None if planned else error, state.close_requested),
         Effects(
             clear_deadline=True,
             publish_kind=publish_kind if publish_id is not None else None,
             publish_id=publish_id,
             publish_error=publish_error if publish_id is not None else None,
-            probe_publish_kind=probe_publish_kind,
-            probe_publish_id=probe_publish_id,
-            probe_publish_error=probe_publish_error,
             queue_kind="cancel" if planned else "fail",
             queue_error=None if planned else error,
             cleanup=True,
@@ -160,7 +145,7 @@ def _cancelled(state: State, event: Event) -> tuple[State, Effects]:
         return _shutdown(state, event.transport)
     if state.phase != "ready":
         return state, Effects()
-    updated = State("ready", state.generation, None, None, state.error)
+    updated = State("ready", None, None, state.error)
     next_state = _dispatch_next(updated, event.next_id)
     return next_state, Effects(
         publish_kind="cancelled", publish_id=event.job_id,
@@ -168,19 +153,15 @@ def _cancelled(state: State, event: Event) -> tuple[State, Effects]:
     )
 
 
-
 def step(state: State, event: Event) -> tuple[State, Effects]:
     """Returned effects exclusively authorize transport and process mutations."""
     if event.kind == "launch":
-        if (state.phase != "stopped" or event.generation <= state.generation
-                or event.job_id is None):
+        if state.phase != "stopped" or event.job_id is None:
             return state, Effects()
         return (
-            State("starting", event.generation, event.job_id, None, None),
+            State("starting", event.job_id, None, None),
             Effects(deadline_stage="starting", launch=True),
         )
-    if event.generation != state.generation:
-        return state, Effects()
 
     if event.kind == "poll":
         if state.phase in ("stopped", "retiring", "failed", "closed"):
@@ -197,7 +178,7 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         if state.phase != "starting" or state.probe_id is None:
             return state, Effects()
         return (
-            State("probing", state.generation, state.probe_id, state.probe_id, None),
+            State("probing", state.probe_id, state.probe_id, None),
             Effects(clear_deadline=True, dispatch_id=state.probe_id),
         )
 
@@ -205,7 +186,7 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         if not admitting(state) or event.job_id is None or state.active_id is not None:
             return state, Effects()
         return (
-            State("ready", state.generation, None, event.job_id, state.error),
+            State("ready", None, event.job_id, state.error),
             Effects(dispatch_id=event.job_id),
         )
 
@@ -222,18 +203,15 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         if not event.success:
             error = event.error if event.error is not None else "GPU probe failed"
             return _failure(state, error)
-        updated = State("ready", state.generation, None, None, None)
-        next_state = _dispatch_next(updated, event.next_id)
-        return next_state, Effects(
+        return State("ready", None, None, None), Effects(
             publish_kind="result", publish_id=event.job_id,
-            dispatch_id=event.next_id,
         )
 
     if event.kind == "result":
         if (state.phase != "ready" or event.job_id is None
                 or event.job_id != state.active_id):
             return state, Effects()
-        updated = State("ready", state.generation, None, None, state.error)
+        updated = State("ready", None, None, state.error)
         next_state = _dispatch_next(updated, event.next_id)
         return next_state, Effects(
             publish_kind="result", publish_id=event.job_id,
@@ -271,13 +249,13 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
             return _failure(state, "GPU helper shutdown timed out")
         if state.phase == "terminating":
             return (
-                State("killing", state.generation, state.probe_id, state.active_id,
+                State("killing", state.probe_id, state.active_id,
                       state.error, state.close_requested),
                 Effects(deadline_stage="killing", kill=True),
             )
         if state.phase == "killing":
             return (
-                State("unretired", state.generation, state.probe_id, state.active_id,
+                State("unretired", state.probe_id, state.active_id,
                       state.error, state.close_requested),
                 Effects(clear_deadline=True),
             )
@@ -287,19 +265,19 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         if state.phase == "closed":
             return state, Effects()
         if state.phase == "failed":
-            return State("closed", state.generation, None, None, state.error, True), Effects()
+            return State("closed", None, None, state.error, True), Effects()
         if state.phase == "stopped":
-            return (State("retiring", state.generation, None, None, state.error, True),
+            return (State("retiring", None, None, state.error, True),
                     Effects(cleanup=True))
         if state.phase == "retiring":
-            return (State("retiring", state.generation, None, None, state.error, True),
+            return (State("retiring", None, None, state.error, True),
                     Effects(cleanup=True))
         if not event.process_alive:
             updated, effects = _exited(state, event)
-            return (State(updated.phase, updated.generation, updated.probe_id,
+            return (State(updated.phase, updated.probe_id,
                           updated.active_id, updated.error, True), effects)
         if state.phase in ("stopping", "terminating", "killing", "unretired"):
-            return (State(state.phase, state.generation, state.probe_id, state.active_id,
+            return (State(state.phase, state.probe_id, state.active_id,
                           state.error, True), Effects())
         return _shutdown(state, event.transport)
 
@@ -311,9 +289,9 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
             return state, Effects()
         if not event.success:
             error = state.error if state.error is not None else event.error
-            return State("retiring", state.generation, None, None, error,
+            return State("retiring", None, None, error,
                          state.close_requested), Effects()
-        return (State("closed" if state.close_requested else "failed", state.generation,
+        return (State("closed" if state.close_requested else "failed",
                       None, None, state.error, state.close_requested), Effects())
 
     raise ValueError("Unknown helper event")

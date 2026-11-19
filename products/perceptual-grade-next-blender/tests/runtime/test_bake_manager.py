@@ -17,8 +17,7 @@ import numpy as np
 
 class Job:
     def __init__(self, inputs):
-        self.result = {"signature": inputs["signature"],
-                       "generation": inputs["generation"]}
+        self.result = {"signature": inputs["signature"]}
         self.cancel_calls = 0
         self.retired = False
 
@@ -271,29 +270,28 @@ class BakeManagerTests(unittest.TestCase):
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
             result = self.worker._result(
                 np.ones((1, 2, 4), dtype=np.float32),
-                {"artifact_dir": str(root), "generation": 1, "signature": "sig"},
+                {"artifact_dir": str(root), "signature": "sig"},
                 {"scene": "Scene", "signature": "sig"}, {"domain": "IMAGE"},
                 backend="SHADER",
             )
+        self.assertEqual(Path(result["path"]), root / "bake.exr")
         self.assertTrue(Path(result["path"]).is_file())
+        self.assertNotIn("generation", result)
         self.assertNotIn("sha256", result)
 
-    def test_mismatched_helper_signature_or_generation_never_publishes(self):
-        for number, field, value in ((1, "signature", "other"), (2, "generation", -1)):
-            with self.subTest(field=field):
-                self.events.clear()
-                entry = self.request(self.node(number))
-                self.manager.poll()
-                result = {"signature": entry["signature"], "generation": entry["generation"]}
-                result[field] = value
-                self.complete(result=result)
-                self.assertEqual(self.events, ["failure"])
-                self.assertFalse(self.manager.jobs)
-                self.assertFalse(entry["root"].exists())
+    def test_mismatched_helper_signature_never_publishes(self):
+        entry = self.request(self.node(1))
+        self.manager.poll()
+        self.complete(result={"signature": "other"})
+        self.assertEqual(self.events, ["failure"])
+        self.assertFalse(self.manager.jobs)
+        self.assertFalse(entry["root"].exists())
 
     def test_native_requests_are_serialized_until_the_previous_job_retires(self):
-        self.request(self.node(1))
-        self.request(self.node(2))
+        first = self.request(self.node(1))
+        second = self.request(self.node(2))
+        self.assertNotEqual(first["inputs"]["artifact_dir"], second["inputs"]["artifact_dir"])
+        self.assertNotIn("generation", first["inputs"])
         self.manager.poll()
         self.manager.poll()
         self.assertEqual(len(self.backend.jobs), 1)

@@ -15,8 +15,8 @@ class BuiltBookReferencesTests(unittest.TestCase):
         expected_hotspots = {
             "src/policy/node.py": "technical/en/development/next-policies.html#next-policy.node-output",
             "src/runtime/bank_publication.py": "technical/en/development/next-policies.html#next-policy.bank-publication",
-            "examples/publication_compare/policy/parameter_publication.py":
-                "technical/en/development/next-policies.html#next-policy.parameter-publication",
+            "src/runtime/image_publication.py":
+                "technical/en/development/next-policies.html#next-policy.bake",
         }
         for suffix, site_path in expected_hotspots.items():
             self.assertTrue(any(item["code"].endswith(suffix)

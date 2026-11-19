@@ -6,18 +6,35 @@ from policy import helper as policy
 
 
 def transition(state, kind, **values):
-    return policy.step(state, policy.Event(kind, state.generation, **values))
+    return policy.step(state, policy.Event(kind, **values))
 
 
 class HelperPolicyTests(unittest.TestCase):
     def probing(self):
-        state, _effects = policy.step(policy.new(), policy.Event("launch", 1, job_id=1))
+        state, _effects = transition(policy.new(), "launch", job_id=1)
         state, _effects = transition(state, "hello")
         return state
 
     def ready(self):
         state, _effects = transition(self.probing(), "probe_result", job_id=1, success=True)
         return state
+
+    def test_successful_probe_leaves_slot_idle_until_submission(self):
+        state, effects = transition(self.probing(), "probe_result", job_id=1, success=True)
+        self.assertEqual(state, policy.State("ready", None, None, None))
+        self.assertEqual(effects, policy.Effects(publish_kind="result", publish_id=1))
+        self.assertTrue(policy.admitting(state))
+        state, effects = transition(state, "submit", job_id=2)
+        self.assertEqual(state.active_id, 2)
+        self.assertEqual(effects, policy.Effects(dispatch_id=2))
+
+    def test_ordinary_result_dispatches_queued_successor(self):
+        state, _effects = transition(self.ready(), "submit", job_id=2)
+        state, effects = transition(state, "result", job_id=2, next_id=3)
+        self.assertEqual(state.active_id, 3)
+        self.assertEqual(effects, policy.Effects(
+            publish_kind="result", publish_id=2, dispatch_id=3,
+        ))
 
     def test_cancelled_probe_cannot_admit_work_or_accept_late_success(self):
         for kind in ("cancel", "cancelled"):
@@ -34,7 +51,7 @@ class HelperPolicyTests(unittest.TestCase):
                                  (state, policy.Effects()))
 
     def test_cancel_before_hello_retains_probe_until_exit(self):
-        state, _ = policy.step(policy.new(), policy.Event("launch", 1, job_id=1))
+        state, _ = transition(policy.new(), "launch", job_id=1)
         state, effects = transition(state, "cancel", job_id=1)
         self.assertEqual(state.phase, "terminating")
         self.assertEqual(state.probe_id, 1)
@@ -43,9 +60,8 @@ class HelperPolicyTests(unittest.TestCase):
         state, effects = transition(state, "exited", exit_code=-15, error="signal")
         self.assertEqual(state.phase, "retiring")
         self.assertTrue(effects.clear_deadline)
-        self.assertIsNone(effects.publish_kind)
-        self.assertEqual(effects.probe_publish_kind, "cancelled")
-        self.assertEqual(effects.probe_publish_id, 1)
+        self.assertEqual(effects.publish_kind, "cancelled")
+        self.assertEqual(effects.publish_id, 1)
         self.assertEqual(effects.queue_kind, "cancel")
         self.assertTrue(effects.cleanup)
         self.assertIsNone(state.probe_id)
@@ -89,7 +105,7 @@ class HelperPolicyTests(unittest.TestCase):
 
     def test_terminal_phases_never_poll_any_transport(self):
         for phase in ("retiring", "failed", "closed"):
-            state = policy.State(phase, 1, None, None, "failure", phase == "closed")
+            state = policy.State(phase, None, None, "failure", phase == "closed")
             for transport in (None, "listener", "channel"):
                 self.assertEqual(transition(state, "poll", transport=transport),
                                  (state, policy.Effects()))
@@ -122,18 +138,30 @@ class HelperPolicyTests(unittest.TestCase):
                          (state, policy.Effects()))
 
     def test_successful_hello_ends_startup_deadline(self):
-        state, _ = policy.step(policy.new(), policy.Event("launch", 1, job_id=1))
+        state, _ = transition(policy.new(), "launch", job_id=1)
         state, effects = transition(state, "hello")
         self.assertTrue(effects.clear_deadline)
         self.assertEqual(effects.dispatch_id, 1)
         self.assertEqual(transition(state, "timeout", stage="starting"),
                          (state, policy.Effects()))
 
-    def test_stale_generation_cannot_mutate_lifecycle(self):
-        state = self.probing()
-        for event in (policy.Event("shutdown", 0), policy.Event("exited", 0),
-                      policy.Event("probe_result", 0, job_id=1, success=True)):
-            self.assertEqual(policy.step(state, event), (state, policy.Effects()))
+    def test_stale_job_receipts_cannot_mutate_lifecycle(self):
+        probing = self.probing()
+        self.assertEqual(transition(probing, "probe_result", job_id=2, success=True),
+                         (probing, policy.Effects()))
+        ready, _ = transition(self.ready(), "submit", job_id=2)
+        for kind in ("preview", "result", "cancelled"):
+            with self.subTest(kind=kind):
+                self.assertEqual(transition(ready, kind, job_id=1, next_id=3),
+                                 (ready, policy.Effects()))
+
+    def test_launch_requires_stopped_phase(self):
+        for state in (self.probing(), self.ready(),
+                      policy.State("failed", None, None, "failure"),
+                      policy.State("closed", None, None, None, True)):
+            with self.subTest(phase=state.phase):
+                self.assertEqual(transition(state, "launch", job_id=2),
+                                 (state, policy.Effects()))
 
 
 if __name__ == "__main__":

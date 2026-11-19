@@ -8,7 +8,6 @@ from dataclasses import dataclass, field, replace
 import threading
 from typing import Optional
 
-from ..policy import compositor_publication
 from ..policy import render_preflight
 
 
@@ -39,45 +38,34 @@ class EvaluationReceipt:
 class RenderPreflightTicket:
     """Plain cross-thread rendezvous; it contains no Blender/RNA references."""
 
-    render_identity: int
-    scene_identity: int
-    frame: int
-    subframe: str
-    generation: int
     state: render_preflight.State
+    lease: Optional[EvaluationReceipt]
     _finished: threading.Event = field(default_factory=threading.Event)
     _error: Optional[BaseException] = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
-    _resolution: Optional[render_preflight.Effects] = None
 
-    def resolve(self, event):
+    def _resolve(self, event, *, error=None):
         with self._lock:
             self.state, effects = render_preflight.step(self.state, event)
             if effects.action == "fail":
-                self._error = RuntimeError(effects.error or "Render preflight failed")
-            if effects.action is not None:
-                self._resolution = effects
+                self._error = (
+                    error if error is not None
+                    else RuntimeError(effects.error or "Render preflight failed")
+                )
             return effects
 
     def fail(self, error):
-        effects = self.resolve(render_preflight.Event(
-            "failed", self.render_identity, self.scene_identity, self.frame,
-            self.subframe, self.generation, error=str(error),
-        ))
-        if effects.action == "fail":
-            with self._lock:
-                self._error = error
-        return effects
+        return self._resolve(render_preflight.Event("failed", error=str(error)),
+                             error=error)
 
     @property
     def failure_authorized(self):
         with self._lock:
-            return (self._resolution is not None
-                    and self._resolution.action == "fail")
+            return self.state.phase == "failed"
 
     def deliver(self):
         with self._lock:
-            if self._resolution is not None:
+            if self.state.phase in ("released", "failed"):
                 self._finished.set()
                 return True
             return False
@@ -90,15 +78,12 @@ class RenderPreflightTicket:
             raise self._error
 
 
-# pg-book: technical-report/en#next-policy.compositor-publication
 class PublicationGate:
     """Observe a small set of Blender activities around main-thread writes.
 
     Callbacks only update local counters. ``commit`` and the narrowly scoped
-    ``render_preflight`` authorize quiescent image writes. ``snapshot_commit``
-    additionally permits publishing a fresh immutable image to a compositor
-    graph whose evaluated snapshot has already been observed. These contexts
-    are not universal locks against native readers Blender does not expose.
+    ``render_preflight`` authorize quiescent image writes. These contexts are
+    not universal locks against native readers Blender does not expose.
     """
 
     def __init__(self, bpy):
@@ -107,13 +92,10 @@ class PublicationGate:
         self._callbacks = 0
         self._evaluations = {}
         self._epoch = 0
-        self._progress = compositor_publication.new()
-        self._snapshot_active = None
         self._committing = False
         self._preflight_queue = deque()
         self._preflight_active = None
         self._preflight_scope = None
-        self._preflight_generation = 0
 
     @contextmanager
     def callback(self):
@@ -150,15 +132,30 @@ class PublicationGate:
             receipts = self._evaluations.get(key)
             if not receipts:
                 return None
-            receipt = replace(receipts.popleft(), successful=bool(successful))
+            receipt = receipts.popleft()
             if not receipts:
                 self._evaluations.pop(key, None)
-            if kind == "compositor":
-                self._progress, _effects = compositor_publication.step(
-                    self._progress, compositor_publication.Event(
-                        "finished", receipt.identity, receipt.epoch,
-                        successful=receipt.successful))
-            return receipt
+            if kind == "render":
+                self._invalidate_render_preflight_locked(receipt, successful)
+            return replace(receipt, successful=bool(successful))
+
+    def _invalidate_render_preflight_locked(self, lease, successful):
+        tickets = []
+        for _ in range(len(self._preflight_queue)):
+            ticket = self._preflight_queue.popleft()
+            if ticket.lease is lease:
+                tickets.append(ticket)
+            else:
+                self._preflight_queue.append(ticket)
+        active = self._preflight_active
+        if active is not None and active.lease is lease:
+            tickets.append(active)
+            self._preflight_active = None
+        message = ("Render ended before Grade preflight completed" if successful
+                   else "Render was cancelled during Grade preflight")
+        for ticket in tickets:
+            ticket.fail(PublicationDeferred(message))
+            ticket.deliver()
 
     def evaluation_active(self, kind, identity=0) -> bool:
         """Report whether this scene still has a matching native evaluation."""
@@ -176,48 +173,30 @@ class PublicationGate:
             return None
         return key[1], receipts[0].epoch
 
-    def _exclusive_evaluation_locked(self, key):
-        return len(self._evaluations) == 1 and len(self._evaluations.get(key, ())) == 1
+    def _owns_render_lease_locked(self, ticket):
+        receipts = self._evaluations.get(("render", ticket.state.scene_identity), ())
+        return (len(self._evaluations) == 1 and len(receipts) == 1
+                and receipts[0] is ticket.lease)
 
     def current_compositor(self):
         """Return the sole observed compositor scene and evaluation epoch."""
         with self._lock:
             return self._current_compositor_locked()
 
-    @property
-    def progress_state(self):
-        with self._lock:
-            return self._progress
-
-    def superseded(self, scene_identity, epoch):
-        """Record a successful binding made within an admitted live scope."""
-        if threading.current_thread() is not threading.main_thread():
-            raise PublicationDeferred("Compositor supersession requires Blender's main thread")
-        with self._lock:
-            if (not self._committing
-                    or self._snapshot_active != (scene_identity, epoch)):
-                raise PublicationDeferred("Compositor supersession has no admitted publication")
-            self._progress, _effects = compositor_publication.step(
-                self._progress, compositor_publication.Event(
-                    "superseded", scene_identity, epoch, eligible=True))
-
-    def request_render_preflight(self, identity, scene_identity, frame, subframe):
+    def request_render_preflight(self, scene_identity, frame, subframe):
         """Queue one frame's demand for a correlated main-thread reconcile."""
-        identity = int(identity)
         scene_identity = int(scene_identity)
         frame = int(frame)
         subframe = str(subframe)
         with self._lock:
-            self._preflight_generation += 1
-            generation = self._preflight_generation
+            receipts = self._evaluations.get(("render", scene_identity), ())
+            lease = receipts[0] if len(receipts) == 1 else None
             ticket = RenderPreflightTicket(
-                identity, scene_identity, frame, subframe, generation,
-                render_preflight.new(identity, scene_identity, frame, subframe,
-                                     generation),
+                render_preflight.new(scene_identity, frame, subframe), lease,
             )
-            if not self._evaluations.get(("render", identity)):
+            if lease is None:
                 ticket.fail(PublicationDeferred(
-                    "Render preflight has no matching active render lease"))
+                    "Render preflight requires one matching active render lease"))
             self._preflight_queue.append(ticket)
             return ticket
 
@@ -256,15 +235,12 @@ class PublicationGate:
                 tickets += (self._preflight_active,)
                 self._preflight_active = None
             self._evaluations.clear()
-            self._progress, _effects = compositor_publication.step(
-                self._progress, compositor_publication.Event("reset", quiescent=True))
         error = PublicationDeferred("Render preflight was invalidated by host lifecycle reset")
         for ticket in tickets:
             ticket.fail(error)
             ticket.deliver()
 
-    def _activity_reason(self, *, render_preflight_job=None,
-                         compositor_snapshot=False) -> Optional[str]:
+    def _activity_reason(self, *, render_preflight_job=None) -> Optional[str]:
         try:
             managers = tuple(self._bpy.data.window_managers)
             if (render_preflight_job is None
@@ -276,7 +252,7 @@ class PublicationGate:
                         if operator.bl_idname in MODAL_READERS:
                             return "Blender bake operation is active"
             for job in JOBS:
-                if job == render_preflight_job or (compositor_snapshot and job == "COMPOSITE"):
+                if job == render_preflight_job:
                     continue
                 if self._bpy.app.is_job_running(job):
                     return "Blender job is active: " + job
@@ -316,70 +292,15 @@ class PublicationGate:
             if scope is None or not self._committing or self._callbacks:
                 return False
             ticket, expected_job = scope
-            key = "render", ticket.render_identity
             if (self._preflight_active is not ticket or ticket._finished.is_set()
-                    or not self._exclusive_evaluation_locked(key)):
+                    or not self._owns_render_lease_locked(ticket)):
                 return False
         if self._activity_reason(render_preflight_job=expected_job) is not None:
             return False
         with self._lock:
             return (self._preflight_scope == scope and self._committing
-                    and not self._callbacks and self._exclusive_evaluation_locked(key)
+                    and not self._callbacks and self._owns_render_lease_locked(ticket)
                     and self._preflight_active is ticket and not ticket._finished.is_set())
-
-    def _snapshot_activity_reason(self):
-        reason = self._activity_reason(compositor_snapshot=True)
-        if reason is not None:
-            return reason
-        try:
-            if not self._bpy.app.is_job_running("COMPOSITE"):
-                return "Observed compositor snapshot has no active COMPOSITE job"
-        except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
-            return "Could not inspect Blender compositor state: " + str(error)
-        return None
-
-    @contextmanager
-    def snapshot_commit(self, scene_identity):
-        """Publish a fresh version after exactly one matching graph snapshot.
-
-        Existing image pixels, reclamation and graph rebuilds remain forbidden
-        in this scope. A successful binding must call ``superseded`` before
-        leaving, so a later evaluation can finish without another live swap.
-        """
-        if threading.current_thread() is not threading.main_thread():
-            raise PublicationDeferred("Compositor publication requires Blender's main thread")
-        with self._lock:
-            observed = self._current_compositor_locked()
-            if self._committing or self._callbacks:
-                raise PublicationDeferred("Another host callback or publication is active")
-            if observed is None or observed[0] != scene_identity:
-                raise PublicationDeferred("Compositor publication requires one matching observed snapshot")
-        reason = self._snapshot_activity_reason()
-        if reason is not None:
-            raise PublicationDeferred(reason)
-        with self._lock:
-            if (self._committing or self._callbacks
-                    or self._current_compositor_locked() != observed):
-                raise PublicationDeferred("Compositor evaluation changed during admission")
-            self._progress, effects = compositor_publication.step(
-                self._progress, compositor_publication.Event(
-                    "admit", scene_identity, observed[1], eligible=True))
-            if effects.publish_epoch is None:
-                raise PublicationDeferred("Compositor successor is protected until a later successful evaluation")
-            self._committing = True
-            self._snapshot_active = scene_identity, effects.publish_epoch
-        try:
-            reason = self._snapshot_activity_reason()
-            if reason is not None:
-                raise PublicationDeferred(reason)
-            with self._lock:
-                if self._callbacks or self._current_compositor_locked() != observed:
-                    raise PublicationDeferred("Compositor evaluation changed during publication")
-            yield effects.publish_epoch
-        finally:
-            with self._lock:
-                self._snapshot_active = None
-                self._committing = False
 
     def _observation_reason(self) -> Optional[str]:
         with self._lock:
@@ -412,14 +333,12 @@ class PublicationGate:
         """Compose graph reconciliation with an admitted foreground scope.
 
         Normal publication and render preflight may invoke nested graph
-        consumers. A compositor snapshot scope may only bind fresh images,
-        so it never admits this broader native graph mutation.
+        consumers.
         """
         if threading.current_thread() is not threading.main_thread():
             raise PublicationDeferred("Graph reconciliation requires Blender's main thread")
         with self._lock:
-            composing = (self._committing and self._snapshot_active is None
-                         and not self._callbacks)
+            composing = self._committing and not self._callbacks
         if composing:
             yield
         else:
@@ -472,10 +391,7 @@ class PublicationGate:
                 claimed = True
                 if self._committing or self._callbacks:
                     raise PublicationDeferred("Another host callback or publication is active")
-                render_key = "render", ticket.render_identity
-                if len(self._evaluations.get(render_key, ())) != 1:
-                    raise PublicationDeferred("Render preflight lost its render lease")
-                if not self._exclusive_evaluation_locked(render_key):
+                if not self._owns_render_lease_locked(ticket):
                     raise PublicationDeferred("Another native evaluation is active")
 
             render_jobs = tuple(job for job in ("RENDER", "RENDER_PREVIEW")
@@ -488,7 +404,7 @@ class PublicationGate:
             with self._lock:
                 if self._committing or self._callbacks:
                     raise PublicationDeferred("Another host callback or publication is active")
-                if not self._exclusive_evaluation_locked(render_key):
+                if not self._owns_render_lease_locked(ticket):
                     raise PublicationDeferred("Render evaluation changed during preflight")
                 self._committing = True
                 acquired = True
@@ -497,7 +413,7 @@ class PublicationGate:
             if reason is not None:
                 raise PublicationDeferred(reason)
             with self._lock:
-                if self._callbacks or not self._exclusive_evaluation_locked(render_key):
+                if self._callbacks or not self._owns_render_lease_locked(ticket):
                     raise PublicationDeferred("Another native evaluation became active")
                 self._preflight_scope = ticket, expected_job
             entered = True
@@ -519,19 +435,46 @@ class PublicationGate:
                         # only failures after yielding are terminal.
                         self._preflight_queue.appendleft(ticket)
                     elif (deliver_failure or (error is None
-                            and ticket._resolution is not None
-                            and ticket._resolution.action == "release")):
+                            and ticket.state.phase == "released")):
                         self._preflight_active = None
             if claimed and not retry:
                 if error is not None:
                     ticket.fail(error)
-                elif not ticket._finished.is_set():
-                    if ticket._resolution is None:
-                        ticket.fail(RuntimeError(
-                            "Render preflight exited without an exact publication receipt"))
-                if (deliver_failure or ticket._resolution is None
-                        or ticket._resolution.action == "release"):
+                elif ticket.state.phase == "waiting":
+                    ticket.fail(RuntimeError(
+                        "Render preflight exited without an exact publication receipt"))
+                if (deliver_failure or ticket.state.phase == "released"):
                     ticket.deliver()
+
+    def publish_render_preflight(self, ticket, *, scene_identity, frame, subframe,
+                                 signature, published_signature):
+        """Resolve the admitted ticket from the main thread's observed frame."""
+        if threading.current_thread() is not threading.main_thread():
+            raise PublicationDeferred("Render preflight publication requires Blender's main thread")
+        with self._lock:
+            scope = self._preflight_scope
+            if (self._preflight_active is not ticket or scope is None
+                    or scope[0] is not ticket or not self._committing
+                    or self._callbacks or ticket._finished.is_set()):
+                raise PublicationDeferred("Render preflight ticket is outside its admitted scope")
+            if not self._owns_render_lease_locked(ticket):
+                raise PublicationDeferred("Another native evaluation became active")
+            expected_job = scope[1]
+
+        reason = self._activity_reason(render_preflight_job=expected_job)
+        if reason is not None:
+            raise PublicationDeferred(reason)
+
+        with self._lock:
+            if (self._preflight_active is not ticket
+                    or self._preflight_scope != scope or not self._committing
+                    or self._callbacks or ticket._finished.is_set()
+                    or not self._owns_render_lease_locked(ticket)):
+                raise PublicationDeferred("Render preflight authorization changed before publication")
+            return ticket._resolve(render_preflight.Event(
+                "published", scene_identity=scene_identity, frame=frame, subframe=subframe,
+                signature=signature, published_signature=published_signature,
+            ))
 
     def finish_render_preflight_failure(self, ticket):
         """Deliver a terminal failure after the host adapter revokes output."""
@@ -540,8 +483,7 @@ class PublicationGate:
         with self._lock:
             if self._preflight_active is not ticket:
                 return False
-            if (ticket._resolution is None
-                    or ticket._resolution.action != "fail"):
+            if ticket.state.phase != "failed":
                 return False
             self._preflight_active = None
         return ticket.deliver()

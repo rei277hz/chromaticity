@@ -1,17 +1,16 @@
-"""Execute an image transaction and retain its native restoration snapshot."""
-
-# pg-book: technical-report/en#next-policy.image-publication
+"""Pack generated images on save and retain native bake restoration snapshots."""
 
 from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 
-from ..policy import image_publication as policy
+from ..policy import bank_publication as policy
 
 
 def pack_image_for_save(image, *, generated, pack):
     """Apply the separate save fallback without claiming a new publication."""
+    # pg-book: technical-report/en#next-policy.bank-publication
     if not policy.request_save_packing(generated, image.is_dirty):
         return
     failure = None
@@ -39,6 +38,7 @@ def write_metadata(entries):
 
 @dataclass
 class ImageSnapshot:
+    # pg-book: technical-report/en#next-policy.bake
     pixels: object
     metadata: tuple
     colorspace: Optional[str] = None
@@ -64,25 +64,3 @@ class ImageSnapshot:
         if (self.half_precision is not None
                 and getattr(image, "use_half_precision", None) != self.half_precision):
             image.use_half_precision = self.half_precision
-
-
-def run_image_publication(operations):
-    state = policy.new()
-    event = policy.Event()
-    failures = []
-    while True:
-        state, effects = policy.step(state, event)
-        action = effects.action
-        if action is None:
-            return tuple(failures)
-        try:
-            observation = operations[action](tuple(failures))
-            event = policy.Event(**(observation or {}))
-            # Silent packing failures are observations, not native exceptions.
-            if action in ("pack", "restore_pack") and not event.clean:
-                error = RuntimeError("Grade parameter image could not be packed")
-                failures.append(error)
-                event = policy.Event(failed=True)
-        except Exception as error:
-            failures.append(error)
-            event = policy.Event(failed=True)

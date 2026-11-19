@@ -1,8 +1,10 @@
 """Lifecycle and join tests for the product-local GPU helper runtime."""
 
 from concurrent.futures import CancelledError
+from dataclasses import fields
 import importlib
 from importlib.resources import files
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -101,6 +103,7 @@ class HelperRuntimeTests(unittest.TestCase):
         cls.module = importlib.import_module(
             "grade_helper_runtime_test.runtime.execution"
         )
+        cls.transport = importlib.import_module("grade_helper_runtime_test.runtime.transport")
         cls.worker = importlib.import_module("grade_helper_runtime_test.runtime.worker")
         cls.adapter = importlib.import_module("grade_helper_runtime_test.lut_helper")
 
@@ -151,24 +154,48 @@ class HelperRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.phase, "closed")
         self.assertFalse(process.terminated)
 
-    def test_probe_and_shutdown_controls_carry_worker_identity(self):
+    def test_probe_and_shutdown_controls_carry_session_identity(self):
         process = FakeProcess()
         runtime, probe = self.runtime(process)
         channel = FakeChannel(process)
         runtime._channel = channel
         try:
-            runtime._message({"kind": "hello", "protocol": 1,
-                              "session": runtime.session,
-                              "generation": runtime.state.generation,
-                              "token": runtime.token})
+            config = json.loads(runtime._config_path.read_text(encoding="utf8"))
+            self.assertEqual(config["session"], runtime.session)
+            self.assertEqual(config["token"], runtime.token)
+            self.assertNotIn("generation", config)
+            self.assertEqual(runtime._deadline[0], "starting")
+            self.assertEqual(len(runtime._deadline), 2)
+            with patch.object(runtime.payloads, "encode", wraps=runtime.payloads.encode) as encode:
+                runtime._message({"kind": "hello", "protocol": self.transport.PROTOCOL,
+                                  "session": runtime.session, "token": runtime.token})
+                encode.assert_called_once_with({}, prefix=f"gpu-{probe._job.identity}")
             self.assertEqual(channel.messages[0]["kind"], "run")
             runtime.close()
             self.assertEqual(channel.messages[-1]["kind"], "shutdown")
             for message in channel.messages:
                 self.assertEqual(message["session"], runtime.session)
-                self.assertEqual(message["generation"], runtime.state.generation)
+                self.assertNotIn("generation", message)
         finally:
             runtime.close()
+
+    def test_handshake_requires_current_protocol_and_token(self):
+        process = FakeProcess()
+        runtime, _probe = self.runtime(process)
+        self.addCleanup(runtime.close)
+        channel = FakeChannel(process)
+        runtime._channel = channel
+        self.assertEqual(self.transport.PROTOCOL, 2)
+        hello = {"kind": "hello", "session": runtime.session,
+                 "protocol": self.transport.PROTOCOL, "token": runtime.token}
+        for bad_hello in (dict(hello, protocol=1), dict(hello, token="foreign token")):
+            with self.assertRaisesRegex(ValueError, "handshake mismatch"):
+                runtime._message(bad_hello)
+            self.assertEqual(runtime.phase, "starting")
+            self.assertEqual(channel.messages, [])
+        runtime._message(hello)
+        self.assertEqual(runtime.phase, "probing")
+        self.assertEqual(channel.messages[0]["kind"], "run")
 
     def test_shutdown_timeout_escalates_through_reducer_authorized_kill(self):
         process = FakeProcess(ignore_terminate=True)
@@ -224,9 +251,9 @@ class HelperRuntimeTests(unittest.TestCase):
         runtime, probe = self.runtime(process)
         channel = FakeChannel(process)
         runtime._channel = channel
-        envelope = {"session": runtime.session,
-                    "generation": runtime.state.generation}
-        runtime._message(dict(envelope, kind="hello", protocol=1, token=runtime.token))
+        envelope = {"session": runtime.session}
+        runtime._message(dict(envelope, kind="hello", protocol=self.transport.PROTOCOL,
+                              token=runtime.token))
         value, files = runtime.payloads.encode(
             {"conformance": True, "backend": "GPU"}, prefix="probe")
         runtime._message(dict(envelope, kind="complete", job=probe._job.identity,
@@ -250,11 +277,23 @@ class HelperRuntimeTests(unittest.TestCase):
 
     def test_repeated_failed_exit_has_no_effects(self):
         policy = self.module.helper_policy
-        state = policy.State("failed", 1, None, None, "original failure")
+        state = policy.State("failed", None, None, "original failure")
+        event = policy.Event("exited", error="late exit")
+        self.assertNotIn("generation", {field.name for field in fields(state)})
+        self.assertNotIn("generation", {field.name for field in fields(event)})
         updated, effects = policy.step(
-            state, policy.Event("exited", generation=1, error="late exit"))
+            state, event)
         self.assertEqual(updated, state)
         self.assertEqual(effects, policy.Effects())
+
+    def test_timeout_is_correlated_by_stage_without_generation(self):
+        policy = self.module.helper_policy
+        state = policy.State("starting", 1, None, None)
+        updated, effects = policy.step(state, policy.Event("timeout", stage="starting"))
+
+        self.assertEqual(updated.phase, "terminating")
+        self.assertEqual(effects.deadline_stage, "terminating")
+        self.assertTrue(effects.terminate)
 
     def test_scalar_effects_keep_publication_and_cleanup_order(self):
         policy = self.module.helper_policy
@@ -263,9 +302,6 @@ class HelperRuntimeTests(unittest.TestCase):
             publish_kind="failure",
             publish_id=8,
             publish_error="original",
-            probe_publish_kind="failure",
-            probe_publish_id=7,
-            probe_publish_error="original",
             queue_kind="fail",
             queue_error="original",
             cleanup=True,
@@ -277,7 +313,6 @@ class HelperRuntimeTests(unittest.TestCase):
             tuple((action.kind, action.job_id, action.error) for action in actions),
             (("clear_deadline", None, None),
              ("publish_failure", 8, "original"),
-             ("publish_failure", 7, "original"),
              ("fail_queued", None, "original"),
              ("cleanup", None, None)),
         )
@@ -305,15 +340,30 @@ class HelperRuntimeTests(unittest.TestCase):
     def ready_runtime(self, process):
         runtime, probe = self.runtime(process)
         runtime._channel = FakeChannel(process)
-        envelope = {"session": runtime.session,
-                    "generation": runtime.state.generation}
-        runtime._message(dict(envelope, kind="hello", protocol=1, token=runtime.token))
+        envelope = {"session": runtime.session}
+        runtime._message(dict(envelope, kind="hello", protocol=self.transport.PROTOCOL,
+                              token=runtime.token))
         value, names = runtime.payloads.encode(
             {"conformance": True, "backend": "GPU"}, prefix="probe")
         runtime._message(dict(envelope, kind="complete", job=probe._job.identity,
                               value=value, files=names))
         self.assertTrue(runtime.gpu_ready)
         return runtime, envelope
+
+    def test_foreign_session_cannot_complete_matching_job_id(self):
+        runtime, envelope = self.ready_runtime(FakeProcess())
+        self.addCleanup(runtime.close)
+        handle = runtime.submit("stack_lut", {})
+        message = dict(envelope, kind="complete", job=handle._job.identity, value="result")
+        with patch.object(runtime.payloads, "decode", wraps=runtime.payloads.decode) as decode:
+            runtime._message(dict(message, session="foreign session"))
+            decode.assert_not_called()
+        self.assertFalse(handle.done())
+        self.assertEqual(runtime.state.active_id, handle._job.identity)
+
+        runtime._message(message)
+        self.assertTrue(handle.done())
+        self.assertEqual(handle.result(), "result")
 
     def test_cancel_startup_before_hello_never_promotes_readiness(self):
         process = FakeProcess()
@@ -331,9 +381,9 @@ class HelperRuntimeTests(unittest.TestCase):
         process = FakeProcess()
         runtime, probe = self.runtime(process)
         runtime._channel = FakeChannel(process)
-        envelope = {"session": runtime.session,
-                    "generation": runtime.state.generation}
-        runtime._message(dict(envelope, kind="hello", protocol=1, token=runtime.token))
+        envelope = {"session": runtime.session}
+        runtime._message(dict(envelope, kind="hello", protocol=self.transport.PROTOCOL,
+                              token=runtime.token))
         self.assertTrue(probe.cancel())
         value, names = runtime.payloads.encode(
             {"conformance": True, "backend": "GPU"}, prefix="late")
@@ -520,7 +570,7 @@ class HelperRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "child failed"):
             group.result()
 
-    def test_worker_preview_uses_the_run_protocol_job_field(self):
+    def test_worker_preview_uses_role_and_job_for_sidecar_prefix(self):
         class Payloads:
             def __init__(self):
                 self.prefix = None
@@ -539,7 +589,7 @@ class HelperRuntimeTests(unittest.TestCase):
         sent = []
         payloads = Payloads()
         context = self.worker.WorkerContext(
-            {"role": "gpu", "generation": 4, "session": "session"},
+            {"role": "gpu", "session": "session"},
             {"kind": "run", "job": 23},
             threading.Event(),
             sent.append,
@@ -548,7 +598,7 @@ class HelperRuntimeTests(unittest.TestCase):
 
         context.preview({"quality": "preview"})
 
-        self.assertEqual(payloads.prefix, "gpu-4-23")
+        self.assertEqual(payloads.prefix, "gpu-23")
         self.assertEqual(sent, [{
             "kind": "preview", "job": 23,
             "value": {"encoded": True}, "files": ("array-preview.npy",),

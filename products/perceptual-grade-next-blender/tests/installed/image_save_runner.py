@@ -224,6 +224,33 @@ assert grade.pg_linear.exposure == 0.8125
 reconcile()
 assert_clean_shared_image(users)
 
+# Leave the first settings' receipt on an inactive bundle whose Color pixels
+# were edited and packed outside publication. Returning to those settings must
+# rewrite the corrupted role before either reader selects the bank.
+original_exposure = grade.pg_linear.exposure
+inactive_primary = parameter_image(shader)
+inactive_color = nodes.parameter_bank_images(inactive_primary)["color"]
+expected_color = np.asarray(inactive_color.pixels[:], dtype=np.float32)
+old_preparation_signature = inactive_primary[nodes.PARAMETER_SIGNATURE]
+old_content_signature = inactive_color[nodes.PARAMETER_CONTENT_SIGNATURE]
+grade.pg_linear.exposure += 0.125
+assert not reconcile()
+assert assert_clean_shared_image(users) != inactive_primary
+nodes._write_grade_parameters(inactive_color, expected_color + 0.25)
+assert inactive_color.is_dirty
+nodes._save_pre(None)
+assert inactive_color.packed_file is not None and not inactive_color.is_dirty
+assert inactive_primary[nodes.PARAMETER_SIGNATURE] == old_preparation_signature
+assert inactive_color[nodes.PARAMETER_CONTENT_SIGNATURE] == old_content_signature
+assert nodes.parameter_bundle_receipt_matches(inactive_primary)
+assert not nodes.parameter_image_matches(inactive_primary)
+
+grade.pg_linear.exposure = original_exposure
+assert not reconcile()
+assert assert_clean_shared_image(users) == inactive_primary
+assert nodes.parameter_image_matches(inactive_primary)
+np.testing.assert_array_equal(inactive_color.pixels[:], expected_color)
+
 
 original_invalidation = nodes._invalidate_grade_parameters
 original_dispatch = nodes._dispatch
@@ -617,6 +644,7 @@ def finish_after_dialog():
         "packing_failures": packing_results,
         "transaction_diagnostics": transaction_diagnostics,
         "save_fallback_repacked": True,
+        "inactive_packed_bank_restored": True,
         "replacement_retirement_reported": True,
         "returned_presenter_reported": True,
         "serialized_pixels_exact": True,
