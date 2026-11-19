@@ -40,7 +40,6 @@ class BakeManager:
         self.publication_queue = deque()
         self.active = None
         self.jobs = {}
-        self.generation = 0
         self.closed = False
         self.backend_closed = False
         self.close_error = None
@@ -138,7 +137,7 @@ class BakeManager:
         if publication_context is not None and not callable(publication_context):
             raise TypeError("Bake publication context must be a context-manager factory")
         node_key = self._node_key(node)
-        if not bake_policy.can_enqueue(len(self.jobs), node_key in self.jobs, True):
+        if not bake_policy.can_enqueue(len(self.jobs), node_key in self.jobs):
             raise RuntimeError("Bake queue is full or this node already has a request")
         route = dict(route)
         signature = route.get("signature")
@@ -147,8 +146,6 @@ class BakeManager:
         if current_signature(node, route) != signature:
             raise RuntimeError("Bake inputs changed before the request was accepted")
 
-        self.generation += 1
-        generation = self.generation
         root, snapshot, images = self._snapshot(route)
         try:
             inputs = {
@@ -156,11 +153,10 @@ class BakeManager:
                 "artifact_dir": str(root), "images": images,
                 "route": route, "target": dict(route),
                 "identity": signature, "signature": signature,
-                "generation": generation,
                 "kind": "compositor" if route.get("domain") == "COMPOSITOR" else "shader",
             }
             entry = {
-                "node": node, "node_key": node_key, "generation": generation,
+                "node": node, "node_key": node_key,
                 "signature": signature, "route": route, "inputs": inputs,
                 "root": root, "publish_callback": publish_callback,
                 "activate_callback": activate_callback,
@@ -171,7 +167,7 @@ class BakeManager:
                 "state": bake_policy.new(),
             }
             effects = self._event(entry, bake_policy.Event(
-                "request", signature, generation, admitted=True,
+                "request", signature,
             ))
             if effects.action != "enqueue":
                 raise RuntimeError("Bake policy rejected the request")
@@ -180,7 +176,6 @@ class BakeManager:
             raise
         self.queue.append(entry)
         self.jobs[node_key] = entry
-        return generation
 
     def _discard_queued(self, entry):
         try:
@@ -195,7 +190,7 @@ class BakeManager:
         if entry is None:
             return False
         effects = self._event(entry, bake_policy.Event(
-            "invalidate", entry["signature"], entry["generation"],
+            "invalidate",
             current_signature=signature,
         ))
         if effects.action == "cancel":
@@ -250,8 +245,8 @@ class BakeManager:
     def _publish_admitted(self, entry, result):
         """Consume the complete publication transaction within host admission."""
         effects = self._event(entry, bake_policy.Event(
-            "publish", entry["signature"], entry["generation"],
-            current_signature=self._resolve_signature(entry), admitted=True,
+            "publish",
+            current_signature=self._resolve_signature(entry),
         ))
         if effects.action == "discard":
             self._retire(entry)
@@ -265,7 +260,7 @@ class BakeManager:
         except Exception as error:
             publication_error = error
         effects = self._event(entry, bake_policy.Event(
-            "published", entry["signature"], entry["generation"],
+            "published",
             current_signature=self._resolve_signature(entry),
             successful=publication_error is None,
             error=None if publication_error is None else str(publication_error),
@@ -278,7 +273,7 @@ class BakeManager:
             except Exception as error:
                 publication_error = error
             effects = self._event(entry, bake_policy.Event(
-                "activated", entry["signature"], entry["generation"],
+                "activated",
                 current_signature=self._resolve_signature(entry),
                 successful=publication_error is None,
                 error=None if publication_error is None else str(publication_error),
@@ -318,7 +313,7 @@ class BakeManager:
     def _withdraw_all(self, event_kind):
         for entry in tuple(self.jobs.values()):
             effects = self._event(entry, bake_policy.Event(
-                event_kind, entry["signature"], entry["generation"],
+                event_kind,
                 current_signature=None,
             ))
             if effects.action == "cancel":
@@ -336,14 +331,14 @@ class BakeManager:
             signature = self._resolve_signature(entry)
             if signature != entry["signature"]:
                 effects = self._event(entry, bake_policy.Event(
-                    "invalidate", entry["signature"], entry["generation"],
+                    "invalidate",
                     current_signature=signature,
                 ))
                 if effects.action == "discard":
                     self._retire(entry)
                     continue
             effects = self._event(entry, bake_policy.Event(
-                "start", entry["signature"], entry["generation"], admitted=True,
+                "start",
             ))
             if effects.action != "start":
                 self._retire(entry)
@@ -354,7 +349,7 @@ class BakeManager:
             except Exception as error:
                 self.active = None
                 effects = self._event(entry, bake_policy.Event(
-                    "completed", entry["signature"], entry["generation"],
+                    "completed",
                     current_signature=entry["signature"], successful=False,
                     error=str(error),
                 ))
@@ -368,7 +363,7 @@ class BakeManager:
         if isinstance(result, CancelledError):
             effects = self._event(entry, bake_policy.Event(
                 "cancelled" if entry["state"].phase == "cancelling" else "completed",
-                entry["signature"], entry["generation"], error=str(result),
+                error=str(result),
             ))
             if effects.action == "retire":
                 self._retire(entry)
@@ -376,7 +371,7 @@ class BakeManager:
         if isinstance(result, BaseException):
             signature = self._resolve_signature(entry)
             effects = self._event(entry, bake_policy.Event(
-                "completed", entry["signature"], entry["generation"],
+                "completed",
                 current_signature=signature, successful=False, error=str(result),
             ))
             if effects.action == "retire":
@@ -388,11 +383,10 @@ class BakeManager:
         receipt_matches = (
             isinstance(result, dict)
             and result.get("signature") == entry["signature"]
-            and result.get("generation") == entry["generation"]
         )
         signature = self._resolve_signature(entry)
         effects = self._event(entry, bake_policy.Event(
-            "completed", entry["signature"], entry["generation"],
+            "completed",
             current_signature=signature if receipt_matches else None,
             successful=receipt_matches,
             error=None if receipt_matches else "Bake helper returned a mismatched receipt",
@@ -444,7 +438,7 @@ class BakeManager:
         self.backend_closed = True
         for entry in tuple(self.jobs.values()):
             effects = self._event(entry, bake_policy.Event(
-                "cancelled", entry["signature"], entry["generation"],
+                "cancelled",
             ))
             if effects.action == "retire":
                 self._retire(entry)

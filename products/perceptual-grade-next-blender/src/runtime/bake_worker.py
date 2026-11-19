@@ -945,10 +945,7 @@ def _result(pixels, inputs, target, descriptor, *, backend, device=None):
     directory = Path(inputs["artifact_dir"])
     if not directory.is_absolute() or directory.is_symlink() or not directory.is_dir():
         raise ValueError("Invalid bake artifact directory")
-    generation = inputs.get("generation", inputs.get("request_generation"))
-    if type(generation) is not int or generation < 1:
-        raise ValueError("Bake artifact requires a positive request generation")
-    path = directory / ("pg_next_bake_" + str(generation) + ".exr")
+    path = directory / "bake.exr"
     if path.is_symlink() or path.exists():
         raise ValueError("Bake artifact path must not be a symbolic link")
     if pixels.shape[1] * pixels.shape[0] * 16 > MAX_PIXEL_BYTES:
@@ -972,7 +969,6 @@ def _result(pixels, inputs, target, descriptor, *, backend, device=None):
         "signature": inputs.get("signature", target.get("signature")),
         "artifact_signature": target.get(
             "artifact_signature", target.get("source_signature", target.get("signature"))),
-        "generation": generation,
         "scene": target.get("scene"),
         "frame": int(target.get("frame", 0)),
         "frame_subframe": float(target.get("frame_subframe", target.get("subframe", 0.0))),

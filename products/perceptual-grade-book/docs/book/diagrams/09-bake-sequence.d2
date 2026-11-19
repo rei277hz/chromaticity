@@ -23,11 +23,11 @@ opt file load or undo: {
 manager -> host: "require current kernels; resolve domain/backend;\nfreeze scene, sources, and enabled Cycles GPU devices"
 manager -> freshness: "capture cheap metadata, per-ID generations,\ngraph/settings, engine, and device selection"
 freshness -> manager: "current request receipt"
-manager -> policy: "request(signature, generation, admitted)"
+manager -> policy: "request(signature)"
 policy -> manager: "enqueue; reserve this node"
 manager -> policy: "start when the helper slot is free"
 policy -> manager: "start"
-manager -> helper: "submit immutable snapshot"
+manager -> helper: "submit immutable snapshot with unique artifact directory"
 alt shader evaluator: {
   eevee_image: "EEVEE Image route" {
     helper -> helper: "render a private orthographic plane;\nreconstruct signed-HDR values from AOVs"
@@ -48,23 +48,24 @@ opt source changes or cancellation: {
   policy -> manager: "cancel; retain running ownership"
   manager -> helper: "request cancellation"
 }
-helper -> manager: "final artifact receipt, failure, or cancellation"
-manager -> policy: "completed / cancelled;\nvalidate identity and current inputs"
+helper -> manager: "final receipt for bake.exr, failure, or cancellation\ncorrelated by helper session and job ID"
+manager -> manager: "check successful receipt's request signature"
+manager -> policy: "completed(current signature) / cancelled"
 alt completion: {
   obsolete: "stale, cancelled, or failed" {
     policy -> manager: "discard / retire; no image publication"
     manager -> manager: "release files\nand reservation"
   }
   current: "successful and current" {
-    policy -> manager: "ready; retain artifact"
+    manager -> manager: "retain ready artifact"
     loop publication deferred: {
       manager -> host: "enter commit scope"
       host -> manager: "defer; retry on a later poll"
     }
     manager -> host: "enter admitted commit scope"
-    manager -> freshness: "check current cheap metadata,\ngenerations, and graph/settings digest"
+    manager -> freshness: "check current cheap metadata, dependency\ngenerations, and graph/settings digest"
     freshness -> manager: "current receipt or revocation effects"
-    manager -> policy: "publish(admitted, current signature)"
+    manager -> policy: "publish(current signature)"
     policy -> manager: "publish"
     manager -> host: "snapshot destination; upload, pack;\ncommit Image metadata and receipt"
     host -> manager: "publication receipt"

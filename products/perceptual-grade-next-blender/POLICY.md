@@ -1,10 +1,10 @@
 # Grade Policies
 
 The product-owned `policy` package owns Grade preparation scheduling, per-node
-output decisions, helper lifecycle, generated-resource retirement, image
-publication, bake scheduling, and gesture coordination. These host-free policies use the Invariant
-verifier. Packaging requires source-bound evidence for every policy module;
-proof evidence remains a build artifact outside the runtime package.
+output decisions, helper lifecycle, generated-resource retirement, parameter
+bank publication, bake scheduling, and gesture coordination. These host-free
+policies use the Invariant verifier. Packaging requires source-bound evidence
+for every policy module. Proof evidence remains a separate build artifact.
 
 Preparation stores only optional desired and running signatures. While one
 snapshot prepares, each request replaces the newest demand. Completion retires
@@ -38,13 +38,21 @@ silently retain stale output or fall back to a runtime graph emitter.
 
 Helper policy owns startup/probe admission, transport polling, shutdown
 escalation, and cleanup receipts. Cancelling the startup probe withdraws startup;
-a late successful probe cannot grant readiness. Physical process exit settles
-job outcomes before fallible cleanup, so cleanup failure cannot hide the worker
+a late successful probe cannot grant readiness. Successful probe completion
+publishes its result and enters `ready` with the work slot idle. Ordinary work
+is submitted afterward. Physical process exit settles job outcomes before
+fallible cleanup, so cleanup failure cannot hide the worker
 error. An incompletely cleaned helper remains owned until an explicit close
 retry succeeds. Queue ordering, payload transfer, and joins retain their existing
 adapter contracts and are not certified by this process-lifecycle proof.
-Helper effects are named scalar authorizations. The runtime translates them
-into the established command order, which runtime tests cover.
+Protocol version 2 and the session field are shared by the host and worker.
+Every frame carries the helper owner's session UUID; the initial worker hello
+also carries the protocol version and a random token checked by the host. Work
+receipts carry a numeric job ID. The reducer correlates those IDs with its
+separate startup probe and active-work identities, while timeout receipts must
+match the current deadline stage. Helper effects are named scalar
+authorizations. The runtime translates them into the established command order,
+which runtime tests cover.
 
 Resource policy decides adoption from native observations and sequences disposal
 through subscription fencing, detachment, cache eviction, and fresh eligibility
@@ -53,26 +61,28 @@ An invalid wrapper can authorize eviction, never another native deletion. Native
 counts and host identities remain observations rather than a duplicate Python
 ownership ledger.
 
-Image publication is a synchronous transaction inside the existing publication
-gate. Snapshot, upload, packing/verification, metadata commitment, and completion
-are separate authorized effects. Upload, packing, or metadata failure restores
-the snapshot where possible and fails closed for every current source user,
-including users outside the initiating receipt. Rollback does not make stale
-output current. The delivery consumer invalidates Blender's cached image result
-after metadata commits and before reporting successful installation. Invalidation
-failure follows the same source-wide failure path; the policy's failed-delivery
-contract covers this receipt. Graph-link replacement and publication-gate
-admission retain their separate adapter contracts.
+Parameter publication stages and packs the inactive bank before selecting it.
+A damaged active bank requires a confirmed error output before repair. Delivery
+requires a successful selector readback. A selection or delivery failure restores
+the selector and fails closed for the source's current users. During file save,
+the bank policy authorizes packing dirty generated parameter images. The save
+handler verifies that Blender reports a packed file and a clean image before
+accepting a successful pack.
 
 Bake policy bounds accepted requests and authorizes enqueue, helper start,
-cancellation, publication, activation, rollback, and retirement. A signature and
-generation fence every completion; publication and activation also recheck the
-current source signature. A deferred publication retains its finished artifact
-until admission is available, while an edit discards it. The runtime serializes
-helper work and keeps snapshot files alive until physical cancellation completes.
-Publication, activation, and rollback share one gate admission. These host
-transactions and native pixel evaluation are covered by runtime and installed
-tests; the proof covers the policy's scalar authorizations.
+cancellation, publication, activation, rollback, and retirement. The accepted
+request signature remains in policy state, while later policy events are scoped
+to that request by the manager. The execution runtime correlates receipts by
+session and job ID. The manager validates the result signature before reporting
+completion. Each request writes `bake.exr` in a unique artifact directory.
+Publication and activation recheck the current source signature and freshness
+observations, including dependency generations. A deferred publication retains
+its finished artifact until admission is available, while an edit
+discards it. The runtime serializes helper work and keeps snapshot files alive
+until physical cancellation completes. Publication, activation, and rollback
+share one gate admission. Runtime and installed tests cover the host
+transactions and native pixel evaluation. The proof covers the policy's scalar
+authorizations.
 
 Baked output selection retains the Image binding when returning to live output.
 A changed source signature disables Use Bake, and a live Grade failure overrides
@@ -108,7 +118,7 @@ buck2 build //products/perceptual-grade-next-blender:verify_policies --remote-on
 buck2 test //products/perceptual-grade-next-blender/tests:policy_verification --remote-only
 buck2 test //products/perceptual-grade-next-blender/tests:policy_preparation --remote-only
 buck2 test //products/perceptual-grade-next-blender/tests:policy_node --remote-only
-buck2 test //products/perceptual-grade-next-blender/tests:policy_helper //products/perceptual-grade-next-blender/tests:policy_resources //products/perceptual-grade-next-blender/tests:policy_image_publication //products/perceptual-grade-next-blender/tests:policy_gesture --remote-only
+buck2 test //products/perceptual-grade-next-blender/tests:policy_helper //products/perceptual-grade-next-blender/tests:policy_resources //products/perceptual-grade-next-blender/tests:policy_bank_publication //products/perceptual-grade-next-blender/tests:policy_gesture --remote-only
 ```
 
 CI checks this product automatically on pushes and pull requests. Its selection

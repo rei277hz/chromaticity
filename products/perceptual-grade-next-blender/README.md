@@ -276,11 +276,6 @@ outstanding:
 buck2 test --remote-only //products/perceptual-grade-next-blender/tests:installed_motion_blur_conformance //products/perceptual-grade-next-blender/tests:installed_motion_blur_conformance_lts
 ```
 
-The publication comparison example provides F3 drag recording for comparing
-helper-image publication strategies across Shader and Compositor trees. Its
-instructions and trace target are in
-`examples/publication_compare/README.md`.
-
 The native regression pauses a real compositor worker, verifies that both banks
 and the selector stay unchanged during the lease, then checks that publication
 uses the same two image identities after the reader exits. It also verifies

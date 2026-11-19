@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from ..policy import helper as helper_policy
 from .payloads import PayloadStore
-from .transport import Channel
+from .transport import PROTOCOL, Channel
 from . import host
 
 
@@ -60,11 +60,6 @@ def _actions_for(effects):
         actions.append(_Action(
             publish_kinds[effects.publish_kind], effects.publish_id,
             effects.publish_error,
-        ))
-    if effects.probe_publish_kind is not None:
-        actions.append(_Action(
-            publish_kinds[effects.probe_publish_kind], effects.probe_publish_id,
-            effects.probe_publish_error,
         ))
     if effects.dispatch_id is not None:
         actions.append(_Action("dispatch", effects.dispatch_id))
@@ -259,9 +254,7 @@ class HelperRuntime:
         job = self._new_job("gpu_probe", {}, probe=True)
         self._probe = JobHandle(self, job)
         self._queue.append(job.identity)
-        self._transition(helper_policy.Event(
-            "launch", generation=self.state.generation + 1, job_id=job.identity,
-        ))
+        self._transition(helper_policy.Event("launch", job_id=job.identity))
         return self._probe
 
     def submit(self, operation, inputs):
@@ -272,9 +265,7 @@ class HelperRuntime:
             raise TypeError("Helper operation name must be a nonempty string")
         job = self._new_job(operation, inputs, probe=False)
         self._queue.append(job.identity)
-        self._transition(helper_policy.Event(
-            "submit", generation=self.state.generation, job_id=job.identity,
-        ))
+        self._transition(helper_policy.Event("submit", job_id=job.identity))
         return JobHandle(self, job)
 
     def join(self, handles):
@@ -289,7 +280,7 @@ class HelperRuntime:
         if job.identity != self.state.active_id and job.state != "queued":
             return False
         self._transition(helper_policy.Event(
-            "cancel", generation=self.state.generation, job_id=job.identity,
+            "cancel", job_id=job.identity,
             transport=self._transport(),
         ))
         return (job.state == "finished" or job.identity == self.state.active_id
@@ -317,7 +308,7 @@ class HelperRuntime:
                 self._launch()
             except Exception as error:
                 self._transition(helper_policy.Event(
-                    "failure", generation=self.state.generation,
+                    "failure",
                     error=f"Could not launch Blender GPU helper: {error}",
                 ))
                 if self._process is None:
@@ -342,7 +333,7 @@ class HelperRuntime:
                     getattr(self._process, action.kind)()
             except OSError as error:
                 self._transition(helper_policy.Event(
-                    "failure", generation=self.state.generation,
+                    "failure",
                     error=f"GPU helper process control failed: {error}",
                 ))
         elif action.kind == "cleanup":
@@ -350,15 +341,10 @@ class HelperRuntime:
                 self._cleanup()
             except Exception as error:
                 self._cleanup_error = error
-                self._transition(helper_policy.Event(
-                    "cleanup_result", generation=self.state.generation,
-                    error=str(error),
-                ))
+                self._transition(helper_policy.Event("cleanup_result", error=str(error)))
             else:
                 self._cleanup_error = None
-                self._transition(helper_policy.Event(
-                    "cleanup_result", generation=self.state.generation, success=True,
-                ))
+                self._transition(helper_policy.Event("cleanup_result", success=True))
         elif action.kind == "fail_queued":
             self._fail_queued(action.error)
         elif action.kind == "cancel_queued":
@@ -367,8 +353,7 @@ class HelperRuntime:
             durations = {"starting": self.startup_seconds,
                          "stopping": self.SHUTDOWN_SECONDS,
                          "terminating": 0.5, "killing": 2.0}
-            self._deadline = (self.state.generation, action.stage,
-                              time.monotonic() + durations[action.stage])
+            self._deadline = (action.stage, time.monotonic() + durations[action.stage])
         elif action.kind == "clear_deadline":
             self._deadline = None
         elif action.kind in ("accept", "pump"):
@@ -386,12 +371,12 @@ class HelperRuntime:
                         self._message(message)
             except EOFError as error:
                 self._transition(helper_policy.Event(
-                    "eof", generation=self.state.generation,
+                    "eof",
                     error=f"GPU helper protocol failed: {error}",
                 ))
             except (OSError, ValueError, KeyError, TypeError, BufferError) as error:
                 self._transition(helper_policy.Event(
-                    "failure", generation=self.state.generation,
+                    "failure",
                     error=f"GPU helper protocol failed: {error}",
                 ))
         else:
@@ -406,7 +391,6 @@ class HelperRuntime:
         self._log_path = self.directory / "helper.log"
         config = {
             "session": self.session,
-            "generation": self.state.generation,
             "role": self.role,
             "token": self.token,
             "address": self._listener.getsockname(),
@@ -442,7 +426,7 @@ class HelperRuntime:
         if job is None or job.state != "queued":
             return
         try:
-            prefix = f"{self.role}-{self.state.generation}-{identity}"
+            prefix = f"{self.role}-{identity}"
             value, files = self.payloads.encode(job.inputs, prefix=prefix)
             job.input_files = tuple(files)
             self._send({
@@ -454,23 +438,19 @@ class HelperRuntime:
             job.state = "running"
         except Exception as error:
             job.error = HelperError(f"Could not dispatch helper operation: {error}")
-            self._transition(helper_policy.Event(
-                "failure", generation=self.state.generation,
-                error=str(job.error),
-            ))
+            self._transition(helper_policy.Event("failure", error=str(job.error)))
 
     def _send(self, message):
         if self._channel is None:
             raise HelperError("GPU helper is not connected")
-        self._channel.send(dict(message, session=self.session,
-                                generation=self.state.generation))
+        self._channel.send(dict(message, session=self.session))
 
     def _send_or_fail(self, message):
         try:
             self._send(message)
         except Exception as error:
             self._transition(helper_policy.Event(
-                "failure", generation=self.state.generation,
+                "failure",
                 error=f"Could not communicate with Blender GPU helper: {error}",
             ))
 
@@ -491,7 +471,7 @@ class HelperRuntime:
     def _process_observation(self, kind):
         code = self._process.poll() if self._process is not None else None
         return helper_policy.Event(
-            kind, generation=self.state.generation,
+            kind,
             transport=self._transport(),
             process_alive=self._process is not None and code is None,
             exit_code=code,
@@ -505,25 +485,20 @@ class HelperRuntime:
         if self._process is not None and self._process.poll() is not None:
             self._process_exited()
         if self._deadline is not None:
-            generation, stage, deadline = self._deadline
+            stage, deadline = self._deadline
             if time.monotonic() >= deadline:
-                self._transition(helper_policy.Event(
-                    "timeout", generation=generation, stage=stage,
-                ))
+                self._transition(helper_policy.Event("timeout", stage=stage))
         return self.gpu_ready
 
     def _message(self, message):
-        if (message.get("session") != self.session
-                or message.get("generation") != self.state.generation):
+        if message.get("session") != self.session:
             self._release_message(message)
             return
         kind = message.get("kind")
         if kind == "hello":
-            if message.get("protocol") != 1 or message.get("token") != self.token:
+            if message.get("protocol") != PROTOCOL or message.get("token") != self.token:
                 raise ValueError("GPU helper handshake mismatch")
-            self._transition(helper_policy.Event(
-                "hello", generation=self.state.generation,
-            ))
+            self._transition(helper_policy.Event("hello"))
             return
 
         identity = message.get("job")
@@ -536,9 +511,7 @@ class HelperRuntime:
         if kind == "preview":
             job.pending_preview = self.payloads.decode(message["value"], copy=True)
             job.pending_files = files
-            self._transition(helper_policy.Event(
-                "preview", generation=self.state.generation, job_id=identity,
-            ))
+            self._transition(helper_policy.Event("preview", job_id=identity))
         elif kind == "complete":
             value = self.payloads.decode(message["value"], copy=True)
             job.pending_value = value
@@ -547,28 +520,23 @@ class HelperRuntime:
                 expected_backend = {"NODE_TREE"} if self.role == "bake" else {"GPU"}
                 valid = (isinstance(value, dict) and value.get("conformance") is True
                          and value.get("backend") in expected_backend)
-                next_id = self._next_queued() if valid else None
                 self._transition(helper_policy.Event(
-                    "probe_result", generation=self.state.generation,
+                    "probe_result",
                     job_id=identity, success=valid,
                     error=None if valid else "Helper probe failed conformance",
-                    next_id=next_id,
                 ))
             else:
                 next_id = self._next_queued()
-                self._transition(helper_policy.Event(
-                    "result", generation=self.state.generation,
-                    job_id=identity, next_id=next_id,
-                ))
+                self._transition(helper_policy.Event("result", job_id=identity, next_id=next_id))
         elif kind == "cancelled":
             next_id = self._next_queued()
             self._transition(helper_policy.Event(
-                "cancelled", generation=self.state.generation,
-                job_id=identity, next_id=next_id, transport=self._transport(),
+                "cancelled", job_id=identity, next_id=next_id,
+                transport=self._transport(),
             ))
         elif kind == "failed":
             self._transition(helper_policy.Event(
-                "failure", generation=self.state.generation,
+                "failure",
                 error=message.get("error", "GPU helper operation failed"),
             ))
         else:

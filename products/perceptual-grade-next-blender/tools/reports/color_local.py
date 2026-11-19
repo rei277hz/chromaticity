@@ -36,8 +36,11 @@ def stage_builder(prepared, tree_type, *, isolated=False, stage='color', local=F
                   graph.sqrt(graph.madd(a, a, graph.mul(b, b))))
         magnitude = (graph._color_magnitude(energy, chroma) if local else
                      graph.sqrt(graph.madd(66., chroma, graph.abs(energy))))
+        # The isolated image carries rounded signed energy independently of H;
+        # reconstructing J_A from H/chroma would lose small nonzero values.
+        ja = graph.mul(graph.sign(energy), graph.sqrt(graph.abs(energy)))
         appearance = SimpleNamespace(graph=graph, H=h, a=a, b=b, energy=energy,
-                                     chroma=chroma, magnitude=magnitude)
+                                     chroma=chroma, magnitude=magnitude, J_A=ja)
     else:
         appearance = graph.tone(graph.encode_cones(
             graph.matrix(source.outputs['Color'], prepared.linear_to_cones)))

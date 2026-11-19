@@ -55,7 +55,6 @@ source_tree(
         "tools/generate_node_templates.py",
         "tools/handbook_audit.py",
         "tools/template_build/**/*.py",
-        "examples/publication_compare/**/*.py",
         "README.md",
         "BUCK",
         "requirements/*.inv",
@@ -183,8 +182,6 @@ python_library(
         "lut_worker.py": PREFIX + "lut_worker.py",
         "runtime/__init__.py": PREFIX + "runtime/__init__.py",
         "runtime/grade_preparation.py": PREFIX + "runtime/grade_preparation.py",
-        "policy/__init__.py": PREFIX + "policy/__init__.py",
-        "policy/preparation_join.py": PREFIX + "policy/preparation_join.py",
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
@@ -284,23 +281,23 @@ export_file(
 invariant_proof(
     name = "proof_bake",
     required_mutations = [
-        "accept_start_from_another_generation",
-        "publish_stale_capture",
+        "skip_current_signature_check",
         "keep_stale_bake_selected",
         "allow_stale_toggle",
     ],
     required_properties = [
-        "request_requires_admission_and_valid_identity",
+        "request_requires_valid_signature",
         "queue_is_bounded_and_serial_per_node",
-        "start_requires_exact_request_generation",
-        "completion_requires_exact_identity_and_current_signature",
-        "publication_requires_admission_and_current_signature",
+        "start_requires_queued_phase",
+        "completion_requires_current_signature",
+        "publication_requires_current_signature",
         "publication_failure_authorizes_rollback",
         "activation_failure_authorizes_rollback",
         "input_change_cancels_running_request",
         "input_change_discards_queued_result",
         "terminal_receipts_are_inert",
         "stale_bake_automatically_uses_live_output",
+        "source_invalidation_overrides_matching_signature",
         "toggle_requires_current_receipt_and_valid_artifact",
         "stale_disabled_bake_revokes_receipt",
         "matching_disabled_bake_retains_receipt",
@@ -322,17 +319,18 @@ invariant_proof(
     name = "proof_render_preflight",
     required_mutations = [
         "release_accepts_unpublished_signature",
-        "stale_generation_is_accepted",
+        "release_accepts_changed_scene_time",
     ],
     required_properties = [
         "release_requires_correlated_exact_publication",
-        "stale_generation_cannot_release_or_fail_current_ticket",
-        "frame_or_scene_mismatch_fails_closed",
+        "missing_or_changed_scene_time_fails_closed",
         "publication_mismatch_fails_closed",
+        "failure_event_fails_closed",
+        "terminal_receipts_are_inert",
     ],
     required_witnesses = [
         "matching_frame_releases_after_exact_publication",
-        "late_previous_frame_result_cannot_release_new_frame",
+        "previous_frame_observation_fails_closed",
     ],
     requirements = ":render_preflight_requirements",
     runtime_source = "policy/render_preflight.py",
@@ -404,35 +402,6 @@ invariant_proof(
     visibility = ["PUBLIC"],
 )
 
-export_file(
-    name = "preparation_join_source",
-    src = POLICY_PREFIX + "preparation_join.py",
-    visibility = ["PUBLIC"],
-)
-
-export_file(
-    name = "preparation_join_requirements",
-    src = "requirements/preparation_join.inv",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "proof_preparation_join",
-    required_properties = [
-        "first_completion_does_not_authorize_aggregate",
-        "any_completion_order_joins_after_all_three",
-        "child_error_is_retained_until_last_retirement",
-        "stale_and_duplicate_completions_are_ignored",
-    ],
-    required_witnesses = [
-        "error_waits_for_every_component",
-    ],
-    requirements = ":preparation_join_requirements",
-    runtime_source = "policy/preparation_join.py",
-    source = ":preparation_join_source",
-    visibility = ["PUBLIC"],
-)
-
 invariant_proof(
     name = "proof_helper",
     required_mutations = [
@@ -445,7 +414,7 @@ invariant_proof(
         "cancelled_probe_withdraws_startup",
         "cancel_before_hello_waits_for_exit",
         "late_probe_success_cannot_revive_cancelled_helper",
-        "stale_generation_is_ignored",
+        "stale_job_receipt_is_ignored",
         "terminal_poll_never_touches_transport",
         "shutdown_does_not_cleanup_live_process",
         "exit_authorizes_failure_and_cleanup",
@@ -460,7 +429,7 @@ invariant_proof(
         "duplicate_exit_does_not_republish",
         "repeated_shutdown_preserves_stage_deadline",
         "first_causal_error_is_preserved",
-        "successful_probe_admits_work",
+        "successful_probe_admits_work_with_idle_slot",
         "cancelled_startup_exit_publishes_cancellation",
         "startup_exit_publishes_probe_failure",
     ],
@@ -495,36 +464,6 @@ invariant_proof(
     requirements = "requirements/resources.inv",
     runtime_source = "policy/resources.py",
     source = POLICY_PREFIX + "resources.py",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
-    name = "proof_image_publication",
-    required_mutations = [
-        "matching_image_skips_clean_packing",
-        "failed_upload_continues_publication",
-        "failed_delivery_reports_success",
-        "save_packing_includes_user_images",
-    ],
-    required_properties = [
-        "metadata_commit_requires_clean_image",
-        "failed_upload_enters_restoration",
-        "failed_transaction_never_delivers",
-        "restored_metadata_requires_clean_packing",
-        "restoration_failure_still_fails_source",
-        "metadata_failure_restores_shared_image",
-        "failed_delivery_fails_source",
-        "terminal_receipts_are_inert",
-        "save_packing_only_repairs_dirty_generated_images",
-        "save_packing_requires_clean_receipt",
-    ],
-    required_witnesses = [
-        "clean_publication_delivers",
-        "restored_image_still_fails_source",
-    ],
-    requirements = "requirements/image_publication.inv",
-    runtime_source = "policy/image_publication.py",
-    source = POLICY_PREFIX + "image_publication.py",
     visibility = ["PUBLIC"],
 )
 
@@ -569,32 +508,6 @@ invariant_proof(
 )
 
 invariant_proof(
-    name = "proof_compositor_publication",
-    required_mutations = [
-        "cancel_cannot_release_protection",
-        "unrelated_scene_cannot_release_protection",
-        "original_epoch_cannot_release_protection",
-        "host_eligibility_is_required",
-    ],
-    required_properties = [
-        "admission_requires_unprotected_observed_snapshot",
-        "admission_does_not_consume_progress_allowance",
-        "admitted_supersession_protects_scene_and_epoch",
-        "protected_successor_cannot_be_superseded",
-        "cancelled_or_unrelated_completion_preserves_protection",
-        "later_successful_same_scene_releases_protection",
-        "reset_requires_quiescence",
-    ],
-    required_witnesses = [
-        "cancelled_evaluation_protects_successor_until_completion",
-    ],
-    requirements = "requirements/compositor_publication.inv",
-    runtime_source = "policy/compositor_publication.py",
-    source = POLICY_PREFIX + "compositor_publication.py",
-    visibility = ["PUBLIC"],
-)
-
-invariant_proof(
     name = "proof_bank_publication",
     required_mutations = [
         "active_bank_can_be_staged",
@@ -604,6 +517,8 @@ invariant_proof(
         "dirty_candidate_can_be_selected",
         "selector_readback_is_ignored",
         "failed_delivery_is_accepted",
+        "exhausted_closure_can_retry",
+        "save_packing_includes_user_images",
     ],
     required_properties = [
         "staging_uses_a_valid_inactive_bank",
@@ -617,8 +532,12 @@ invariant_proof(
         "selector_failure_restores_original_bank_before_fail_closed",
         "selector_restore_always_fails_closed",
         "failed_closed_gate_retains_its_retry_effect",
+        "closure_retry_exhaustion_is_indeterminate",
         "failed_staging_never_selects_or_delivers",
         "failed_delivery_restores_original_selector",
+        "terminal_outcome_requires_its_receipt",
+        "save_packing_only_repairs_dirty_generated_images",
+        "save_packing_requires_clean_receipt",
         "terminal_receipts_are_inert",
     ],
     required_witnesses = [
@@ -626,6 +545,7 @@ invariant_proof(
         "dirty_stage_fails_without_selector_change",
         "unauthorized_begin_fails_without_staging",
         "damaged_active_bank_is_closed_before_repair",
+        "repair_and_final_closure_have_separate_retries",
     ],
     requirements = "requirements/bank_publication.inv",
     runtime_source = "policy/bank_publication.py",
@@ -661,13 +581,10 @@ POLICY_PROOFS = [
     ":proof_color_authoring",
     ":proof_bake",
     ":proof_bank_publication",
-    ":proof_compositor_publication",
     ":proof_node",
     ":proof_preparation",
-    ":proof_preparation_join",
     ":proof_helper",
     ":proof_resources",
-    ":proof_image_publication",
     ":proof_gesture",
     ":proof_render_preflight",
 ]
@@ -803,132 +720,6 @@ generate(
         "report": "package-report.json",
     },
     tool = ":package",
-    visibility = ["PUBLIC"],
-)
-
-python_library(
-    name = "publication_compare_policy_runtime",
-    srcs = {
-        "__init__.py": "examples/publication_compare/policy/__init__.py",
-        "parameter_publication.py": "examples/publication_compare/policy/parameter_publication.py",
-    },
-    base_module = "policy",
-)
-
-python_test(
-    name = "publication_compare_parameter_policy",
-    srcs = {
-        "test_policy_parameter_publication.py": "examples/publication_compare/tests/test_policy_parameter_publication.py",
-    },
-    base_module = "tests.publication_compare",
-    deps = [":publication_compare_policy_runtime"],
-)
-
-invariant_proof(
-    name = "proof_publication_compare_parameter_publication",
-    required_mutations = [
-        "allocation_ignores_pool_bound",
-        "exposed_candidate_is_overwritten",
-        "active_reader_does_not_block_retirement",
-        "dirty_candidate_is_published",
-        "failed_delivery_skips_restoration",
-    ],
-    required_properties = [
-        "allocation_keeps_three_version_bound",
-        "only_unexposed_candidates_can_be_reused",
-        "retirement_requires_quiescence_and_no_users",
-        "current_and_candidate_versions_remain_pinned",
-        "snapshot_requires_completely_packed_candidate",
-        "binding_requires_snapshot_receipt",
-        "publication_requires_committed_bindings",
-        "partial_transaction_failure_restores_bindings",
-        "restoration_failures_still_attempt_every_component",
-        "failed_transaction_never_delivers",
-        "terminal_receipts_are_inert",
-    ],
-    required_witnesses = [
-        "packed_candidate_can_publish_and_deliver",
-        "delivery_failure_restores_then_fails_closed",
-        "quiescent_unreferenced_version_can_retire",
-    ],
-    requirements = "examples/publication_compare/requirements/parameter_publication.inv",
-    runtime_source = "policy/parameter_publication.py",
-    source = "examples/publication_compare/policy/parameter_publication.py",
-)
-
-invariant_bundle(
-    name = "publication_compare_policy_evidence",
-    deps = [
-        ":proof_bank_publication",
-        ":proof_compositor_publication",
-        ":proof_image_publication",
-        ":proof_publication_compare_parameter_publication",
-    ],
-)
-
-extension_tree(
-    name = "publication_compare_tree",
-    entrypoints = {
-        "__init__.py": "examples/publication_compare/__init__.py",
-        "nodes.py": "examples/publication_compare/nodes.py",
-        "blender_manifest.toml": "examples/publication_compare/blender_manifest.toml",
-        "README.md": "examples/publication_compare/README.md",
-        "LICENSE": "LICENSE",
-        "policy/__init__.py": "examples/publication_compare/policy/__init__.py",
-        "policy/compositor_publication.py": POLICY_PREFIX + "compositor_publication.py",
-        "policy/image_publication.py": POLICY_PREFIX + "image_publication.py",
-        "policy/parameter_publication.py": "examples/publication_compare/policy/parameter_publication.py",
-        "policy/bank_publication.py": POLICY_PREFIX + "bank_publication.py",
-        "runtime/__init__.py": "examples/publication_compare/runtime/__init__.py",
-        "runtime/compositor_receipts.py": RUNTIME_PREFIX + "compositor_receipts.py",
-        "runtime/drag_trace.py": "examples/publication_compare/runtime/drag_trace.py",
-        "runtime/image_publication.py": RUNTIME_PREFIX + "image_publication.py",
-        "runtime/parameter_publication.py": "examples/publication_compare/runtime/parameter_publication.py",
-        "runtime/bank_publication.py": RUNTIME_PREFIX + "bank_publication.py",
-        "runtime/publication_compare_diagnostics.py": "examples/publication_compare/runtime/publication_compare_diagnostics.py",
-        "runtime/publication.py": RUNTIME_PREFIX + "publication.py",
-    },
-    visibility = ["PUBLIC"],
-    deps = [],
-)
-
-python_library(
-    name = "publication_compare_packager_sources",
-    srcs = {
-        "publication_compare_package.py": "examples/publication_compare/tools/package_publication_compare.py",
-    },
-    base_module = "product_build",
-    visibility = ["PUBLIC"],
-    deps = ["//tools/verification:packaging"],
-)
-
-python_binary(
-    name = "publication_compare_package",
-    main_module = "product_build.publication_compare_package",
-    deps = [":publication_compare_packager_sources"],
-)
-
-export_file(
-    name = "publication_compare_inventory",
-    src = "examples/publication_compare/package_inventory.json",
-    visibility = ["PUBLIC"],
-)
-
-generate(
-    name = "publication_compare_extension",
-    args = [
-        "--tree",
-        "$(location :publication_compare_tree)",
-        "--inventory",
-        "$(location :publication_compare_inventory)",
-        "--proofs",
-        "$(location :publication_compare_policy_evidence)",
-    ],
-    outputs = {
-        "zip": "grade_publication_compare.zip",
-        "report": "package-report.json",
-    },
-    tool = ":publication_compare_package",
     visibility = ["PUBLIC"],
 )
 

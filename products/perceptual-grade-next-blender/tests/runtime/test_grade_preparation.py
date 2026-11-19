@@ -102,17 +102,28 @@ class GradePreparationTests(unittest.IsolatedAsyncioTestCase):
                             self.module.preparation_signature(replace(
                                 settings, tone=replace(settings.tone, fit=1.0))))
 
-    async def test_failed_child_waits_for_sibling_retirement(self):
+    async def test_first_worker_failure_waits_for_sibling_retirement(self):
         failed = asyncio.Event()
-        preparer = self.preparer(on_timing=lambda _sig, name, _a, _b:
-                                failed.set() if name == "tone" else None)
+        timings = []
+
+        def record_timing(_signature, name, _started, _finished):
+            timings.append(name)
+            if name == "tone":
+                failed.set()
+
+        preparer = self.preparer(on_timing=record_timing)
+        tone_error = ValueError("tone failed")
         release = threading.Event()
         self.addCleanup(release.set)
         linear_started, boundary_started = threading.Event(), threading.Event()
+
+        def fail_linear(*_args):
+            raise ValueError("linear failed later")
+
         with (
-            patch.object(self.module, "prepare_tone", side_effect=ValueError("tone failed")),
+            patch.object(self.module, "prepare_tone", side_effect=tone_error),
             patch.object(self.module, "prepare_linear", self.blocked(
-                self.module.prepare_linear, linear_started, release)),
+                fail_linear, linear_started, release)),
             patch.object(self.module, "prepare_boundary", self.blocked(
                 self.module.prepare_boundary, boundary_started, release)),
         ):
@@ -120,9 +131,12 @@ class GradePreparationTests(unittest.IsolatedAsyncioTestCase):
             await self.wait_started(linear_started, boundary_started)
             await asyncio.wait_for(failed.wait(), 10)
             self.assertFalse(task.done())
+            self.assertEqual(timings, ["tone"])
             release.set()
-            with self.assertRaisesRegex(ValueError, "tone failed"):
+            with self.assertRaises(ValueError) as failure:
                 await task
+        self.assertIs(failure.exception, tone_error)
+        self.assertEqual(timings[-1], "join")
 
     async def test_cancellation_waits_for_physical_retirement(self):
         preparer = self.preparer()

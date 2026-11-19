@@ -9,53 +9,14 @@ from types import SimpleNamespace
 import unittest
 import zipfile
 
-import numpy as np
-
-
-class Pixels:
-    def __init__(self, values):
-        self.values = np.asarray(values, dtype=np.float32)
-
-    def __len__(self):
-        return len(self.values)
-
-    def foreach_get(self, target):
-        target[:] = self.values
-
-    def foreach_set(self, values):
-        self.values[:] = values
-
-
-class Image(dict):
+class Image:
     def __init__(self):
-        super().__init__(signature="old")
-        self.pixels = Pixels((0.1, 0.2, 0.3, 1.0))
         self.packed_file = object()
         self.is_dirty = False
-        self.tags = []
-        self.tag_error = None
-
-    def update(self):
-        self.is_dirty = True
 
     def pack(self):
         self.is_dirty = False
         self.packed_file = object()
-
-    def update_tag(self):
-        self.tags.append((self.get("signature"), self.is_dirty))
-        if self.tag_error is not None:
-            raise self.tag_error
-
-
-class Metadata(dict):
-    fail_key = None
-
-    def __setitem__(self, key, value):
-        if self.fail_key == key:
-            self.fail_key = None
-            raise RuntimeError("second tree metadata failed")
-        super().__setitem__(key, value)
 
 
 class GradeTransactionTests(unittest.TestCase):
@@ -219,169 +180,16 @@ class GradeTransactionTests(unittest.TestCase):
             self.publication.pack_image_for_save(image, generated=True, pack=fail)
         self.assertIs(raised.exception, failure)
 
-    def publish(self, *, failure=None, rollback_failure=None, matching=False,
-                clean=True, second_tree_failure=False, silent_pack=False,
-                tag_failure=False):
+    def test_save_fallback_rejects_clean_image_without_packed_file(self):
         image = Image()
-        image.is_dirty = not clean
-        if tag_failure:
-            image.tag_error = RuntimeError("image invalidation failed")
-        old_pixels = image.pixels.values.copy()
-        trees = [Metadata(kernel="old-shader"), Metadata(kernel="old-compositor")]
-        if second_tree_failure:
-            trees[1].fail_key = "kernel"
-        if matching:
-            image["signature"] = "new"
-        metadata = ((image, "signature", "new"),
-                    (trees[0], "kernel", "new-shader"), (trees[0], "signature", "new"),
-                    (trees[1], "kernel", "new-compositor"), (trees[1], "signature", "new"))
-        calls, failed_users, delivered = [], [], []
-        snapshots = []
+        image.is_dirty = True
+        image.packed_file = None
 
-        def snapshot():
-            snapshots.append(self.publication.ImageSnapshot.capture(image, metadata))
-            return {"matching": matching, "clean": not image.is_dirty}
+        def clear_dirty_only(target):
+            target.is_dirty = False
 
-        def upload():
-            image.pixels.foreach_set((0.9, 0.8, 0.7, 1.0))
-            image.update()
-
-        def restore_upload():
-            image.pixels.foreach_set(snapshots[0].pixels)
-            image.update()
-
-        def pack():
-            image.pack()
-            return {"clean": not image.is_dirty}
-
-        def deliver():
-            image.update_tag()
-            self.assertEqual(image.tags, [("new", False)])
-            self.assertEqual(trees[1]["kernel"], "new-compositor")
-            delivered.append("authorized")
-
-        def operation(name, function):
-            def invoke(errors):
-                calls.append(name)
-                if name in (failure, rollback_failure):
-                    if name == "upload":
-                        upload()  # A native write may fail after changing bytes.
-                    raise RuntimeError(name + " failed")
-                if name == "pack" and silent_pack:
-                    return {"clean": False}
-                if name == "fail":
-                    self.assertTrue(errors)
-                return function()
-            return invoke
-
-        callbacks = {
-            "prepare": lambda: None, "snapshot": snapshot, "upload": upload, "pack": pack,
-            "commit": lambda: self.publication.write_metadata(metadata),
-            "restore_upload": restore_upload, "restore_pack": pack,
-            "restore_metadata": lambda: self.publication.write_metadata(snapshots[0].metadata),
-            "deliver": deliver,
-            "fail": lambda: failed_users.extend(("authorized", "shared", "lagging")),
-            "retire": lambda: None,
-        }
-        errors = self.publication.run_image_publication(
-            {name: operation(name, function) for name, function in callbacks.items()})
-        return calls, image, old_pixels, trees, failed_users, delivered, errors
-
-    def test_publication_consumer_commits_only_after_clean_packing(self):
-        calls, image, _old, trees, failed, delivered, errors = self.publish()
-        self.assertEqual(calls, ["prepare", "snapshot", "upload", "pack", "commit", "deliver", "retire"])
-        self.assertFalse(image.is_dirty)
-        self.assertEqual(image["signature"], "new")
-        self.assertEqual(trees[1]["kernel"], "new-compositor")
-        self.assertFalse(failed)
-        self.assertTrue(delivered)
-        self.assertFalse(errors)
-        self.assertEqual(image.tags, [("new", False)])
-
-    def test_image_invalidation_failure_fails_source_without_delivery_receipt(self):
-        calls, image, _old, _trees, failed, delivered, errors = self.publish(tag_failure=True)
-        self.assertEqual(calls, ["prepare", "snapshot", "upload", "pack", "commit",
-                                 "deliver", "fail", "retire"])
-        self.assertEqual(image.tags, [("new", False)])
-        self.assertFalse(delivered)
-        self.assertEqual(failed, ["authorized", "shared", "lagging"])
-        self.assertEqual([str(error) for error in errors], ["image invalidation failed"])
-
-    def test_clean_matching_fast_path_skips_upload_and_pack(self):
-        calls, _image, _old, _trees, _failed, delivered, errors = self.publish(matching=True)
-        self.assertEqual(calls, ["prepare", "snapshot", "commit", "deliver", "retire"])
-        self.assertTrue(delivered)
-        self.assertFalse(errors)
-        dirty = self.publish(matching=True, clean=False)
-        self.assertIn("upload", dirty[0])
-        self.assertIn("pack", dirty[0])
-
-    def test_mutation_failures_restore_image_and_fail_all_source_users(self):
-        for failure in ("upload", "pack", "commit"):
-            with self.subTest(failure=failure):
-                calls, image, old, trees, failed, delivered, errors = self.publish(failure=failure)
-                np.testing.assert_array_equal(image.pixels.values, old)
-                self.assertEqual(image["signature"], "old")
-                self.assertEqual(trees, [{"kernel": "old-shader"}, {"kernel": "old-compositor"}])
-                self.assertFalse(image.is_dirty)
-                self.assertEqual(failed, ["authorized", "shared", "lagging"])
-                self.assertFalse(delivered)
-                self.assertEqual(str(errors[0]), failure + " failed")
-                self.assertEqual(calls[-5:], ["restore_upload", "restore_pack", "restore_metadata", "fail", "retire"])
-
-    def test_second_tree_metadata_failure_restores_partial_commit(self):
-        calls, image, old, trees, failed, delivered, errors = self.publish(second_tree_failure=True)
-        np.testing.assert_array_equal(image.pixels.values, old)
-        self.assertEqual(image["signature"], "old")
-        self.assertEqual(trees, [{"kernel": "old-shader"}, {"kernel": "old-compositor"}])
-        self.assertFalse(image.is_dirty)
-        self.assertEqual(str(errors[0]), "second tree metadata failed")
-        self.assertEqual(failed, ["authorized", "shared", "lagging"])
-        self.assertFalse(delivered)
-        self.assertEqual(calls[-1], "retire")
-
-    def test_failed_restoration_preserves_error_and_still_fails_source(self):
-        for rollback in ("restore_upload", "restore_pack", "restore_metadata"):
-            with self.subTest(rollback=rollback):
-                calls, _image, _old, _trees, failed, delivered, errors = self.publish(
-                    failure="upload", rollback_failure=rollback)
-                self.assertEqual([str(error) for error in errors], ["upload failed", rollback + " failed"])
-                self.assertEqual(failed, ["authorized", "shared", "lagging"])
-                self.assertFalse(delivered)
-                self.assertEqual(calls[-2:], ["fail", "retire"])
-                if rollback != "restore_metadata":
-                    self.assertNotIn("restore_metadata", calls)
-
-    def test_silent_pack_failure_restores_and_fails_without_commit(self):
-        calls, image, old, _trees, failed, delivered, errors = self.publish(silent_pack=True)
-        self.assertNotIn("commit", calls)
-        self.assertFalse(delivered)
-        self.assertTrue(failed)
-        self.assertIn("could not be packed", str(errors[0]))
-        np.testing.assert_array_equal(image.pixels.values, old)
-        self.assertFalse(image.is_dirty)
-
-    def test_preparation_snapshot_and_failure_handler_failures_still_retire(self):
-        for failure in ("prepare", "snapshot"):
-            calls, _image, _old, _trees, failed, delivered, errors = self.publish(failure=failure)
-            self.assertNotIn("upload", calls)
-            self.assertNotIn("restore_upload", calls)
-            self.assertTrue(failed)
-            self.assertFalse(delivered)
-            self.assertEqual(str(errors[0]), failure + " failed")
-        calls, _image, _old, _trees, _failed, _delivered, errors = self.publish(
-            failure="upload", rollback_failure="fail")
-        self.assertEqual(calls[-1], "retire")
-        self.assertEqual([str(error) for error in errors], ["upload failed", "fail failed"])
-
-    def test_retirement_failure_is_returned_after_success_or_prior_failure(self):
-        success = self.publish(failure="retire")
-        self.assertTrue(success[5])
-        self.assertEqual([str(error) for error in success[6]], ["retire failed"])
-        failed = self.publish(failure="upload", rollback_failure="retire")
-        self.assertFalse(failed[5])
-        self.assertEqual(failed[4], ["authorized", "shared", "lagging"])
-        self.assertEqual([str(error) for error in failed[6]], ["upload failed", "retire failed"])
+        with self.assertRaisesRegex(RuntimeError, "could not be packed"):
+            self.publication.pack_image_for_save(image, generated=True, pack=clear_dirty_only)
 
 
 if __name__ == "__main__":

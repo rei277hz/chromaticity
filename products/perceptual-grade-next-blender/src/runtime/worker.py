@@ -9,17 +9,13 @@ import threading
 import traceback
 
 from .payloads import PayloadStore
-from .transport import frame, receive
+from .transport import PROTOCOL, frame, receive
 from .host import configure_helper
-
-
-PROTOCOL = 1
 
 
 class WorkerContext:
     def __init__(self, config, job, cancelled, send, payloads):
         self.role = config["role"]
-        self.generation = config["generation"]
         self.session = config["session"]
         self.job = job
         self._cancelled = cancelled
@@ -32,7 +28,7 @@ class WorkerContext:
 
     def preview(self, value):
         self.checkpoint()
-        prefix = f"{self.role}-{self.generation}-{self.job['job']}"
+        prefix = f"{self.role}-{self.job['job']}"
         encoded, files = self._payloads.encode(value, prefix=prefix)
         try:
             self._send(dict(kind="preview", job=self.job["job"], value=encoded,
@@ -55,7 +51,7 @@ def run(config, namespace):
     send_lock = threading.Lock()
 
     def send(message):
-        message.update(session=config["session"], generation=config["generation"])
+        message["session"] = config["session"]
         with send_lock:
             sock.sendall(frame(message))
 
@@ -71,8 +67,7 @@ def run(config, namespace):
         try:
             while True:
                 message = receive(sock)
-                if (message.get("session") != config["session"]
-                        or message.get("generation") != config["generation"]):
+                if message.get("session") != config["session"]:
                     raise ValueError("Helper control identity mismatch")
                 if message["kind"] == "cancel":
                     identity = message["job"]
@@ -108,7 +103,7 @@ def run(config, namespace):
                 if identity in cancelled_jobs or stopping.is_set():
                     cancelled.set()
             context = WorkerContext(config, message, cancelled, send, payloads)
-            prefix = f"{config['role']}-{config['generation']}-{identity}"
+            prefix = f"{config['role']}-{identity}"
             try:
                 inputs = payloads.decode(message["inputs"], copy=True)
                 context.checkpoint()

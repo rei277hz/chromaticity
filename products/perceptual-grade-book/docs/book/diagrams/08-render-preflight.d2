@@ -1,5 +1,5 @@
 direction: down
-waiting: "waiting"
+waiting: "waiting\n(scene, frame, subframe)"
 released: "released" {
   style.double-border: true
 }
@@ -7,9 +7,8 @@ failed: "failed" {
   style.double-border: true
 }
 
-waiting -> released: "match\n/ release"
-waiting -> failed: "failure or\nmismatch\n/ fail"
-waiting -> waiting: "stale generation"
+waiting -> released: "Exact match / release"
+waiting -> failed: "Mismatch or error / fail"
 
 **.style.font-size: 32
 (** -> **)[*].style.font-size: 24

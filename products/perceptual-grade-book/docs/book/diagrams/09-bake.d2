@@ -11,16 +11,15 @@ terminal: "terminal" {
   style.double-border: true
 }
 
-idle -> queued: "request\n[admitted, valid identity]\n/ enqueue"
-queued -> running: "start [admitted]\n/ start"
+idle -> queued: "request\n[valid signature]\n/ enqueue"
+queued -> running: "start\n/ start"
 queued -> terminal: "invalidate [changed]; close\n/ discard"
 running -> ready: "completed\n[success, current]"
 running -> terminal: "completed [stale success] / discard;\ncompleted [failed] / retire"
 running -> cancelling: "invalidate [changed]; close\n/ cancel"
 cancelling -> terminal: "cancelled / retire;\ncompleted / discard"
-ready -> ready: "publish [denied]"
-ready -> terminal: "invalidate [changed]; close;\npublish [admitted, stale]\n/ discard"
-ready -> publishing: "publish\n[admitted, current]\n/ publish"
+ready -> terminal: "invalidate [changed]; close;\npublish [stale]\n/ discard"
+ready -> publishing: "publish\n[current]\n/ publish"
 publishing -> activating: "published\n[success, current]\n/ activate"
 publishing -> terminal: "published [failed or stale]\n/ rollback"
 activating -> terminal: "activated [success, current] / retire;\nactivated [failed or stale] / rollback"

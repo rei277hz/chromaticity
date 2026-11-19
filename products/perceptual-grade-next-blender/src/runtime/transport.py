@@ -5,6 +5,7 @@ import socket
 import struct
 
 
+PROTOCOL = 2
 MAX_FRAME = 4 * 1024 * 1024
 
 

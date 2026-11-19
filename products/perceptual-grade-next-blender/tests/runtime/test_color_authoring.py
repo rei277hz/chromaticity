@@ -59,6 +59,14 @@ class ColorAuthoringTests(unittest.TestCase):
         self.edit(0, 130.)
         self.assertEqual(self.claims[0][1], baseline)
 
+    def test_capture_uses_owner_from_policy_result(self):
+        claims = [list(row) for row in self.claims]
+        event = authoring.ownership.Event("push", 0)
+        decision = authoring.ownership.State(3), authoring.ownership.Effects("capture")
+        with patch.object(authoring.ownership, "step", return_value=decision):
+            authoring._claim_event(claims, 0, 1, event, offset=12.)
+        self.assertEqual(claims[0][1], authoring.Claim(3, 12.))
+
     def test_same_value_is_idempotent(self):
         self.edit(0, 130.)
         effects = self.edit(0, 130.)

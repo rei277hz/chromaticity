@@ -4,17 +4,17 @@ consumer: "Publication consumer"
 policy: "Bank policy"
 blender: "Blender role banks / nodes"
 
-consumer -> policy: "begin(admitted, active, candidate)"
-opt active bank invalid: {
+consumer -> policy: "begin(admitted, active)"
+loop invalid active bank requires closure: {
   policy -> consumer: "fail_closed(active)"
   consumer -> blender: "close output; preserve alpha"
-  blender -> consumer: "closure confirmed"
-  consumer -> policy: "closed(failed=false)"
+  blender -> consumer: "closure receipt or error"
+  consumer -> policy: "closed(receipt)"
 }
-publication: "loop [stage or repair, select, deliver; stop on failure]" {
+publication: "loop [stage or repair, select, deliver while authorized]" {
   policy -> consumer: "action(candidate)"
   opt stage or repair: {
-    consumer -> blender: "stage five roles; reuse clean matching payloads"
+    consumer -> blender: "stage five roles; verify pixels before reuse"
     blender -> consumer: "complete bundle packing and content receipts"
   }
   opt stage needs a replacement kernel: {
@@ -39,13 +39,13 @@ opt selection or delivery failed: {
   blender -> consumer: "restoration receipt or error"
   consumer -> policy: "restored(receipt)"
 }
-closure: "loop [fail_closed returned; bounded closure attempts]" {
+closure: "loop [final closure; at most one retry]" {
   policy -> consumer: "fail_closed(active)"
   consumer -> blender: "close output; preserve alpha"
   blender -> consumer: "closure receipt or error"
-  consumer -> policy: "closed(receipt) while budget remains"
+  consumer -> policy: "closed(receipt)"
 }
-consumer -> consumer: "committed / failed_closed / indeterminate"
+policy -> consumer: "committed / failed_closed / indeterminate"
 
 **.style.font-size: 44
 (** -> **)[*].style.font-size: 44

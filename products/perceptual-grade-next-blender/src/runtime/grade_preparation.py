@@ -22,14 +22,13 @@ from ..kernel.prepare import (
 )
 from ..kernel.settings import Settings
 from ..kernel.stage2_parameters import prepare_parameters
-from ..policy import preparation_join
 
 
 PREPARATION_SCHEMA = 2
 
 
 def preparation_signature(settings: Settings) -> str:
-    """Correlate children with the complete immutable numerical input."""
+    """Identify the complete immutable numerical input."""
     if not isinstance(settings, Settings):
         raise TypeError("Grade preparation requires frozen Settings")
     encoded = json.dumps(
@@ -98,7 +97,6 @@ class GradePreparer:
         """Launch every required component before awaiting any one of them."""
         signature = preparation_signature(settings)
         started = time.perf_counter()
-        state = preparation_join.new(signature)
         loop = asyncio.get_running_loop()
         components = (
             ("linear", lambda: prepare_linear(settings.linear, settings.space)),
@@ -116,64 +114,44 @@ class GradePreparer:
         # Process receipts as each child retires. The group below retains the
         # aggregate slot until every worker has physically returned, including
         # when a child or a diagnostic callback fails.
-        values = {}
-        completion = preparation_join.Effects()
         first_error = None
         trace_error = None
 
         async def receive(name, child):
-            nonlocal state, completion, first_error, trace_error
+            nonlocal first_error, trace_error
             component, value, error, child_started, child_finished = await child
             if component != name:
                 raise RuntimeError("Preparation receipt has the wrong component")
-            state, effects = preparation_join.step(
-                state,
-                preparation_join.Event(
-                    signature, name, None if error is None else str(error)
-                ),
-            )
-            if error is None:
-                values[name] = value
-            elif first_error is None:
+            if error is not None and first_error is None:
                 first_error = error
-            if effects.completion_signature is not None:
-                completion = effects
             try:
                 self._trace(signature, name, child_started, child_finished)
             except Exception as error:
                 if trace_error is None:
                     trace_error = error
+            return value
 
         group = asyncio.gather(
             *(receive(name, child) for (name, _), child in zip(components, children)),
             return_exceptions=True,
         )
         try:
-            failures = await asyncio.shield(group)
+            results = await asyncio.shield(group)
         except asyncio.CancelledError:
             # Cancellation withdraws the caller, but cannot claim a running
             # executor function has stopped. Keep our physical retirement fence.
             await asyncio.shield(group)
             raise
-        for error in failures:
-            if isinstance(error, BaseException):
-                raise error
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
-        # Only a terminal join effect authorizes the aggregate to be assembled.
-        if completion.completion_signature != signature:
-            raise RuntimeError("Preparation join did not authorize an aggregate")
-        if completion.error is not None:
+        if first_error is not None:
             self._trace(signature, "join", started, time.perf_counter())
-            if first_error is None:
-                raise RuntimeError("Preparation join recorded an error without a cause")
             raise first_error
         if trace_error is not None:
             raise trace_error
-        if len(values) != 3:
-            raise RuntimeError("Preparation join authorized an incomplete aggregate")
-        linear, (tone, color), boundary = (
-            values[name] for name in ("linear", "tone", "boundary")
-        )
+        linear, (tone, color), boundary = results
         if (boundary.fl, boundary.aw, boundary.gamma) != (tone.fl, tone.aw, tone.gamma):
             raise ValueError("Boundary geometry belongs to a different appearance context")
         prepared = PreparedGrade(linear, tone, settings.space, color, boundary, True)

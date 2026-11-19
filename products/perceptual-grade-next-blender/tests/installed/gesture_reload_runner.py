@@ -244,10 +244,15 @@ def drag():
                 assert int(round(float(selected))) == active
                 parameter = banks[active]
                 readers = [node for node in kernel.nodes if node.get(nodes.PARAMETER_READER)]
-                mapped = {node.get(nodes.PARAMETER_READER_BANK): node.image
-                          for node in readers}
-                assert set(mapped) == {0, 1}
-                assert all(mapped[bank] == banks[bank] for bank in (0, 1))
+                expected = {(bank, role): image for bank, primary in enumerate(banks)
+                            for role, image in nodes.parameter_bank_images(primary).items()}
+                reader_roles = set()
+                for reader in readers:
+                    key = (reader[nodes.PARAMETER_READER_BANK],
+                           reader[nodes.PARAMETER_READER_ROLE])
+                    assert key in expected and reader.image == expected[key], key
+                    reader_roles.add(key)
+                assert reader_roles == expected.keys()
                 publications[observed.applied_signature] = hashlib.sha256(
                     array("f", parameter.pixels[:]).tobytes()).hexdigest()
         result = {"mode": MODES[mode_index], "lagging_publications": len(publications),

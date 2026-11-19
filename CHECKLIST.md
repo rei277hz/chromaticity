@@ -2,6 +2,22 @@
 
 Update this checklist as work progresses. Validation and formatting must remain scoped to `products/perceptual-grade-next-blender`, and executable checks must use Buck2 with `--remote-only`.
 
+## Main CI follow-up — verified
+
+Run `44146241261` on merged main `5a2cf26636c1` passed both build targets and 62/66 test targets. Three test targets failed and one handbook dependency failed to build; these results supersede any implication that the final merged selection was wholly verified by earlier focused receipts.
+
+- [x] Identify the shared isolated Color fixture's missing `J_A`, the custom hue/Adaptance RNA backing-storage reset and rollback defect, and Chromium's inherited temporary socket path overflow.
+- [x] Restore the isolated fixture's signed achromatic coordinate from incoming float32 energy without changing production math or numerical thresholds.
+- [x] Repair reset and transaction rollback for custom storage, retaining the existing policy/effect boundaries.
+- [x] Add real Blender regressions for unbound neutrality, complete/family resets, claim ownership, and exact rollback of absent/present backing keys.
+- [x] Isolate diagram Chromium in a short private temporary directory and add a real-browser regression to the existing Next handbook audit target.
+- [x] Document the causes and repairs in the Technical Report.
+- [x] Repair the newly exposed conversion-fixture preparation barrier; bound the live compositor probe's Blender/llvmpipe threads and preserve reports on timeout without weakening acceptance.
+- [x] Run affected tests through Buck2 `--remote-only`: Color suites each pass nine methods (`5becb784`); complete current/LTS installed and compositor-carrier retests pass (`c7beb653`); current/LTS animation and GUI undo pass (`f8629308`, separately from that command's pre-repair installed failures).
+- [x] Pass both selected builds (`54a93cce`, 27 remote commands, zero local) and all 66 explicit Next CI test targets (`c405df87`, seven remote commands, zero local, reusing unchanged passing results). The earlier broad pass `75d35ef8` passed 64/66 before the additional fixture repairs. All timeouts, thresholds, normal-exit checks, and coverage are retained.
+- [x] Pass the changed Next BUCK file with pinned buildifier 10.2.0 through Buck2 `--remote-only` (`7cec7ad1`); remove the temporary validation target afterward.
+- [x] Repeat documentation acceptance after recording settled evidence: `808f0c10-e844-460d-b96a-7c02f4f2c5d4` passes 15 Technical Report checks (0.229 seconds) and five handbook artifact/browser checks (8.865 seconds), with seven remote commands and zero local. Inspect `sl status`: only intended source and tracking documents are pending, with no temporary validation targets or build outputs.
+
 ## LTS undo-lifetime repair — verified
 
 The native recursive crash is reproduced. The source-supported pointer-remap mechanism is a hypothesis until its specific address collision is captured; pre-repair successful retries do not validate a fix.
