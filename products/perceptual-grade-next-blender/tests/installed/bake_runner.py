@@ -79,8 +79,8 @@ def compositor_context(scene, tree, node=None):
                                                       node_tree=tree, path=()))
 
 
-def bake_toggle_enabled(node, context):
-    observed = {}
+def assert_bake_controls(node, context, warning=None, *, can_bake=None):
+    observed = {"labels": []}
 
     class Layout:
         def __init__(self):
@@ -98,18 +98,36 @@ def bake_toggle_enabled(node, context):
         def row(self, **_kwargs):
             return Layout()
 
-        def label(self, **_kwargs):
-            pass
+        def label(self, *, text, **_kwargs):
+            observed["labels"].append(text)
 
         def prop(self, _node, name, **_kwargs):
             if name == "pg_use_bake":
                 observed["enabled"] = self.enabled
 
-        def operator(self, *_args, **_kwargs):
+        def operator(self, name, **_kwargs):
+            if name == "perceptual_grade.bake":
+                observed["can_bake"] = self.enabled
             return SimpleNamespace()
 
     nodes._draw_bake_controls(node, context, Layout())
-    return observed["enabled"]
+    assert observed["enabled"], observed["labels"]
+    if can_bake is not None:
+        assert observed["can_bake"] == can_bake, observed["labels"]
+    warning_texts = {
+        nodes.localization.tr("status.bake_stale_" + reason)
+        for reason in ("engine", "source", "route", "inputs", "unverified")
+    }
+    expected = set() if warning is None else {nodes.localization.tr(warning)}
+    assert warning_texts.intersection(observed["labels"]) == expected, observed["labels"]
+
+
+def assert_shader_uses_image(node, image):
+    reader = nodes.bake_graph.marked(node.node_tree, nodes.bake_graph.READER)
+    selectors = tuple(item for item in node.node_tree.nodes if item.get(nodes.bake_graph.SELECTOR))
+    assert node.pg_use_bake and node.pg_bake_image == image
+    assert reader.image == image
+    assert selectors and all(float(item.inputs[0].default_value) == 1.0 for item in selectors)
 
 
 def bake(node, context, *, backend=None):
@@ -333,9 +351,62 @@ identity_match = True
 
 # Image evaluation respects EEVEE and falls back only for unsupported engines.
 scene.render.engine = "BLENDER_EEVEE"
-eevee_values = bake(shader, shader_context(material, scene, node=shader), backend="EEVEE")
+image_context = shader_context(material, scene, node=shader)
+eevee_values = bake(shader, image_context, backend="EEVEE")
 np.testing.assert_allclose(eevee_values.reshape(-1, 4), source_rgba, rtol=0, atol=0.002)
 assert tuple(shader.pg_bake_image.size) == (2, 2)
+
+eevee_image = shader.pg_bake_image
+eevee_receipt = nodes._bake_receipt_signature(shader)
+assert eevee_receipt is not None
+assert_bake_controls(shader, image_context)
+scene.render.engine = "CYCLES"
+bpy.context.view_layer.update()
+nodes._reconcile_bake_outputs((shader,), exact=False)
+assert_shader_uses_image(shader, eevee_image)
+assert nodes._bake_receipt_signature(shader) == eevee_receipt
+assert_bake_controls(shader, image_context, "status.bake_stale_engine")
+scene.render.engine = "BLENDER_EEVEE"
+bpy.context.view_layer.update()
+nodes._reconcile_bake_outputs((shader,), exact=False)
+assert_shader_uses_image(shader, eevee_image)
+assert nodes._bake_receipt_signature(shader) == eevee_receipt
+assert_bake_controls(shader, image_context)
+
+# A failed replacement restores the selected image, pixels, and receipt.
+previous_image = shader.pg_bake_image
+previous_receipt = nodes._bake_receipt_signature(shader)
+previous_pixels = np.asarray(previous_image.pixels[:], dtype=np.float32).copy()
+previous_gain = grade_data.pg_color.global_gain
+original_activate = nodes._bake_activate
+activation_failures = []
+
+
+def fail_after_bake_activation(entry, result):
+    original_activate(entry, result)
+    activation_failures.append("injected")
+    raise RuntimeError("Injected Bake activation failure")
+
+
+try:
+    grade_data.pg_color.global_gain = previous_gain + 0.125
+    nodes._bake_activate = fail_after_bake_activation
+    operator = SimpleNamespace(cancel=False, node_pointer="", tree_pointer="")
+    assert nodes.PG_OT_bake.execute(operator, image_context) == {"FINISHED"}
+    assert shader.pg_use_bake, "Replacement request disabled the selected bake"
+    wait_bake(shader)
+    assert activation_failures == ["injected"]
+finally:
+    nodes._bake_activate = original_activate
+    grade_data.pg_color.global_gain = previous_gain
+
+assert_shader_uses_image(shader, previous_image)
+np.testing.assert_array_equal(
+    np.asarray(previous_image.pixels[:], dtype=np.float32), previous_pixels,
+)
+assert nodes._bake_receipt_signature(shader) == previous_receipt
+assert_bake_controls(shader, image_context)
+
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.cycles.device = "GPU"
 fallback_values = bake(shader, shader_context(material, scene, node=shader), backend="CYCLES_CPU")
@@ -385,7 +456,7 @@ assert not shader.pg_use_bake
 assert nodes._bake_toggle_available(shader)
 assert nodes._bake_receipt_signature(shader) == nodes._bake_observed_signature(
     shader, nodes._stored_bake_context(shader)), ("manual-off", shader.get(nodes._BAKE_ERROR))
-assert bake_toggle_enabled(shader, shader_context(material, scene, node=shader))
+assert_bake_controls(shader, image_context)
 shader_wrapper = shader.node_tree
 shader_selectors = tuple(item for item in shader_wrapper.nodes
                          if item.get(nodes.bake_graph.SELECTOR))
@@ -467,9 +538,11 @@ shader.pg_use_bake = True
 assert shader.pg_use_bake
 
 # Unchanged baked outputs use a cheap observation, including unrelated native
-# dependency updates. A relevant source event conservatively requires rebaking
-# even when this test leaves its pixels unchanged.
+# dependency updates. A relevant source event marks the Image as stale even
+# when this test leaves its pixels unchanged.
 nodes._remember_bake_observation(shader)
+source_receipt = nodes._bake_receipt_signature(shader)
+source_bake = shader.pg_bake_image
 original_describe = nodes.bake_routes.describe
 def reject_full_idle_read(*_args, **_kwargs):
     raise AssertionError("Idle bake polling read full source pixels")
@@ -478,16 +551,23 @@ try:
     nodes._depsgraph_update_post(scene, SimpleNamespace(
         updates=(SimpleNamespace(id=unrelated_image),)))
     nodes._reconcile_bake_outputs((shader,), exact=False)
-    assert shader.pg_use_bake and nodes._bake_toggle_available(shader)
+    assert_shader_uses_image(shader, source_bake)
+    assert_bake_controls(shader, image_context)
+    nodes._depsgraph_update_post(scene, SimpleNamespace(
+        updates=(SimpleNamespace(id=source_image),)))
+    nodes._reconcile_bake_outputs((shader,), exact=False)
+    assert_shader_uses_image(shader, source_bake)
+    assert nodes._bake_receipt_signature(shader) == source_receipt
+    assert_bake_controls(shader, image_context, "status.bake_stale_source")
+    shader.pg_use_bake = False
+    assert not shader.pg_use_bake
+    assert_bake_controls(shader, image_context, "status.bake_stale_source")
+    shader.pg_use_bake = True
+    assert_shader_uses_image(shader, source_bake)
 finally:
     nodes.bake_routes.describe = original_describe
-nodes._depsgraph_update_post(scene, SimpleNamespace(
-    updates=(SimpleNamespace(id=source_image),)))
-nodes._reconcile_bake_outputs((shader,), exact=False)
-assert not shader.pg_use_bake
-shader.pg_use_bake = True
-assert not shader.pg_use_bake and not nodes._bake_toggle_available(shader)
-shader_values = bake(shader, shader_context(material, scene, node=shader))
+shader_values = bake(shader, image_context)
+assert_bake_controls(shader, image_context)
 
 # Blender passes an initially shared node_tree to the copy callback.  Exercise
 # that callback directly in the background fixture before changing the copy.
@@ -567,29 +647,42 @@ assert shared.pg_use_bake, shared.get(nodes._BAKE_ERROR)
 if bpy.app.timers.is_registered(nodes._bake_tick):
     bpy.app.timers.unregister(nodes._bake_tick)
 assert not bpy.app.timers.is_registered(nodes._bake_tick)
-shared_values = bake(shared, shader_context(material, scene, node=shared))
+shared_context = shader_context(material, scene, node=shared)
+shared_image = shader.pg_bake_image
+original_reader_receipt = nodes._bake_receipt_signature(shader)
+assert original_reader_receipt is not None
+assert_bake_controls(shader, image_context)
+shared_values = bake(shared, shared_context)
 nodes._bake_tick()
-assert shader.pg_use_bake and shared.pg_use_bake
-shared_rebake = shared.pg_bake_image == shader.pg_bake_image and shared_values.size == shader_values.size
+assert_shader_uses_image(shader, shared_image)
+assert_shader_uses_image(shared, shared_image)
+assert nodes._bake_receipt_signature(shader) == original_reader_receipt
+assert_bake_controls(shader, image_context, "status.bake_stale_source")
+assert_bake_controls(shared, shared_context)
+shared_rebake = shared_values.size == shader_values.size
 
-# Editing the authoritative Grade leaves baked mode and restores the live
-# child kernel after the replacement has become current.
-old_live = nodes.bake_graph.live_tree(shader.node_tree)
+# Editing the authoritative Grade leaves the bake selected while preparing
+# the updated live child. The user can switch between the two outputs.
+old_live = nodes.bake_graph.live_tree(shared.node_tree)
 old_signature = old_live.get(nodes._KERNEL_SIGNATURE)
-old_wrapper = shader.node_tree
-assert shader.pg_use_bake and nodes._bake_toggle_available(shader)
+old_wrapper = shared.node_tree
+old_receipt = nodes._bake_receipt_signature(shared)
 grade_data.pg_color.global_gain = 0.375
-assert not shader.pg_use_bake
-assert not nodes._bake_toggle_available(shader)
-assert not bake_toggle_enabled(shader, shader_context(material, scene, node=shader))
-wait_ready(shader)
+assert_shader_uses_image(shared, shared_image)
+assert_bake_controls(shared, shared_context, "status.bake_stale_inputs")
+wait_ready(shared)
 nodes._bake_tick()
-assert not shader.pg_use_bake
-new_live = nodes.bake_graph.live_tree(shader.node_tree)
+assert_shader_uses_image(shared, shared_image)
+new_live = nodes.bake_graph.live_tree(shared.node_tree)
 assert new_live is not None and new_live.get(nodes._KERNEL_SIGNATURE) != old_signature
-assert shader.node_tree == old_wrapper
-shader.pg_use_bake = True
-assert not shader.pg_use_bake, "A stale bake was relabeled current by the toggle"
+assert shared.node_tree == old_wrapper
+shared.pg_use_bake = False
+assert not shared.pg_use_bake
+assert_bake_controls(shared, shared_context, "status.bake_stale_inputs")
+shared.pg_use_bake = True
+assert_shader_uses_image(shared, shared_image)
+assert nodes._bake_receipt_signature(shared) == old_receipt
+assert_bake_controls(shared, shared_context, "status.bake_stale_inputs")
 
 # UV route through Cycles and a non-overlapping square mesh.
 scene.render.engine = "CYCLES"
@@ -608,10 +701,27 @@ uv_node.pg_grade = grade_data
 link_source(shader_tree, uv_node, source, uv=True)
 uv_node.pg_bake_width = 16
 uv_node.pg_bake_height = 16
+bpy.context.view_layer.update()
 wait_ready(uv_node)
 uv_values = bake(uv_node, shader_context(material, scene, obj, uv_node))
 assert uv_node.pg_bake_image.get(nodes._BAKE_DOMAIN) == "UV"
 assert uv_values.shape == (16 * 16 * 4,)
+uv_context = shader_context(material, scene, obj, uv_node)
+uv_image = uv_node.pg_bake_image
+uv_receipt = nodes._bake_receipt_signature(uv_node)
+# EEVEE blocks new UV bakes. The published UV Image remains usable.
+scene.render.engine = "BLENDER_EEVEE"
+bpy.context.view_layer.update()
+nodes._reconcile_bake_outputs((uv_node,), exact=False)
+assert_shader_uses_image(uv_node, uv_image)
+assert nodes._bake_receipt_signature(uv_node) == uv_receipt
+assert_bake_controls(uv_node, uv_context, "status.bake_stale_engine", can_bake=False)
+scene.render.engine = "CYCLES"
+bpy.context.view_layer.update()
+nodes._reconcile_bake_outputs((uv_node,), exact=False)
+assert_shader_uses_image(uv_node, uv_image)
+assert nodes._bake_receipt_signature(uv_node) == uv_receipt
+assert_bake_controls(uv_node, uv_context)
 # Material/node-tree edits can surface as Object geometry updates in Blender.
 # They do not alter the UV source geometry or object transform.
 nodes._depsgraph_update_post(scene, SimpleNamespace(updates=(
@@ -625,6 +735,7 @@ assert uv_node.pg_use_bake and nodes._bake_toggle_available(uv_node), (
     "Shading-only object update invalidated UV bake",
     nodes._bake_receipt_signature(uv_node),
 )
+assert_bake_controls(uv_node, uv_context)
 
 # Compositor route uses the native compositor capture path.
 scene.render.engine = "BLENDER_EEVEE"
@@ -724,14 +835,15 @@ report = {
     "wrapper_independent": True,
     "wrapper_recovery": True,
     "baked_conversion": True,
-    "grade_edit_live_fallback": True,
+    "grade_edit_stale_warning": True,
     "identity_match": identity_match,
     "engine_selection": True,
+    "engine_roundtrip": True,
     "cycles_gpu_acceptance": gpu_acceptance,
     "eevee_transport_shapes": [list(item) for item in eevee_transport_shapes],
     "render_admission": True,
     "source_edit_invalidation": True,
-    "source_edit_fallback": True,
+    "source_edit_stale_warning": True,
 }
 
 # Deliver fixture construction/engine updates as the interactive event loop
@@ -795,18 +907,29 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     restored_source = bpy.data.images.get(source_image_name)
     assert restored_uv.pg_use_bake and nodes._bake_toggle_available(restored_uv)
 
-    # Source edits while Use Bake is off must still revoke the saved receipt.
+    # Source edits while Use Bake is off mark the receipt stale across file load.
     restored_uv.pg_use_bake = False
     assert not restored_uv.pg_use_bake
+    original_receipt = nodes._bake_receipt_signature(restored_uv)
     before_source_edit = np.asarray(restored_source.pixels[:], dtype=np.float32)
     restored_source.pixels.foreach_set(before_source_edit + 0.01)
     nodes.invalidate_source(restored_source)
-    assert not nodes._bake_toggle_available(restored_uv)
-    assert not bake_toggle_enabled(
-        restored_uv, shader_context(restored_material, bpy.context.scene, node=restored_uv),
+    assert not restored_uv.pg_use_bake
+    assert_bake_controls(
+        restored_uv, nodes._stored_bake_context(restored_uv), "status.bake_stale_source",
     )
     restored_uv.pg_use_bake = True
-    assert not restored_uv.pg_use_bake
+    assert restored_uv.pg_use_bake
+    assert nodes._bake_receipt_signature(restored_uv) == original_receipt
+    assert "FINISHED" in bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+    assert "FINISHED" in bpy.ops.wm.open_mainfile(filepath=blend_path)
+    restored_material = bpy.data.materials.get(material_name)
+    restored_uv = restored_material.node_tree.nodes.get(uv_name)
+    assert restored_uv.pg_use_bake
+    assert nodes._bake_receipt_signature(restored_uv) == original_receipt
+    assert_bake_controls(
+        restored_uv, nodes._stored_bake_context(restored_uv), "status.bake_stale_source",
+    )
 report["persistence"] = True
 report["undo_valid_bake"] = True
 report["source_edit_while_off"] = True

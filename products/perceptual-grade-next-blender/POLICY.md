@@ -84,11 +84,14 @@ share one gate admission. Runtime and installed tests cover the host
 transactions and native pixel evaluation. The proof covers the policy's scalar
 authorizations.
 
-Baked output selection retains the Image binding when returning to live output.
-A changed source signature disables Use Bake, and a live Grade failure overrides
-the baked branch. Each node keeps its own live-input signature, so rebaking a
-shared managed Image updates all readers without claiming that their independent
-Grade settings produced those pixels.
+Use Bake selects the bound managed Image while it is valid and the live Grade
+has no error. Each node keeps its own input receipt when returning to live
+output or when inputs change. A mismatch displays a warning and leaves the
+selection in effect. Returning to the recorded engine and inputs clears the
+mismatch. A tracked source update persists on the receipt until a successful
+rebake or explicit Image binding establishes a new baseline. Rebaking a shared
+managed Image updates the pixels for all its readers. Each reader compares
+its own live inputs against its own receipt.
 
 Gesture policy decides observer admission, handoff, participation, deferred
 completion, and undo permission. Its runtime coordinator stores the per-window

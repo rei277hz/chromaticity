@@ -56,7 +56,7 @@ class BakeFreshnessTests(unittest.TestCase):
     def setUp(self):
         self.sources = self.module.BakeSources()
 
-    def test_receipt_roundtrip_is_strictly_versioned(self):
+    def test_receipt_roundtrip(self):
         receipt = self.module.BakeReceipt("stable-route-token")
         encoded = receipt.encode()
         self.assertEqual(json.loads(encoded), {
@@ -65,6 +65,26 @@ class BakeFreshnessTests(unittest.TestCase):
         })
         self.assertEqual(self.module.BakeReceipt.decode(encoded), receipt)
 
+        enriched = self.module.BakeReceipt(
+            "stable-route-token", "backend-token", source_invalidated=True,
+        )
+        enriched_encoded = enriched.encode()
+        self.assertEqual(json.loads(enriched_encoded), {
+            "schema": self.module.RECEIPT_SCHEMA,
+            "signature": "stable-route-token",
+            "backend_signature": "backend-token",
+            "source_invalidated": True,
+        })
+        self.assertEqual(self.module.BakeReceipt.decode(enriched_encoded), enriched)
+
+    def test_legacy_signature_only_receipt_remains_readable(self):
+        encoded = '{"schema":1,"signature":"legacy-route-token"}'
+        self.assertEqual(
+            self.module.BakeReceipt.decode(encoded),
+            self.module.BakeReceipt("legacy-route-token"),
+        )
+
+    def test_receipt_rejects_invalid_records(self):
         invalid = (
             None, "", "not json", "[]", "{}",
             '{"schema":1}',
@@ -74,6 +94,10 @@ class BakeFreshnessTests(unittest.TestCase):
             '{"schema":1.0,"signature":"route"}',
             '{"schema":"1","signature":"route"}',
             '{"schema":2,"signature":"route"}',
+            '{"schema":1,"signature":"route","backend_signature":""}',
+            '{"schema":1,"signature":"route","backend_signature":4}',
+            '{"schema":1,"signature":"route","source_invalidated":1}',
+            '{"schema":1,"signature":"route","source_invalidated":"true"}',
         )
         for value in invalid:
             with self.subTest(value=value):
@@ -117,7 +141,17 @@ class BakeFreshnessTests(unittest.TestCase):
         image.is_dirty = True
 
         self.assertTrue(self.sources.changed(10, (image,)))
+        self.assertTrue(self.sources.source_changed(10, (image,)))
         self.assertTrue(self.sources.matches(baseline))
+
+    def test_rerouting_only_invalidates_the_pending_request(self):
+        original = Image(1)
+        replacement = Image(2, is_dirty=True)
+        self.sources.bind(10, (original,))
+
+        self.assertTrue(self.sources.changed(10, (replacement,)))
+        self.assertFalse(self.sources.source_changed(10, (replacement,)))
+        self.assertFalse(self.sources.source_changed(10, (original,)))
 
     def test_dependency_event_invalidates_even_when_source_was_already_dirty(self):
         image = Image(1, is_dirty=True)

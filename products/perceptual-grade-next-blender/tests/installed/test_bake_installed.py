@@ -68,7 +68,7 @@ class BakeInstalledTests(unittest.TestCase):
                 self.assertTrue(data.get("engine_selection_stale"), details)
                 self.assertTrue(data.get("wrapper_independent"), details)
                 self.assertTrue(data.get("wrapper_recovery"), details)
-                self.assertTrue(data.get("grade_edit_live_fallback"), details)
+                self.assertTrue(data.get("grade_edit_stale_warning"), details)
                 self.assertTrue(data.get("identity_match"), details)
                 self.assertTrue(data.get("engine_selection"), details)
                 self.assertIn(data.get("cycles_gpu_acceptance", {}).get("status"),
@@ -77,7 +77,9 @@ class BakeInstalledTests(unittest.TestCase):
                                  [[1, 1], [2, 2], [2, 5], [5, 2]], details)
                 self.assertTrue(data.get("baked_conversion"), details)
                 self.assertTrue(data.get("render_admission"), details)
-                self.assertTrue(data.get("source_edit_fallback"), details)
+                self.assertTrue(data.get("source_edit_stale_warning"), details)
+                self.assertTrue(data.get("source_edit_while_off"), details)
+                self.assertTrue(data.get("engine_roundtrip"), details)
                 self.assertTrue(data.get("persistence"), details)
                 self.assertTrue(data.get("teardown"), details)
 

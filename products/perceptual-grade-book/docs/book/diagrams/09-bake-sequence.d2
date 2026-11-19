@@ -15,8 +15,8 @@ opt file load or undo: {
       manager -> host: "reconcile the restored selection"
     }
     changed: "missing or mismatched" {
-      freshness -> manager: "revoke receipt; select live;\ndisable Use Bake until rebake"
-      manager -> host: "apply revocation effects"
+      freshness -> manager: "derive outdated or unverified warning"
+      manager -> host: "reconcile the restored selection"
     }
   }
 }
@@ -41,9 +41,9 @@ alt shader evaluator: {
 }
 opt source changes or cancellation: {
   host -> manager: "notified Image edit / explicit invalidate_image;\nsource or settings observation changes"
-  manager -> freshness: "advance affected per-ID generation;\ncompare every bound node, including Use Bake off"
-  freshness -> manager: "revoke receipt; select live;\ndisable Use Bake until rebake"
-  manager -> host: "apply revocation effects"
+  manager -> freshness: "observe source changes, including Use Bake off"
+  freshness -> manager: "mark tracked receipts on source updates"
+  manager -> host: "retain selection and show the warning"
   manager -> policy: "invalidate or close"
   policy -> manager: "cancel; retain running ownership"
   manager -> helper: "request cancellation"
@@ -64,7 +64,7 @@ alt completion: {
     }
     manager -> host: "enter admitted commit scope"
     manager -> freshness: "check current cheap metadata, dependency\ngenerations, and graph/settings digest"
-    freshness -> manager: "current receipt or revocation effects"
+    freshness -> manager: "current request signature or absence"
     manager -> policy: "publish(current signature)"
     policy -> manager: "publish"
     manager -> host: "snapshot destination; upload, pack;\ncommit Image metadata and receipt"
@@ -92,10 +92,8 @@ alt completion: {
 loop after publication, including Use Bake off: {
   host -> manager: "observe source metadata and notified changes"
   manager -> freshness: "compare receipt and Image generations"
-  opt source or settings changed: {
-    freshness -> manager: "revoke receipt; select live;\ndisable Use Bake until rebake"
-    manager -> host: "apply revocation effects to all affected readers"
-  }
+  freshness -> manager: "derive warning from retained receipt"
+  manager -> host: "reconcile valid Image selection and warning"
 }
 
 **.style.font-size: 44

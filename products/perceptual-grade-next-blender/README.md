@@ -144,10 +144,9 @@ Shutdown withdraws pending demand and waits for active physical work to retire.
 Shared Grade and Grade Stack nodes expose a Bake control in both Shader and
 Compositor trees. A bake captures the current native node-tree result into a
 managed packed 32-bit float RGBA Image and switches the node to that reader.
-Use Bake can be disabled at any time without unbinding the Image; changing the
-authoritative Grade or Stack settings or a detected source change revokes the
-bake receipt, returns the node to live output, and disables Use Bake until a
-new bake is published. Nodes retain source tracking while Use Bake is off. A
+Use Bake switches between the live output and the bound Image. A valid Image
+stays available when the Grade, Stack, render engine, or source changes. The
+node displays a warning with the reason when the bake may be outdated. A
 managed Image may be selected by multiple nodes, so a rebake updates every
 reader of that Image.
 
@@ -194,11 +193,10 @@ Image bytes, and `.blend`, `.npy`, or EXR bake payloads are never hashed.
 Accepting a request copies each unique source Image once to freeze its
 click-time state. Request, publication, and render boundaries compare receipts
 and tokens without image-sized hashing. File load and undo rebaseline transient
-generations against the persisted cheap receipt and preserve Use Bake when it
-still matches; a missing or mismatched receipt returns to live output and
-requires rebaking. Earlier receipt versions are not migrated. Toggle
-availability is derived from this same freshness decision and remains greyed
-out after revocation until a new bake publishes.
+generations against the saved receipt. Engine and settings warnings clear when
+their recorded values return. Detected source updates are recorded on the
+receipt, including while Use Bake is off. A successful rebake creates a new
+receipt and clears the source warning.
 
 Grade and Grade Stack receipts identify their sockets by public names, so
 generated socket identifiers can change during live/wrapper/fallback kernel

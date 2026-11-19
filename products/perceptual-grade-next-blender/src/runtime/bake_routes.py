@@ -160,13 +160,19 @@ def _shader_backend(host, scene, *, domain, exact=False):
     else:
         backend = "CYCLES_CPU"
     return {
-        "render_engine": render_engine,
         "cycles_device": ("GPU" if backend == "CYCLES_GPU" else
                           "CPU" if backend == "CYCLES_CPU" else None),
         "shader_backend": backend,
         "cycles_gpu": (_cycles_gpu_preferences(host, exact=exact)
                         if backend == "CYCLES_GPU" else None),
     }
+
+
+def backend_signature(route):
+    """Fingerprint the engine and device facts already observed for this route."""
+    return _digest(tuple(route.get(key) for key in (
+        "render_engine", "shader_backend", "cycles_device", "cycles_gpu",
+    )))
 
 
 def _plain(value):
@@ -1115,7 +1121,8 @@ def _describe(node, context, *, full, dependencies=None):
     )
     result = dict(schema=SCHEMA, domain=domain, width=width, height=height,
                   scene=str(scene.name), frame=int(scene.frame_current),
-                  subframe=float(scene.frame_subframe), owner_kind=kind, owner_name=str(owner.name),
+                  subframe=float(scene.frame_subframe), render_engine=scene.render.engine,
+                  owner_kind=kind, owner_name=str(owner.name),
                   group_path=tuple(str(item.name) for item in parents), node_name=str(node.name),
                   object_name=str(obj.name) if obj is not None else None,
                   material_slot=material_slot, uv_map=uv_map,

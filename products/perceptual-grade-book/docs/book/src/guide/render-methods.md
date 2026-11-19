@@ -13,10 +13,11 @@ The result is the native evaluated output of the node tree, so Grade uses its
 helper-image kernel and Grade Stack uses its full 65³ LUT graph.
 
 **Use Bake** chooses between the Image and live node output without removing the
-Image binding. If settings or tracked source data change, the receipt is
-revoked, the node returns to live output, and Use Bake is disabled until a new
-bake succeeds. You can also turn Use Bake off manually while keeping the Image
-assigned. A managed Image may be shared: rebaking it updates every reader.
+Image binding. A valid Image remains available when settings, tracked source
+data, or the render engine change. The node warns that the bake may be outdated
+and shows the reason. Switching back to the engine used for the bake clears the
+engine warning when the other inputs still match. Rebaking a shared managed
+Image updates every reader.
 
 Settings tracking includes Linear, Tone, and every Stage 3 control on the target,
 enabled Stack entries, and live upstream Grade/Stack nodes.

@@ -297,10 +297,9 @@ def _bake_image_valid(node):
 
 
 def _set_bake_mode(node, enabled, *, reconcile=True):
-    signature = _bake_receipt_signature(node)
     record = _node_stores.get(node.as_pointer())
     policy = bake_policy.output_policy(
-        bool(enabled), signature, signature, _bake_image_valid(node),
+        bool(enabled), _bake_image_valid(node),
         None if record is None else record["state"].error,
     )
     enabled = policy.mode == "baked"
@@ -325,9 +324,12 @@ def _bake_receipt_signature(node):
     return None if receipt is None else receipt.signature
 
 
-def _write_bake_receipt(node, signature):
+def _write_bake_receipt(node, signature, backend_signature=None,
+                        source_invalidated=False):
     write_metadata(((node, _BAKE_NODE_SIGNATURE,
-                     None if signature is None else BakeReceipt(signature).encode()),))
+                     None if signature is None else BakeReceipt(
+                         signature, backend_signature, source_invalidated,
+                     ).encode()),))
 
 
 def _bake_image_metadata(image, route, result):
@@ -384,6 +386,20 @@ def _publish_bake(entry, result, error):
             )
         entry["bake_image"] = image
         entry["bake_created_image"] = created
+        entry["bake_receipt_snapshot"] = tuple(
+            (node, key, node.get(key)) for key in (_BAKE_NODE_SIGNATURE, _BAKE_CONTEXT)
+        )
+        if not created:
+            readers = tuple(reader for reader in _all_grade_nodes()
+                            if bake_routes.is_bake_target(reader)
+                            and reader.pg_bake_image == image)
+            entry["bake_reader_snapshots"] = tuple(
+                (reader, bool(reader.pg_use_bake), reader.get(_BAKE_NODE_SIGNATURE))
+                for reader in readers
+            )
+            for reader, selected, _receipt in entry["bake_reader_snapshots"]:
+                if selected:
+                    _set_bake_mode(reader, False)
         metadata = _bake_image_metadata(image, route, result)
         entry["bake_old_size"] = tuple(image.size)
         entry["bake_snapshot"] = None if created else ImageSnapshot.capture(image, metadata)
@@ -426,20 +442,27 @@ def _bake_activate(entry, result):
         _ensure_bake_wrapper(node)
     route = entry["inputs"]["route"]
     node[_BAKE_CONTEXT] = json.dumps(_bake_context(route), separators=(",", ":"))
-    _write_bake_receipt(node, route["receipt_signature"])
+    _write_bake_receipt(node, route["receipt_signature"],
+                        bake_routes.backend_signature(route))
     _remember_bake_observation(node)
     _set_bake_mode(node, True)
     if not node.pg_use_bake:
         raise RuntimeError("Bake output could not be activated")
     write_metadata(((node, _BAKE_ERROR, None),))
-    _tag_bake_readers(image)
+    _tag_bake_readers(image, updated_node=node)
+    for reader, selected, _receipt in entry.get("bake_reader_snapshots", ()):
+        if reader != node and selected and _bake_toggle_available(reader):
+            _set_bake_mode(reader, True)
     _ensure_bake_timer()
 
 
-def _tag_bake_readers(image):
-    _mark_bake_sources((image,))
+def _tag_bake_readers(image, *, updated_node=None):
+    if updated_node is not None:
+        _mark_bake_sources((image,))
     for reader in _all_grade_nodes():
         if bake_routes.is_bake_target(reader) and reader.pg_bake_image == image:
+            if updated_node is not None and reader != updated_node:
+                _persist_bake_source_change(reader)
             _synchronize_bake_output(reader, use_bake=reader.pg_use_bake)
             reader.id_data.update_tag()
             if reader.node_tree is not None:
@@ -456,6 +479,8 @@ def _bake_rollback(entry, _result, error):
         if entry.get("bake_created_image"):
             if node is not None:
                 _set_bake_mode(node, False)
+                write_metadata(entry.get("bake_receipt_snapshot", ()))
+                _bake_sources.forget(node.as_pointer())
             if node is not None and getattr(node, "pg_bake_image", None) == image:
                 node.pg_bake_image = None
             if image.users == 0:
@@ -473,10 +498,17 @@ def _bake_rollback(entry, _result, error):
                 raise RuntimeError("Restored Bake Image could not be packed")
             write_metadata(snapshot.metadata)
             image.update()
+        if node is not None:
+            write_metadata(entry["bake_receipt_snapshot"])
+            for reader, _selected, receipt in entry.get("bake_reader_snapshots", ()):
+                write_metadata(((reader, _BAKE_NODE_SIGNATURE, receipt),))
+            _bake_sources.forget(node.as_pointer())
+        if snapshot is not None:
             _tag_bake_readers(image)
         if node is not None:
             node[_BAKE_ERROR] = str(error)
-            _set_bake_mode(node, False)
+            for reader, selected, _receipt in entry.get("bake_reader_snapshots", ()):
+                _set_bake_mode(reader, selected)
     except Exception as rollback_error:
         if image is not None:
             write_metadata(((image, _BAKE_IMAGE_SCHEMA, None),))
@@ -503,6 +535,9 @@ def _bake_tick():
     except Exception as error:
         print("Perceptual Grade Bake failed:", error)
         pending = bool(_bake_manager.queue or _bake_manager.active)
+    for key in tuple(_bake_sources.bindings):
+        if isinstance(key, tuple) and key[1] not in _bake_manager.jobs:
+            _bake_sources.forget(key)
     if not pending and _bake_manager.closed and _bake_manager.backend_closed:
         _bake_manager = None
         return None
@@ -519,16 +554,18 @@ def _bake_failure(entry, error):
     try:
         node = entry["node"]
         node[_BAKE_ERROR] = str(error)
-        _set_bake_mode(node, False)
     except (AttributeError, ReferenceError, RuntimeError):
         return
 
 
 def _bake_current_signature(node, route):
-    revisions = route.get("source_revisions") if isinstance(route, dict) else None
-    if revisions is not None and not _bake_sources.matches(revisions):
+    if not _bake_sources.matches(route["source_revisions"]):
         return None
-    return _bake_observed_signature(node, route or _stored_bake_context(node))
+    dependencies = []
+    current = bake_routes.observe(node, route, dependencies=dependencies)["route"]
+    if current is None or _bake_sources.changed(("request", node.as_pointer()), dependencies):
+        return None
+    return current["receipt_signature"]
 
 
 def _remember_bake_observation(node):
@@ -538,27 +575,24 @@ def _remember_bake_observation(node):
     _bake_pending_invalidations.discard(node.as_pointer())
 
 
-def _bake_observed_signature(node, context):
+def _bake_observed_signature(node, context, *, track_sources=False):
     dependencies = []
     observation = bake_routes.observe(node, context, dependencies=dependencies)
-    pointer = node.as_pointer()
-    route = observation.get("route")
-    current = None if route is None else route.get("receipt_signature")
-    if (pointer in _bake_pending_invalidations
-            or _bake_sources.changed(pointer, dependencies)):
-        current = None
-        _bake_pending_invalidations.add(pointer)
-        _ensure_bake_timer()
-    elif pointer not in _bake_sources.bindings and current is not None:
-        # A restored receipt starts a new session baseline; only stable facts
-        # are compared across load/undo, never old pointers or dirty booleans.
-        _bake_sources.bind(pointer, dependencies)
-    return current
+    route = observation["route"]
+    if route is None:
+        return None
+    if track_sources:
+        pointer = node.as_pointer()
+        if _bake_sources.source_changed(pointer, dependencies):
+            _persist_bake_source_change(node)
+            _bake_sources.bind(pointer, dependencies)
+        elif pointer not in _bake_sources.bindings:
+            _bake_sources.bind(pointer, dependencies)
+    return route["receipt_signature"]
 
 
-def _bake_route(node, context):
+def _bake_route(node, context, dependencies):
     context = context or _stored_bake_context(node)
-    dependencies = []
     route = bake_routes.describe(node, context, dependencies=dependencies)
     if route.get("width") is None or route.get("height") is None:
         route["width"] = int(node.pg_bake_width)
@@ -637,25 +671,30 @@ def _prepare_bake_kernels(node, route):
 def _bake_request(node, context):
     if _bake_manager is None:
         raise RuntimeError("Bake manager is unavailable")
+    pointer = node.as_pointer()
+    if pointer in _bake_manager.jobs:
+        raise RuntimeError("This node already has a Bake request")
+    dependencies = []
     with _grade_resources.gate.commit():
-        _set_bake_mode(node, False)
         _reconcile_bake_outputs()
-        route = _bake_route(node, context)
+        route = _bake_route(node, context, dependencies)
     _prepare_bake_kernels(node, route)
     with _grade_resources.gate.commit():
         if _bake_wrapper(node) is None:
             _ensure_bake_wrapper(node)
-        node[_BAKE_CONTEXT] = json.dumps(_bake_context(route), separators=(",", ":"))
         write_metadata(((node, _BAKE_ERROR, None),))
-        _bake_manager.request(
-            node, route, _publish_bake, _bake_current_signature,
-            activate_callback=_bake_activate, rollback_callback=_bake_rollback,
-            failure_callback=_bake_failure,
-            publication_context=_grade_resources.gate.commit,
-        )
-        _remember_bake_observation(node)
-        # First requests, published bakes, and manually disabled bakes all
-        # keep the same per-source baseline until their receipt retires.
+        request_key = ("request", pointer)
+        _bake_sources.bind(request_key, dependencies)
+        try:
+            _bake_manager.request(
+                node, route, _publish_bake, _bake_current_signature,
+                activate_callback=_bake_activate, rollback_callback=_bake_rollback,
+                failure_callback=_bake_failure,
+                publication_context=_grade_resources.gate.commit,
+            )
+        except BaseException:
+            _bake_sources.forget(request_key)
+            raise
     _ensure_bake_timer()
 
 
@@ -663,7 +702,9 @@ def _bake_image_changed(node, _context):
     if node.as_pointer() in _bake_mode_updates:
         return
     _set_bake_mode(node, False)
-    _bake_sources.forget(node.as_pointer())
+    pointer = node.as_pointer()
+    _bake_sources.forget(pointer)
+    _bake_pending_invalidations.discard(pointer)
     _write_bake_receipt(node, None)
     image = getattr(node, "pg_bake_image", None)
     if image is not None and _bake_image_valid(node):
@@ -677,7 +718,8 @@ def _bake_image_changed(node, _context):
                 == (image.get(_BAKE_DOMAIN) == "UV"),
             )
             if effects.receipt_signature is not None:
-                _write_bake_receipt(node, effects.receipt_signature)
+                _write_bake_receipt(node, effects.receipt_signature,
+                                    bake_routes.backend_signature(route))
                 node[_BAKE_CONTEXT] = json.dumps(_bake_context(route), separators=(",", ":"))
                 _remember_bake_observation(node)
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
@@ -686,16 +728,32 @@ def _bake_image_changed(node, _context):
         _bake_manager.invalidate(node, None)
 
 
-def _bake_toggle_available(node, context=None):
-    signature = _bake_receipt_signature(node)
-    if signature is None:
-        return False
-    current = _bake_observed_signature(node, _stored_bake_context(node) or context)
+def _bake_toggle_available(node, _context=None):
     record = _node_stores.get(node.as_pointer())
     return bake_policy.bake_toggle_available(
-        current, signature, _bake_image_valid(node),
+        _bake_image_valid(node),
         None if record is None else record["state"].error,
     )
+
+
+def _bake_warning(node, observation):
+    if not _bake_image_valid(node):
+        return None
+    receipt = BakeReceipt.decode(node.get(_BAKE_NODE_SIGNATURE))
+    if receipt is None:
+        return "status.bake_stale_unverified"
+    if receipt.source_invalidated or node.as_pointer() in _bake_pending_invalidations:
+        return "status.bake_stale_source"
+    route = observation["route"]
+    if route is None:
+        return ("status.bake_stale_engine" if observation["code"] == "cycles"
+                else "status.bake_stale_route")
+    if route["receipt_signature"] == receipt.signature:
+        return None
+    if (receipt.backend_signature is not None
+            and receipt.backend_signature != bake_routes.backend_signature(route)):
+        return "status.bake_stale_engine"
+    return "status.bake_stale_inputs"
 
 
 def _bake_use_changed(node, _context):
@@ -703,8 +761,8 @@ def _bake_use_changed(node, _context):
         return
     try:
         if node.pg_use_bake:
-            if not _bake_toggle_available(node, _context):
-                raise RuntimeError("Bake inputs changed; bake again to use this Image")
+            if not _bake_toggle_available(node):
+                raise RuntimeError("Bound Bake Image is unavailable or Grade output has failed")
             _set_bake_mode(node, True)
             _ensure_bake_timer()
         else:
@@ -741,10 +799,17 @@ def _invalidate_bake(node):
 
 def _mark_bake_sources(dependencies):
     affected = _bake_sources.invalidate(dependencies)
-    _bake_pending_invalidations.update(affected)
+    _bake_pending_invalidations.update(key for key in affected if isinstance(key, int))
     if affected:
         _ensure_bake_timer()
-    return affected
+    return {key[1] if isinstance(key, tuple) else key for key in affected}
+
+
+def _persist_bake_source_change(node):
+    receipt = BakeReceipt.decode(node.get(_BAKE_NODE_SIGNATURE))
+    if bake_policy.persist_source_invalidation(
+            receipt is not None, receipt is not None and not receipt.source_invalidated):
+        _write_bake_receipt(node, receipt.signature, receipt.backend_signature, True)
 
 
 def _consume_bake_invalidations():
@@ -754,18 +819,7 @@ def _consume_bake_invalidations():
     for pointer in affected:
         node = nodes.get(pointer)
         if node is not None:
-            if _bake_manager is not None:
-                _bake_manager.invalidate(node, None)
-            output = bake_policy.output_policy(
-                bool(getattr(node, "pg_use_bake", False)), None,
-                _bake_receipt_signature(node), _bake_image_valid(node),
-                source_invalidated=True,
-            )
-            if output.revoke_receipt:
-                _write_bake_receipt(node, None)
-            enabled = output.mode == "baked"
-            if getattr(node, "pg_use_bake", False) != enabled:
-                _set_bake_mode(node, enabled)
+            _persist_bake_source_change(node)
             _bake_sources.forget(pointer)
         _bake_pending_invalidations.discard(pointer)
     return affected
@@ -818,10 +872,16 @@ def _draw_bake_controls(node, context, layout):
     op.tree_pointer = str(node.id_data.as_pointer())
     op.cancel = busy
     toggle = row.row(align=True)
-    toggle.enabled = _bake_toggle_available(node, context)
+    toggle.enabled = _bake_toggle_available(node)
     toggle.prop(node, "pg_use_bake", toggle=True)
-    if node.pg_bake_image is not None and not toggle.enabled:
-        box.label(text=localization.tr("status.bake_stale"), icon="INFO")
+    if _bake_image_valid(node):
+        stored_context = _stored_bake_context(node)
+        freshness = status
+        if stored_context is not None and stored_context != context:
+            freshness = bake_routes.observe(node, stored_context)
+        warning = _bake_warning(node, freshness)
+        if warning is not None:
+            box.label(text=localization.tr(warning), icon="INFO")
     if node.get(_BAKE_ERROR):
         box.label(text=str(node.get(_BAKE_ERROR)), icon="ERROR")
 
@@ -848,10 +908,10 @@ def _reconcile_bake_outputs_in_scope(nodes=None, *, exact=True):
         if not bake_routes.is_bake_target(node):
             continue
         using_bake = bool(getattr(node, "pg_use_bake", False))
-        has_job = (_bake_manager is not None
-                   and _bake_manager._node_key(node) in _bake_manager.jobs)
+        job = (None if _bake_manager is None else
+               _bake_manager.jobs.get(_bake_manager._node_key(node)))
         receipt_signature = _bake_receipt_signature(node)
-        if not using_bake and not has_job and receipt_signature is None:
+        if not using_bake and job is None and receipt_signature is None:
             try:
                 _synchronize_bake_output(node, use_bake=False)
             except Exception as error:
@@ -859,23 +919,17 @@ def _reconcile_bake_outputs_in_scope(nodes=None, *, exact=True):
                 _dispatch(node, node_policy.Event(
                     "installation_result", record["state"].desired_signature, str(error)))
             continue
-        context = _stored_bake_context(node)
         # All revalidation uses cheap metadata and revisions. Exact geometry
         # validation happens only while accepting an explicit Bake request.
-        current = _bake_observed_signature(node, context)
-        if _bake_manager is not None:
-            _bake_manager.invalidate(node, current)
+        if receipt_signature is not None:
+            _bake_observed_signature(node, _stored_bake_context(node), track_sources=True)
+        if job is not None:
+            _bake_manager.invalidate(node, _bake_manager._resolve_signature(job))
         record = _node_stores.get(node.as_pointer())
         output = bake_policy.output_policy(
-            using_bake, current, receipt_signature,
-            _bake_image_valid(node),
+            using_bake, _bake_image_valid(node),
             None if record is None else record["state"].error,
-            source_invalidated=node.as_pointer() in _bake_pending_invalidations,
         )
-        if output.revoke_receipt:
-            _write_bake_receipt(node, None)
-            _bake_sources.forget(node.as_pointer())
-            _bake_pending_invalidations.discard(node.as_pointer())
         enabled = output.mode == "baked"
         if enabled != using_bake:
             _set_bake_mode(node, enabled)
@@ -1669,6 +1723,9 @@ def _apply_output_presentation(node, mode, error):
     if mode == "error":
         print("Perceptual Grade output failed:", error)
         values[_NODE_ERROR] = True
+    elif getattr(node, "pg_use_bake", False):
+        if mode != "current":
+            values[_NODE_PENDING] = "status.updating"
     elif awaiting_compositor:
         values[_NODE_PENDING] = "status.waiting_compositor"
     elif mode != "current":
@@ -1887,24 +1944,20 @@ def _remap_node_snapshot(snapshot, source, replacement):
 
 
 def _apply_output_kernel(node, mode):
-    if mode != "current" and bake_graph.eligible(node):
-        # A broken wrapper may have lost its live child. Install the policy's
-        # replacement before reconciling its reader and selector topology.
-        _set_bake_mode(node, False, reconcile=mode not in {"pending", "error"})
-    if mode == "pending":
-        fallback_mode = "pending"
-    elif mode == "error":
-        fallback_mode = "error"
-    else:
+    if mode not in {"pending", "error"}:
         return
+    # A pending live child can be replaced inside a selected bake wrapper.
+    # A kernel failure must expose the emergency output even with Use Bake on.
+    keep_bake = (mode == "pending" and getattr(node, "pg_use_bake", False)
+                 and _bake_toggle_available(node))
+    if not keep_bake and bake_graph.eligible(node):
+        _set_bake_mode(node, False, reconcile=False)
     kernel = _acquire_fallback_kernel(
-        fallback_mode, node.id_data.bl_idname,
-        vector=node.inputs.get("Vector") is not None,
-        preferred=getattr(node, "node_tree", None),
+        mode, node.id_data.bl_idname,
+        vector=not keep_bake and node.inputs.get("Vector") is not None,
+        preferred=_kernel_for_node(node) if keep_bake else node.node_tree,
     )
-    if getattr(node, "node_tree", None) == kernel:
-        return
-    _replace_node_kernel(node, kernel, emergency=True)
+    _replace_node_kernel(node, kernel, emergency=not keep_bake)
 
 
 def _apply_output_effect(node, effects):
@@ -3360,6 +3413,7 @@ def _forget_node(node):
 
 def _forget_node_pointer(pointer):
     _bake_sources.forget(pointer)
+    _bake_sources.forget(("request", pointer))
     _bake_pending_invalidations.discard(pointer)
     record = _node_stores.pop(pointer, None)
     _unindex_output_node(pointer)
@@ -4676,7 +4730,7 @@ def _compositor_cancel(scene, *_args):
 
 @persistent
 def _save_pre(_filepath):
-    # Revoke queued stale receipts before Blender serializes the file. This is
+    # Persist queued source invalidations before Blender serializes the file. This is
     # deliberately metadata-only and includes nodes with Use Bake disabled.
     if _grade_resources is not None:
         try:

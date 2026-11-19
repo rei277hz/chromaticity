@@ -40,7 +40,6 @@ class Effects:
 class Output:
     mode: Literal["live", "baked", "error"]
     error: Optional[str] = None
-    revoke_receipt: bool = False
 
 
 @dataclass(frozen=True)
@@ -169,33 +168,26 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
     return state, Effects()
 
 
-def bake_toggle_available(desired_signature: Optional[str],
-                          artifact_signature: Optional[str],
-                          artifact_valid: bool,
+def bake_toggle_available(artifact_valid: bool,
                           live_error: Optional[str] = None) -> bool:
-    """Availability is independent of the user's persisted switch value."""
-    return (live_error is None and artifact_valid
-            and desired_signature is not None and artifact_signature is not None
-            and desired_signature == artifact_signature)
+    """A valid managed artifact remains selectable while its freshness is warned separately."""
+    return live_error is None and artifact_valid
 
 
-def output_policy(use_bake: bool, desired_signature: Optional[str],
-                  artifact_signature: Optional[str], artifact_valid: bool,
-                  live_error: Optional[str] = None,
-                  source_invalidated: bool = False) -> Output:
-    """Select a node's current output while preserving image binding on bypass."""
-    stale = (artifact_signature is not None
-             and (source_invalidated or (desired_signature is not None
-                                        and desired_signature != artifact_signature)))
+def persist_source_invalidation(has_receipt: bool, source_changed: bool) -> bool:
+    """Authorize a durable invalidation marker only for a tracked source event."""
+    return has_receipt and source_changed
+
+
+def output_policy(use_bake: bool, artifact_valid: bool,
+                  live_error: Optional[str] = None) -> Output:
+    """Select output from artifact validity and live-kernel health."""
     if live_error is not None:
-        return Output("error", live_error, stale)
+        return Output("error", live_error)
     if not use_bake:
-        return Output("live", revoke_receipt=stale)
+        return Output("live")
     if not artifact_valid:
-        return Output("error", "Bound bake Image is unavailable or invalid", stale)
-    if source_invalidated or not bake_toggle_available(
-            desired_signature, artifact_signature, artifact_valid):
-        return Output("live", revoke_receipt=stale)
+        return Output("error", "Bound bake Image is unavailable or invalid")
     return Output("baked")
 
 

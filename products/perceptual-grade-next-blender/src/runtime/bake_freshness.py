@@ -17,20 +17,31 @@ RECEIPT_SCHEMA = 1
 @dataclass(frozen=True)
 class BakeReceipt:
     signature: str
+    backend_signature: Optional[str] = None
+    source_invalidated: bool = False
 
     def encode(self):
-        return json.dumps({"schema": RECEIPT_SCHEMA, "signature": self.signature},
-                          separators=(",", ":"), sort_keys=True)
+        record = {"schema": RECEIPT_SCHEMA, "signature": self.signature}
+        if self.backend_signature is not None:
+            record["backend_signature"] = self.backend_signature
+        if self.source_invalidated:
+            record["source_invalidated"] = True
+        return json.dumps(record, separators=(",", ":"), sort_keys=True)
 
     @classmethod
     def decode(cls, value) -> Optional["BakeReceipt"]:
         try:
             record = json.loads(value)
             signature = record.get("signature")
+            backend_signature = record.get("backend_signature")
+            source_invalidated = record.get("source_invalidated", False)
             if (type(record.get("schema")) is int
                     and record["schema"] == RECEIPT_SCHEMA
-                    and isinstance(signature, str) and signature):
-                return cls(signature)
+                    and isinstance(signature, str) and signature
+                    and (backend_signature is None
+                         or isinstance(backend_signature, str) and backend_signature)
+                    and type(source_invalidated) is bool):
+                return cls(signature, backend_signature, source_invalidated)
         except (AttributeError, TypeError, ValueError):
             pass
         return None
@@ -105,6 +116,22 @@ class BakeSources:
             return True
         return any(dirty and not old_dirty
                    for (_, _, dirty), (_, _, old_dirty) in zip(current, baseline))
+
+    def source_changed(self, node_key, dependencies):
+        """Detect changes to retained source IDs without treating rerouting as edits."""
+        baseline = self.bindings.get(node_key)
+        if baseline is None:
+            return False
+        previous = {key: (generation, dirty)
+                    for key, generation, dirty in baseline}
+        current = self.snapshot(dependencies)
+        return any(
+            key in previous and (
+                generation != previous[key][0]
+                or (dirty and not previous[key][1])
+            )
+            for key, generation, dirty in current
+        )
 
     def invalidate(self, dependencies):
         affected = set()
