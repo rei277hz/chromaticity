@@ -134,8 +134,8 @@ measure correctness workloads rather than interactive response.
 Installed animation and conversion fixtures cover the remaining Blender
 adapters: typed fractional precision and soft ranges, node-owned versus shared
 claims, same-time versus actual frame/subframe changes, copy/reset/conversion,
-saved metadata, undo, Auto/Limited indicators, and effective sampled settings
-without keyframe writes. The independent native undo fixture
+saved metadata, undo, and effective sampled settings without keyframe writes.
+The independent native undo fixture
 `installed/gesture_undo_runner.py` also detaches a hue claim by editing its
 unchanged numeric value. It requires an undo state that restores only the
 provenance while leaving the mathematical signature and effective hues unchanged,

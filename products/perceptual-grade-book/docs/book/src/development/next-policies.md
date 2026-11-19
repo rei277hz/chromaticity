@@ -151,9 +151,8 @@ checks the stored row against the public 4° minimum; an already-valid row is
 preserved exactly. Finite out-of-range Adaptance targets
 are shortened along their a/b ray; nonfinite requests fail visibly. These
 effective settings feed preparation without changing authored values,
-keyframes, or ownership claims. **Auto** is derived from current displacement
-and identifies the owning handle; **Limited** compares raw with effective
-settings. Neither indication is an independent persisted validity flag.
+keyframes, or ownership claims. **Limited** compares raw with effective
+settings and is not an independent persisted validity flag.
 
 ![Color authoring and evaluated constraints](../assets/illustrations/next-policy/10-color-authoring-sequence.svg)
 

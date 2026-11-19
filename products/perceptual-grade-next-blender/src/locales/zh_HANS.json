@@ -158,9 +158,7 @@
   "tooltip.adaptance_half_saturation": "白偏影响降至一半时的饱和度 C/|J_A|；更高饱和度受到保护。",
   "tooltip.web_chroma": "此扭曲手柄相对彩度变化的 log2 比值。",
   "tooltip.web_hue": "相对未调色 Rec.709 手柄保存的色相偏移，单位为度。相邻手柄会自动移动，以保持至少 4 度的间隔。",
-  "label.color_auto": "自动",
   "label.color_limited": "已限制",
-  "tooltip.hue_auto": "由{owner}手柄自动推移。该手柄回退时，此色相会向原值恢复。直接编辑此色相即可接管它。",
   "tooltip.hue_limited": "求值时会调整色相，以保持循环顺序及至少 4 度的手柄间隔。保存的动画值和关键帧保持不变。",
   "tooltip.adaptance_limited": "求值时会沿径向收缩白偏目标对，使其保持在锥体响应极点之前。保存的动画值和关键帧保持不变。",
   "tooltip.web_scale": "在此扭曲手柄以档为单位同时缩放 J_A 和 C。"

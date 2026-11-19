@@ -20,10 +20,10 @@ reference's Adaptance → H–K repair → common positive Scale order.
 Adaptance drags use 0.01 increments and tonal soft spans of ±4, ±10, ±20,
 and ±25. Finite requests beyond the physical response domain are limited
 radially, preserving the a/b tint direction. Warp hue edits maintain at least
-4° between cyclic target angles by pushing neighbors; the Auto indicator names
-the initiating handle. Returning that handle restores its neighbors toward
-their saved positions until blocked. A manual edit detaches only that handle;
-a new push transfers ownership using its current position as the new baseline.
+4° between cyclic target angles by pushing neighbors. Returning the initiating
+handle restores its neighbors toward their saved positions until blocked. A
+manual edit detaches only that handle. A new push transfers ownership using
+its current position as the new baseline.
 Claims persist through copy, conversion, save, and undo. Actual frame/subframe
 changes expire per-node claims; shared Grade claims remain. Animated samples
 resolve through the same immutable settings boundary for Grade and Stack,

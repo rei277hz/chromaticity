@@ -5245,11 +5245,6 @@ def _draw_color_family(node, layout, family):
                 for kind in ("chroma", "hue", "scale"):
                     row.prop(settings, f"web_{kind}_{tone}_{handle}", text="", slider=True)
                     if kind == "hue":
-                        claim = _hue_claims(settings)[tone][handle]
-                        if claim is not None:
-                            _draw_color_notice(row, "label.color_auto", "tooltip.hue_auto",
-                                               owner=localization.tr(
-                                                   "handle." + _WEB_HANDLES[claim.origin_handle]))
                         if (raw is not None and raw.color.web.hue_degrees[tone][handle]
                                 != resolved.color.web.hue_degrees[tone][handle]):
                             _draw_color_notice(row, "label.color_limited", "tooltip.hue_limited")
@@ -5257,12 +5252,12 @@ def _draw_color_family(node, layout, family):
     op.family = family.upper()
 
 
-def _draw_color_notice(layout, label, tooltip, **values):
+def _draw_color_notice(layout, label, tooltip):
     indicator = layout.row(align=True)
     indicator.enabled = False
     op = indicator.operator(PG_OT_color_notice.bl_idname,
                             text=localization.tr(label), emboss=False)
-    op.detail = localization.tr(tooltip, **values)
+    op.detail = localization.tr(tooltip)
 
 
 class PGShaderGradeStack(bpy.types.ShaderNodeCustomGroup):
@@ -5745,7 +5740,7 @@ class PG_OT_reset_tone(bpy.types.Operator):
 
 class PG_OT_color_notice(bpy.types.Operator):
     bl_idname = "perceptual_grade.color_notice"
-    bl_label = localization.native("label.color_auto")
+    bl_label = localization.native("label.color_limited")
     bl_options = {"INTERNAL"}
 
     detail: StringProperty(options={"HIDDEN", "SKIP_SAVE"})

@@ -158,9 +158,7 @@
   "tooltip.adaptance_half_saturation": "Saturation C/|J_A| at which Adaptance has half influence; higher saturation is protected.",
   "tooltip.web_chroma": "Relative chroma change stored as a log2 ratio at this Warp handle.",
   "tooltip.web_hue": "Stored hue displacement from the ungraded Rec.709 handle, in degrees. Neighboring handles move automatically to retain at least 4 degrees of separation.",
-  "label.color_auto": "Auto",
   "label.color_limited": "Limited",
-  "tooltip.hue_auto": "Automatically displaced by {owner}. It returns toward its previous value when that handle retreats. Editing this hue takes control of it.",
   "tooltip.hue_limited": "The evaluated hue is adjusted to preserve cyclic order with at least 4 degrees between handles. Stored animation values and keyframes are unchanged.",
   "tooltip.adaptance_limited": "The evaluated Adaptance pair is reduced radially before a cone-response pole. Stored animation values and keyframes are unchanged.",
   "tooltip.web_scale": "Scale J_A and C together at this Warp handle, in stops."
