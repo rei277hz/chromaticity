@@ -39,7 +39,7 @@ class PreparedStack:
 def _signature(settings, space):
     from .kernel.color_resolution import COLOR_RESOLUTION_SCHEMA
 
-    payload = ("stage-1-2-3-guarded-stack-v2", COLOR_RESOLUTION_SCHEMA,
+    payload = ("forward-stack", lut.STACK_COMPOSITION_SCHEMA, COLOR_RESOLUTION_SCHEMA,
                space, tuple(asdict(item) for item in settings))
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
                                      allow_nan=False).encode("utf8")).hexdigest()
@@ -94,7 +94,8 @@ class StackGPUBackend:
         gpu.init()
         if not gpu.capabilities.compute_shader_support_get():
             raise RuntimeError("Grade Stack LUT baking requires GPU compute shaders")
-        source = grade_source(boundary) if boundary is not None else "vec3 grade_value(vec3 value) { return value; }"
+        source = (grade_source(boundary) if boundary is not None
+                  else "vec3 grade_value(vec3 value, int final_grade) { return value; }")
         if self._source == source and self._shader is not None:
             return
         info = gpu.types.GPUShaderCreateInfo()
@@ -103,7 +104,8 @@ class StackGPUBackend:
         for binding, name in enumerate(samplers):
             info.sampler(binding, "FLOAT_2D", name)
         info.image(0, "RGBA32F", "FLOAT_2D", "output_pixels", qualifiers={"WRITE"})
-        for name in ("cube_size", "sample_start", "sample_count", "output_width", "grade_index", "first_grade"):
+        for name in ("cube_size", "sample_start", "sample_count", "output_width",
+                     "grade_index", "first_grade", "final_grade"):
             info.push_constant("INT", name)
         info.compute_source(source + _VALUE_SHADER)
         self._shader = gpu.shader.create_from_info(info)
@@ -217,6 +219,7 @@ class StackLUTBaker:
             shader.uniform_sampler("boundary_seed", self._boundary_texture)
             if self.prepared:
                 shader.uniform_int("grade_index", self._grade)
+                shader.uniform_int("final_grade", int(self._grade == len(self.prepared) - 1))
             shader.uniform_int("first_grade", int(self._grade == 0))
             shader.image("output_pixels", self._values[self._grade % 2])
         for name, value in (("cube_size", self.size), ("sample_start", self.cursor),
@@ -240,6 +243,8 @@ class StackLUTBaker:
         pixels = np.asarray(self._output.read(), dtype=np.float32).reshape(-1, 4)
         fields = pixels[:4 * count, :3].copy().reshape(4, size, size, size, 3)
         if not np.isfinite(fields).all():
+            if np.isposinf(fields[0]).all(axis=-1).any():
+                raise ArithmeticError("An intermediate Grade could not decode to finite RGB")
             raise ArithmeticError("Stack GPU baking produced nonfinite values")
         for array in (fields, self.to_lut, self.from_lut):
             array.flags.writeable = False
@@ -279,7 +284,10 @@ void main() {
     } else {
         value = texelFetch(input_values, pixel, 0).xyz;
     }
-    if (grade_index >= 0) value = grade_value(value);
+    // Carry a failed decode through to readback without evaluating another Grade.
+    if (grade_index >= 0 && !any(isinf(value)) && !any(isnan(value))) {
+        value = grade_value(value, final_grade);
+    }
     imageStore(output_pixels, pixel, vec4(value, 1.0));
 }
 """

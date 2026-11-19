@@ -295,6 +295,34 @@ class BakeRouteTests(unittest.TestCase):
         self.grade.pg_stack_entries[0].grade.pg_tone.fit = .5
         self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
 
+    def test_stack_composition_revision_applies_to_multiple_enabled_entries(self):
+        self.grade.bl_idname = "PGShaderGradeStack"
+        self.grade.pg_stack_entries = [SimpleNamespace(grade=self.grade.pg_grade, enabled=True),
+                                       SimpleNamespace(grade=self.grade.pg_grade, enabled=False)]
+
+        for enabled in (False, True):
+            with self.subTest(second_enabled=enabled):
+                self.grade.pg_stack_entries[1].enabled = enabled
+                first = self.module.describe(self.grade, self.context)
+                with patch.object(self.module, "STACK_COMPOSITION_SCHEMA",
+                                  self.module.STACK_COMPOSITION_SCHEMA + 1):
+                    revised = self.module.describe(self.grade, self.context)
+                for key in ("signature", "receipt_signature", "observation_signature"):
+                    self.assertEqual(first[key] != revised[key], enabled, key)
+
+    def test_upstream_stack_composition_revision_changes_bake_identity(self):
+        upstream = self.make_grade(self.tree, name="Upstream Stack",
+                                   kind="PGShaderGradeStack")
+        upstream.pg_stack_entries = [SimpleNamespace(grade=upstream.pg_grade, enabled=True)
+                                     for _ in range(2)]
+        link(upstream, "Color", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)
+        with patch.object(self.module, "STACK_COMPOSITION_SCHEMA",
+                          self.module.STACK_COMPOSITION_SCHEMA + 1):
+            revised = self.module.describe(self.grade, self.context)
+        for key in ("signature", "receipt_signature", "observation_signature"):
+            self.assertNotEqual(first[key], revised[key], key)
+
     def assert_color_edit_invalidates(self, controls, names):
         baseline = self.module.describe(self.grade, self.context)
         for name in names:

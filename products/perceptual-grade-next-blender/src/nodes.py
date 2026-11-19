@@ -60,6 +60,7 @@ from .kernel.stage2_parameters import (
 )
 from .lut_gpu import PreparedStack as _PreparedStack
 from .lut_helper import StackHelperBackend
+from .kernel.lut import STACK_COMPOSITION_SCHEMA
 from .kernel.settings import D65, SPACES
 from .kernel.tone_ui import (
     TONE_DEFAULTS, TONE_FIELDS, TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS,
@@ -1448,7 +1449,7 @@ def _kernel(tree_type, prepared, working_space, signature, parameter_images=None
 
 def _stack_signature(settings, working_space):
     values = tuple(_snapshot_values(item) for item in settings)
-    return _signature("forward-stack", values, working_space)
+    return _signature("forward-stack", (STACK_COMPOSITION_SCHEMA, values), working_space)
 
 
 def _stack_kernel(tree_type, prepared, signature, quality):

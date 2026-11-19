@@ -224,13 +224,19 @@ def grade_source(boundary):
     input_color = _Expression("input_value", "vec3")
     cones = graph.parameters.matrix(input_color)
     toned = graph.tone(graph.encode_cones(cones))
-    guarded = output_guard(graph, graph.color_and_guard(toned))
-    native = guarded.native_color
+    repaired = graph.color_and_guard(toned)
+    raw = graph.decode_coordinates(repaired.J_A, repaired.a, repaired.b)
+    graph.lines.extend((
+        "    if (final_grade == 0) {",
+        f"        return {_code(raw.valid)} > 0.0 ? {_code(raw.color)} : vec3(uintBitsToFloat(0x7f800000u));",
+        "    }",
+    ))
+    guarded = output_guard(graph, repaired)
     body = "\n".join((
         _PREAMBLE,
-        "vec3 grade_value(vec3 input_value) {",
+        "vec3 grade_value(vec3 input_value, int final_grade) {",
         *graph.lines,
-        f"    return {_code(native)};",
+        f"    return {_code(guarded.native_color)};",
         "}",
     ))
     return body
