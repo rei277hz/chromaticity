@@ -32,11 +32,11 @@ class Effects:
 def _claim_event(claims, row, handle, event, offset=None):
     claim = claims[row][handle]
     state = ownership.State(claim.origin_handle if claim is not None else None)
-    _, effects = ownership.step(state, event)
+    next_state, effects = ownership.step(state, event)
     if effects.action == "clear":
         claims[row][handle] = None
     elif effects.action == "capture":
-        claims[row][handle] = Claim(event.origin_handle, offset)
+        claims[row][handle] = Claim(next_state.origin_handle, offset)
 
 
 def _result(original, settings, before, claims):
