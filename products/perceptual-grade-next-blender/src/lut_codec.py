@@ -1,11 +1,14 @@
 """Value-only snapshots crossing the private Stack GPU helper boundary."""
 
 from dataclasses import asdict
+import math
 
 import numpy as np
 
 from .kernel import lut
-from .kernel.settings import ColorSettings, LinearSettings, Settings, SPACES, ToneSettings
+from .kernel.settings import (
+    ColorSettings, LinearSettings, Settings, SPACES, ToneSettings, stack_directions,
+)
 from .lut_gpu import PreparedStack
 
 
@@ -34,6 +37,7 @@ def freeze_prepared(prepared, diagnostics=None):
     cube = prepared.cube
     return {
         "settings": freeze_settings(prepared.settings),
+        "directions": stack_directions(len(prepared.settings), prepared.directions or None),
         "working_space": prepared.space,
         "signature": cube.signature,
         "size": cube.size,
@@ -41,7 +45,7 @@ def freeze_prepared(prepared, diagnostics=None):
         "edge_values": cube.edge_values,
         "to_lut": cube.to_lut,
         "from_lut": cube.from_lut,
-        "diagnostics": diagnostics,
+        "diagnostics": prepared.diagnostics if diagnostics is None else diagnostics,
     }
 
 
@@ -51,6 +55,19 @@ def _array(value, shape, label):
         raise ValueError("Invalid Stack helper " + label)
     value.flags.writeable = False
     return value
+
+
+def _validate_inverse_diagnostics(diagnostics, size):
+    if not isinstance(diagnostics, dict):
+        raise ValueError("Missing Stack helper inverse diagnostics")
+    count = diagnostics.get("inverse_approximate_vertices")
+    residual = diagnostics.get("inverse_max_residual")
+    if (
+        type(count) is not int or not 0 <= count <= size**3
+        or type(residual) is not float or not math.isfinite(residual) or residual < 0.0
+        or (count > 0) != (residual > 1.0)
+    ):
+        raise ValueError("Invalid Stack helper inverse diagnostics")
 
 
 def thaw_prepared(payload):
@@ -72,5 +89,9 @@ def thaw_prepared(payload):
         _array(payload["from_lut"], (3, 3), "output basis"),
         size,
     )
-    return PreparedStack(thaw_settings(payload["settings"]), space, cube,
-                         payload.get("diagnostics"))
+    settings = thaw_settings(payload["settings"])
+    directions = stack_directions(len(settings), payload.get("directions"))
+    diagnostics = payload.get("diagnostics")
+    if "INVERSE" in directions:
+        _validate_inverse_diagnostics(diagnostics, size)
+    return PreparedStack(settings, space, cube, diagnostics, directions)

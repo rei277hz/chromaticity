@@ -2,8 +2,13 @@
 
 Grade and Grade Stack nodes appear in the Shader and Compositor Color Add
 menus. Regular Grade nodes apply Linear, Tone, and Stage 3 Color through the
-product's `kernel` package; Grade Stack nodes apply ordered, forward-only complete
-Grades through progressive 33³/65³ GPU LUTs. Both use shared static Grade datablocks.
+product's `kernel` package. Each Grade Stack entry can apply or invert Linear,
+Tone, and Color in any position. Adjacent entries with opposite directions pass
+appearance values, composing different Linear transforms in CAT16 cone space
+for an Inverse → Forward pair. Only a final Forward entry applies the AP1-D65
+boundary mapping. A final Inverse entry returns recovered signed RGB.
+The Stack bakes the ordered entries into progressive 33³/65³ GPU LUTs.
+Both node types use shared static Grade datablocks.
 The Add menus provide one Grade entry. Right-click a Grade node and choose
 **Convert to Node-Owned Grade** to give it independent settings and numeric keyframes
 in Blender's native animation editors. All variants use the same Grade controls and preparation
@@ -132,6 +137,10 @@ work. Direct value entry requests only the final 65³ cube. The main thread poll
 helper receipts asynchronously, so GPU dispatch and texture readback do not block
 Blender's UI thread. A matching 33³ result remains marked as a preview until the
 full cube installs.
+
+When a Stack LUT uses finite inverse approximations outside tolerance, the node
+warns how many vertices of the displayed LUT are affected and reports the worst
+error as a multiple of tolerance.
 
 A complete previous result can remain visible with an amber `Updating` indication.
 Only the exact current kernel is ready for rendering. Render reconciliation joins

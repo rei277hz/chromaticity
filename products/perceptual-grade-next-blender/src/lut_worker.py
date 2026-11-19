@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 from .kernel import lut
+from .kernel.settings import stack_directions
 from .lut_codec import freeze_prepared, thaw_settings
 from .lut_gpu import StackGPUBackend
 from .runtime.grade_preparation import GradePreparer
@@ -54,6 +55,7 @@ class StackWorker:
         started = time.perf_counter()
         context.checkpoint()
         settings = thaw_settings(inputs["settings"])
+        directions = stack_directions(len(settings), inputs.get("directions"))
         space = inputs["working_space"]
         progressive = bool(inputs["progressive"])
         preparation_rows = {}
@@ -87,7 +89,7 @@ class StackWorker:
         context.checkpoint()
         reused = self.backend._shader is not None
         job = self.backend.create_prepared(
-            prepared_grades, space, progressive, settings=settings,
+            prepared_grades, space, progressive, settings=settings, directions=directions,
         )
         setup_seconds = time.perf_counter() - started
         phase = "preview" if progressive else "full"
@@ -124,6 +126,7 @@ class StackWorker:
                 quality, prepared = receipt
                 calculated_at = time.perf_counter()
                 diagnostics = {
+                    **(prepared.diagnostics or {}),
                     "worker_pid": os.getpid(),
                     "worker_started_at": started,
                     "worker_calculated_at": calculated_at,

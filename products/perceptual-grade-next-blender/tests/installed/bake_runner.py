@@ -796,6 +796,120 @@ assert nodes._bake_manager._node_key(engine_stale) not in nodes._bake_manager.jo
 scene.cycles.device = "CPU"
 engine_selection_stale = True
 
+# Both shader Bake routes capture the native full Stack, including Inverse.
+inverse_grade = nodes._make_grade()
+inverse_grade.pg_linear.exposure = -1.0
+stack_source_image = image("Stack Bake Source", source_rgba, 2, 2)
+expected_stack_rgba = source_rgba.copy()
+expected_stack_rgba[:, :3] *= 2.0
+image_stack = nodes.create_stack_node(shader_tree)
+image_stack_context = shader_context(material, scene, node=image_stack)
+inverse_entry = image_stack.pg_stack_entries.add()
+inverse_entry.direction = "INVERSE"
+inverse_entry.grade = inverse_grade
+ignored_entry = image_stack.pg_stack_entries.add()
+ignored_entry.enabled = False
+ignored_entry.grade = inverse_grade
+stack_source_node = shader_tree.nodes.new("ShaderNodeTexImage")
+stack_source_node.image = stack_source_image
+stack_source_node.interpolation = "Closest"
+link_source(shader_tree, image_stack, stack_source_node)
+bpy.context.view_layer.update()
+
+# Editing an active entry withdraws even a first Bake before the next poll.
+# An edit to a disabled row does not change the captured transform.
+nodes._bake_request(image_stack, image_stack_context)
+stack_key = manager._node_key(image_stack)
+queued_stack_request = manager.jobs[stack_key]
+assert queued_stack_request["state"].phase == "queued"
+ignored_entry.direction = "INVERSE"
+image_stack.pg_active_index = 1
+assert manager.jobs[stack_key] is queued_stack_request
+inverse_entry.direction = "FORWARD"
+assert stack_key not in manager.jobs
+assert image_stack.pg_bake_image is None and not image_stack.pg_use_bake
+
+inverse_entry.direction = "INVERSE"
+nodes._bake_request(image_stack, image_stack_context)
+manager._start_next()
+running_stack_request = manager.jobs[stack_key]
+assert manager.active is running_stack_request
+assert running_stack_request["state"].phase == "running"
+inverse_entry.enabled = False
+assert running_stack_request["state"].phase == "cancelling"
+assert manager.active is running_stack_request
+wait_bake(image_stack)
+assert image_stack.pg_bake_image is None and not image_stack.pg_use_bake
+assert nodes._bake_receipt_signature(image_stack) is None
+inverse_entry.enabled = True
+
+scene.render.engine = "BLENDER_EEVEE"
+bpy.context.view_layer.update()
+stack_eevee_values = bake(image_stack, image_stack_context, backend="EEVEE")
+stack_image = image_stack.pg_bake_image
+stack_receipt = nodes._bake_receipt_signature(image_stack)
+assert stack_receipt is not None
+assert stack_image.get(nodes._BAKE_DOMAIN) == "IMAGE"
+assert tuple(stack_image.size) == (2, 2)
+np.testing.assert_allclose(stack_eevee_values.reshape(4, 4), expected_stack_rgba,
+                           rtol=0, atol=0.002)
+assert_bake_controls(image_stack, image_stack_context)
+
+inverse_entry.direction = "FORWARD"
+assert_shader_uses_image(image_stack, stack_image)
+assert nodes._bake_receipt_signature(image_stack) == stack_receipt
+assert_bake_controls(image_stack, image_stack_context, "status.bake_stale_inputs")
+inverse_entry.direction = "INVERSE"
+assert_shader_uses_image(image_stack, stack_image)
+assert_bake_controls(image_stack, image_stack_context)
+
+for engine, warning in (("CYCLES", "status.bake_stale_engine"), ("BLENDER_EEVEE", None)):
+    scene.render.engine = engine
+    bpy.context.view_layer.update()
+    nodes._reconcile_bake_outputs((image_stack,), exact=False)
+    assert_shader_uses_image(image_stack, stack_image)
+    assert nodes._bake_receipt_signature(image_stack) == stack_receipt
+    assert_bake_controls(image_stack, image_stack_context, warning)
+
+scene.render.engine = "CYCLES"
+bpy.context.view_layer.update()
+stack_cycles_values = bake(image_stack, image_stack_context, backend="CYCLES_CPU")
+assert image_stack.pg_bake_image.get(nodes._BAKE_DOMAIN) == "IMAGE"
+assert tuple(image_stack.pg_bake_image.size) == (2, 2)
+np.testing.assert_allclose(stack_cycles_values.reshape(4, 4), expected_stack_rgba,
+                           rtol=0, atol=0.002)
+assert_bake_controls(image_stack, image_stack_context)
+
+image_stack.pg_bake_image = None
+stack_coordinates = shader_tree.nodes.new("ShaderNodeUVMap")
+shader_tree.links.new(stack_coordinates.outputs["UV"], stack_source_node.inputs["Vector"])
+image_stack.pg_bake_width = 16
+image_stack.pg_bake_height = 8
+uv_stack_context = shader_context(material, scene, obj, image_stack)
+bpy.context.view_layer.update()
+stack_uv_values = bake(image_stack, uv_stack_context, backend="CYCLES_CPU")
+stack_uv_image = image_stack.pg_bake_image
+stack_uv_receipt = nodes._bake_receipt_signature(image_stack)
+assert stack_uv_receipt is not None
+assert stack_uv_image.get(nodes._BAKE_DOMAIN) == "UV"
+assert tuple(stack_uv_image.size) == (16, 8)
+expected_uv_rgba = expected_stack_rgba.reshape(2, 2, 4).repeat(4, axis=0).repeat(8, axis=1)
+np.testing.assert_allclose(stack_uv_values.reshape(8, 16, 4), expected_uv_rgba,
+                           rtol=0, atol=0.002)
+assert_bake_controls(image_stack, uv_stack_context, can_bake=True)
+scene.render.engine = "BLENDER_EEVEE"
+bpy.context.view_layer.update()
+nodes._reconcile_bake_outputs((image_stack,), exact=False)
+assert_shader_uses_image(image_stack, stack_uv_image)
+assert nodes._bake_receipt_signature(image_stack) == stack_uv_receipt
+assert_bake_controls(image_stack, uv_stack_context, "status.bake_stale_engine", can_bake=False)
+scene.render.engine = "CYCLES"
+bpy.context.view_layer.update()
+nodes._reconcile_bake_outputs((image_stack,), exact=False)
+assert_shader_uses_image(image_stack, stack_uv_image)
+assert nodes._bake_receipt_signature(image_stack) == stack_uv_receipt
+assert_bake_controls(image_stack, uv_stack_context, can_bake=True)
+
 # Stack route is evaluated through the populated 65^3 LUT when the helper is available.
 stack_tree = bpy.data.node_groups.new("Bake Stack Compositor", nodes.COMPOSITOR_TREE)
 stack_tree.interface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
@@ -825,6 +939,8 @@ report = {
     "passed": True,
     "domains": ["IMAGE", "UV", "COMPOSITOR"],
     "stack": stack_ok,
+    "stack_shader_bakes": ["IMAGE_EEVEE", "IMAGE_CYCLES", "UV_CYCLES"],
+    "stack_entry_bake_invalidation": True,
     "packed_float": all(item.pg_bake_image is not None and item.pg_bake_image.is_float
                          and item.pg_bake_image.packed_file is not None
                          for item in (shader, shared, uv_node, comp_grade)),

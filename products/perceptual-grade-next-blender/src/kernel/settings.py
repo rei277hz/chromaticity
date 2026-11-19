@@ -83,3 +83,26 @@ class Settings:
     tone: ToneSettings = field(default_factory=ToneSettings)
     space: str = 'Linear Rec.709'
     color: ColorSettings = field(default_factory=ColorSettings)
+
+
+@dataclass(frozen=True)
+class StackEntrySettings:
+    settings: Settings
+    direction: str = "FORWARD"
+
+
+def split_stack_entries(entries):
+    """Bare Grade settings are the original, all-forward Stack input."""
+    entries = tuple(StackEntrySettings(item) if isinstance(item, Settings) else item
+                    for item in entries)
+    return tuple(item.settings for item in entries), tuple(item.direction for item in entries)
+
+
+def stack_directions(count, directions=None):
+    if directions is None:
+        return ("FORWARD",) * count
+    if not isinstance(directions, (tuple, list)) or len(directions) != count:
+        raise ValueError("Stack directions must match the number of Grades")
+    if any(item not in ("FORWARD", "INVERSE") for item in directions):
+        raise ValueError("Stack directions must be FORWARD or INVERSE")
+    return tuple(directions)

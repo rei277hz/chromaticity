@@ -60,8 +60,8 @@ from .kernel.stage2_parameters import (
 )
 from .lut_gpu import PreparedStack as _PreparedStack
 from .lut_helper import StackHelperBackend
-from .kernel.lut import STACK_COMPOSITION_SCHEMA
-from .kernel.settings import D65, SPACES
+from .kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
+from .kernel.settings import D65, SPACES, StackEntrySettings, split_stack_entries, stack_directions
 from .kernel.tone_ui import (
     TONE_DEFAULTS, TONE_FIELDS, TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS,
     clamp_tone_anchor,
@@ -151,6 +151,8 @@ _KERNEL_SCHEMA = 6
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
 _KERNEL_QUALITY = "_perceptual_grade_quality"
+_STACK_INVERSE_APPROXIMATE_VERTICES = "_perceptual_grade_inverse_approximate_vertices"
+_STACK_INVERSE_MAX_RESIDUAL = "_perceptual_grade_inverse_max_residual"
 _IDENTITY_KERNEL_KIND = "_perceptual_grade_identity_kernel"
 _ERROR_KERNEL_KIND = "_perceptual_grade_error_kernel"
 _NODE_ERROR = "_perceptual_grade_kernel_error"
@@ -1447,9 +1449,18 @@ def _kernel(tree_type, prepared, working_space, signature, parameter_images=None
     return tree
 
 
-def _stack_signature(settings, working_space):
+def _stack_signature(entries, working_space):
+    settings, directions = split_stack_entries(entries)
+    return _stack_settings_signature(settings, working_space, directions)
+
+
+def _stack_settings_signature(settings, working_space, directions):
+    directions = stack_directions(len(settings), directions or None)
     values = tuple(_snapshot_values(item) for item in settings)
-    return _signature("forward-stack", (STACK_COMPOSITION_SCHEMA, values), working_space)
+    payload = (STACK_COMPOSITION_SCHEMA, values)
+    if "INVERSE" in directions:
+        payload += (STACK_INVERSE_SCHEMA, directions)
+    return _signature("forward-stack", payload, working_space)
 
 
 def _stack_kernel(tree_type, prepared, signature, quality):
@@ -1464,6 +1475,10 @@ def _stack_kernel(tree_type, prepared, signature, quality):
         tree["_perceptual_grade_tree_type"] = tree_type
         tree["_perceptual_grade_working_space"] = prepared.space
         tree["_perceptual_grade_lut_signature"] = prepared.cube.signature
+        if "INVERSE" in prepared.directions:
+            diagnostics = prepared.diagnostics
+            tree[_STACK_INVERSE_APPROXIMATE_VERTICES] = diagnostics["inverse_approximate_vertices"]
+            tree[_STACK_INVERSE_MAX_RESIDUAL] = diagnostics["inverse_max_residual"]
         for image in built.images:
             image["_perceptual_grade_stack_image"] = signature
     except BaseException:
@@ -1531,7 +1546,7 @@ def _settings_for_node(node, working_space=None):
     working_space = working_space or _working_space()
     if _is_stack_node(node):
         return tuple(
-            _grade_settings(entry.grade, working_space)
+            StackEntrySettings(_grade_settings(entry.grade, working_space), entry.direction)
             for entry in node.pg_stack_entries
             if entry.enabled and entry.grade is not None
         )
@@ -2056,7 +2071,7 @@ def _record_for(node, desired_signature=None, source=None):
             kernel_quality, stack=_is_stack_node(node))):
         applied_signature = desired_signature
         applied_quality = kernel_quality
-    stack_grade_ids = _stack_grade_ids(node) if _is_stack_node(node) else ()
+    stack_entries = _stack_entry_observations(node) if _is_stack_node(node) else ()
     state = node_policy.new(
         desired_signature=desired_signature,
         applied_signature=applied_signature,
@@ -2065,7 +2080,7 @@ def _record_for(node, desired_signature=None, source=None):
     )
     record = {"node": node, "state": state, "source": source,
               "stack": _is_stack_node(node),
-              "stack_grade_ids": stack_grade_ids}
+              "stack_entries": stack_entries}
     _node_stores[pointer] = record
     return record
 
@@ -2101,6 +2116,7 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
             return tuple(failures)
 
     if effects.rebuild:
+        _invalidate_bake(node)
         failures.extend(
             error for failed_nodes, error in _refresh_nodes((node,))
         )
@@ -2226,7 +2242,7 @@ def _publication_signature(record, prepared):
     if record["stack"]:
         if not isinstance(prepared, _PreparedStack):
             raise TypeError("LUT preparation returned an invalid Stack result")
-        return _stack_signature(prepared.settings, prepared.space)
+        return _stack_settings_signature(prepared.settings, prepared.space, prepared.directions)
     prepared_settings = Settings(
         linear=prepared.linear.settings,
         tone=prepared.tone.settings,
@@ -3539,9 +3555,9 @@ def _replace_kernel(node):
         print("Perceptual Grade kernel repair failed:", error)
 
 
-def _stack_grade_ids(node):
+def _stack_entry_observations(node):
     return tuple(
-        entry.grade.as_pointer()
+        (entry.grade.as_pointer(), entry.direction)
         for entry in node.pg_stack_entries
         if entry.enabled and entry.grade is not None
     )
@@ -3701,17 +3717,12 @@ def _stack_owner(entry):
 
 def _stack_changed(entry, _context):
     node = _stack_owner(entry)
-    if node is None:
-        return
-    _index_output_node(node)
-    failures = _dispatch_stack_replacement(node)
-    if failures:
-        print("Perceptual Grade Stack update failed:", failures[-1])
+    if node is not None:
+        _refresh_stack_policy(node)
 
 
 def _refresh_stack_policy(node):
     _index_output_node(node)
-    _invalidate_bake(node)
     failures = _dispatch_stack_replacement(node)
     if failures:
         print("Perceptual Grade Stack update failed:", failures[-1])
@@ -3721,9 +3732,9 @@ def _dispatch_stack_replacement(node):
     if _node_reset_pending:
         return ()
     record = _record_for(node)
-    grade_ids = _stack_grade_ids(node)
-    changed = stack_changed(record["stack_grade_ids"], grade_ids)
-    record["stack_grade_ids"] = grade_ids
+    entries = _stack_entry_observations(node)
+    changed = stack_changed(record["stack_entries"], entries)
+    record["stack_entries"] = entries
     return _dispatch(node, node_policy.Event("stack_replace", stack_changed=changed))
 
 
@@ -3887,16 +3898,12 @@ def _forget_gesture_pointer(pointer):
 def _settings_signature_for(node):
     try:
         space = _working_space()
+        settings = _settings_for_node(node, space)
         if _is_stack_node(node):
-            settings = tuple(
-                _grade_settings(entry.grade, space)
-                for entry in node.pg_stack_entries
-                if entry.enabled and entry.grade is not None
-            )
             return _stack_signature(settings, space)
         return _signature(
             node.id_data.bl_idname,
-            _snapshot_values(_settings_for_node(node, space)),
+            _snapshot_values(settings),
             space,
         )
     except (AttributeError, ReferenceError, RuntimeError, ValueError):
@@ -4258,10 +4265,8 @@ def _grade_changed(grade):
             elif _is_stack_node(node):
                 record = _record_for(node)
                 referenced = grade_is_referenced(
-                    record["stack_grade_ids"], grade_pointer,
+                    record["stack_entries"], grade_pointer,
                 )
-                if referenced:
-                    _invalidate_bake(node)
                 failures.extend(
                     (node, error) for error in _dispatch(
                         node, node_policy.Event(
@@ -5158,6 +5163,12 @@ class PGStackEntry(bpy.types.PropertyGroup):
         translation_context=localization.CONTEXT,
         description=localization.native("tooltip.enabled"),
         default=True, update=_stack_changed)
+    direction: EnumProperty(
+        name=localization.native("property.stack_direction"),
+        translation_context=localization.CONTEXT,
+        items=(("FORWARD", localization.native("enum.direction.forward"), ""),
+               ("INVERSE", localization.native("enum.direction.inverse"), "")),
+        default="FORWARD", options=set(), update=_stack_changed)
     grade: PointerProperty(
                            type=PGGradeData,
                            name=localization.native("property.grade"),
@@ -5174,6 +5185,7 @@ def _draw_stack_node(node, context, layout):
         row.prop(entry, "enabled", text="", icon="HIDE_OFF" if entry.enabled else "HIDE_ON",
                  toggle=True)
         row.template_ID(entry, "grade")
+        row.prop(entry, "direction", text="")
         op = row.operator(PG_OT_new_stack_grade.bl_idname, text="", icon="ADD")
         op.index = index
         op = row.operator(PG_OT_stack_action.bl_idname, text="", icon="GREASEPENCIL",
@@ -5191,6 +5203,17 @@ def _draw_stack_node(node, context, layout):
     )
     op.action = "ADD"
     _draw_node_status(node, layout)
+    kernel = _kernel_for_node(node)
+    if kernel is None:
+        return
+    vertices = kernel.get(_STACK_INVERSE_APPROXIMATE_VERTICES)
+    residual = kernel.get(_STACK_INVERSE_MAX_RESIDUAL)
+    if type(vertices) is int and vertices > 0 and isinstance(residual, (int, float)):
+        layout.label(text=localization.tr("status.stack_inverse_approximation"), icon="INFO")
+        layout.label(text=localization.tr("status.stack_inverse_affected_vertices", vertices=vertices))
+        layout.label(text=localization.tr(
+            "status.stack_inverse_worst_error", residual=residual,
+        ))
 
 
 def _draw_stack_settings(node, layout):

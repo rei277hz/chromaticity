@@ -61,6 +61,9 @@ class BakeInstalledTests(unittest.TestCase):
                 self.assertTrue(data.get("passed"), details)
                 self.assertEqual(data.get("domains"), ["IMAGE", "UV", "COMPOSITOR"], details)
                 self.assertTrue(data.get("stack"), details)
+                self.assertEqual(data.get("stack_shader_bakes"),
+                                 ["IMAGE_EEVEE", "IMAGE_CYCLES", "UV_CYCLES"], details)
+                self.assertTrue(data.get("stack_entry_bake_invalidation"), details)
                 self.assertTrue(data.get("packed_float"), details)
                 self.assertTrue(data.get("live_restored"), details)
                 self.assertTrue(data.get("shared_rebake"), details)

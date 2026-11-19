@@ -10,6 +10,7 @@ from ..color_core import linear as color_linear
 
 # Version the Stack math in generated LUTs, installed kernels, and image Bakes.
 STACK_COMPOSITION_SCHEMA = 2
+STACK_INVERSE_SCHEMA = 1
 SIZE = 65
 PREVIEW_SIZE = 33
 CELLS = SIZE - 1
@@ -203,7 +204,7 @@ def _stack_matrix(matrices, space):
     return lut_matrix, to_lut, from_lut, digest.hexdigest()
 
 
-__all__ = ("STACK_COMPOSITION_SCHEMA", "SIZE", "PREVIEW_SIZE", "CELLS", "MINIMUM", "MAXIMUM", "KAPPA",
+__all__ = ("STACK_COMPOSITION_SCHEMA", "STACK_INVERSE_SCHEMA", "SIZE", "PREVIEW_SIZE", "CELLS", "MINIMUM", "MAXIMUM", "KAPPA",
            "LOG_RANGE", "ATLAS_WIDTH", "ATLAS_HEIGHT", "LinearCube", "axis",
            "atlas_height", "basis", "basis_pixels", "stack_config_pixels",
            "pack_rgbe", "unpack_rgbe")

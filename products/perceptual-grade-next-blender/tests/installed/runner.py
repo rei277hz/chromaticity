@@ -512,9 +512,12 @@ class TestStackBackend:
 
     @_timings.timed("synthetic CPU Stack fixture setup")
     def create_job(self, payload, progressive):
-        settings, working_space = payload
+        entries, working_space = payload
+        settings, directions = nodes.split_stack_entries(entries)
         matrices = tuple(nodes.prepare_linear(item.linear, working_space).rgb_matrix
                          for item in settings)
+        matrices = tuple(np.linalg.inv(matrix) if direction == "INVERSE" else matrix
+                         for matrix, direction in zip(matrices, directions))
         matrix, to_lut, from_lut, signature = lut_kernel._stack_matrix(
             matrices, working_space
         )
@@ -544,7 +547,10 @@ class TestStackBackend:
                 values, edges, signature, working_space,
                 to_lut, from_lut, size,
             )
-            return nodes._PreparedStack(settings, working_space, result)
+            diagnostics = ({"inverse_approximate_vertices": 7, "inverse_max_residual": 2.5}
+                           if "INVERSE" in directions else None)
+            return nodes._PreparedStack(settings, working_space, result,
+                                        diagnostics=diagnostics, directions=directions)
 
         return TestStackJob(cube, progressive)
 
@@ -1533,7 +1539,7 @@ assert all(not node.use_custom_color for node in shared_shader_nodes)
 assert "error" in output_effects and "current" in output_effects
 nodes._apply_output_effect = original_output_effect
 
-# Forward-only Grade Stacks build 65-cube lookup kernels in both tree types.
+# Grade Stacks build 65-cube lookup kernels in both tree types.
 _start_timing_section("Stack builds and gestures")
 stack_grade = nodes._make_grade()
 stack_grade.pg_linear.exposure = 0.5
@@ -1575,13 +1581,49 @@ for stack_node, color_name, alpha_name in (
         assert any(node.bl_idname == "CompositorNodeSetAlpha" for node in kernel.nodes)
 assert shader_stack.pg_stack_entries[0].grade == stack_grade
 assert compositor_stack.pg_stack_entries[0].grade == stack_grade
-assert nodes._stack_grade_ids(shader_stack) == (stack_grade.as_pointer(),)
+assert nodes._stack_entry_observations(shader_stack) == ((stack_grade.as_pointer(), "FORWARD"),)
 assert nodes._stack_signature(
     nodes._settings_for_node(shader_stack), nodes._working_space()
 ) == shader_stack.node_tree.get(nodes._KERNEL_SIGNATURE)
-assert nodes._settings_for_node(shader_stack)[0].color.lightness[1][2] == 0.125
-assert nodes._settings_for_node(shader_stack)[0].color.adaptance[2][1] == -0.0625
-assert nodes._settings_for_node(shader_stack)[0].color.web.hue_degrees[2][3] == 15.0
+stack_settings = nodes._settings_for_node(shader_stack)[0].settings
+assert stack_settings.color.lightness[1][2] == 0.125
+assert stack_settings.color.adaptance[2][1] == -0.0625
+assert stack_settings.color.web.hue_degrees[2][3] == 15.0
+assert nodes._stack_signature((stack_settings,), nodes._working_space()) == (
+    shader_stack.node_tree.get(nodes._KERNEL_SIGNATURE)
+)
+
+# A direction edit refreshes only the Stack that owns the entry.
+for stack_node, entry, other_node in (
+        (shader_stack, shader_entry, compositor_stack),
+        (compositor_stack, compositor_entry, shader_stack)):
+    forward_signature = stack_node.node_tree.get(nodes._KERNEL_SIGNATURE)
+    other_kernel = other_node.node_tree
+    entry.direction = "INVERSE"
+    inverse_signature = nodes._settings_signature_for(stack_node)
+    assert inverse_signature != forward_signature
+    assert nodes._record_for(stack_node)["state"].desired_signature == inverse_signature
+    failures = nodes._drain_preparations()
+    assert not failures, failures
+    assert stack_node.node_tree.get(nodes._KERNEL_SIGNATURE) == inverse_signature
+    assert other_node.node_tree == other_kernel
+    assert stack_node.pg_stack_entries[0].grade == stack_grade
+    warning = (
+        localization.tr("status.stack_inverse_approximation"),
+        localization.tr("status.stack_inverse_affected_vertices", vertices=7),
+        localization.tr("status.stack_inverse_worst_error", residual=2.5),
+    )
+    inverse_layout = stack_ui_checks["Layout"]()
+    nodes._draw_stack_node(stack_node, bpy.context, inverse_layout)
+    assert all(label in inverse_layout.labels for label in warning), inverse_layout.labels
+    entry.direction = "FORWARD"
+    failures = nodes._drain_preparations()
+    assert not failures, failures
+    assert stack_node.node_tree.get(nodes._KERNEL_SIGNATURE) == forward_signature
+    forward_layout = stack_ui_checks["Layout"]()
+    nodes._draw_stack_node(stack_node, bpy.context, forward_layout)
+    assert not any(label in forward_layout.labels for label in warning), forward_layout.labels
+
 shader_stack_graph = connect_grade_graph(shader_tree, shader_stack)
 compositor_stack_graph = connect_grade_graph(
     compositor_tree, compositor_stack, compositor=True
@@ -1647,8 +1689,8 @@ gesture_context = None
 
 class HoldingStackOwner:
     def create_job(self, payload, progressive):
-        settings, working_space = payload
-        exposure = settings[0].linear.exposure
+        entries, _working_space = payload
+        exposure = entries[0].settings.linear.exposure
         stack_preparation_exposures.append(exposure)
         job = original_stack_owner.create_job(payload, progressive)
         ready, release = ((preview_ready, continue_full) if exposure == 1.0 else

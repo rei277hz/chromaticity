@@ -4,6 +4,7 @@ from concurrent.futures import CancelledError
 from pathlib import Path
 from threading import current_thread, main_thread
 
+from .kernel.settings import split_stack_entries, stack_directions
 from .lut_codec import freeze_settings, thaw_prepared
 from .runtime.execution import HelperRuntime
 
@@ -53,10 +54,12 @@ class HelperStackJob:
     """A nonblocking one-child join, replaceable by a composed operation later."""
 
     def __init__(self, backend, payload, progressive):
-        settings, working_space = payload
+        entries, working_space = payload
+        settings, directions = split_stack_entries(entries)
         self.backend = backend
         self.inputs = {
             "settings": freeze_settings(settings),
+            "directions": stack_directions(len(settings), directions),
             "working_space": working_space,
             "progressive": bool(progressive),
         }

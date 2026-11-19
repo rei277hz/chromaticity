@@ -323,6 +323,55 @@ class BakeRouteTests(unittest.TestCase):
         for key in ("signature", "receipt_signature", "observation_signature"):
             self.assertNotEqual(first[key], revised[key], key)
 
+    def test_stack_bake_identity_tracks_directions_of_enabled_entries_in_order(self):
+        self.grade.bl_idname = "PGShaderGradeStack"
+        first = SimpleNamespace(grade=self.grade.pg_grade, enabled=True, direction="FORWARD")
+        second = SimpleNamespace(grade=self.grade.pg_grade, enabled=False, direction="FORWARD")
+        empty = SimpleNamespace(grade=None, enabled=True, direction="FORWARD")
+        self.grade.pg_stack_entries = [first, second, empty]
+        single_forward = self.module.describe(self.grade, self.context)
+        second.direction = empty.direction = "INVERSE"
+        self.assertEqual(single_forward, self.module.describe(self.grade, self.context))
+
+        first.direction = "INVERSE"
+        single_inverse = self.module.describe(self.grade, self.context)
+        with patch.object(self.module, "STACK_INVERSE_SCHEMA", self.module.STACK_INVERSE_SCHEMA + 1):
+            revised = self.module.describe(self.grade, self.context)
+            first.direction = "FORWARD"
+            self.assertEqual(single_forward, self.module.describe(self.grade, self.context))
+        first.direction = "INVERSE"
+        for key in ("signature", "receipt_signature", "observation_signature"):
+            self.assertNotEqual(single_inverse[key], revised[key], key)
+        second.enabled = True
+        two_inverse = self.module.describe(self.grade, self.context)
+        first.direction = "FORWARD"
+        forward_inverse = self.module.describe(self.grade, self.context)
+        self.grade.pg_stack_entries = [second, first, empty]
+        inverse_forward = self.module.describe(self.grade, self.context)
+        for key in ("signature", "receipt_signature", "observation_signature"):
+            self.assertEqual(len({item[key] for item in (
+                single_forward, single_inverse, two_inverse, forward_inverse, inverse_forward,
+            )}), 5, key)
+
+    def test_upstream_stack_direction_is_observed_while_using_live_output(self):
+        upstream = self.make_grade(self.tree, name="Upstream Stack",
+                                   kind="PGShaderGradeStack")
+        entry = SimpleNamespace(grade=upstream.pg_grade, enabled=True, direction="FORWARD")
+        upstream.pg_stack_entries = [entry]
+        link(upstream, "Color", self.grade, "Color")
+        forward = self.module.describe(self.grade, self.context)
+        entry.direction = "INVERSE"
+        inverse = self.module.describe(self.grade, self.context)
+        for key in ("signature", "receipt_signature", "observation_signature"):
+            self.assertNotEqual(forward[key], inverse[key], key)
+
+        upstream.pg_use_bake = True
+        upstream.pg_bake_image = Image("Stored bake")
+        upstream.pg_bake_image[self.module.BAKE_DOMAIN] = "IMAGE"
+        baked = self.module.describe(self.grade, self.context)
+        entry.direction = "FORWARD"
+        self.assertEqual(baked, self.module.describe(self.grade, self.context))
+
     def assert_color_edit_invalidates(self, controls, names):
         baseline = self.module.describe(self.grade, self.context)
         for name in names:

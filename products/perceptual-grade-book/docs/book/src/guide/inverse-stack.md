@@ -1,8 +1,21 @@
 # Grade Stacks
 
 A **Grade Stack** combines an ordered list of shared Grades into one sampled
-transform. In current Next, every enabled entry runs forward, from top to
-bottom. The Stack is not an inverse-solving tool in this release.
+transform. Enabled entries run from top to bottom. Use the direction selector
+on each entry to choose **Forward** (the default) or **Inverse**. An Inverse
+entry can appear anywhere, including alone or next to another Inverse. It
+searches for an input whose Grade result before AP1-D65 boundary mapping
+matches the target. This applies to both RGB and appearance targets. Grading
+can discard information, so the recovered input can be approximate or one of
+several possible inputs. Inverse requires an invertible Linear transform.
+
+An **Inverse → Forward** pair passes the recovered pre-Tone appearance directly
+when the entries have the same Linear transform. Different Linear transforms
+compose in CAT16 cone space. A **Forward → Inverse** pair passes the post-Color
+appearance. Both handoffs carry signed values and avoid an RGB round trip.
+Only a final Forward entry applies the AP1-D65 boundary mapping. A final Inverse
+entry returns recovered signed RGB, which can exceed the LUT grid maximum of
+1024.
 
 ## Arrange and edit entries
 
@@ -28,7 +41,11 @@ helper evaluates the two resolutions separately. A complete prior result can
 remain visible during updates, but rendering and normal saving wait for a
 current full result.
 
-Changing a referenced Grade, entry enable state, or order changes the sampled
+The Stack can use a LUT with finite inverse approximations outside tolerance.
+It warns how many vertices of the displayed preview or full LUT are affected
+and reports the worst error as a multiple of tolerance.
+
+Changing a referenced Grade, entry direction, enable state, or order changes the sampled
 function. A current setting signature is required before a result can install.
 After file load or before rendering, Next reconciles the derived LUT. A
 preparation failure is visible and fails closed with magenta output preserving

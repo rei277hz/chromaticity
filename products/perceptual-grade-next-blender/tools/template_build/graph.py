@@ -717,7 +717,7 @@ class Graph(ColorGraph):
         """Freeze post-Tone reference energy without adding a Color stage."""
         return self._color_input(appearance)
 
-    def _decode_responses(self, achromatic, raw_a, raw_b):
+    def _decode_responses(self, achromatic, raw_a, raw_b, *, cones_only=False):
         combined = self.vector((achromatic, raw_a, raw_b))
         responses = tuple(self.dot(combined, row) for row in INVERSE_OPPONENT)
         absolute = tuple(self.abs(r) for r in responses)
@@ -732,24 +732,27 @@ class Graph(ColorGraph):
             p = self.div(self.mul(27.13, safe), self.sub(400, safe))
             value = self.mul(self.sign(response), self.div(self.power(p, 1/.42), self.prepared.fl))
             cones.append(value)
-        rgb = self.matrix(self.vector(cones), self.prepared.from_cones)
-        components = self.split(rgb)
+        vector = self.vector(cones)
+        if not cones_only:
+            vector = self.matrix(vector, self.prepared.from_cones)
+        components = self.split(vector)
         for component in components:
             valid = self.mul(valid, self.lt(self.abs(component), FLOAT_MAX))
-        safe_rgb = self.vector(tuple(self.mul(valid, self.minimum(FLOAT_MAX, self.maximum(-FLOAT_MAX, v))) for v in components))
-        return DecodeSockets(safe_rgb, valid, margin)
+        safe_vector = self.vector(tuple(self.mul(valid, self.minimum(FLOAT_MAX, self.maximum(-FLOAT_MAX, v))) for v in components))
+        return DecodeSockets(safe_vector, valid, margin)
 
     def decode(self, state):
         if state.graph is not self:
             raise ValueError("Appearance sockets belong to another Graph")
         return self._decode_responses(state.achromatic, state.raw_a, state.raw_b)
 
-    def decode_coordinates(self, J_A, a, b):
+    def decode_coordinates(self, J_A, a, b, *, cones_only=False):
         """Decode arbitrary later-stage coordinates without stale Tone shortcuts."""
         eccentricity, _ = self._eccentricity(a, b, robust=True)
         factor = self.mul(1204 / self.prepared.aw, eccentricity)
         achromatic = self.mul(self.mul(self.prepared.aw, self.sign(J_A)), self.power(self.mul(.01, self.abs(J_A)), 1/self.prepared.gamma))
-        return self._decode_responses(achromatic, self.div(a, factor), self.div(b, factor))
+        return self._decode_responses(achromatic, self.div(a, factor), self.div(b, factor),
+                                      cones_only=cones_only)
 
     def hk_guard(self, state):
         from .guard_graph import hk_guard

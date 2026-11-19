@@ -16,7 +16,7 @@ import math
 from pathlib import Path
 
 from ..kernel.color_ui import COLOR_FIELDS
-from ..kernel.lut import STACK_COMPOSITION_SCHEMA
+from ..kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
 
 
 SCHEMA = 1
@@ -406,8 +406,12 @@ def _owner(host, node, context):
 def _grade_settings(node):
     kind = node.bl_idname
     if kind in STACK_TYPES:
-        entries = tuple(_grade_values(entry.grade) for entry in node.pg_stack_entries
-                        if entry.enabled and entry.grade is not None)
+        active = tuple(entry for entry in node.pg_stack_entries
+                       if entry.enabled and entry.grade is not None)
+        entries = tuple(_grade_values(entry.grade) for entry in active)
+        directions = tuple(getattr(entry, "direction", "FORWARD") for entry in active)
+        if "INVERSE" in directions:
+            return ("stack_composition", STACK_COMPOSITION_SCHEMA, entries, STACK_INVERSE_SCHEMA, directions)
         if len(entries) > 1:
             return ("stack_composition", STACK_COMPOSITION_SCHEMA, entries)
         return entries
