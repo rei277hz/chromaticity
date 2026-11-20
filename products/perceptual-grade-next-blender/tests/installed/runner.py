@@ -1548,6 +1548,80 @@ assert all(not node.use_custom_color for node in shared_shader_nodes)
 assert "error" in output_effects and "current" in output_effects
 nodes._apply_output_effect = original_output_effect
 
+
+def check_preparation_publication_isolation():
+    tree = bpy.data.node_groups.new("Grade Publication Isolation", nodes.SHADER_TREE)
+    resources = nodes._grade_resources
+    resource_type = type(resources)
+    original_resource = resource_type.resource
+    try:
+        stale, broken, healthy = grades = tuple(
+            nodes.create_per_node_node(tree) for _ in range(3)
+        )
+        assert not nodes._drain_preparations()
+        records = tuple(nodes._node_stores[node.as_pointer()] for node in grades)
+        stale_signature = records[0]["state"].applied_signature
+        for node in grades:
+            node.exposure = 0.5
+        publications = {
+            publication.source: publication
+            for publication in nodes._preparation_runtime.wait()
+        }
+        receipts = tuple(publications[record["source"]] for record in records)
+        assert all(receipt.error is None for receipt in receipts)
+        stale.exposure = 1.0
+
+        lookup_failure = RuntimeError("simulated Grade bank lookup failure")
+        looked_up = []
+
+        def resource_with_failure(self, node, space):
+            looked_up.append(node)
+            if node == broken:
+                raise lookup_failure
+            return original_resource(self, node, space)
+
+        resource_type.resource = resource_with_failure
+        scene_identity = bpy.context.scene.as_pointer()
+        before_deferral = tuple(
+            (record["state"], node.node_tree) for record, node in zip(records, grades)
+        )
+        resources.gate.evaluation_started("compositor", scene_identity)
+        try:
+            assert not nodes._handle_preparation_completions(receipts)
+            assert not looked_up
+            for receipt in receipts:
+                assert resources.pending[receipt.source, receipt.lane] is receipt
+            assert tuple(
+                (record["state"], node.node_tree) for record, node in zip(records, grades)
+            ) == before_deferral
+        finally:
+            resources.gate.evaluation_finished("compositor", scene_identity)
+
+        failures = []
+        for _ in receipts:
+            failures.extend(nodes._handle_preparation_completions(()))
+        assert failures == [((broken,), lookup_failure)], failures
+        assert stale not in looked_up, looked_up
+        assert not resources.pending
+        assert not stale.get(nodes._NODE_ERROR)
+        assert records[0]["state"].applied_signature == stale_signature
+        assert broken.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+        assert_grade_current(healthy)
+
+        resource_type.resource = original_resource
+        assert not nodes._refresh_nodes((broken,))
+        assert not nodes._drain_preparations()
+        for node in grades:
+            assert_grade_current(node)
+    finally:
+        resource_type.resource = original_resource
+        tree.nodes.clear()
+        bpy.data.node_groups.remove(tree)
+
+
+with _timings.operation("Grade preparation publication isolation"):
+    check_preparation_publication_isolation()
+
 # Grade Stacks build 65-cube lookup kernels in both tree types.
 _start_timing_section("Stack builds and gestures")
 stack_grade = nodes._make_grade()

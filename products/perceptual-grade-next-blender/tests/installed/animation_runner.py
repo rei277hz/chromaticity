@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 
 import bpy
 import numpy as np
@@ -201,7 +202,7 @@ for grade in (first_grade, second_grade):
     bpy.data.node_groups.remove(grade)
 
 # Repeated same-time callbacks retain provenance. Actual frame/subframe
-# changes expire every per-node claim, even while rendering blocks refresh.
+# changes expire every per-node claim, even while publication is deferred.
 shared_claim_grade = nodes._make_grade()
 shared_claim_grade.pg_color.web_hue_3_0 = 180.0
 shared_claims = nodes._hue_claims(shared_claim_grade.pg_color)
@@ -211,14 +212,35 @@ assert local_claims != nodes.color_authoring.EMPTY_CLAIMS
 nodes._frame_change_pre(scene)
 nodes._frame_change_post(scene)
 assert nodes._hue_claims(shader_node) == local_claims
-blocked = nodes._frame_reconcile_blocked
-try:
-    nodes._frame_reconcile_blocked = lambda _pointer: True
+gate = nodes._grade_resources.gate
+scene_identity = scene.as_pointer()
+with gate.callback():
     scene.frame_set(8, subframe=0.25)
     scene.frame_set(8)
+    assert scene_identity in nodes._frame_reconcile_scenes
+    assert nodes._hue_claims(shader_node, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
+original_host = gate._bpy
+try:
+    for job, locked, modal in (
+        ("OBJECT_BAKE", False, None),
+        ("SHADER_COMPILATION", False, None),
+        (None, True, None),
+        (None, False, "OBJECT_OT_bake_image"),
+    ):
+        operators = () if modal is None else (SimpleNamespace(bl_idname=modal),)
+        manager = SimpleNamespace(is_interface_locked=locked, windows=(
+            SimpleNamespace(modal_operators=operators),
+        ))
+        gate._bpy = SimpleNamespace(
+            app=SimpleNamespace(is_job_running=lambda name: name == job),
+            data=SimpleNamespace(window_managers=(manager,)),
+        )
+        nodes._frame_reconcile_tick()
+        assert scene_identity in nodes._frame_reconcile_scenes, (job, locked, modal)
 finally:
-    nodes._frame_reconcile_blocked = blocked
-assert nodes._hue_claims(shader_node, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
+    gate._bpy = original_host
+nodes._frame_reconcile_tick()
+assert scene_identity not in nodes._frame_reconcile_scenes
 assert nodes._hue_claims(shared_claim_grade.pg_color) == shared_claims
 bpy.data.node_groups.remove(shared_claim_grade)
 
@@ -529,6 +551,7 @@ def change_time_after_validation(current_nodes, signatures, **kwargs):
     if result[0] and not time_changed_after_validation:
         time_changed_after_validation.append(True)
         scene.frame_set(preflight_time[0], subframe=0.75)
+        assert scene.as_pointer() in nodes._frame_reconcile_scenes
     return result
 
 

@@ -2221,6 +2221,11 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
                 source, signature, payload, lane=lane, progressive=progressive,
                 playback_session=record.get("playback_session"),
             )
+            if _grade_resources is not None:
+                key = (source, lane)
+                queued = _grade_resources.pending.get(key)
+                if queued is not None and queued.error is not None:
+                    del _grade_resources.pending[key]
             _ensure_timer()
         except Exception as error:
             failures.extend(_dispatch(node, node_policy.Event(
@@ -2234,8 +2239,11 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
     return tuple(failures)
 
 
-def _dispatch_transition(node, record, event, preparation=None, defer_build=False):
-    record["state"], effects = node_policy.step(record["state"], event)
+def _dispatch_transition(node, record, event, preparation=None, defer_build=False,
+                         *, transition=None):
+    if transition is None:
+        transition = node_policy.step(record["state"], event)
+    record["state"], effects = transition
     failures = _consume_effects(node, effects, preparation, record, defer_build=defer_build)
     return effects, failures
 
@@ -2360,43 +2368,68 @@ def _playback_preview(record, session):
             and session in _playback_sessions.values())
 
 
+def _publication_records(source, lane):
+    records = []
+    for pointer, record in tuple(_node_stores.items()):
+        if record.get("source") is not source or lane != ("lut" if record["stack"] else "grade"):
+            continue
+        try:
+            if record["node"].as_pointer() == pointer:
+                records.append(record)
+        except ReferenceError:
+            continue
+    return tuple(records)
+
+
 def _handle_preparation_result(source, preparation_signature, prepared, error,
                                quality="full", lane="grade", admitted=False,
                                playback_session=None):
     global _reconciling
+    transitions = []
+    for record in _publication_records(source, lane):
+        state = record["state"]
+        current = preparation_signature == state.desired_preparation_signature
+        playback_preview = _playback_preview(record, playback_session)
+        if not current and (error is not None or not (state.gesture_active or playback_preview)):
+            continue
+        signature = None
+        failure = error
+        if failure is None:
+            try:
+                signature = _publication_signature(record, prepared)
+            except Exception as invalid_preparation:
+                if not current:
+                    continue
+                failure = invalid_preparation
+        event = node_policy.Event(
+            "preparation_result", signature, None if failure is None else str(failure),
+            quality=quality, preparation_signature=preparation_signature,
+            playback_preview=playback_preview,
+        )
+        transition = node_policy.step(state, event)
+        if failure is not None or transition[1].build_signature is not None:
+            transitions.append((record, event, transition, failure))
+
+    # A deferred bank build must leave both the receipt and node state intact.
+    if lane == "grade" and any(effects.build_signature is not None
+                               for _, _, (_, effects), _ in transitions):
+        if not _grade_resources.gate.retirement_allowed():
+            raise PublicationDeferred("Grade bank publication requires quiescent readers")
+
     failures = []
     authorized_builds = {}
     previous_reconciling = _reconciling
     _reconciling = True
     try:
-        for record in tuple(_node_stores.values()):
-            if record.get("source") is not source:
-                continue
-            if ((record["stack"] and lane != "lut")
-                    or (not record["stack"] and lane != "grade")):
-                continue
-            if error is not None:
-                signature = None
-            else:
-                try:
-                    signature = _publication_signature(record, prepared)
-                except Exception as failure:
-                    failures.extend(_fail_installation(
-                        (record,), record["state"].desired_signature,
-                        failure, quality,
-                    ))
-                    continue
+        for record, event, transition, failure in transitions:
+            node = record["node"]
+            if failure is not None:
+                failures.append(((node,), failure))
             effects, transition_failures = _dispatch_transition(
-                record["node"], record,
-                node_policy.Event("preparation_result", signature,
-                                       None if error is None else str(error),
-                                       quality=quality,
-                                       preparation_signature=preparation_signature,
-                                       playback_preview=_playback_preview(record, playback_session)),
-                defer_build=True,
+                node, record, event, defer_build=True, transition=transition,
             )
-            failures.extend(transition_failures)
-            if effects.build_signature is not None:
+            failures.extend(((node,), error) for error in transition_failures)
+            if not transition_failures and effects.build_signature is not None:
                 build_quality = effects.build_quality
                 authorized_builds.setdefault(
                     (effects.build_signature, build_quality), []
@@ -2618,8 +2651,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
             for record in users):
         # A recovery must install the exact demand. An older playback result
         # cannot repair a corrupt active bank and certify its replacement.
-        return _fail_installation(users, None, RuntimeError(
-            "Grade parameter bank is corrupt"))
+        return _publication_failure(users, RuntimeError("Grade parameter bank is corrupt"))
     context.update(
         previous_trees=dict(resource.trees),
         repairing=not active_valid,
@@ -3299,7 +3331,7 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
                           else _kernel(tree_type, prepared, prepared.space, signature))
                 built_kernel = True
             except Exception as error:
-                return _fail_installation(users, signature, error, quality)
+                return _publication_failure(users, error)
         failures = []
         compositor_records = []
         compositor_before = {}
@@ -3311,14 +3343,13 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
                 if stack:
                     previous_bindings = _record_compositor_bindings((record,))
             except Exception as error:
-                failures.extend(_dispatch(node, node_policy.Event(
-                    "installation_result", signature, str(error), quality=quality)))
+                failures.extend(_publication_failure((record,), error))
                 continue
             if previous != kernel:
                 _retire_kernels((previous,))
             delivery_failures = _dispatch(node, node_policy.Event(
                 "installation_result", signature, quality=quality))
-            failures.extend(delivery_failures)
+            failures.extend(((node,), error) for error in delivery_failures)
             if previous_bindings:
                 if delivery_failures:
                     _compositor_receipts.restore(previous_bindings)
@@ -3330,8 +3361,7 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
                 _tag_compositor_outputs(compositor_records)
             except Exception as error:
                 _compositor_receipts.restore(compositor_before)
-                failures.append(error)
-                failures.extend(_fail_installation(compositor_records, None, error, quality))
+                failures.extend(_publication_failure(compositor_records, error))
         return tuple(failures)
     finally:
         if built_kernel:
@@ -3352,33 +3382,14 @@ def _fail_installation(users, signature, error, quality="full"):
 
 
 def _queue_preparation_completions(completions):
-    for publication in completions:
-        if _grade_resources is not None:
-            source = publication.source if hasattr(publication, "source") else publication[0]
-            lane = getattr(publication, "lane", "grade")
-            _grade_resources.pending[(source, lane)] = publication
+    if _grade_resources is not None:
+        for publication in completions:
+            _grade_resources.pending[(publication.source, publication.lane)] = publication
 
 
-def _publication_demand(publication):
-    if hasattr(publication, "source"):
-        return (publication.source, publication.prepared, publication.error,
-                getattr(publication, "lane", "grade"))
-    source, _signature, prepared, error = publication
-    return source, prepared, error, "grade"
-
-
-def _admit_parameter_candidate(publication):
-    """Check backpressure before consuming the mailbox or node-policy result."""
-    source, prepared, error, lane = _publication_demand(publication)
-    if lane != "grade" or error is not None:
-        return False
-    if not _grade_resources.gate.retirement_allowed():
-        raise PublicationDeferred("Grade bank publication requires quiescent readers")
-    records = tuple(record for record in _node_stores.values()
-                    if record.get("source") is source and not record["stack"])
-    if records:
-        _grade_resources.resource(records[0]["node"], prepared.space)
-    return True
+def _publication_failure(records, error):
+    nodes = tuple(record["node"] for record in records)
+    return ((nodes, error), *_block_nodes(nodes, error))
 
 
 def _publish_pending_preparations(*, drain=False, sources=None):
@@ -3387,21 +3398,32 @@ def _publish_pending_preparations(*, drain=False, sources=None):
         raise PublicationDeferred("Grade lifecycle reconciliation is pending")
     failures = []
     # One complete source per foreground turn, with no settling delay or rate cap.
-    keys = tuple(key for key in _grade_resources.pending
-                 if sources is None or key[0] in sources)
+    pending = _grade_resources.pending
+    keys = tuple(key for key in pending if sources is None or key[0] in sources)
     deferred = None
     for key in keys:
-        publication = _grade_resources.pending[key]
+        publication = pending.get(key)
+        if publication is None:
+            continue
+        terminal_error = None
         try:
-            admitted = _admit_parameter_candidate(publication)
+            failures.extend(_handle_preparation_result(
+                publication.source, publication.signature, publication.prepared,
+                publication.error, publication.quality, publication.lane,
+                True, None if drain else publication.playback_session,
+            ))
         except PublicationDeferred as error:
             if drain:
                 raise
             deferred = error
             continue
-        del _grade_resources.pending[key]
-        failures.extend(_consume_preparation_publication(
-            publication, admitted=admitted, interactive=not drain))
+        except Exception as error:
+            terminal_error = error
+        # Processing can withdraw or replace this source.
+        if pending.get(key) is publication:
+            del pending[key]
+        if terminal_error is not None:
+            failures.extend(_publication_failure(_publication_records(*key), terminal_error))
         if not drain:
             return tuple(failures)
     if deferred is not None:
@@ -3422,24 +3444,13 @@ def _handle_preparation_completions(completions):
             if _frame_change_active:
                 return ()
             if _frame_reconcile_scenes:
-                _reconcile_pending_frames()
+                _reconcile_pending_frames_in_scope()
                 if _frame_reconcile_scenes:
                     return ()
             return _publish_pending_preparations()
     except PublicationDeferred:
         pass
     return ()
-
-
-def _consume_preparation_publication(publication, *, admitted=False, interactive=True):
-    if hasattr(publication, "quality"):
-        return _handle_preparation_result(
-            publication.source, publication.signature, publication.prepared,
-            publication.error, publication.quality, publication.lane, admitted,
-            publication.playback_session if interactive else None,
-        )
-    source, signature, prepared, error = publication
-    return _handle_preparation_result(source, signature, prepared, error)
 
 
 def _preparation_tick():
@@ -3450,9 +3461,15 @@ def _preparation_tick():
     try:
         _collect_compositor_receipts()
         _preparation_runtime.pump_main_thread()
-        _handle_preparation_completions(_preparation_runtime.collect())
+        for _nodes, error in _handle_preparation_completions(_preparation_runtime.collect()):
+            print("Perceptual Grade asynchronous publication failed:", error)
     except Exception as error:
-        _block_nodes(tuple(_all_grade_nodes()), error)
+        if _grade_resources is not None:
+            try:
+                with _grade_resources.gate.commit():
+                    _block_nodes(tuple(_all_grade_nodes()), error)
+            except PublicationDeferred:
+                return 0.02
         print("Perceptual Grade asynchronous preparation failed:", error)
     pending = _preparation_runtime.pending or bool(_grade_resources and _grade_resources.pending)
     if not pending:
@@ -3592,8 +3609,8 @@ def _block_nodes(nodes, error, *, during_reset=False):
                     "installation_result", error=message))
                 _apply_output_effect(node, effects, retire=False)
             else:
-                failures.extend(_dispatch(
-                    node, node_policy.Event("installation_result", error=message)))
+                errors = _dispatch(node, node_policy.Event("installation_result", error=message))
+                failures.extend(((node,), failure) for failure in errors)
         except Exception as failure:
             failures.append(((node,), failure))
     return tuple(failures)
@@ -4663,36 +4680,48 @@ def _frame_change_pre(scene, *_args):
         _clear_frame_color_claims(scene)
 
 
-def _frame_reconcile_blocked(scene_identity):
-    if _grade_resources is not None:
-        gate = _grade_resources.gate
-        if (gate.evaluation_active("render", scene_identity)
-                or gate.evaluation_active("compositor", scene_identity)):
-            return True
-    return (bpy.app.is_job_running("RENDER")
-            or bpy.app.is_job_running("RENDER_PREVIEW")
-            or bpy.app.is_job_running("COMPOSITE"))
-
-
-def _reconcile_pending_frames():
-    if _node_reset_pending or _frame_change_active:
-        return
-    for pointer, scene in tuple(_frame_reconcile_scenes.items()):
+def _reconcile_pending_frames_in_scope():
+    """Reconcile queued frames while the publication gate is already held."""
+    for pointer in tuple(_frame_reconcile_scenes):
+        if _node_reset_pending or _frame_change_active:
+            return
+        # An observation posted during reconciliation belongs to the next turn.
+        scene = _frame_reconcile_scenes.pop(pointer, None)
+        if scene is None:
+            continue
         try:
             live = scene.as_pointer() == pointer
         except ReferenceError:
             live = False
-        if live:
-            if _frame_reconcile_blocked(pointer):
-                continue
+        if not live:
+            continue
+        nodes = None
+        try:
             nodes = _scene_grade_nodes(scene)
             _clear_frame_color_claims(scene, nodes)
             failures = _refresh_nodes(nodes, frame_scene=pointer)
-            _reconcile_bake_outputs(nodes)
-            for failed_nodes, error in failures:
-                names = ", ".join(getattr(node, "name", "Grade") for node in failed_nodes)
-                print(f"Perceptual Grade frame update failed for {names}: {error}")
-        _frame_reconcile_scenes.pop(pointer, None)
+            _reconcile_bake_outputs_in_scope(nodes)
+        except PublicationDeferred:
+            _frame_reconcile_scenes.setdefault(pointer, scene)
+            raise
+        except Exception as error:
+            print("Perceptual Grade frame update failed:", error)
+            if nodes is None:
+                _frame_reconcile_scenes.setdefault(pointer, scene)
+                continue
+            failures = _block_nodes(nodes, error)
+            if failures:
+                _frame_reconcile_scenes.setdefault(pointer, scene)
+        for failed_nodes, error in failures:
+            names = ", ".join(getattr(node, "name", "Grade") for node in failed_nodes)
+            print(f"Perceptual Grade frame update failed for {names}: {error}")
+
+
+def _reconcile_pending_frames():
+    """Admit and reconcile evaluated frame observations on the main thread."""
+    if _grade_resources is not None and not (_node_reset_pending or _frame_change_active):
+        with _grade_resources.gate.commit():
+            _reconcile_pending_frames_in_scope()
 
 
 def _observe_evaluated_frame(scene):
@@ -4715,8 +4744,9 @@ def _frame_change_post(scene, *_args):
             for _nodes, error in _handle_preparation_completions(
                     _preparation_runtime.collect()):
                 print("Perceptual Grade frame publication failed:", error)
-        except Exception as error:
-            _block_nodes(_scene_grade_nodes(scene), error)
+        except Exception:
+            # The preparation timer handles runtime failures under admission.
+            _ensure_timer()
 
 
 @persistent
@@ -4743,9 +4773,7 @@ def _frame_reconcile_tick():
         except PublicationDeferred:
             pass  # Keep the scene queued until the next admitted turn.
         except Exception as error:
-            nodes = tuple(node for scene in _frame_reconcile_scenes.values()
-                          for node in _scene_grade_nodes(scene))
-            _block_nodes(nodes, error)
+            print("Perceptual Grade frame reconciliation failed:", error)
     return 0.1
 
 
@@ -5173,8 +5201,9 @@ def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
             if defer_failure_mutations:
                 failures.append(((node,), error))
             else:
-                failures.extend(_dispatch(node, node_policy.Event(
-                    "installation_result", state.desired_signature, str(error))))
+                errors = _dispatch(node, node_policy.Event(
+                    "installation_result", state.desired_signature, str(error)))
+                failures.extend(((node,), failure) for failure in errors)
     return tuple(failures)
 
 
