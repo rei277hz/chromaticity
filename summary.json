@@ -2,12 +2,12 @@
   "schema": 1,
   "metadata": {
     "repository": "rei277hz/chromaticity",
-    "commit": "c3ef5625e30aa485fa5cc9645a9d2f6ffcaab380",
-    "run_id": "44534306848",
-    "run_number": 55,
+    "commit": "a3ee887110cf85f770c353a7045c455d0611d8ab",
+    "run_id": "44731482132",
+    "run_number": 57,
     "run_attempt": 1,
-    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/44534306848",
-    "timestamp": "2026-11-19T14:08:57+00:00"
+    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/44731482132",
+    "timestamp": "2026-11-20T12:36:32+00:00"
   },
   "builds": {
     "passed": 2,
@@ -30,12 +30,13 @@
     ]
   },
   "tests": {
-    "passed": 65,
+    "passed": 64,
     "total": 65,
-    "outcome": "passed",
-    "exit_code": 0,
+    "outcome": "failed",
+    "exit_code": 32,
     "counts": {
-      "passed": 65
+      "failed": 1,
+      "passed": 64
     },
     "issues": [],
     "targets": [
@@ -281,7 +282,7 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:compositor_carriers",
-        "status": "passed"
+        "status": "failed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gesture_undo_gui",
