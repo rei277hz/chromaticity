@@ -52,7 +52,35 @@ def _exception_text(error):
 
 def _edges(tree):
     return {(link.from_node.name, link.from_socket.name,
-             link.to_node.name, link.to_socket.name) for link in tree.links}
+             link.to_node.name, link.to_socket.name, link.is_muted) for link in tree.links}
+
+
+def _multi_input_snapshot(nodes):
+    # Join Geometry supplies a native multi-input socket for the graph restore
+    # code shared by Grade kernel swaps and ownership conversions.
+    tree = bpy.data.node_groups.new("Link snapshot tree", "GeometryNodeTree")
+    kernel = bpy.data.node_groups.new("Link snapshot group", "GeometryNodeTree")
+    kernel.interface.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    replacement = kernel.copy()
+    try:
+        group = tree.nodes.new("GeometryNodeGroup")
+        group.node_tree = kernel
+        first = tree.nodes.new("GeometryNodeMeshCube")
+        last = tree.nodes.new("GeometryNodeMeshCube")
+        target = tree.nodes.new("GeometryNodeJoinGeometry").inputs["Geometry"]
+        tree.links.new(first.outputs["Mesh"], target).is_muted = True
+        tree.links.new(group.outputs["Geometry"], target).is_muted = True
+        tree.links.new(last.outputs["Mesh"], target)
+        snapshot = nodes._kernel_snapshot(group)
+        nodes._restore_kernel_snapshot(group, replacement, snapshot)
+        ordered = sorted(target.links, key=lambda link: link.multi_input_sort_id)
+        assert [(link.from_node, link.is_muted) for link in ordered] == [
+            (first, True), (group, True), (last, False),
+        ]
+    finally:
+        bpy.data.node_groups.remove(tree)
+        bpy.data.node_groups.remove(replacement)
+        bpy.data.node_groups.remove(kernel)
 
 
 def _menu(nodes, tree, node):
@@ -168,14 +196,14 @@ def _round_trip(nodes, tree, assert_grade_current):
     tree.nodes.active = shared
     source = tree.nodes.new("ShaderNodeRGB" if tree.bl_idname == nodes.SHADER_TREE
                             else "CompositorNodeRGB")
-    tree.links.new(source.outputs[0], shared.inputs["Color"])
+    tree.links.new(source.outputs[0], shared.inputs["Color"]).is_muted = True
     tree.links.new(shared.outputs["Color"], other.inputs["Color"])
     subtract = tree.nodes.new("ShaderNodeMath")
     subtract.operation = "SUBTRACT"
     first_input, second_input = subtract.inputs[:2]
     assert first_input.name == second_input.name
     tree.links.new(source.outputs[0], first_input)
-    tree.links.new(shared.outputs["Color"], second_input)
+    tree.links.new(shared.outputs["Color"], second_input).is_muted = True
 
     def assert_subtract_inputs(grade):
         assert tuple(link.from_socket for link in first_input.links) == (source.outputs[0],)
@@ -195,6 +223,7 @@ def _round_trip(nodes, tree, assert_grade_current):
     local = tree.nodes[original_name]
     assert nodes._is_per_node_grade_node(local)
     assert_subtract_inputs(local)
+    assert _edges(tree) == original_edges
     _assert_values(_settings(nodes, local), expected)
     assert nodes._hue_claims(local) == claims
     assert other.pg_grade == original_grade
@@ -505,23 +534,35 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
     assert_grade_current(node)
     observer = bpy.data.objects.new("Grade conversion external driver", None)
     scene.collection.objects.link(observer)
-    observer["grade_value"] = 0.0
-    external_curve = observer.driver_add('["grade_value"]')
-    external_variable = external_curve.driver.variables.new()
-    external_variable.name = "grade_value"
-    external_variable.type = "SINGLE_PROP"
-    external_target = external_variable.targets[0]
-    external_target.id_type = "NODETREE"
-    external_target.id = tree
-    external_target.data_path = node.path_from_id("exposure")
-    external_curve.driver.expression = external_variable.name
-    original_target_path = external_target.data_path
-    bpy.context.view_layer.update()
-    assert abs(observer["grade_value"] - node.exposure) < 1e-6
-    tree.nodes.active = node
-    node.select = True
     source = tree.nodes.new("ShaderNodeRGB")
     source_name = source.name
+    original_target_path = node.path_from_id("exposure")
+
+    def add_reader(owner):
+        owner["grade_value"] = 0.0
+        curve = owner.driver_add('["grade_value"]')
+        variable = curve.driver.variables.new()
+        variable.name = "grade_value"
+        variable.type = "SINGLE_PROP"
+        target = variable.targets[0]
+        target.id_type = "NODETREE"
+        target.id = tree
+        target.data_path = original_target_path
+        curve.driver.expression = variable.name
+        return target
+
+    external_target = add_reader(observer)
+    sibling_target = add_reader(source)
+
+    def assert_readers(target_id, path, expected):
+        bpy.context.view_layer.update()
+        for owner, target in ((observer, external_target), (source, sibling_target)):
+            assert target.id == target_id and target.data_path == path
+            assert abs(owner["grade_value"] - expected) < 1e-6
+
+    assert_readers(tree, original_target_path, node.exposure)
+    tree.nodes.active = node
+    node.select = True
     tree.links.new(source.outputs["Color"], node.inputs["Color"])
     values = _settings(nodes, node)
     name = node.name
@@ -561,8 +602,7 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
             _assert_original_animation(
                 nodes, tree, node, original, values, links, action, slot, driver_state,
             )
-            assert external_target.id == tree
-            assert external_target.data_path == original_target_path
+            assert_readers(tree, original_target_path, node.exposure)
 
         animation_type = nodes.NodeAnimationConversion
         finish = animation_type.finish
@@ -588,8 +628,7 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
         _assert_original_animation(
             nodes, tree, node, original, values, links, action, slot, driver_state,
         )
-        assert external_target.id == tree
-        assert external_target.data_path == original_target_path
+        assert_readers(tree, original_target_path, node.exposure)
 
         # Exercise rollback after one of two backed-up Grade drivers is removed.
         animation_module = importlib.import_module(animation_type.__module__)
@@ -631,8 +670,7 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
         _assert_original_animation(
             nodes, tree, node, original, values, links, action, slot, driver_state,
         )
-        assert external_target.id == tree
-        assert external_target.data_path == original_target_path
+        assert_readers(tree, original_target_path, node.exposure)
         assert not any(group.get(animation_module._BACKUP_TAG)
                        for group in bpy.data.node_groups)
 
@@ -653,8 +691,7 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
         _assert_original_animation(
             nodes, tree, node, original, values, links, action, slot, driver_state,
         )
-        assert external_target.id == tree
-        assert external_target.data_path == original_target_path
+        assert_readers(tree, original_target_path, node.exposure)
 
         remove_source = nodes._remove_conversion_source
 
@@ -674,8 +711,7 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
         _assert_original_animation(
             nodes, tree, node, original, values, links, action, slot, driver_state,
         )
-        assert external_target.id == tree
-        assert external_target.data_path == original_target_path
+        assert_readers(tree, original_target_path, node.exposure)
 
         # Deletion and temporary-backup cleanup may report an error after commit.
         # Both errors must leave the already validated replacement current.
@@ -713,8 +749,8 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
         assert replacement.as_pointer() != node_pointer
         assert replacement.bl_idname == "PGShaderGrade"
         _assert_values(_settings(nodes, replacement.pg_grade), values)
-        assert external_target.id == replacement.pg_grade
-        assert external_target.data_path == "pg_linear.exposure"
+        grade = replacement.pg_grade
+        assert_readers(grade, "pg_linear.exposure", values["exposure"])
         assert not replacement.get(nodes._NODE_ERROR)
         assert not replacement.get(nodes._NODE_PENDING)
         assert node_pointer not in nodes._node_stores
@@ -728,6 +764,18 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
                     & {curve.data_path for curve in tree.animation_data.drivers})
         assert not any(group.get(animation_module._BACKUP_TAG)
                        for group in bpy.data.node_groups)
+
+        # The sibling reads through the shared node. The Object reads the
+        # Grade datablock directly and must keep following that datablock.
+        sibling_target.id = tree
+        sibling_target.data_path = replacement.path_from_id() + ".pg_grade.pg_linear.exposure"
+        local = nodes.convert_grade_node(replacement, "NODE")
+        local.exposure = -0.5
+        bpy.context.view_layer.update()
+        assert sibling_target.id == tree and sibling_target.data_path == local.path_from_id("exposure")
+        assert abs(source["grade_value"] - local.exposure) < 1e-6
+        assert external_target.id == grade and external_target.data_path == "pg_linear.exposure"
+        assert abs(observer["grade_value"] - values["exposure"]) < 1e-6
     finally:
         bpy.data.objects.remove(observer, do_unlink=True)
         for candidate_name in (node_name, source_name, name):
@@ -737,6 +785,7 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
 
 
 def run(nodes, assert_grade_current):
+    _multi_input_snapshot(nodes)
     _backup_cleanup(nodes)
     scene = bpy.context.scene
     old_frame, old_subframe = scene.frame_current, scene.frame_subframe

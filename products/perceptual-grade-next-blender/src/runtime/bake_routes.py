@@ -682,7 +682,7 @@ class _Walker:
         self.image_pointers = set()
         self.image_states = {}
         self.dependency_pointers = set()
-        self.upstream = {}
+        self.upstream_grades = {}
         self.reasons = set()
         self.visiting = set()
         self.visited = set()
@@ -763,7 +763,8 @@ class _Walker:
                 self.coordinate_depth -= 1
 
     def output(self, node, output, parents):
-        key = (_identity(node), _socket_name(output), tuple(_identity(item) for item in parents))
+        node_key = _identity(node)
+        key = (node_key, _socket_name(output), tuple(_identity(item) for item in parents))
         if key in self.visiting:
             raise RouteBlocked("cycle", "Bake input contains a node cycle")
         if key in self.visited:
@@ -799,11 +800,7 @@ class _Walker:
                         self.input(alpha, parents)
                     return
                 self._observe(node, output, parents, _grade_settings(node))
-                self.upstream[key] = dict(
-                    tree_name=str(getattr(getattr(node, "id_data", None), "name", "")),
-                    tree_type=str(getattr(getattr(node, "id_data", None), "bl_idname", "")),
-                    group_path=tuple(str(item.name) for item in parents),
-                    node_name=str(node.name), kind="STACK" if kind in STACK_TYPES else "GRADE")
+                self.upstream_grades.setdefault(node_key, node)
                 for socket in node.inputs:
                     if socket.name in {"Color", "Alpha"}:
                         self.input(socket, parents)
@@ -1025,7 +1022,7 @@ def _dimension(node, key):
     return int(value)
 
 
-def _describe(node, context, *, full, dependencies=None):
+def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
     import bpy
     if not is_bake_target(node):
         raise RouteBlocked("target", "Bake is available only for shared Grade and Grade Stack nodes")
@@ -1113,8 +1110,7 @@ def _describe(node, context, *, full, dependencies=None):
                   material_slot=material_slot, uv_map=uv_map,
                   reasons=tuple(sorted(walker.reasons)),
                   images=tuple(item[1] for item in walker.images.values()),
-                  canvas_size=canvas_size,
-                  upstream=tuple(walker.upstream.values()), signature=None,
+                  canvas_size=canvas_size, signature=None,
                   **evaluator)
     colorspace = getattr(bpy.data, "colorspace", None)
     working_space = (getattr(colorspace, "working_space_interop_id", None),
@@ -1172,22 +1168,30 @@ def _describe(node, context, *, full, dependencies=None):
             if key not in existing:
                 existing.add(key)
                 dependencies.append(item)
+    if upstream_grades is not None:
+        existing = {_identity(item) for item in upstream_grades}
+        upstream_grades.extend(grade for key, grade in walker.upstream_grades.items()
+                               if key not in existing)
     return result
 
 
-def describe(node, context=None, *, dependencies=None):
+def describe(node, context=None, *, dependencies=None, upstream_grades=None):
     """Return a value-only request with exact UV/geometry and cheap Image facts.
 
     When provided, ``dependencies`` receives each effective source Image and
     referenced Object/Mesh once. It is a caller-owned transient list; the
     returned route never contains Blender IDs.
 
+    ``upstream_grades`` is another transient list. It receives each live Grade
+    or Grade Stack node whose kernel will be used by this route, once.
+
     ``request_signature`` augments the durable receipt with the expected size
     for canvas-sized outputs. Both are available from ``preview`` and omit
     transient dirty state. ``signature`` additionally covers validated exact
     geometry; only an explicit request needs that full geometry work.
     """
-    return _describe(node, context, full=True, dependencies=dependencies)
+    return _describe(node, context, full=True, dependencies=dependencies,
+                     upstream_grades=upstream_grades)
 
 
 def preview(node, context=None, *, dependencies=None):

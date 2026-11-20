@@ -2262,6 +2262,7 @@ assert not stale_compositor_node.use_custom_color
 
 # A failed kernel replacement restores the original group, external links,
 # and socket defaults after the candidate was temporarily selected.
+stale_node.inputs["Color"].links[0].is_muted = True
 rollback_kernel = stale_node.node_tree
 candidate_kernel = rollback_kernel.copy()
 restore_calls = []
@@ -2273,6 +2274,7 @@ def fail_once_after_candidate_restore(node, kernel, snapshot):
     restore_calls.append(kernel)
     if node == stale_node and kernel == candidate_kernel and len(restore_calls) == 1:
         assert_grade_graph(stale_shader_graph)
+        assert stale_node.inputs["Color"].links[0].is_muted
         raise RuntimeError("simulated post-install verification failure")
 
 
@@ -2289,6 +2291,8 @@ finally:
 assert restore_calls == [candidate_kernel, rollback_kernel]
 assert stale_node.node_tree == rollback_kernel
 assert_grade_graph(stale_shader_graph)
+assert stale_node.inputs["Color"].links[0].is_muted
+stale_node.inputs["Color"].links[0].is_muted = False
 assert_grade_graph(stale_compositor_graph)
 if candidate_kernel.users == 0:
     bpy.data.node_groups.remove(candidate_kernel, do_unlink=True)

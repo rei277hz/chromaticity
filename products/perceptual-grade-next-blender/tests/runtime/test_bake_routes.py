@@ -829,16 +829,48 @@ class BakeRouteTests(unittest.TestCase):
         reader = Node(upstream.node_tree, "ShaderNodeTexImage", "Baked Image",
                       image=upstream.pg_bake_image)
         reader[self.module.bake_graph.READER] = 1
-        first = self.module.describe(self.grade, self.context)
+        upstream_grades = []
+        first = self.module.describe(self.grade, self.context, upstream_grades=upstream_grades)
         self.assertEqual(first["images"][0]["reader_path"], ("Baked Image",))
         upstream.pg_grade.pg_linear.exposure = 1.
         upstream.pg_grade.pg_color.web_hue_1_2 = 12.
         self.assertEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
-        self.assertFalse(first["upstream"])
+        self.assertFalse(upstream_grades)
         upstream.pg_bake_image["_pg_next_bake_operation"] = "rebake"
         self.assertNotEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
         reader.image = Image("Different Image")
         self.blocked("baked_sampler")
+
+    def test_upstream_grades_use_exact_nodes_across_linked_group_occurrences(self):
+        source_tree = Tree("Shared group")
+        source_tree.library = SimpleNamespace(filepath="/libraries/source.blend")
+        source_grade = self.make_grade(source_tree)
+        source_output = Node(source_tree, "NodeGroupOutput", inputs=(("Color", None),))
+        link(source_grade, "Color", source_output, "Color")
+        decoy_tree = Tree(source_tree.name)
+        decoy_tree.library = SimpleNamespace(filepath="/libraries/decoy.blend")
+        decoy_grade = self.make_grade(decoy_tree)
+        decoy_output = Node(decoy_tree, "NodeGroupOutput", inputs=(("Color", None),))
+        link(decoy_grade, "Color", decoy_output, "Color")
+
+        instances = tuple(
+            Node(self.tree, "ShaderNodeGroup", name, outputs=(("Color", None),), node_tree=tree)
+            for name, tree in (("First", source_tree), ("Second", source_tree), ("Decoy", decoy_tree))
+        )
+        link(instances[0], "Color", self.grade, "Color")
+        link(instances[1], "Color", self.grade, "Alpha")
+        upstream_grades = []
+        route = self.module.describe(self.grade, self.context, upstream_grades=upstream_grades)
+        self.assertEqual(len(upstream_grades), 1)
+        self.assertIs(upstream_grades[0], source_grade)
+        self.assertNotIn("upstream", route)
+        json.dumps(route)
+
+        self.grade.inputs.get("Alpha").links.clear()
+        link(instances[2], "Color", self.grade, "Alpha")
+        self.module.describe(self.grade, self.context, upstream_grades=upstream_grades)
+        self.assertEqual(len(upstream_grades), 2)
+        self.assertIs(upstream_grades[1], decoy_grade)
 
     def test_upstream_uv_bake_forces_surface_route_and_private_cycles(self):
         self.mesh()
@@ -987,7 +1019,15 @@ class BakeRouteTests(unittest.TestCase):
         layers = Node(tree, "CompositorNodeRLayers", outputs=(("Image", None),),
                       scene=self.scene)
         link(layers, "Image", target, "Color")
-        cycles = self.module.describe(target, context)
+        world_tree = Tree("Render Layers World")
+        self.scene.world = ID("World", node_tree=world_tree)
+        world_grade = self.make_grade(world_tree)
+        world_output = Node(world_tree, "ShaderNodeOutputWorld", inputs=(("Surface", None),))
+        link(world_grade, "Color", world_output, "Surface")
+        upstream_grades = []
+        cycles = self.module.describe(target, context, upstream_grades=upstream_grades)
+        self.assertEqual(len(upstream_grades), 1)
+        self.assertIs(upstream_grades[0], world_grade)
         self.scene.render.engine = "BLENDER_EEVEE"
         eevee = self.module.describe(target, context)
         self.assertNotEqual(cycles["signature"], eevee["signature"])

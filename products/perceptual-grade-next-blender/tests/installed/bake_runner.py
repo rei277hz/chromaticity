@@ -295,6 +295,70 @@ def bake_linked_images(scene, mesh_object, material, directory):
                                    values, rtol=0, atol=1e-6)
 
 
+def check_bake_upstream_grade_identity(scene, directory):
+    group = bpy.data.node_groups.new("Bake Grade Identity Collision", nodes.SHADER_TREE)
+    group.interface.new_socket(name="Color", in_out="OUTPUT", socket_type="NodeSocketColor")
+    output = group.nodes.new("NodeGroupOutput")
+    upstream = nodes.create_node(group)
+    upstream.pg_grade = nodes._make_grade()
+    group.links.new(upstream.outputs["Color"], output.inputs["Color"])
+    wait_ready(upstream)
+
+    library_path = directory / "bake-grade-decoy.blend"
+    bpy.data.libraries.write(str(library_path), {group}, fake_user=True)
+    with bpy.data.libraries.load(str(library_path), link=True) as (available, imported):
+        assert group.name in available.node_groups
+        imported.node_groups = [group.name]
+    decoy_group = imported.node_groups[0]
+    assert decoy_group.library is not None and decoy_group.name == group.name
+    decoy = decoy_group.nodes[upstream.name]
+    assert decoy.as_pointer() != upstream.as_pointer()
+    assert any(node == decoy for node in nodes._all_grade_nodes())
+
+    material = bpy.data.materials.new("Bake Grade Identity")
+    material.use_nodes = True
+    tree = material.node_tree
+    occurrence = tree.nodes.new("ShaderNodeGroup")
+    occurrence.node_tree = group
+    target = nodes.create_node(tree)
+    target.pg_grade = nodes._make_grade()
+    tree.links.new(occurrence.outputs["Color"], target.inputs["Color"])
+    wait_ready(target)
+
+    context = shader_context(material, scene, node=target)
+    original_refresh = nodes._refresh_nodes
+    manager = nodes._bake_manager
+    failure = RuntimeError("Injected Bake upstream preparation failure")
+    failed_pointer = upstream.as_pointer()
+    queued = []
+
+    def refresh_with_failure(candidates, *args, **kwargs):
+        candidates = tuple(candidates)
+        for candidate in candidates:
+            if candidate.as_pointer() == failed_pointer:
+                return (((candidate,), failure),)
+        return original_refresh(candidates, *args, **kwargs)
+
+    try:
+        nodes._refresh_nodes = refresh_with_failure
+        manager.request = lambda node, *_args, **_kwargs: queued.append(node.as_pointer())
+        try:
+            nodes._bake_request(target, context)
+        except RuntimeError as error:
+            assert str(failure) in str(error)
+        else:
+            raise AssertionError("Bake accepted a failed upstream Grade")
+        assert not queued
+
+        failed_pointer = decoy.as_pointer()
+        nodes._bake_request(target, context)
+        assert queued == [target.as_pointer()]
+    finally:
+        nodes._refresh_nodes = original_refresh
+        del manager.request
+        nodes._bake_sources.forget(("request", target.as_pointer()))
+
+
 scene = bpy.context.scene
 scene.frame_set(1)
 scene.render.resolution_percentage = 100
@@ -1228,6 +1292,7 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     assert_bake_controls(legacy_reader, legacy_reader_context, "status.bake_stale_source")
 
     bake_linked_images(restored_scene, restored_mesh_object, restored_material, Path(directory))
+    check_bake_upstream_grade_identity(restored_scene, Path(directory))
 report["persistence"] = True
 report["undo_valid_bake"] = True
 report["source_edit_while_off"] = True

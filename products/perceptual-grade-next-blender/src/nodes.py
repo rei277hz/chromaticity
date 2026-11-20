@@ -619,9 +619,10 @@ def _bake_observed_signature(node, context, *, track_sources=False):
     return route["receipt_signature"]
 
 
-def _bake_route(node, context, dependencies):
+def _bake_route(node, context, dependencies, upstream_grades):
     context = context or _stored_bake_context(node)
-    route = bake_routes.describe(node, context, dependencies=dependencies)
+    route = bake_routes.describe(node, context, dependencies=dependencies,
+                                 upstream_grades=upstream_grades)
     if route.get("width") is None or route.get("height") is None:
         route["width"] = int(node.pg_bake_width)
         route["height"] = int(node.pg_bake_height)
@@ -653,28 +654,10 @@ def _stored_bake_context(node):
     return None
 
 
-def _prepare_bake_kernels(node, route):
+def _prepare_bake_kernels(node, upstream_grades):
     """Require every native Grade kernel captured by the route to be current."""
-    candidates = [node]
-    locators = {
-        (str(item.get("tree_name", "")), str(item.get("tree_type", "")),
-         str(item.get("node_name", "")))
-        for item in route.get("upstream", ())
-    }
-    if locators:
-        candidates.extend(
-            candidate for candidate in _all_grade_nodes()
-            if (str(getattr(candidate.id_data, "name", "")),
-                str(getattr(candidate.id_data, "bl_idname", "")),
-                str(getattr(candidate, "name", ""))) in locators
-        )
-    unique = {}
-    for candidate in candidates:
-        try:
-            unique[candidate.as_pointer()] = candidate
-        except (AttributeError, ReferenceError, RuntimeError):
-            continue
-    candidates = tuple(unique.values())
+    candidates = tuple({candidate.as_pointer(): candidate
+                        for candidate in (node, *upstream_grades)}.values())
     failures = _refresh_nodes(candidates)
     if failures:
         raise RuntimeError("Bake requires current Grade kernels: "
@@ -704,10 +687,11 @@ def _bake_request(node, context):
     if pointer in _bake_manager.jobs:
         raise RuntimeError("This node already has a Bake request")
     dependencies = []
+    upstream_grades = []
     with _grade_resources.gate.commit():
         _reconcile_bake_outputs()
-        route = _bake_route(node, context, dependencies)
-    _prepare_bake_kernels(node, route)
+        route = _bake_route(node, context, dependencies, upstream_grades)
+    _prepare_bake_kernels(node, upstream_grades)
     with _grade_resources.gate.commit():
         if _bake_wrapper(node) is None:
             _ensure_bake_wrapper(node)
@@ -1889,7 +1873,7 @@ def _kernel_snapshot(node):
         return socket.name if socket.node == node else socket
 
     links = tuple(
-        (socket_key(link.from_socket), socket_key(link.to_socket))
+        (socket_key(link.from_socket), socket_key(link.to_socket), link.is_muted)
         for link in tree_links
         if link.from_node == node or link.to_node == node
     )
@@ -1910,7 +1894,8 @@ def _kernel_snapshot(node):
         ))
         multi_input_groups[target_socket.as_pointer()] = (
             target_socket,
-            tuple(socket_key(candidate.from_socket) for _index, candidate in incoming),
+            tuple((socket_key(candidate.from_socket), candidate.is_muted)
+                  for _index, candidate in incoming),
         )
     return {
         "kernel": node.node_tree,
@@ -1937,11 +1922,12 @@ def _restore_node_connections(node, snapshot):
         return grade_sockets[key] if isinstance(key, str) else key
 
     expected_links = tuple(
-        (resolve(output, node.outputs), resolve(input_, node.inputs))
-        for output, input_ in snapshot["links"]
+        (resolve(output, node.outputs), resolve(input_, node.inputs), muted)
+        for output, input_, muted in snapshot["links"]
     )
     multi_input_groups = {
-        pointer: (target, tuple(resolve(output, node.outputs) for output in sources))
+        pointer: (target, tuple((resolve(output, node.outputs), muted)
+                                for output, muted in sources))
         for pointer, (target, sources) in snapshot["multi_input_groups"].items()
     }
     for link in tuple(tree.links):
@@ -1958,12 +1944,12 @@ def _restore_node_connections(node, snapshot):
             socket.default_value = value
 
     for target_socket, sources in multi_input_groups.values():
-        for source_socket in sources:
-            tree.links.new(source_socket, target_socket)
+        for source_socket, muted in sources:
+            tree.links.new(source_socket, target_socket).is_muted = muted
 
-    for source_socket, target_socket in expected_links:
+    for source_socket, target_socket, muted in expected_links:
         if target_socket.as_pointer() not in multi_input_groups:
-            tree.links.new(source_socket, target_socket)
+            tree.links.new(source_socket, target_socket).is_muted = muted
 
     actual_values = tuple(
         (name, _socket_default_value(node.inputs[name]))
@@ -1971,15 +1957,15 @@ def _restore_node_connections(node, snapshot):
     )
     if actual_values != snapshot["values"]:
         raise RuntimeError("Kernel replacement did not preserve input values")
-    expected_endpoints = sorted((source.as_pointer(), target.as_pointer())
-                                for source, target in expected_links)
-    actual_endpoints = sorted(
-        (link.from_socket.as_pointer(), link.to_socket.as_pointer())
+    expected_link_states = sorted((source.as_pointer(), target.as_pointer(), muted)
+                                  for source, target, muted in expected_links)
+    actual_link_states = sorted(
+        (link.from_socket.as_pointer(), link.to_socket.as_pointer(), link.is_muted)
         for link in tree.links
         if link.from_node == node or link.to_node == node
     )
-    if actual_endpoints != expected_endpoints:
-        raise RuntimeError("Kernel replacement did not preserve node links")
+    if actual_link_states != expected_link_states:
+        raise RuntimeError("Kernel replacement did not preserve node link state")
     for target_socket, sources in multi_input_groups.values():
         actual_sources = [
             (index, link)
@@ -1989,10 +1975,11 @@ def _restore_node_connections(node, snapshot):
         actual_sources.sort(key=lambda item: (
             getattr(item[1], "multi_input_sort_id", item[0]), item[0]
         ))
-        actual_order = tuple(link.from_socket.as_pointer() for _index, link in actual_sources)
-        expected_order = tuple(source.as_pointer() for source in sources)
-        if actual_order != expected_order:
-            raise RuntimeError("Kernel replacement changed multi-input link order")
+        actual_states = tuple((link.from_socket.as_pointer(), link.is_muted)
+                              for _index, link in actual_sources)
+        expected_states = tuple((source.as_pointer(), muted) for source, muted in sources)
+        if actual_states != expected_states:
+            raise RuntimeError("Kernel replacement changed multi-input link state")
 
 
 def _replace_node_kernel(node, kernel, *, emergency=False):
@@ -6538,7 +6525,8 @@ def convert_grade_node(node, target_kind):
             snapshot,
             values=tuple((key, value) for key, value in snapshot["values"]
                          if key != "Vector"),
-            links=tuple((source, target) for source, target in snapshot["links"]
+            links=tuple((source, target, muted)
+                        for source, target, muted in snapshot["links"]
                         if target != "Vector"),
         )
     name = node.name
