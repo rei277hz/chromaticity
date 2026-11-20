@@ -50,7 +50,7 @@ class CompositorGuiTests(unittest.TestCase):
                     ], cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                         text=True, start_new_session=True)
                     try:
-                        output, _ = process.communicate(timeout=240 if phase == "exercise" else 60)
+                        output, _ = process.communicate(timeout=240 if phase == "exercise" else 180)
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         output, _ = process.communicate(timeout=10)
@@ -72,6 +72,8 @@ class CompositorGuiTests(unittest.TestCase):
                         self.assertEqual(data["repaired_schema"], [6, 6, 6], details)
                         self.assertTrue(data["settings_preserved"], details)
                         self.assertEqual(len(data["rows"]), 2, details)
+                        self.assertTrue(data["stack_viewer_refinement"], details)
+                        self.assertTrue(data["stack_viewer_adoption"], details)
 
 
 if __name__ == "__main__":

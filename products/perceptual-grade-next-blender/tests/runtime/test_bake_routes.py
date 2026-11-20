@@ -884,6 +884,67 @@ class BakeRouteTests(unittest.TestCase):
         self.assertIsNone(route["width"])
         self.assertIsNone(route["height"])
 
+    def test_compositor_pointwise_constants_use_canvas_but_spatial_nodes_do_not(self):
+        tree = Tree("Compositor", "CompositorNodeTree")
+        self.scene.compositing_node_group = tree
+        target = self.make_grade(tree)
+        context = SimpleNamespace(scene=self.scene, object=None,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+        math_node = Node(tree, "CompositorNodeMath", inputs=(("Value", 0.25), ("Value_001", 0.5)),
+                         outputs=(("Value", None),))
+        link(math_node, "Value", target, "Color")
+        math_route = self.module.describe(target, context)
+        self.assertEqual((math_route["width"], math_route["height"],
+                          math_route["canvas_size"]), (50, 40, (50, 40)))
+        target.inputs.get("Color").links.clear()
+        scale = Node(tree, "CompositorNodeScale", inputs=(("Image", None),),
+                     outputs=(("Image", None),))
+        link(scale, "Image", target, "Color")
+        spatial_route = self.module.describe(target, context)
+        self.assertIsNone(spatial_route["canvas_size"])
+        self.assertIsNone(spatial_route["width"])
+        self.assertIsNone(spatial_route["height"])
+
+    def test_compositor_canvas_size_changes_request_but_not_saved_receipt(self):
+        tree = Tree("Compositor", "CompositorNodeTree")
+        self.scene.compositing_node_group = tree
+        target = self.make_grade(tree)
+        context = SimpleNamespace(scene=self.scene, object=None,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+        previous = self.module.describe(target, context)
+        self.assertEqual(previous["canvas_size"], (50, 40))
+        for name, value, expected in (
+            ("resolution_x", 120, (60, 40)),
+            ("resolution_y", 100, (60, 50)),
+            ("resolution_percentage", 58, (69, 58)),
+        ):
+            with self.subTest(setting=name):
+                setattr(self.scene.render, name, value)
+                changed = self.module.describe(target, context)
+                passive = self.module.preview(target, context)
+                self.assertEqual(changed["canvas_size"], expected)
+                self.assertEqual(passive["canvas_size"], expected)
+                self.assertEqual(previous["receipt_signature"], changed["receipt_signature"])
+                self.assertEqual(changed["request_signature"], passive["request_signature"])
+                self.assertNotEqual(previous["request_signature"], changed["request_signature"])
+                self.assertNotEqual(previous["observation_signature"], changed["observation_signature"])
+                previous = changed
+        self.scene.render.resolution_x = 119
+        self.assertEqual(previous["request_signature"],
+                         self.module.preview(target, context)["request_signature"])
+
+        source = Node(tree, "CompositorNodeImage", outputs=(("Image", None),), image=Image(size=(5, 3)))
+        link(source, "Image", target, "Color")
+        compositor_image = self.module.preview(target, context)
+        shader = self.module.preview(self.grade, self.context)
+        self.scene.render.resolution_percentage = 50
+        for node, node_context, before in ((target, context, compositor_image),
+                                           (self.grade, self.context, shader)):
+            with self.subTest(domain=before["domain"]):
+                self.assertIsNone(before["canvas_size"])
+                self.assertEqual(before["request_signature"], self.module.preview(
+                    node, node_context)["request_signature"])
+
     def test_compositor_override_settings_do_not_change_bake_identity(self):
         tree = Tree("Compositor", "CompositorNodeTree")
         self.scene.compositing_node_group = tree

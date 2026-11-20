@@ -24,6 +24,9 @@ MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
 _COMPOSITOR_OVERRIDES = frozenset(("compositor_device", "compositor_precision"))
+_COMPOSITOR_POINTWISE = frozenset((
+    "CompositorNodeRGB", "CompositorNodeValue", "CompositorNodeMath", "CompositorNodeMixRGB",
+))
 # These modifiers preserve loop topology and UV coordinates. Blender exposes
 # a viewport evaluated mesh to Python, which cannot certify render-only
 # topology/UV changes, so other enabled render modifiers require application
@@ -678,7 +681,7 @@ class _Walker:
         self.render_states = []
         self.render_observations = []
         self.coordinate_depth = 0
-        self.compositor_native = False
+        self.unknown_compositor_extent = False
 
     def input(self, socket, parents):
         links = _links(socket)
@@ -831,10 +834,11 @@ class _Walker:
                 self.input(socket, (*parents, node))
                 return
             if kind == "CompositorNodeRLayers":
-                self.compositor_native = True
+                self.unknown_compositor_extent = True
                 self._render_scene(getattr(node, "scene", None) or self.scene)
-            elif kind.startswith("CompositorNode") and kind not in {"CompositorNodeRGB", "CompositorNodeValue"}:
-                self.compositor_native = True
+            elif self.compositor:
+                if kind not in _COMPOSITOR_POINTWISE and kind not in POINTWISE:
+                    self.unknown_compositor_extent = True
             elif kind not in POINTWISE and not self.coordinate_depth:
                 self.reasons.add("surface_dependency")
             for socket in node.inputs:
@@ -1037,6 +1041,7 @@ def _describe(node, context, *, full, dependencies=None):
         raise RouteBlocked("destination_domain", "Compositor Bake cannot write a UV-domain destination")
     obj = None
     uv_map = material_slot = None
+    canvas_size = None
     if domain == "UV":
         if kind != "material":
             raise RouteBlocked("world_uv", "World Bake supports only Image-domain inputs")
@@ -1064,14 +1069,16 @@ def _describe(node, context, *, full, dependencies=None):
     elif domain == "IMAGE":
         first = next(iter(walker.images.values()), None)
         width, height = (first[1]["width"], first[1]["height"]) if first else (1, 1)
-    elif walker.compositor_native:
+    elif walker.unknown_compositor_extent:
         width = height = None
     elif len(walker.images) == 1:
         first = next(iter(walker.images.values()))[1]
         width, height = first["width"], first["height"]
     elif not walker.images:
-        scale = int(scene.render.resolution_percentage) / 100.
-        width, height = max(1, int(scene.render.resolution_x * scale)), max(1, int(scene.render.resolution_y * scale))
+        percentage = int(scene.render.resolution_percentage)
+        width = max(1, scene.render.resolution_x * percentage // 100)
+        height = max(1, scene.render.resolution_y * percentage // 100)
+        canvas_size = (width, height)
     else:
         width = height = None
     if width is not None and height is not None:
@@ -1089,6 +1096,7 @@ def _describe(node, context, *, full, dependencies=None):
                   material_slot=material_slot, uv_map=uv_map,
                   reasons=tuple(sorted(walker.reasons)),
                   images=tuple(item[1] for item in walker.images.values()),
+                  canvas_size=canvas_size,
                   upstream=tuple(walker.upstream.values()), signature=None,
                   **evaluator)
     colorspace = getattr(bpy.data, "colorspace", None)
@@ -1108,11 +1116,20 @@ def _describe(node, context, *, full, dependencies=None):
         material_slot, uv_map,
     )
     result["receipt_signature"] = _digest(receipt_observation)
-    result["observation_signature"] = _digest((
+    # The managed image supplies its actual dimensions for persisted receipts.
+    # Pending requests have no image yet and must carry the expected canvas.
+    result["request_signature"] = (
+        _digest((result["receipt_signature"], "scene_canvas", canvas_size))
+        if canvas_size is not None else result["receipt_signature"]
+    )
+    observation_facts = (
         receipt_observation,
         tuple((key, dirty) for key, (_state, dirty)
               in walker.image_observations.items()),
-    ))
+    )
+    if canvas_size is not None:
+        observation_facts += (canvas_size,)
+    result["observation_signature"] = _digest(observation_facts)
     if full:
         terminal = tuple((_socket_name(socket), _plain(getattr(socket, "default_value", None)),
                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
@@ -1148,7 +1165,8 @@ def describe(node, context=None, *, dependencies=None):
     referenced Object/Mesh once. It is a caller-owned transient list; the
     returned route never contains Blender IDs.
 
-    ``receipt_signature`` uses the same cheap facts as ``preview`` and omits
+    ``request_signature`` augments the durable receipt with the expected size
+    for canvas-sized outputs. Both are available from ``preview`` and omit
     transient dirty state. ``signature`` additionally covers validated exact
     geometry; only an explicit request needs that full geometry work.
     """

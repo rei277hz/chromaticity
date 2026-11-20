@@ -144,12 +144,12 @@ def build(node, kernel, *, retire=None):
 
 
 def synchronize(node, *, use_bake):
-    """Reconcile native reader/selector drift from one authorized output policy."""
+    """Reconcile a reader and report whether its native output selection changed."""
     tree = node.node_tree
     if tree is None or tree.get(WRAPPER) != 1:
         if use_bake:
             raise RuntimeError("Baked output has no private wrapper")
-        return
+        return False
     reader = marked(tree, READER)
     live = marked(tree, LIVE)
     selectors = tuple(item for item in tree.nodes if item.get(SELECTOR))
@@ -159,11 +159,13 @@ def synchronize(node, *, use_bake):
     image = node.pg_bake_image
     if reader.image != image:
         reader.image = image
+    selection_changed = False
     for selector in selectors:
         socket = selector.inputs[0] if shader else selector.inputs["Switch"]
         value = float(use_bake) if shader else bool(use_bake)
         if socket.default_value != value:
             socket.default_value = value
+            selection_changed = True
     if shader:
         uv = marked(tree, UV)
         if uv is None:
@@ -183,6 +185,7 @@ def synchronize(node, *, use_bake):
             reader.interpolation = interpolation
         if reader.extension != extension:
             reader.extension = extension
+    return selection_changed
 
 
 def replace_live(node, kernel):

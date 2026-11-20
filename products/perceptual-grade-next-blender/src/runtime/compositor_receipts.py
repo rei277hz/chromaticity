@@ -10,16 +10,26 @@ class CompositorReceipts:
         self._bindings = {}
         self._completed = {}
         self._pending = deque()
+        self._serial = 0
 
-    def bind(self, nodes_by_scene, generation):
-        """Record one successful publication; return exact rollback facts."""
+    def bind(self, nodes_by_scene, *, baked_nodes=()):
+        """Bind live outputs under a fresh generation and withdraw baked outputs."""
         previous = {}
         with self._lock:
+            if nodes_by_scene:
+                self._serial += 1
             for scene, nodes in nodes_by_scene.items():
                 bindings = self._bindings.setdefault(scene, {})
                 for node in nodes:
                     previous[scene, node] = bindings.get(node)
-                    bindings[node] = generation
+                    bindings[node] = self._serial
+            if baked_nodes:
+                for scene, bindings in tuple(self._bindings.items()):
+                    for node in baked_nodes:
+                        if node in bindings:
+                            previous[scene, node] = bindings.pop(node)
+                    if not bindings:
+                        del self._bindings[scene]
         return previous
 
     def restore(self, previous):

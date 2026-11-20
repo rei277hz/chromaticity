@@ -115,7 +115,7 @@ def assert_bake_controls(node, context, warning=None, *, can_bake=None):
         assert observed["can_bake"] == can_bake, observed["labels"]
     warning_texts = {
         nodes.localization.tr("status.bake_stale_" + reason)
-        for reason in ("engine", "source", "route", "inputs", "unverified")
+        for reason in ("engine", "source", "route", "inputs", "canvas_size", "unverified")
     }
     expected = set() if warning is None else {nodes.localization.tr(warning)}
     assert warning_texts.intersection(observed["labels"]) == expected, observed["labels"]
@@ -719,6 +719,56 @@ np.testing.assert_allclose(constant_values.reshape(-1, 4),
                            np.broadcast_to((.2, .3, .4, .65),
                                            (constant_values.size // 4, 4)),
                            rtol=0, atol=0.002)
+constant_image = constant_grade.pg_bake_image
+constant_receipt = nodes._bake_receipt_signature(constant_grade)
+constant_operation = constant_image.get(nodes._BAKE_OPERATION)
+assert_bake_controls(constant_grade, constant_context, can_bake=True)
+scene.render.resolution_percentage = 50
+assert_bake_controls(
+    constant_grade, constant_context, "status.bake_stale_canvas_size", can_bake=True,
+)
+assert constant_grade.pg_use_bake and constant_grade.pg_bake_image == constant_image
+nodes._bake_request(constant_grade, constant_context)
+constant_key = manager._node_key(constant_grade)
+assert manager.jobs[constant_key]["state"].phase == "queued"
+scene.render.resolution_x = 48
+nodes._bake_tick()
+assert constant_key not in manager.jobs
+assert constant_grade.pg_use_bake and constant_grade.pg_bake_image == constant_image
+assert constant_image.get(nodes._BAKE_OPERATION) == constant_operation
+assert nodes._bake_receipt_signature(constant_grade) == constant_receipt
+np.testing.assert_array_equal(np.asarray(constant_image.pixels[:]), constant_values)
+scene.render.resolution_x = 32
+scene.render.resolution_percentage = 100
+assert_bake_controls(constant_grade, constant_context, can_bake=True)
+scene.render.resolution_percentage = 50
+constant_grade.pg_use_bake = False
+constant_image.alpha_mode = "STRAIGHT"
+original_pixels = np.asarray(constant_image.pixels[:], dtype=np.float32)
+try:
+    nodes._bake_activate = fail_after_bake_activation
+    nodes._bake_request(constant_grade, constant_context)
+    wait_bake(constant_grade)
+finally:
+    nodes._bake_activate = original_activate
+assert activation_failures == ["injected", "injected"]
+assert not constant_grade.pg_use_bake and constant_grade.pg_bake_image == constant_image
+assert tuple(constant_image.size) == (32, 32) and constant_image.alpha_mode == "STRAIGHT"
+assert constant_image.get(nodes._BAKE_OPERATION) == constant_operation
+np.testing.assert_array_equal(np.asarray(constant_image.pixels[:]), original_pixels)
+constant_math = constant_tree.nodes.new("ShaderNodeMath")
+constant_math.operation = "ADD"
+constant_math.inputs[0].default_value = .25
+constant_math.inputs[1].default_value = .25
+constant_tree.links.new(constant_math.outputs[0], constant_grade.inputs["Color"])
+math_values = bake(constant_grade, constant_context)
+assert constant_grade.pg_bake_image == constant_image
+assert tuple(constant_image.size) == (16, 16), constant_grade.get(nodes._BAKE_ERROR)
+assert constant_image.packed_file is not None and not constant_image.is_dirty
+np.testing.assert_allclose(math_values.reshape(-1, 4)[:, :3], .5, rtol=0, atol=.002)
+assert_bake_controls(constant_grade, constant_context, can_bake=True)
+scene.render.resolution_percentage = 100
+assert_bake_controls(constant_grade, constant_context, "status.bake_stale_canvas_size")
 
 # A signature change before the first poll invalidates the queued request.
 scene.render.engine = "CYCLES"

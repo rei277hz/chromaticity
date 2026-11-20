@@ -281,7 +281,25 @@ def _synchronize_bake_output(node, *, use_bake):
     wrapper_present = bool(tree is not None and tree.get(bake_graph.WRAPPER))
     if use_bake or wrapper_present:
         _ensure_bake_wrapper(node)
-        bake_graph.synchronize(node, use_bake=use_bake)
+        selection_changed = bake_graph.synchronize(node, use_bake=use_bake)
+        if node.id_data.bl_idname == COMPOSITOR_TREE:
+            pointer = node.as_pointer()
+            record = _node_stores.get(pointer)
+            if record is None:
+                return
+            if use_bake:
+                known = _compositor_receipts.known(pointer)
+                if known:
+                    _forget_compositor_node(pointer)
+                if known or selection_changed:
+                    _refresh_compositor_presentation(record)
+            elif (record["state"].applied_signature is not None
+                  and (selection_changed or not _compositor_receipts.known(pointer))):
+                # A Viewer evaluation of the baked reader cannot acknowledge
+                # the live output when that reader is switched off again.
+                _publish_compositor_binding(record)
+            elif selection_changed:
+                _refresh_compositor_presentation(record)
 
 
 def _ensure_bake_timer():
@@ -407,12 +425,15 @@ def _publish_bake(entry, result, error):
         metadata = _bake_image_metadata(image, route, result)
         entry["bake_old_size"] = tuple(image.size)
         entry["bake_snapshot"] = None if created else ImageSnapshot.capture(image, metadata)
+        # Changing interpretation can reload the packed buffer at its old size.
+        if image.colorspace_settings.name != "Non-Color":
+            image.colorspace_settings.name = "Non-Color"
+        if image.alpha_mode != "CHANNEL_PACKED":
+            image.alpha_mode = "CHANNEL_PACKED"
+        if getattr(image, "use_half_precision", False):
+            image.use_half_precision = False
         if tuple(image.size) != (width, height):
             image.scale(width, height)
-        image.colorspace_settings.name = "Non-Color"
-        image.alpha_mode = "CHANNEL_PACKED"
-        if hasattr(image, "use_half_precision"):
-            image.use_half_precision = False
         image.pixels.foreach_set(values)
         image.update()
         image.pack()
@@ -492,9 +513,9 @@ def _bake_rollback(entry, _result, error):
             return
         if snapshot is not None:
             old_size = entry.get("bake_old_size", tuple(image.size))
+            snapshot.restore_properties(image)
             if tuple(image.size) != tuple(old_size):
                 image.scale(*old_size)
-            snapshot.restore_properties(image)
             image.pixels.foreach_set(snapshot.pixels)
             image.update()
             image.pack()
@@ -569,7 +590,7 @@ def _bake_current_signature(node, route):
     current = bake_routes.observe(node, route, dependencies=dependencies)["route"]
     if current is None or _bake_sources.changed(("request", node.as_pointer()), dependencies):
         return None
-    return current["receipt_signature"]
+    return current["request_signature"]
 
 
 def _remember_bake_observation(node):
@@ -601,7 +622,7 @@ def _bake_route(node, context, dependencies):
     if route.get("width") is None or route.get("height") is None:
         route["width"] = int(node.pg_bake_width)
         route["height"] = int(node.pg_bake_height)
-    route["signature"] = route["receipt_signature"]
+    route["signature"] = route["request_signature"]
     route["source_signature"] = route["receipt_signature"]
     route["artifact_signature"] = route["source_signature"]
     route["source_revisions"] = _bake_sources.snapshot(dependencies)
@@ -751,6 +772,10 @@ def _bake_warning(node, observation):
     route = observation["route"]
     if route is None:
         return "status.bake_stale_route"
+    image = node.pg_bake_image
+    if (route.get("canvas_size") is not None
+            and tuple(image.size) != tuple(route["canvas_size"])):
+        return "status.bake_stale_canvas_size"
     if route["receipt_signature"] == receipt.signature:
         return None
     if (receipt.backend_signature is not None
@@ -1680,19 +1705,42 @@ def _refresh_compositor_presentation(record):
         _apply_output_presentation(record["node"], effects.output_mode, effects.error)
 
 
-def _record_compositor_bindings(records, generation):
+def _record_compositor_bindings(records):
     """Record successful bindings only after their version is activated."""
     nodes_by_scene = {}
+    baked_nodes = []
     for record in records:
         node = record["node"]
         if node.id_data.bl_idname != COMPOSITOR_TREE:
             continue
         pointer = node.as_pointer()
+        if getattr(node, "pg_use_bake", False):
+            baked_nodes.append(pointer)
+            continue
         for scene in _compositor_scenes((record,)):
             nodes_by_scene.setdefault(scene.as_pointer(), []).append(pointer)
     # Resolve every RNA identity before changing the plain map, then return
     # rollback facts before the caller dispatches fallible presentation work.
-    return _compositor_receipts.bind(nodes_by_scene, generation)
+    if not nodes_by_scene and not baked_nodes:
+        return {}
+    return _compositor_receipts.bind(nodes_by_scene, baked_nodes=baked_nodes)
+
+
+def _publish_compositor_binding(record):
+    previous = _record_compositor_bindings((record,))
+    if not previous:
+        return
+    try:
+        _refresh_compositor_presentation(record)
+        _tag_compositor_outputs((record,))
+    except Exception as error:
+        _compositor_receipts.restore(previous)
+        failures = _fail_installation((record,), None, error)
+        if failures:
+            raise ExceptionGroup(
+                "Could not deliver compositor output", [error, *failures],
+            ) from error
+        raise
 
 
 def _restore_compositor_bindings(previous):
@@ -1734,12 +1782,13 @@ def _collect_compositor_receipts():
 
 
 def _apply_output_presentation(node, mode, error):
-    awaiting_compositor = mode == "current" and _compositor_output_pending(node)
+    using_bake = bool(getattr(node, "pg_use_bake", False))
+    awaiting_compositor = mode == "current" and not using_bake and _compositor_output_pending(node)
     values = {}
     if mode == "error":
         print("Perceptual Grade output failed:", error)
         values[_NODE_ERROR] = True
-    elif getattr(node, "pg_use_bake", False):
+    elif using_bake:
         if mode != "current":
             values[_NODE_PENDING] = "status.updating"
     elif awaiting_compositor:
@@ -2199,7 +2248,7 @@ def _request_node(node, working_space, snapshots=None):
     state = record["state"]
     failures = []
     needs_compositor_adoption = (
-        not record["stack"] and node.id_data.bl_idname == COMPOSITOR_TREE
+        node.id_data.bl_idname == COMPOSITOR_TREE and not getattr(node, "pg_use_bake", False)
         and state.applied_signature is not None
         and not _compositor_receipts.known(node.as_pointer())
     )
@@ -2211,16 +2260,17 @@ def _request_node(node, working_space, snapshots=None):
             validate_graph=needs_compositor_adoption,
         )
     if needs_compositor_adoption and current:
-        resource = _grade_resources.resource(node, working_space)
-        live_kernel = _kernel_for_node(node)
-        if (resource.generation is not None
-                and tuple(live_kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
-                == resource.banks
-                and live_kernel.get(PARAMETER_ACTIVE_BANK) == resource.active_bank):
-            # Loaded/undone graphs can already satisfy kernel demand and skip
-            # publication entirely. Seed their plain evaluation facts before
-            # the request's presentation effect claims the result is current.
-            _record_compositor_bindings((record,), resource.generation)
+        # Loaded/undone graphs can already satisfy demand and skip publication.
+        if record["stack"]:
+            _publish_compositor_binding(record)
+        else:
+            resource = _grade_resources.resource(node, working_space)
+            live_kernel = _kernel_for_node(node)
+            if (resource.generation is not None
+                    and tuple(live_kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
+                    == resource.banks
+                    and live_kernel.get(PARAMETER_ACTIVE_BANK) == resource.active_bank):
+                _record_compositor_bindings((record,))
     if not current:
         failures.extend(_dispatch(node, node_policy.Event(
             "installation_result", None, "Installed Grade kernel is missing or stale")))
@@ -2654,7 +2704,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         active_images = parameter_bank_images(resource.image)
         for role in PARAMETER_ROLES:
             _invalidate_grade_parameters(active_images[role])
-        context["receipt_before"] = _record_compositor_bindings(users, generation)
+        context["receipt_before"] = _record_compositor_bindings(users)
         delivery_errors = []
         for record in users:
             event_kind = "recovery_result" if context["repairing"] else "installation_result"
@@ -3158,18 +3208,37 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
             except Exception as error:
                 return _fail_installation(users, signature, error, quality)
         failures = []
+        compositor_records = []
+        compositor_before = {}
         for record in users:
             node = record["node"]
+            previous_bindings = {}
             try:
                 previous = _replace_node_kernel(node, kernel)
+                if stack:
+                    previous_bindings = _record_compositor_bindings((record,))
             except Exception as error:
                 failures.extend(_dispatch(node, node_policy.Event(
                     "installation_result", signature, str(error), quality=quality)))
                 continue
             if previous != kernel:
                 _retire_kernels((previous,))
-            failures.extend(_dispatch(node, node_policy.Event(
-                "installation_result", signature, quality=quality)))
+            delivery_failures = _dispatch(node, node_policy.Event(
+                "installation_result", signature, quality=quality))
+            failures.extend(delivery_failures)
+            if previous_bindings:
+                if delivery_failures:
+                    _compositor_receipts.restore(previous_bindings)
+                elif not getattr(node, "pg_use_bake", False):
+                    compositor_records.append(record)
+                    compositor_before.update(previous_bindings)
+        if compositor_records:
+            try:
+                _tag_compositor_outputs(compositor_records)
+            except Exception as error:
+                _compositor_receipts.restore(compositor_before)
+                failures.append(error)
+                failures.extend(_fail_installation(compositor_records, None, error, quality))
         return tuple(failures)
     finally:
         if built_kernel:

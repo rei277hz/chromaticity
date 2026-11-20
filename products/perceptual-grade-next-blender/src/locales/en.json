@@ -88,6 +88,7 @@
   "status.bake_stale_source": "Bake may be outdated (source data changed)",
   "status.bake_stale_route": "Bake may be outdated (inputs could not be checked)",
   "status.bake_stale_inputs": "Bake may be outdated (inputs changed)",
+  "status.bake_stale_canvas_size": "Bake may be outdated (render canvas size changed)",
   "status.bake_stale_unverified": "Bake may be outdated (no reference for current inputs)",
   "label.bake": "Bake",
   "error.autokey_failed": "Could not create an animation keyframe",

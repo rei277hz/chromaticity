@@ -136,7 +136,8 @@ while the helper continues; at most one latest Stack snapshot waits behind activ
 work. Direct value entry requests only the final 65³ cube. The main thread polls
 helper receipts asynchronously, so GPU dispatch and texture readback do not block
 Blender's UI thread. A matching 33³ result remains marked as a preview until the
-full cube installs.
+full cube installs. A visible Compositor Viewer keeps the Stack's updating
+indicator until it finishes evaluating that full cube.
 
 When a Stack LUT uses finite inverse approximations outside tolerance, the node
 warns how many vertices of the displayed LUT are affected and reports the worst
@@ -172,8 +173,11 @@ multiple source Images use the UV route and require a mesh with a
 non-overlapping render UV map.
 
 Compositor bakes use Blender's full-precision CPU compositor and retain its
-output dimensions. A constant uses the scene canvas. For Render Layers inputs,
-the scene's chosen render engine produces the pixels supplied to the compositor.
+output dimensions. A constant uses the scene canvas at the render resolution
+percentage. If its pixel dimensions change, a pending constant bake is
+discarded. An existing bake stays usable with a canvas-size warning that
+clears when its dimensions match again. For Render Layers inputs, the scene's
+chosen render engine produces the pixels supplied to the compositor.
 
 The Shader Vector input controls only baked sampling. When unlinked, it uses
 the recorded bake UV map (or the active render UV map for Image bakes).

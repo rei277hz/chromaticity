@@ -337,6 +337,128 @@ def finish(error=None):
     bpy.ops.wm.quit_blender()
 
 
+def exercise_stack_viewer():
+    """Verify Viewer completion for Stack refinement and kernel adoption."""
+    helper = importlib.import_module(extension.__name__ + ".lut_helper")
+    scene = bpy.context.scene
+    scene.render.compositor_device = "CPU"
+    scene.render.compositor_precision = "FULL"
+    width, height = 16, 8
+    scene.render.resolution_x = width
+    scene.render.resolution_y = height
+    scene.render.resolution_percentage = 100
+    tree = scene.compositing_node_group
+    stack = nodes.create_stack_node(tree)
+    grade = nodes._make_grade()
+    stack.pg_stack_entries.add().grade = grade
+    source = next(node for node in tree.nodes if node.bl_idname == "CompositorNodeImage")
+    viewer = next(node for node in tree.nodes if node.bl_idname == "CompositorNodeViewer")
+    image = bpy.data.images.new("Stack Viewer source", width, height, alpha=True, float_buffer=True)
+    image.colorspace_settings.name = "Non-Color"
+    image.alpha_mode = "CHANNEL_PACKED"
+    image.use_half_precision = False
+    neutral_patches = np.asarray(((.005, .005, .005, .4), (.01, .01, .01, .65)), dtype=np.float32)
+    image.pixels.foreach_set(np.tile(np.repeat(neutral_patches, width // 2, axis=0), (height, 1)).ravel())
+    image.update()
+    source.image = image
+    tree.links.new(source.outputs["Image"], stack.inputs["Color"])
+    tree.links.new(stack.outputs["Color"], viewer.inputs["Image"])
+    tree.nodes.active = viewer
+    stack_id = stack.as_pointer()
+    scene_id = scene.as_pointer()
+    receipts = nodes._compositor_receipts
+
+    def generation():
+        return receipts.snapshot(scene_id).get(stack_id)
+
+    def quality():
+        state = nodes._record_for(stack)["state"]
+        assert state.error is None, state.error
+        return state.applied_quality if state.applied_signature == state.desired_signature else None
+
+    def viewer_patches():
+        pixels = next(image for image in bpy.data.images if image.type == "COMPOSITING")
+        assert tuple(pixels.size) == (width, height), tuple(pixels.size)
+        rgba = np.asarray(pixels.pixels[:], dtype=np.float32).reshape(height, width, 4)
+        return rgba[height // 2, [width // 4, 3 * width // 4]]
+
+    while quality() != "full" or generation() is None or nodes._compositor_output_pending(stack):
+        yield
+    initial = viewer_patches()
+    assert np.isfinite(initial).all() and np.all(initial[:, :3] > 1e-5), initial
+    np.testing.assert_allclose(initial[:, 3], neutral_patches[:, 3], atol=1e-6, rtol=0)
+    held = {}
+    deliver = receipts.completed
+    advance = helper.HelperStackJob.advance
+    allow_refinement = False
+
+    def hold_completion(receipt):
+        if receipt is not None and receipt.successful and receipt.identity == scene_id:
+            binding = dict(receipt.snapshot).get(stack_id)
+            if binding is not None:
+                held[binding] = receipt
+                return
+        deliver(receipt)
+
+    def hold_refinement(job):
+        if job.preview_emitted and not job.cancelled and not allow_refinement:
+            return None
+        return advance(job)
+
+    receipts.completed = hold_completion
+    helper.HelperStackJob.advance = hold_refinement
+    try:
+        window = bpy.context.window.as_pointer()
+        gesture = nodes._begin_gesture(window, stack)
+        grade.pg_linear.exposure = 1.0
+        while quality() != "preview" or generation() not in held:
+            yield
+        preview = generation()
+        allow_refinement = True
+        nodes._end_gesture(window, gesture)
+        while quality() != "full" or generation() not in held:
+            yield
+        full = generation()
+        assert full != preview, (full, preview)
+        deliver(held[preview])
+        nodes._collect_compositor_receipts()
+        assert nodes._compositor_output_pending(stack)
+        assert stack.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        deliver(held[full])
+        nodes._collect_compositor_receipts()
+        assert not nodes._compositor_output_pending(stack)
+        assert not stack.get(nodes._NODE_PENDING)
+        actual = viewer_patches()
+        np.testing.assert_allclose(actual[:, :3], 2 * initial[:, :3], atol=1e-5, rtol=.03)
+        assert np.any(np.abs(actual[:, :3] - initial[:, :3]) > 1e-5)
+        np.testing.assert_allclose(actual[:, 3], initial[:, 3], atol=1e-6, rtol=0)
+        result["stack_viewer_refinement"] = True
+
+        kernel = stack.node_tree
+        nodes._reset_compositor_receipts()
+        assert generation() is None
+        failures = nodes._refresh_nodes((stack,))
+        assert not failures, failures
+        adopted = generation()
+        assert adopted is not None and adopted != full, (adopted, full)
+        assert stack.node_tree == kernel and quality() == "full"
+        deliver(held[full])
+        nodes._collect_compositor_receipts()
+        assert nodes._compositor_output_pending(stack)
+        assert stack.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        while adopted not in held:
+            yield
+        deliver(held[adopted])
+        nodes._collect_compositor_receipts()
+        assert not nodes._compositor_output_pending(stack)
+        assert not stack.get(nodes._NODE_PENDING)
+        np.testing.assert_allclose(viewer_patches(), actual, atol=1e-6, rtol=0)
+        result["stack_viewer_adoption"] = True
+    finally:
+        receipts.completed = deliver
+        helper.HelperStackJob.advance = advance
+
+
 def complete():
     baseline = reference_rows["rows"] if reference_rows else rows
     references = {row["config"]: np.asarray(row["pixels"], dtype=np.float32)
@@ -356,6 +478,25 @@ def complete():
     else:
         result["repaired_schema"] = [node.node_tree[nodes._KERNEL_KIND] for node in consumers()]
         assert result["repaired_schema"] == [nodes._KERNEL_SCHEMA] * 3
+        exercise = exercise_stack_viewer()
+        deadline = time.monotonic() + 120
+
+        def stack_tick():
+            try:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Stack Viewer completion timed out")
+                next(exercise)
+            except StopIteration:
+                finish()
+                return None
+            except Exception:
+                exercise.close()
+                finish(traceback.format_exc())
+                return None
+            return .05
+
+        bpy.app.timers.register(stack_tick, first_interval=.05)
+        return
     finish()
 
 

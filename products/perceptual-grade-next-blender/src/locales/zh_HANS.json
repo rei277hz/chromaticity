@@ -88,6 +88,7 @@
   "status.bake_stale_source": "烘焙可能已过时（源数据已更改）",
   "status.bake_stale_route": "烘焙可能已过时（无法检查输入）",
   "status.bake_stale_inputs": "烘焙可能已过时（输入已更改）",
+  "status.bake_stale_canvas_size": "烘焙可能已过时（渲染画布尺寸已更改）",
   "status.bake_stale_unverified": "烘焙可能已过时（没有可与当前输入比较的记录）",
   "label.bake": "烘焙",
   "error.autokey_failed": "无法创建动画关键帧",
