@@ -86,6 +86,25 @@ compositor_node = nodes.create_per_node_node(compositor_tree)
 compositor_tree.links.new(compositor_source.outputs["Image"], compositor_node.inputs["Color"])
 compositor_tree.links.new(compositor_node.outputs["Color"], compositor_output.inputs["Image"])
 scene.compositing_node_group = compositor_tree
+PASSTHROUGH_EFFECT = "Animated Grade active passthrough"
+if hasattr(scene, "compositor_effects"):
+    passthrough = bpy.data.node_groups.new(PASSTHROUGH_EFFECT, nodes.COMPOSITOR_TREE)
+    for direction in ("INPUT", "OUTPUT"):
+        passthrough.interface.new_socket(name="Image", in_out=direction, socket_type="NodeSocketColor")
+    passthrough.links.new(
+        passthrough.nodes.new("NodeGroupInput").outputs["Image"],
+        passthrough.nodes.new("NodeGroupOutput").inputs["Image"],
+    )
+    graded_effect = scene.compositor_effects.active
+    active_effect = scene.compositor_effects.new(PASSTHROUGH_EFFECT)
+    active_effect.node_group = passthrough
+    active_effect.is_active = True
+    assert scene.compositing_node_group == passthrough
+    assert compositor_node in nodes._scene_grade_nodes(scene, compositor_mode="render")
+    graded_effect.enable_for_render = False
+    assert compositor_node not in nodes._scene_grade_nodes(scene, compositor_mode="render")
+    assert compositor_node in nodes._scene_grade_nodes(scene, compositor_mode="preview")
+    graded_effect.enable_for_render = True
 
 failures = nodes._refresh_nodes((shader_node, compositor_node))
 assert not failures, failures
@@ -648,6 +667,7 @@ validate_animation_outputs = nodes._animation_outputs_current
 
 
 def capture_first_render_validation(current_nodes, signatures, **kwargs):
+    assert compositor_node in current_nodes, current_nodes
     ready, error = validate_animation_outputs(current_nodes, signatures, **kwargs)
     if not first_render_validation and ready:
         first_render_validation.append((scene.frame_current, shader_node.exposure))
@@ -742,6 +762,12 @@ def finish_test():
         scene.tool_settings.use_keyframe_insert_auto = old_auto_key
         scene.frame_start, scene.frame_end, scene.frame_step = old_range
         scene.frame_set(old_frame, subframe=old_subframe)
+        if hasattr(scene, "compositor_effects"):
+            for effect in scene.compositor_effects:
+                if effect.node_group == compositor_tree:
+                    effect.is_active = True
+                    break
+            scene.compositor_effects.remove(scene.compositor_effects[PASSTHROUGH_EFFECT])
         scene.compositing_node_group = old_compositing_group
         if not bpy.app.background:
             bpy.app.timers.register(_quit_when_idle, first_interval=0.1)

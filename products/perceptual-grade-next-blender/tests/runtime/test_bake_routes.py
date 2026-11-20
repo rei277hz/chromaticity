@@ -934,6 +934,77 @@ class BakeRouteTests(unittest.TestCase):
         self.assertIsNone(route["width"])
         self.assertIsNone(route["height"])
 
+    def test_saved_compositor_bake_resolves_original_effect_after_selection(self):
+        tree = Tree("Bake Graph", "CompositorNodeTree")
+        target = self.make_grade(tree)
+        source = Node(tree, "CompositorNodeImage", outputs=(("Image", None),), image=Image())
+        link(source, "Image", target, "Color")
+        other_tree = Tree("Other Graph", "CompositorNodeTree")
+        self.make_grade(other_tree, name=target.name)
+        first = ID("Bake Effect", node_group=tree, is_active=True)
+        second = ID("Other Effect", node_group=other_tree, is_active=False)
+        self.scene.compositor_effects = Collection((first, second))
+        self.scene.compositing_node_group = tree
+        context = SimpleNamespace(scene=self.scene,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+
+        route = self.module.describe(target, context)
+        self.assertEqual(route["effect_name"], first.name)
+        self.assertEqual(route["root_key"], (tree.name, None))
+        self.assertEqual(route["images"][0]["effect_name"], first.name)
+        self.assertEqual(route["images"][0]["root_key"], route["root_key"])
+
+        first.is_active, second.is_active = False, True
+        self.scene.compositing_node_group = other_tree
+        stored = json.loads(json.dumps(route))
+        observation = self.module.preview(target, stored)
+        self.assertEqual(observation["effect_name"], first.name)
+        self.assertEqual(observation["request_signature"], route["request_signature"])
+
+        first.node_group = other_tree
+        self.blocked("occurrence", node=target, context=stored)
+
+    def test_shared_compositor_root_uses_active_effect_only_for_new_requests(self):
+        tree = Tree("Shared Graph", "CompositorNodeTree")
+        target = self.make_grade(tree)
+        first = ID("First Effect", node_group=tree, is_active=False)
+        second = ID("Second Effect", node_group=tree, is_active=True)
+        self.scene.compositor_effects = Collection((first, second))
+        context = SimpleNamespace(scene=self.scene,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+        route = self.module.describe(target, context)
+        self.assertEqual(route["effect_name"], second.name)
+
+        first.is_active, second.is_active = True, False
+        self.assertEqual(self.module.preview(target, context)["effect_name"], first.name)
+        self.assertEqual(self.module.preview(target, route)["effect_name"], second.name)
+        self.scene.compositor_effects.pop()
+        self.blocked("occurrence", node=target, context=route)
+
+    def test_legacy_compositor_bake_requires_unique_matching_occurrence(self):
+        root = Tree("Original Graph", "CompositorNodeTree")
+        nested = Tree("Nested Graph", "CompositorNodeTree")
+        target = self.make_grade(nested)
+        Node(root, "CompositorNodeGroup", "Group", node_tree=nested)
+        self.scene.compositing_node_group = root
+        context = SimpleNamespace(scene=self.scene,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=root, path=()))
+        route = self.module.describe(target, context)
+        self.assertNotIn("effect_name", route)
+        self.assertEqual(route["root_key"], (root.name, None))
+        legacy = {key: value for key, value in route.items() if key != "root_key"}
+
+        other = Tree("Other Graph", "CompositorNodeTree")
+        Node(other, "CompositorNodeGroup", "Different Group", node_tree=nested)
+        self.scene.compositor_effects = Collection((ID("Original Effect", node_group=root),
+                                                     ID("Other Effect", node_group=other, is_active=True)))
+        self.scene.compositing_node_group = other
+        recovered = self.module.describe(target, legacy)
+        self.assertEqual(recovered["receipt_signature"], route["receipt_signature"])
+        self.assertEqual(recovered["effect_name"], "Original Effect")
+        other.nodes[0].name = "Group"
+        self.blocked("occurrence", node=target, context=legacy)
+
     def test_compositor_pointwise_constants_use_canvas_but_spatial_nodes_do_not(self):
         tree = Tree("Compositor", "CompositorNodeTree")
         self.scene.compositing_node_group = tree

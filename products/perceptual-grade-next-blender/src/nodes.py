@@ -82,6 +82,7 @@ from .runtime.grade_resources import (
     OWNER_NODE as PARAMETER_OWNER_NODE,
 )
 from .runtime.publication import PublicationDeferred
+from .runtime.compositor_effects import compositor_occurrences
 from .runtime.compositor_receipts import CompositorReceipts
 from .runtime.resource_lifecycle import run_resource_lifecycle
 from .runtime.node_conversion_animation import NodeAnimationConversion
@@ -639,7 +640,7 @@ def _bake_route(node, context, dependencies, upstream_grades):
 def _bake_context(route):
     return {key: route[key] for key in (
         "scene", "owner_kind", "owner_name", "group_path", "object_name",
-        "scene_key", "owner_key", "object_key",
+        "scene_key", "owner_key", "object_key", "root_key", "effect_name",
     ) if key in route}
 
 
@@ -2416,15 +2417,30 @@ def _invalidate_grade_parameters(image):
     image.update_tag()
 
 
+def _compositor_preview_roots(scene, trees):
+    seen = set()
+    for _, root in compositor_occurrences(scene, mode="preview"):
+        pointer = root.as_pointer()
+        if pointer in seen:
+            continue
+        seen.add(pointer)
+        owners = tuple(key for key, tree in trees.items()
+                       if root == tree or root.contains_tree(tree))
+        if owners:
+            yield root, owners
+
+
 def _compositor_scene_bindings(records):
+    trees = {}
     owners = {}
     for record in records:
         try:
             node = record["node"]
             tree = node.id_data
             if tree.bl_idname == COMPOSITOR_TREE:
-                owner = owners.setdefault(tree.as_pointer(), (tree, []))
-                owner[1].append(node.as_pointer())
+                pointer = tree.as_pointer()
+                trees[pointer] = tree
+                owners.setdefault(pointer, []).append(node.as_pointer())
         except (AttributeError, ReferenceError, RuntimeError):
             continue
     scenes = {}
@@ -2432,12 +2448,10 @@ def _compositor_scene_bindings(records):
         return scenes
     for scene in tuple(bpy.data.scenes):
         try:
-            root = scene.compositing_node_group
-            if root is None:
-                continue
-            nodes = tuple(node for tree, pointers in owners.values()
-                          if root == tree or root.contains_tree(tree)
-                          for node in pointers)
+            nodes = tuple(dict.fromkeys(
+                node for _, keys in _compositor_preview_roots(scene, trees)
+                for key in keys for node in owners[key]
+            ))
             if nodes:
                 scenes[scene.as_pointer()] = scene, nodes
         except (AttributeError, ReferenceError, RuntimeError):
@@ -2447,9 +2461,16 @@ def _compositor_scene_bindings(records):
 
 def _request_compositor_evaluation(scene):
     # ID.update_tag() does not request ID_RECALC_COMPOSITOR. Reassert the
-    # root through its RNA setter, including for changes in nested trees.
-    scene.compositing_node_group = scene.compositing_node_group
-    scene.update_tag()
+    # scene's preview through an RNA setter without changing its active effect.
+    for effect, root in compositor_occurrences(scene, mode="preview"):
+        if effect is None:
+            scene.compositing_node_group = root
+        else:
+            # This setter requests ID_RECALC_COMPOSITOR without rebuilding
+            # relations or replacing the effect's input properties.
+            effect.enable_for_preview = effect.enable_for_preview
+        scene.update_tag()
+        break
 
 
 def _tag_compositor_outputs(records):
@@ -2493,11 +2514,7 @@ def _tag_compositor_outputs(records):
     roots = {}
     for scene in tuple(bpy.data.scenes):
         try:
-            root = scene.compositing_node_group
-            if root is None:
-                continue
-            if any(root == tree or root.contains_tree(tree)
-                   for tree in owners.values()):
+            for root, _ in _compositor_preview_roots(scene, owners):
                 scenes[scene.as_pointer()] = scene
                 roots[root.as_pointer()] = root
         except (AttributeError, ReferenceError, RuntimeError):
@@ -4861,7 +4878,7 @@ def _render_pre(scene):
         try:
             _service_render_preflight(defer=False)
         except PublicationDeferred as error:
-            _block_nodes(_scene_grade_nodes(scene), error)
+            _block_nodes(_scene_grade_nodes(scene, compositor_mode="render"), error)
             print("Perceptual Grade render preflight failed:", error)
     else:
         try:
@@ -4907,7 +4924,7 @@ def _service_render_preflight(*, defer=True):
                     with (_restore_bake_sources(update_view_layer=False)
                           if restoring else nullcontext()):
                         scene.frame_set(request.frame, subframe=float.fromhex(request.subframe))
-                    _reconcile_bake_outputs(_scene_grade_nodes(scene))
+                    _reconcile_bake_outputs(_scene_grade_nodes(scene, compositor_mode="render"))
                     nodes, _signatures, signature = _animation_snapshot(scene)
                     failures = []
                     first_frame = request.scene_identity not in _render_validated_scenes
@@ -4963,7 +4980,7 @@ def _revoke_render_output(ticket):
                   if candidate.as_pointer() == ticket.state.scene_identity), None)
     if scene is not None:
         error = RuntimeError(ticket.state.error or "Render preflight failed")
-        failures = _block_nodes(_scene_grade_nodes(scene), error,
+        failures = _block_nodes(_scene_grade_nodes(scene, compositor_mode="render"), error,
                                 during_reset=_node_reset_pending)
         for _nodes, failure in failures:
             print("Perceptual Grade could not install render failure output:", failure)
@@ -6354,10 +6371,8 @@ class PG_OT_new_stack_grade(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _scene_grade_nodes(scene):
-    roots = []
-    roots.extend(getattr(scene, name, None)
-                 for name in ("compositing_node_group", "node_tree"))
+def _scene_grade_nodes(scene, *, compositor_mode=None):
+    roots = [root for _, root in compositor_occurrences(scene, mode=compositor_mode)]
     for _kind, owner in shader_scene_inventory(scene).owners:
         if getattr(owner, "use_nodes", True):
             roots.append(getattr(owner, "node_tree", None))
@@ -6390,7 +6405,7 @@ def _scene_grade_nodes(scene):
 
 
 def _animation_snapshot(scene):
-    nodes = _scene_grade_nodes(scene)
+    nodes = _scene_grade_nodes(scene, compositor_mode="render")
     signatures = []
     for node in nodes:
         signature = _settings_signature_for(node)

@@ -19,6 +19,7 @@ from ..kernel.color_ui import COLOR_FIELDS
 from ..kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
 from . import bake_graph
 from .bake_images import datablock_key, route_datablock
+from .compositor_effects import compositor_occurrences, matching_compositor_occurrences
 from .shader_scene import shader_scene_inventory
 
 
@@ -292,17 +293,69 @@ def _editor_path(space, root, target):
     return tuple(names)
 
 
+def _compositor_owner(host, tree, context):
+    if isinstance(context, Mapping):
+        scene = route_datablock(host, host.data.scenes, context, "scene")
+        owner = route_datablock(host, host.data.scenes, context, "owner")
+        if not _same(scene, owner) or context.get("owner_kind") != "compositor":
+            raise RouteBlocked("owner", "The bake scene or graph owner is unavailable")
+        path = tuple(context.get("group_path", ()))
+        matches = []
+        for effect, root in matching_compositor_occurrences(host, scene, context):
+            try:
+                selected, parents = _resolve_path(root, path)
+            except RouteBlocked:
+                continue
+            if _same(selected, tree):
+                matches.append((effect, root, parents))
+        if len(matches) != 1:
+            raise RouteBlocked("occurrence", "The saved compositor effect occurrence cannot be resolved uniquely")
+        effect, root, parents = matches[0]
+    else:
+        context = context or host.context
+        space = getattr(context, "space_data", None)
+        candidates = [(scene, effect, root) for scene in host.data.scenes
+                      for effect, root in compositor_occurrences(scene) if _group_paths(root, tree)]
+        editor_path = getattr(space, "path", ())
+        editor_root = (editor_path[0].node_tree if editor_path else getattr(space, "node_tree", None))
+        for index, preferred in ((0, getattr(space, "id", None)), (2, editor_root),
+                                 (0, getattr(context, "scene", None))):
+            matches = [item for item in candidates if _same(item[index], preferred)]
+            if matches:
+                candidates = matches
+        if len(candidates) > 1:
+            candidates = [item for item in candidates if getattr(item[1], "is_active", False)]
+        if len(candidates) != 1:
+            raise RouteBlocked("occurrence", "Choose the compositor effect containing this node")
+        scene, effect, root = candidates[0]
+        parents = _occurrence_parents(space, root, tree)
+    locator = {"root_key": datablock_key(host, root)}
+    if effect is not None:
+        locator["effect_name"] = effect.name
+    return "compositor", scene, scene, parents, locator
+
+
+def _occurrence_parents(space, root, tree):
+    path = _editor_path(space, root, tree)
+    if path is None:
+        paths = _group_paths(root, tree)
+        if len(paths) != 1:
+            raise RouteBlocked("occurrence", "Choose the exact node-group occurrence to bake")
+        path = paths[0]
+    _tree, parents = _resolve_path(root, path)
+    return parents
+
+
 def _owner(host, node, context):
     tree = node.id_data
-    compositor = tree.bl_idname == "CompositorNodeTree"
+    if tree.bl_idname == "CompositorNodeTree":
+        return _compositor_owner(host, tree, context)
     if isinstance(context, Mapping):
         kind = context.get("owner_kind")
         scene = route_datablock(host, host.data.scenes, context, "scene")
-        values = {"material": host.data.materials, "world": host.data.worlds,
-                  "compositor": host.data.scenes}.get(kind)
+        values = {"material": host.data.materials, "world": host.data.worlds}.get(kind)
         owner = route_datablock(host, values, context, "owner") if values is not None else None
-        root = (getattr(owner, "compositing_node_group", None) if kind == "compositor"
-                else getattr(owner, "node_tree", None))
+        root = getattr(owner, "node_tree", None)
         path = tuple(context.get("group_path", ()))
         if scene is None or owner is None or root is None:
             raise RouteBlocked("owner", "The bake scene or graph owner is unavailable")
@@ -311,25 +364,21 @@ def _owner(host, node, context):
             raise RouteBlocked("occurrence", "The selected node-group occurrence changed")
         if kind == "world" and not _same(getattr(scene, "world", None), owner):
             raise RouteBlocked("world_scene", "The selected World is not used by this scene")
-        return kind, owner, scene, root, parents
+        return kind, owner, scene, parents, {}
     context = context or host.context
     scene = getattr(context, "scene", None)
     space = getattr(context, "space_data", None)
     candidates = []
-    collections = (("compositor", host.data.scenes),) if compositor else (
-        ("material", host.data.materials), ("world", host.data.worlds))
+    collections = (("material", host.data.materials), ("world", host.data.worlds))
     for kind, owners in collections:
         for owner in owners:
-            root = (getattr(owner, "compositing_node_group", None) if compositor
-                    else getattr(owner, "node_tree", None))
+            root = getattr(owner, "node_tree", None)
             if root is not None and _group_paths(root, tree):
                 candidates.append((kind, owner, root))
     preferred = [item for item in candidates if _same(item[1], getattr(space, "id", None))]
     if not preferred:
         preferred = [item for item in candidates if _same(item[2], getattr(space, "node_tree", None))]
-    if not preferred and compositor:
-        preferred = [item for item in candidates if _same(item[1], scene)]
-    if not preferred and not compositor:
+    if not preferred:
         active = getattr(getattr(context, "object", None), "active_material", None)
         preferred = [item for item in candidates if _same(item[1], active)]
         if not preferred:
@@ -338,20 +387,11 @@ def _owner(host, node, context):
     if len(chosen) != 1:
         raise RouteBlocked("owner", "Choose the scene, material or World containing this node")
     kind, owner, root = chosen[0]
-    if compositor:
-        scene = owner
     if scene is None:
         raise RouteBlocked("scene", "Bake requires a scene context")
     if kind == "world" and not _same(getattr(scene, "world", None), owner):
         raise RouteBlocked("world_scene", "The selected World is not used by this scene")
-    path = _editor_path(space, root, tree)
-    if path is None:
-        paths = _group_paths(root, tree)
-        if len(paths) != 1:
-            raise RouteBlocked("occurrence", "Choose the exact node-group occurrence to bake")
-        path = paths[0]
-    _tree, parents = _resolve_path(root, path)
-    return kind, owner, scene, root, parents
+    return kind, owner, scene, _occurrence_parents(space, root, tree), {}
 
 
 def _grade_settings(node):
@@ -686,10 +726,12 @@ def _instance_observations(inventory):
 
 
 class _Walker:
-    def __init__(self, host, scene, *, owner_kind, owner, full, compositor, dependencies=None):
+    def __init__(self, host, scene, *, owner_kind, owner, full, compositor,
+                 compositor_locator, dependencies=None):
         self.host, self.scene, self.full = host, scene, full
         self.owner = (owner_kind, datablock_key(host, owner))
         self.compositor = compositor
+        self.compositor_locator = compositor_locator
         self.dependencies = dependencies
         self.graph = []
         self.images = {}
@@ -757,6 +799,8 @@ class _Walker:
                     alpha_linked=alpha or bool(previous and previous[1]["alpha_linked"]),
                     interpolation=str(getattr(sampler, "interpolation", "Linear")),
                     extension=str(getattr(sampler, "extension", "REPEAT")), baked=baked)
+        if self.owner[0] == "compositor":
+            item.update(self.compositor_locator)
         self.images[key] = (state, item)
         if (baked and not self.compositor
                 and image.get(BAKE_DOMAIN) == "UV"):
@@ -1057,11 +1101,11 @@ def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
         raise RouteBlocked("target", "Bake is available only for shared Grade and Grade Stack nodes")
     if getattr(getattr(node, "id_data", None), "bl_idname", None) not in {"ShaderNodeTree", "CompositorNodeTree"}:
         raise RouteBlocked("target", "Bake requires a Shader or Compositor graph")
-    kind, owner, scene, root, parents = _owner(bpy, node, context)
+    kind, owner, scene, parents, locator = _owner(bpy, node, context)
     compositor = kind == "compositor"
     collected_dependencies = [] if dependencies is not None else None
     walker = _Walker(bpy, scene, owner_kind=kind, owner=owner, full=full, compositor=compositor,
-                     dependencies=collected_dependencies)
+                     compositor_locator=locator, dependencies=collected_dependencies)
     for socket in node.inputs:
         if socket.name in {"Color", "Alpha"}:
             walker.input(socket, parents)
@@ -1140,7 +1184,7 @@ def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
                   reasons=tuple(sorted(walker.reasons)),
                   images=tuple(item[1] for item in walker.images.values()),
                   canvas_size=canvas_size, signature=None,
-                  **evaluator)
+                  **evaluator, **locator)
     colorspace = getattr(bpy.data, "colorspace", None)
     working_space = (getattr(colorspace, "working_space_interop_id", None),
                      getattr(colorspace, "working_space", None))

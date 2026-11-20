@@ -547,6 +547,23 @@ def exercise_viewer_receipts():
         second_id = second_scene.as_pointer()
         window.scene = second_scene
         second_scene.compositing_node_group = tree
+        effects = getattr(second_scene, "compositor_effects", None)
+        if effects is not None:
+            # Exercise the default Viewer for a stack with the Grade in the first,
+            # non-active effect. Its output feeds the active passthrough effect.
+            output = next(node for node in tree.nodes if node.bl_idname == "NodeGroupOutput")
+            tree.links.new(stack.outputs["Color"], output.inputs["Image"])
+            graded_effect = effects.active
+            passthrough = bpy.data.node_groups.new("Viewer active passthrough", nodes.COMPOSITOR_TREE)
+            for direction in ("INPUT", "OUTPUT"):
+                passthrough.interface.new_socket(name="Image", in_out=direction, socket_type="NodeSocketColor")
+            passthrough.links.new(
+                passthrough.nodes.new("NodeGroupInput").outputs["Image"],
+                passthrough.nodes.new("NodeGroupOutput").inputs["Image"],
+            )
+            active_effect = effects.new("Viewer active passthrough")
+            active_effect.node_group = passthrough
+            active_effect.is_active = True
         while generation(second_id) is None:
             yield "second scene binding"
         second = generation(second_id)
@@ -564,7 +581,12 @@ def exercise_viewer_receipts():
         assert not nodes._compositor_output_pending(stack)
         assert not stack.get(nodes._NODE_PENDING)
 
-        second_scene.compositing_node_group = None
+        if effects is not None:
+            assert effects.active == active_effect
+            np.testing.assert_allclose(viewer_patches(), actual, atol=1e-6, rtol=0)
+            graded_effect.enable_for_preview = False
+        else:
+            second_scene.compositing_node_group = None
         while generation(second_id) is not None:
             yield "second scene detachment"
         window.scene = scene

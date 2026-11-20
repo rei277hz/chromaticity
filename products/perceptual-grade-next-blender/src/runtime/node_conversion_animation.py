@@ -1,10 +1,13 @@
 """Stage animation ownership changes while a Grade node is replaced."""
 
 from dataclasses import dataclass
+import re
+from typing import Optional
 
 
 _BACKUP_TAG = "_perceptual_grade_conversion_backup"
 _BACKUP_SAFE_TAG = _BACKUP_TAG + "_safe_to_cleanup"
+_NODE_SELECTOR = re.compile(r'''(?:^|\.)(nodes\[(?:-?\d+|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\])(?=[.\[])''')
 
 
 def _action_bindings(animation):
@@ -54,6 +57,33 @@ def _remove_conversion_driver(animation, curve):
     animation.drivers.remove(curve)
 
 
+def _animation_owners(tree):
+    import bpy
+
+    # Blender's user map lists main IDs and attributes references made by an
+    # embedded node tree to its containing ID. Both can own driver curves.
+    owners = {tree}
+    for owner in bpy.data.user_map():
+        owners.add(owner)
+        embedded = getattr(owner, "node_tree", None)
+        if embedded is not None and embedded.is_embedded_data:
+            owners.add(embedded)
+    return owners
+
+
+def _single_property_targets(driver):
+    for index, variable in enumerate(driver.variables):
+        if variable.type == "SINGLE_PROP":
+            yield index, variable.targets[0]
+
+
+def _resolve(owner, path):
+    try:
+        return owner.path_resolve(path)
+    except (AttributeError, ValueError):
+        return None
+
+
 @dataclass(frozen=True)
 class _Binding:
     owner: object
@@ -72,7 +102,6 @@ class _Binding:
 @dataclass(frozen=True)
 class _GradeDriver:
     curve: object
-    original_path: str
     suffix: str
     remove: bool
     array_index: int
@@ -80,12 +109,36 @@ class _GradeDriver:
 
 
 @dataclass(frozen=True)
+class _TargetState:
+    id_type: str
+    owner: object
+    path: str
+
+    def assign(self, target):
+        # Changing id_type can clear the ID, and Blender may decline a new ID.
+        if target.id_type != self.id_type:
+            target.id_type = self.id_type
+        if target.id != self.owner:
+            target.id = self.owner
+        if target.data_path != self.path:
+            target.data_path = self.path
+        if (target.id_type, target.id, target.data_path) != (self.id_type, self.owner, self.path):
+            raise RuntimeError("Could not preserve a Grade driver target")
+
+
+@dataclass(frozen=True)
 class _DriverTarget:
     target: object
-    original_id: object
-    original_path: str
-    temporary_id: object
-    temporary_path: str
+    original: _TargetState
+    destination: _TargetState
+    node_path: Optional[tuple[str, str]] = None
+
+    def apply(self, node_prefix):
+        state = self.destination
+        if self.node_path is not None:
+            root, suffix = self.node_path
+            state = _TargetState(state.id_type, state.owner, root + node_prefix + suffix)
+        state.assign(self.target)
 
 
 class NodeAnimationConversion:
@@ -100,6 +153,7 @@ class NodeAnimationConversion:
     def __init__(self, tree, source, replacement, *, removed_properties=(),
                  property_target_mapping=None):
         self.tree = tree
+        self.source = source
         self.replacement = replacement
         self.source_prefix = source.path_from_id()
         self.replacement_prefix = replacement.path_from_id()
@@ -114,13 +168,13 @@ class NodeAnimationConversion:
             if getattr(owner, "action", None) is not None
         )
         self._drivers = tuple(
-            _GradeDriver(curve, curve.data_path,
+            _GradeDriver(curve,
                          _node_suffix(curve.data_path, self.source_prefix),
                          curve.data_path in self.removed_paths,
                          curve.array_index,
-                         tuple(self._driver_target(target)
-                               for variable in curve.driver.variables
-                               for target in variable.targets))
+                         tuple((index, plan)
+                               for index, target in _single_property_targets(curve.driver)
+                               if (plan := self._driver_target(target)) is not None))
             for curve in (() if animation is None else tuple(animation.drivers))
             if _node_suffix(curve.data_path, self.source_prefix) is not None
         )
@@ -132,23 +186,35 @@ class NodeAnimationConversion:
         self._drivers_removed = False
 
     def _driver_target(self, target):
-        original_id, original_path = target.id, target.data_path
-        suffix = _node_suffix(original_path, self.source_prefix)
-        if original_id == self.tree and suffix is not None:
-            mapping = self._target_mapping(original_path)
-            if original_path in self.removed_paths and mapping is None:
-                raise RuntimeError(
-                    "A Grade driver targets a property that conversion removes"
-                )
-            if mapping is not None:
-                temporary_id, temporary_path = mapping
-            else:
-                temporary_id, temporary_path = self.tree, self.replacement_prefix + suffix
-        else:
-            temporary_id, temporary_path = original_id, original_path
-        return _DriverTarget(
-            target, original_id, original_path, temporary_id, temporary_path,
-        )
+        owner, path = target.id, target.data_path
+        if owner is None:
+            return None
+        reference = self._node_reference(owner, path)
+        if reference is None or _resolve(owner, path) is None:
+            return None
+        root, suffix = reference
+        original = _TargetState(target.id_type, owner, path)
+        source_path = self.source_prefix + suffix
+        mapping = self._target_mapping(source_path)
+        if mapping is not None:
+            destination, destination_path = mapping
+            if destination != self.tree:
+                return _DriverTarget(target, original,
+                                     _TargetState("NODETREE", destination, destination_path))
+            suffix = _node_suffix(destination_path, self.replacement_prefix)
+            if suffix is None:
+                raise RuntimeError("Could not resolve the replacement Grade driver field")
+        elif source_path in self.removed_paths:
+            raise RuntimeError("A Grade driver targets a property that conversion removes")
+        return _DriverTarget(target, original, original, (root, suffix))
+
+    def _node_reference(self, owner, path):
+        # RNA paths can reach a node through its tree or through an ID that
+        # references the tree. Resolve the node to check its actual identity.
+        for match in _NODE_SELECTOR.finditer(path):
+            if _resolve(owner, path[:match.end()]) == self.source:
+                return path[:match.start(1)], path[match.end():]
+        return None
 
     def _target_mapping(self, path):
         mapping = self.property_target_mapping.get(path)
@@ -160,10 +226,7 @@ class NodeAnimationConversion:
         return None
 
     def _capture_reader_targets(self):
-        import bpy
-
-        tree_users = bpy.data.user_map(subset={self.tree}).get(self.tree, ())
-        for owner in {self.tree, *tree_users}:
+        for owner in _animation_owners(self.tree):
             animation = getattr(owner, "animation_data", None)
             if animation is None:
                 continue
@@ -175,13 +238,16 @@ class NodeAnimationConversion:
                 driver = curve.driver
                 if driver is None:
                     continue
-                for variable in driver.variables:
-                    for target in variable.targets:
-                        if target.id != self.tree:
-                            continue
-                        if _node_suffix(target.data_path, self.source_prefix) is None:
-                            continue
-                        self._reader_targets.append(self._driver_target(target))
+                for _index, target in _single_property_targets(driver):
+                    plan = self._driver_target(target)
+                    if plan is not None:
+                        self._reader_targets.append(plan)
+
+    def _targets(self):
+        yield from self._reader_targets
+        for driver in self._drivers:
+            for _index, target in driver.targets:
+                yield target
 
     def prepare(self):
         """Copy bound Actions and move source-node paths to the candidate."""
@@ -224,14 +290,10 @@ class NodeAnimationConversion:
             if record is not None:
                 binding.assign(record[1])
 
-        for target in self._reader_targets:
-            target.target.id = target.temporary_id
-            target.target.data_path = target.temporary_path
         for driver in self._drivers:
             driver.curve.data_path = self.replacement_prefix + driver.suffix
-            for target in driver.targets:
-                target.target.id = target.temporary_id
-                target.target.data_path = target.temporary_path
+        for target in self._targets():
+            target.apply(self.replacement_prefix)
 
     def finish(self):
         """Set candidate animation paths after its final node name is assigned."""
@@ -240,20 +302,17 @@ class NodeAnimationConversion:
             curve.data_path = prefix + suffix
         for driver in self._drivers:
             driver.curve.data_path = prefix + driver.suffix
-        for target in self._reader_targets:
-            if target.temporary_id == self.tree:
-                suffix = _node_suffix(target.temporary_path, self.replacement_prefix)
-                if suffix is not None:
-                    target.target.data_path = prefix + suffix
-        for driver in self._drivers:
-            for target in driver.targets:
-                if target.temporary_id == self.tree:
-                    suffix = _node_suffix(target.temporary_path, self.replacement_prefix)
-                    if suffix is not None:
-                        target.target.data_path = prefix + suffix
+        for target in self._targets():
+            target.apply(prefix)
 
     def remove_grade_drivers(self):
         """Backup then remove node-owned drivers on converted Grade fields."""
+        # Only the prepared kernel has the replacement's final sockets. Verify
+        # every remapped reader here while the source node can still be restored.
+        for plan in self._targets():
+            target = plan.target
+            if _resolve(target.id, target.data_path) is None:
+                raise RuntimeError(f"Could not resolve converted Grade driver path {target.data_path!r}")
         removable = tuple(driver for driver in self._drivers if driver.remove)
         if self._drivers_removed or not removable:
             return
@@ -272,13 +331,8 @@ class NodeAnimationConversion:
             # The source may already have a temporary name. Store the backup
             # under its original path so it restores after the source is renamed.
             backup_curve.data_path = self.source_prefix + driver.suffix
-            backup_targets = tuple(
-                target for variable in backup_curve.driver.variables
-                for target in variable.targets
-            )
-            for backup_target, target in zip(backup_targets, driver.targets):
-                backup_target.id = target.original_id
-                backup_target.data_path = target.original_path
+            for index, target in driver.targets:
+                target.original.assign(backup_curve.driver.variables[index].targets[0])
             copied.append(backup_curve)
         self._driver_backups = tuple(copied)
         animation = self.tree.animation_data
@@ -300,27 +354,27 @@ class NodeAnimationConversion:
 
         for target in self._reader_targets:
             try:
-                target.target.id = target.original_id
-                target.target.data_path = target.original_path
+                target.original.assign(target.target)
             except Exception as error:
                 failures.append(error)
 
-        animation = self.tree.animation_data_create()
+        animation = self.tree.animation_data
         replacement_prefix = self.replacement.path_from_id()
-        for curve in tuple(animation.drivers):
-            suffix = _node_suffix(curve.data_path, replacement_prefix)
-            if suffix is not None:
-                curve.data_path = self.source_prefix + suffix
         for driver in self._drivers:
-            curve = animation.drivers.find(
-                self.source_prefix + driver.suffix, index=driver.array_index,
-            )
-            if curve is not None:
-                targets = tuple(target for variable in curve.driver.variables
-                                for target in variable.targets)
-                for actual, target in zip(targets, driver.targets):
-                    actual.id = target.original_id
-                    actual.data_path = target.original_path
+            try:
+                original_path = self.source_prefix + driver.suffix
+                curve = animation.drivers.find(
+                    replacement_prefix + driver.suffix, index=driver.array_index,
+                )
+                if curve is not None:
+                    curve.data_path = original_path
+                else:
+                    curve = animation.drivers.find(original_path, index=driver.array_index)
+                if curve is not None:
+                    for index, target in driver.targets:
+                        target.original.assign(curve.driver.variables[index].targets[0])
+            except Exception as error:
+                failures.append(error)
 
         if self._drivers_removed and self._driver_backup is not None:
             try:

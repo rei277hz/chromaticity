@@ -512,12 +512,13 @@ def _assert_original_animation(nodes, tree, node, original, values, links,
     assert node.path_from_id("exposure") in _paths(action, slot)
 
 
-def _transaction_failure_cases(nodes, tree, assert_grade_current):
+def _transaction_failure_cases(nodes, material, assert_grade_current):
     """Exercise reversible conversion failures before committing source removal."""
+    tree = material.node_tree
     scene = bpy.context.scene
     frame = scene.frame_current + scene.frame_subframe
     node = nodes.create_per_node_node(tree)
-    node.name = "Conversion rollback fixture"
+    node.name = 'Grade "rollback" \\ fixture'
     node_name = node.name
     node_pointer = node.as_pointer()
     node.exposure = 0.625
@@ -538,27 +539,68 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
     source_name = source.name
     original_target_path = node.path_from_id("exposure")
 
-    def add_reader(owner):
-        owner["grade_value"] = 0.0
-        curve = owner.driver_add('["grade_value"]')
+    def add_reader(owner, prop="grade_value", *, id_type="NODETREE", target_id=tree,
+                   path=original_target_path):
+        owner[prop] = 0.0
+        curve = owner.driver_add(f'["{prop}"]')
         variable = curve.driver.variables.new()
         variable.name = "grade_value"
         variable.type = "SINGLE_PROP"
         target = variable.targets[0]
-        target.id_type = "NODETREE"
-        target.id = tree
-        target.data_path = original_target_path
+        target.id_type = id_type
+        target.id = target_id
+        target.data_path = path
         curve.driver.expression = variable.name
         return target
 
     external_target = add_reader(observer)
     sibling_target = add_reader(source)
+    material_path = "node_tree." + original_target_path
+    material_target = add_reader(observer, "via_material", id_type="MATERIAL",
+                                 target_id=material, path=material_path)
+    indexed_path = f"node_tree.nodes[{list(tree.nodes).index(node)}].exposure"
+    assert material.path_resolve(indexed_path) == node.exposure
+    indexed_target = add_reader(observer, "via_index", id_type="MATERIAL",
+                                target_id=material, path=indexed_path)
+    socket_suffix = '.inputs["Color"].default_value[0]'
+    socket_path = "node_tree." + node.path_from_id() + socket_suffix
+    socket_target = add_reader(observer, "via_socket", id_type="MATERIAL",
+                               target_id=material, path=socket_path)
+    other_material = bpy.data.materials.new("Grade conversion embedded readers")
+    other_material.use_nodes = True
+    obj = bpy.context.object
+    obj.data.materials.append(other_material)
+    other_tree = other_material.node_tree
+    embedded_reader = other_tree.nodes.new("ShaderNodeRGB")
+    embedded_target = add_reader(embedded_reader)
+    other_node = nodes.create_per_node_node(other_tree)
+    other_node.name = node.name
+    other_node.exposure = -1.25
+    unrelated = add_reader(observer, "unrelated", id_type="MATERIAL",
+                           target_id=other_material, path=material_path)
 
     def assert_readers(target_id, path, expected):
         bpy.context.view_layer.update()
-        for owner, target in ((observer, external_target), (source, sibling_target)):
-            assert target.id == target_id and target.data_path == path
+        for owner, target in ((observer, external_target), (source, sibling_target),
+                              (embedded_reader, embedded_target)):
+            assert (target.id_type, target.id, target.data_path) == ("NODETREE", target_id, path)
             assert abs(owner["grade_value"] - expected) < 1e-6
+        material_state = (("MATERIAL", material, material_path) if target_id == tree
+                          else ("NODETREE", target_id, path))
+        assert (material_target.id_type, material_target.id, material_target.data_path) == material_state
+        assert abs(observer["via_material"] - expected) < 1e-6
+        indexed_state = (("MATERIAL", material, indexed_path) if target_id == tree
+                         else ("NODETREE", target_id, path))
+        assert (indexed_target.id_type, indexed_target.id, indexed_target.data_path) == indexed_state
+        assert abs(observer["via_index"] - expected) < 1e-6
+        assert (socket_target.id_type, socket_target.id, socket_target.data_path) == (
+            "MATERIAL", material, socket_path,
+        )
+        assert abs(observer["via_socket"] - material.path_resolve(socket_path)) < 1e-6
+        assert (unrelated.id_type, unrelated.id, unrelated.data_path) == (
+            "MATERIAL", other_material, material_path,
+        )
+        assert abs(observer["unrelated"] - other_node.exposure) < 1e-6
 
     assert_readers(tree, original_target_path, node.exposure)
     tree.nodes.active = node
@@ -769,6 +811,12 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
         # Grade datablock directly and must keep following that datablock.
         sibling_target.id = tree
         sibling_target.data_path = replacement.path_from_id() + ".pg_grade.pg_linear.exposure"
+        material_target.id_type = "MATERIAL"
+        material_target.id = material
+        material_target.data_path = (f"node_tree.nodes[{list(tree.nodes).index(replacement)}]"
+                                     ".pg_grade.pg_linear.exposure")
+        another_user = nodes.create_node(tree)
+        another_user.pg_grade = grade
         local = nodes.convert_grade_node(replacement, "NODE")
         local.exposure = -0.5
         bpy.context.view_layer.update()
@@ -776,8 +824,17 @@ def _transaction_failure_cases(nodes, tree, assert_grade_current):
         assert abs(source["grade_value"] - local.exposure) < 1e-6
         assert external_target.id == grade and external_target.data_path == "pg_linear.exposure"
         assert abs(observer["grade_value"] - values["exposure"]) < 1e-6
+        assert (material_target.id_type, material_target.id, material_target.data_path) == (
+            "MATERIAL", material, "node_tree." + local.path_from_id("exposure"),
+        )
+        assert abs(observer["via_material"] - local.exposure) < 1e-6
+        assert another_user.pg_grade == grade
     finally:
         bpy.data.objects.remove(observer, do_unlink=True)
+        for candidate in tuple(other_tree.nodes):
+            other_tree.nodes.remove(candidate)
+        obj.data.materials.pop(index=list(obj.data.materials).index(other_material))
+        bpy.data.materials.remove(other_material)
         for candidate_name in (node_name, source_name, name):
             candidate = tree.nodes.get(candidate_name)
             if candidate is not None:
@@ -802,7 +859,7 @@ def run(nodes, assert_grade_current):
             _round_trip(nodes, tree, assert_grade_current)
             _animated_snapshot(nodes, tree, assert_grade_current)
             _retired_receipt(nodes, tree, assert_grade_current)
-        _transaction_failure_cases(nodes, material.node_tree, assert_grade_current)
+        _transaction_failure_cases(nodes, material, assert_grade_current)
     finally:
         obj.active_material = old_material
         scene.compositing_node_group = old_compositor
