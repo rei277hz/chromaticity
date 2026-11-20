@@ -338,7 +338,7 @@ def finish(error=None):
 
 
 def exercise_stack_viewer():
-    """Verify Viewer completion for Stack refinement and kernel adoption."""
+    """Verify Viewer completion for Stack refinement, adoption and scene attachment."""
     helper = importlib.import_module(extension.__name__ + ".lut_helper")
     scene = bpy.context.scene
     scene.render.compositor_device = "CPU"
@@ -368,8 +368,8 @@ def exercise_stack_viewer():
     scene_id = scene.as_pointer()
     receipts = nodes._compositor_receipts
 
-    def generation():
-        return receipts.snapshot(scene_id).get(stack_id)
+    def generation(identity=scene_id):
+        return receipts.snapshot(identity).get(stack_id)
 
     def quality():
         state = nodes._record_for(stack)["state"]
@@ -393,10 +393,10 @@ def exercise_stack_viewer():
     allow_refinement = False
 
     def hold_completion(receipt):
-        if receipt is not None and receipt.successful and receipt.identity == scene_id:
+        if receipt is not None and receipt.successful:
             binding = dict(receipt.snapshot).get(stack_id)
             if binding is not None:
-                held[binding] = receipt
+                held[receipt.identity, binding] = receipt
                 return
         deliver(receipt)
 
@@ -408,23 +408,23 @@ def exercise_stack_viewer():
     receipts.completed = hold_completion
     helper.HelperStackJob.advance = hold_refinement
     try:
-        window = bpy.context.window.as_pointer()
-        gesture = nodes._begin_gesture(window, stack)
+        window = bpy.context.window
+        gesture = nodes._begin_gesture(window.as_pointer(), stack)
         grade.pg_linear.exposure = 1.0
-        while quality() != "preview" or generation() not in held:
+        while quality() != "preview" or (scene_id, generation()) not in held:
             yield
         preview = generation()
         allow_refinement = True
-        nodes._end_gesture(window, gesture)
-        while quality() != "full" or generation() not in held:
+        nodes._end_gesture(window.as_pointer(), gesture)
+        while quality() != "full" or (scene_id, generation()) not in held:
             yield
         full = generation()
         assert full != preview, (full, preview)
-        deliver(held[preview])
+        deliver(held[scene_id, preview])
         nodes._collect_compositor_receipts()
         assert nodes._compositor_output_pending(stack)
         assert stack.get(nodes._NODE_PENDING) == "status.waiting_compositor"
-        deliver(held[full])
+        deliver(held[scene_id, full])
         nodes._collect_compositor_receipts()
         assert not nodes._compositor_output_pending(stack)
         assert not stack.get(nodes._NODE_PENDING)
@@ -442,18 +442,53 @@ def exercise_stack_viewer():
         adopted = generation()
         assert adopted is not None and adopted != full, (adopted, full)
         assert stack.node_tree == kernel and quality() == "full"
-        deliver(held[full])
+        deliver(held[scene_id, full])
         nodes._collect_compositor_receipts()
         assert nodes._compositor_output_pending(stack)
         assert stack.get(nodes._NODE_PENDING) == "status.waiting_compositor"
-        while adopted not in held:
+        while (scene_id, adopted) not in held:
             yield
-        deliver(held[adopted])
+        deliver(held[scene_id, adopted])
         nodes._collect_compositor_receipts()
         assert not nodes._compositor_output_pending(stack)
         assert not stack.get(nodes._NODE_PENDING)
         np.testing.assert_allclose(viewer_patches(), actual, atol=1e-6, rtol=0)
         result["stack_viewer_adoption"] = True
+
+        second_scene = bpy.data.scenes.new("Second Stack Viewer Scene")
+        second_scene.render.compositor_device = "CPU"
+        second_scene.render.compositor_precision = "FULL"
+        second_scene.render.resolution_x = width
+        second_scene.render.resolution_y = height
+        second_scene.render.resolution_percentage = 100
+        second_id = second_scene.as_pointer()
+        window.scene = second_scene
+        second_scene.compositing_node_group = tree
+        while generation(second_id) is None:
+            yield "second scene binding"
+        second = generation(second_id)
+        assert second != adopted and generation() == adopted, (second, generation(), adopted)
+        assert stack.node_tree == kernel
+        assert nodes._compositor_output_pending(stack)
+        assert stack.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        deliver(held[scene_id, adopted])
+        nodes._collect_compositor_receipts()
+        assert nodes._compositor_output_pending(stack)
+        while (second_id, second) not in held:
+            yield "second scene Viewer completion"
+        deliver(held[second_id, second])
+        nodes._collect_compositor_receipts()
+        assert not nodes._compositor_output_pending(stack)
+        assert not stack.get(nodes._NODE_PENDING)
+
+        second_scene.compositing_node_group = None
+        while generation(second_id) is not None:
+            yield "second scene detachment"
+        window.scene = scene
+        assert generation() == adopted
+        assert not nodes._compositor_output_pending(stack)
+        assert not stack.get(nodes._NODE_PENDING)
+        result["stack_viewer_scenes"] = True
     finally:
         receipts.completed = deliver
         helper.HelperStackJob.advance = advance
@@ -480,12 +515,14 @@ def complete():
         assert result["repaired_schema"] == [nodes._KERNEL_SCHEMA] * 3
         exercise = exercise_stack_viewer()
         deadline = time.monotonic() + 120
+        waiting_for = None
 
         def stack_tick():
+            nonlocal waiting_for
             try:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("Stack Viewer completion timed out")
-                next(exercise)
+                    raise TimeoutError(f"Timed out waiting for {waiting_for or 'Stack Viewer completion'}")
+                waiting_for = next(exercise)
             except StopIteration:
                 finish()
                 return None

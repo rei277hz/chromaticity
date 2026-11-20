@@ -1653,9 +1653,8 @@ def _draw_node_status(node, layout):
         layout.label(text=_animation_error_text(node), icon="ERROR")
 
 
-def _visible_compositor_scenes(record):
+def _visible_compositor_scenes(scenes):
     """Scenes with a visible Viewer/backdrop or an observed evaluation."""
-    scenes = {scene.as_pointer() for scene in _compositor_scenes((record,))}
     if not scenes:
         return ()
     expected = set()
@@ -1684,7 +1683,7 @@ def _visible_compositor_scenes(record):
     return tuple(expected)
 
 
-def _compositor_output_pending(node):
+def _compositor_output_pending(node, expected_scenes=None):
     try:
         if node.id_data.bl_idname != COMPOSITOR_TREE:
             return False
@@ -1692,22 +1691,25 @@ def _compositor_output_pending(node):
         record = _node_stores.get(pointer)
         if record is None:
             return False
-        return _compositor_receipts.awaiting(pointer, _visible_compositor_scenes(record))
+        if expected_scenes is None:
+            expected_scenes = _visible_compositor_scenes(_compositor_scene_bindings((record,)))
+        return _compositor_receipts.awaiting(pointer, expected_scenes)
     except (AttributeError, ReferenceError, RuntimeError):
         return False
 
 
-def _refresh_compositor_presentation(record):
+def _refresh_compositor_presentation(record, expected_scenes=None):
     """Consume presentation authorization without rebuilding a Grade graph."""
     state, effects = node_policy.step(record["state"], node_policy.Event("presentation"))
     record["state"] = state
     if effects.output_mode is not None:
-        _apply_output_presentation(record["node"], effects.output_mode, effects.error)
+        _apply_output_presentation(record["node"], effects.output_mode, effects.error,
+                                   expected_scenes)
 
 
 def _record_compositor_bindings(records):
     """Record successful bindings only after their version is activated."""
-    nodes_by_scene = {}
+    live_records = []
     baked_nodes = []
     for record in records:
         node = record["node"]
@@ -1716,9 +1718,12 @@ def _record_compositor_bindings(records):
         pointer = node.as_pointer()
         if getattr(node, "pg_use_bake", False):
             baked_nodes.append(pointer)
-            continue
-        for scene in _compositor_scenes((record,)):
-            nodes_by_scene.setdefault(scene.as_pointer(), []).append(pointer)
+        else:
+            live_records.append(record)
+    nodes_by_scene = {
+        identity: nodes
+        for identity, (_scene, nodes) in _compositor_scene_bindings(live_records).items()
+    }
     # Resolve every RNA identity before changing the plain map, then return
     # rollback facts before the caller dispatches fallible presentation work.
     if not nodes_by_scene and not baked_nodes:
@@ -1766,24 +1771,71 @@ def _reset_compositor_receipts():
     _compositor_receipts.reset()
 
 
+def _live_compositor_records():
+    live = {}
+    for pointer, record in tuple(_node_stores.items()):
+        node = record["node"]
+        try:
+            if (record["state"].applied_signature is None
+                    or node.id_data.bl_idname != COMPOSITOR_TREE
+                    or getattr(node, "pg_use_bake", False)):
+                continue
+            tree = _bake_wrapper(node)
+            selector = bake_graph.marked(tree, bake_graph.SELECTOR)
+            if tree is not None and (selector is None or selector.inputs["Switch"].default_value):
+                continue
+            live[pointer] = record
+        except (AttributeError, KeyError, ReferenceError, RuntimeError):
+            continue
+    return live
+
+
+def _consume_compositor_membership(effects, scenes):
+    attached = effects.reevaluate_scenes
+    if not attached:
+        return
+    try:
+        with _grade_resources.gate.graph_commit():
+            for identity in attached:
+                _request_compositor_evaluation(scenes[identity][0])
+    except Exception as error:
+        # Keep detachments. An evaluation racing a failed or deferred request
+        # cannot acknowledge the fresh generation assigned by the retry.
+        additions = {pair: None for pair, old in effects.previous.items() if old is None}
+        _compositor_receipts.restore(additions)
+        if not isinstance(error, PublicationDeferred):
+            print("Perceptual Grade compositor scene reconciliation failed:", error)
+
+
 def _collect_compositor_receipts():
-    if _node_reset_pending:
+    if _node_reset_pending or threading.current_thread() is not threading.main_thread():
         return
     _compositor_receipts.collect()
+    live = _live_compositor_records()
+    scenes = _compositor_scene_bindings(live.values())
+    effects = _compositor_receipts.reconcile({
+        identity: nodes for identity, (_scene, nodes) in scenes.items()
+    })
+    _consume_compositor_membership(effects, scenes)
     # Reconcile visibility changes too: a hidden Viewer must not leave the
     # node permanently marked Updating when no evaluation is expected.
-    for pointer in _compositor_receipts.node_identities():
+    visible = {}
+    for identity in _visible_compositor_scenes(scenes):
+        for pointer in scenes[identity][1]:
+            visible.setdefault(pointer, []).append(identity)
+    for pointer in live.keys() | {node for _scene, node in effects.previous}:
         record = _node_stores.get(pointer)
         if record is not None:
             try:
-                _refresh_compositor_presentation(record)
+                _refresh_compositor_presentation(record, visible.get(pointer, ()))
             except (AttributeError, ReferenceError, RuntimeError) as error:
                 print("Perceptual Grade compositor presentation failed:", error)
 
 
-def _apply_output_presentation(node, mode, error):
+def _apply_output_presentation(node, mode, error, expected_scenes=None):
     using_bake = bool(getattr(node, "pg_use_bake", False))
-    awaiting_compositor = mode == "current" and not using_bake and _compositor_output_pending(node)
+    awaiting_compositor = (mode == "current" and not using_bake
+                           and _compositor_output_pending(node, expected_scenes))
     values = {}
     if mode == "error":
         print("Perceptual Grade output failed:", error)
@@ -1823,35 +1875,36 @@ def _socket_default_value(socket):
 def _kernel_snapshot(node):
     tree = node.id_data
     tree_links = tuple(tree.links)
+
+    # A kernel swap recreates the Grade sockets. Its neighbors retain their
+    # sockets, and their display names need not be unique.
+    def socket_key(socket):
+        return socket.name if socket.node == node else socket
+
     links = tuple(
-        (link.from_node, link.from_socket.name,
-         link.to_node, link.to_socket.name)
+        (socket_key(link.from_socket), socket_key(link.to_socket))
         for link in tree_links
         if link.from_node == node or link.to_node == node
     )
-    multi_input_groups = []
+    multi_input_groups = {}
     for link in tree_links:
         if link.from_node != node or not getattr(link.to_socket, "is_multi_input", False):
             continue
-        target = link.to_node
-        input_name = link.to_socket.name
-        if any(group[0] == target and group[1] == input_name
-               for group in multi_input_groups):
+        target_socket = link.to_socket
+        if target_socket.as_pointer() in multi_input_groups:
             continue
         incoming = [
             (index, candidate)
             for index, candidate in enumerate(tree_links)
-            if candidate.to_node == target and candidate.to_socket == link.to_socket
+            if candidate.to_socket == target_socket
         ]
         incoming.sort(key=lambda item: (
             getattr(item[1], "multi_input_sort_id", item[0]), item[0]
         ))
-        multi_input_groups.append((
-            target,
-            input_name,
-            tuple((candidate.from_node, candidate.from_socket.name)
-                  for _index, candidate in incoming),
-        ))
+        multi_input_groups[target_socket.as_pointer()] = (
+            target_socket,
+            tuple(socket_key(candidate.from_socket) for _index, candidate in incoming),
+        )
     return {
         "kernel": node.node_tree,
         "values": tuple(
@@ -1859,7 +1912,7 @@ def _kernel_snapshot(node):
             for socket in node.inputs if hasattr(socket, "default_value")
         ),
         "links": links,
-        "multi_input_groups": tuple(multi_input_groups),
+        "multi_input_groups": multi_input_groups,
     }
 
 
@@ -1872,12 +1925,21 @@ def _restore_kernel_snapshot(node, kernel, snapshot):
 
 def _restore_node_connections(node, snapshot):
     tree = node.id_data
+
+    def resolve(key, grade_sockets):
+        return grade_sockets[key] if isinstance(key, str) else key
+
+    expected_links = tuple(
+        (resolve(output, node.outputs), resolve(input_, node.inputs))
+        for output, input_ in snapshot["links"]
+    )
+    multi_input_groups = {
+        pointer: (target, tuple(resolve(output, node.outputs) for output in sources))
+        for pointer, (target, sources) in snapshot["multi_input_groups"].items()
+    }
     for link in tuple(tree.links):
         touches_node = link.from_node == node or link.to_node == node
-        touches_multi_input = any(
-            link.to_node == target and link.to_socket.name == input_name
-            for target, input_name, _sources in snapshot["multi_input_groups"]
-        )
+        touches_multi_input = link.to_socket.as_pointer() in multi_input_groups
         if touches_node or touches_multi_input:
             tree.links.remove(link)
 
@@ -1888,26 +1950,13 @@ def _restore_node_connections(node, snapshot):
         if hasattr(socket, "default_value"):
             socket.default_value = value
 
-    for target, input_name, sources in snapshot["multi_input_groups"]:
-        target_socket = target.inputs.get(input_name)
-        if target_socket is None:
-            raise RuntimeError("Kernel replacement lost a multi-input socket")
-        for source, output in sources:
-            source_socket = source.outputs.get(output)
-            if source_socket is None:
-                raise RuntimeError("Kernel replacement lost a connected socket")
+    for target_socket, sources in multi_input_groups.values():
+        for source_socket in sources:
             tree.links.new(source_socket, target_socket)
 
-    for source, output, target, input_ in snapshot["links"]:
-        if any(target == group_target and input_ == group_input
-               for group_target, group_input, _sources
-               in snapshot["multi_input_groups"]):
-            continue
-        source_socket = source.outputs.get(output)
-        target_socket = target.inputs.get(input_)
-        if source_socket is None or target_socket is None:
-            raise RuntimeError("Kernel replacement lost a connected socket")
-        tree.links.new(source_socket, target_socket)
+    for source_socket, target_socket in expected_links:
+        if target_socket.as_pointer() not in multi_input_groups:
+            tree.links.new(source_socket, target_socket)
 
     actual_values = tuple(
         (name, _socket_default_value(node.inputs[name]))
@@ -1915,35 +1964,26 @@ def _restore_node_connections(node, snapshot):
     )
     if actual_values != snapshot["values"]:
         raise RuntimeError("Kernel replacement did not preserve input values")
-    expected_links = tuple(sorted(
-        (source.as_pointer(), output, target.as_pointer(), input_)
-        for source, output, target, input_ in snapshot["links"]
-    ))
-    actual_links = tuple(sorted(
-        (link.from_node.as_pointer(), link.from_socket.name,
-         link.to_node.as_pointer(), link.to_socket.name)
+    expected_endpoints = sorted((source.as_pointer(), target.as_pointer())
+                                for source, target in expected_links)
+    actual_endpoints = sorted(
+        (link.from_socket.as_pointer(), link.to_socket.as_pointer())
         for link in tree.links
         if link.from_node == node or link.to_node == node
-    ))
-    if actual_links != expected_links:
+    )
+    if actual_endpoints != expected_endpoints:
         raise RuntimeError("Kernel replacement did not preserve node links")
-    for target, input_name, sources in snapshot["multi_input_groups"]:
-        target_socket = target.inputs.get(input_name)
+    for target_socket, sources in multi_input_groups.values():
         actual_sources = [
             (index, link)
             for index, link in enumerate(tree.links)
-            if link.to_node == target and link.to_socket == target_socket
+            if link.to_socket == target_socket
         ]
         actual_sources.sort(key=lambda item: (
             getattr(item[1], "multi_input_sort_id", item[0]), item[0]
         ))
-        actual_order = tuple(
-            (link.from_node.as_pointer(), link.from_socket.name)
-            for _index, link in actual_sources
-        )
-        expected_order = tuple(
-            (source.as_pointer(), output) for source, output in sources
-        )
+        actual_order = tuple(link.from_socket.as_pointer() for _index, link in actual_sources)
+        expected_order = tuple(source.as_pointer() for source in sources)
         if actual_order != expected_order:
             raise RuntimeError("Kernel replacement changed multi-input link order")
 
@@ -1992,20 +2032,6 @@ def _replace_node_kernel(node, kernel, *, emergency=False):
     if candidate is not kernel:
         _retire_kernels((previous,))
     return previous_live
-
-
-def _remap_node_snapshot(snapshot, source, replacement):
-    def remap(node):
-        return replacement if node == source else node
-
-    return dict(snapshot, links=tuple(
-        (remap(origin), output, remap(target), input_)
-        for origin, output, target, input_ in snapshot["links"]
-    ), multi_input_groups=tuple(
-        (remap(target), input_, tuple((remap(origin), output)
-                                     for origin, output in sources))
-        for target, input_, sources in snapshot["multi_input_groups"]
-    ))
 
 
 def _apply_output_kernel(node, mode):
@@ -2377,25 +2403,40 @@ def _invalidate_grade_parameters(image):
     image.update_tag()
 
 
-def _compositor_scenes(records):
-    owners = []
+def _compositor_scene_bindings(records):
+    owners = {}
     for record in records:
         try:
-            tree = record["node"].id_data
+            node = record["node"]
+            tree = node.id_data
             if tree.bl_idname == COMPOSITOR_TREE:
-                owners.append(tree)
+                owner = owners.setdefault(tree.as_pointer(), (tree, []))
+                owner[1].append(node.as_pointer())
         except (AttributeError, ReferenceError, RuntimeError):
             continue
-    scenes = []
+    scenes = {}
+    if not owners:
+        return scenes
     for scene in tuple(bpy.data.scenes):
         try:
             root = scene.compositing_node_group
-            if root is not None and any(root == tree or root.contains_tree(tree)
-                                        for tree in owners):
-                scenes.append(scene)
+            if root is None:
+                continue
+            nodes = tuple(node for tree, pointers in owners.values()
+                          if root == tree or root.contains_tree(tree)
+                          for node in pointers)
+            if nodes:
+                scenes[scene.as_pointer()] = scene, nodes
         except (AttributeError, ReferenceError, RuntimeError):
             continue
-    return tuple(scenes)
+    return scenes
+
+
+def _request_compositor_evaluation(scene):
+    # ID.update_tag() does not request ID_RECALC_COMPOSITOR. Reassert the
+    # root through its RNA setter, including for changes in nested trees.
+    scene.compositing_node_group = scene.compositing_node_group
+    scene.update_tag()
 
 
 def _tag_compositor_outputs(records):
@@ -2451,11 +2492,7 @@ def _tag_compositor_outputs(records):
     for root in roots.values():
         tag_tree(root)
     for scene in scenes.values():
-        # ID.update_tag() does not request ID_RECALC_COMPOSITOR. Reassert the
-        # unchanged root through its RNA setter to request a live compositor
-        # evaluation, including when the edited Grade is inside a nested tree.
-        scene.compositing_node_group = scene.compositing_node_group
-        scene.update_tag()
+        _request_compositor_evaluation(scene)
 
     tagged_areas = set()
     for screen in tuple(bpy.data.screens):
@@ -6490,8 +6527,8 @@ def convert_grade_node(node, target_kind):
             snapshot,
             values=tuple((key, value) for key, value in snapshot["values"]
                          if key != "Vector"),
-            links=tuple(link for link in snapshot["links"]
-                        if not (link[2] == node and link[3] == "Vector")),
+            links=tuple((source, target) for source, target in snapshot["links"]
+                        if target != "Vector"),
         )
     name = node.name
     parent, location = node.parent, tuple(node.location)
@@ -6587,11 +6624,10 @@ def convert_grade_node(node, target_kind):
         if failures:
             raise RuntimeError("Could not finalize converted Grade: "
                                + str(failures[-1][1]))
-        remapped = _remap_node_snapshot(conversion_snapshot, node, replacement)
         for link in tuple(tree.links):
             if link.from_node == node or link.to_node == node:
                 tree.links.remove(link)
-        _restore_node_connections(replacement, remapped)
+        _restore_node_connections(replacement, conversion_snapshot)
         failures = _refresh_nodes((replacement,))
         if failures:
             raise RuntimeError("Could not reconcile converted Grade graph: "

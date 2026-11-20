@@ -170,6 +170,17 @@ def _round_trip(nodes, tree, assert_grade_current):
                             else "CompositorNodeRGB")
     tree.links.new(source.outputs[0], shared.inputs["Color"])
     tree.links.new(shared.outputs["Color"], other.inputs["Color"])
+    subtract = tree.nodes.new("ShaderNodeMath")
+    subtract.operation = "SUBTRACT"
+    first_input, second_input = subtract.inputs[:2]
+    assert first_input.name == second_input.name
+    tree.links.new(source.outputs[0], first_input)
+    tree.links.new(shared.outputs["Color"], second_input)
+
+    def assert_subtract_inputs(grade):
+        assert tuple(link.from_socket for link in first_input.links) == (source.outputs[0],)
+        assert tuple(link.from_socket for link in second_input.links) == (grade.outputs["Color"],)
+
     shared.inputs["Color"].default_value = (0.1, 0.2, 0.3, 0.4)
     if tree.bl_idname == nodes.SHADER_TREE:
         tree.links.new(shared.outputs["Alpha"], other.inputs["Alpha"])
@@ -183,6 +194,7 @@ def _round_trip(nodes, tree, assert_grade_current):
     assert nodes.PG_OT_convert_grade.execute(operator, context) == {"FINISHED"}, errors
     local = tree.nodes[original_name]
     assert nodes._is_per_node_grade_node(local)
+    assert_subtract_inputs(local)
     _assert_values(_settings(nodes, local), expected)
     assert nodes._hue_claims(local) == claims
     assert other.pg_grade == original_grade
@@ -202,6 +214,7 @@ def _round_trip(nodes, tree, assert_grade_current):
     assert shared["user_marker"] == "preserved"
     assert shared.select and other.select
     assert _edges(tree) == original_edges, (_edges(tree), original_edges)
+    assert_subtract_inputs(shared)
     assert all(abs(a - b) < 1e-6 for a, b in zip(
         shared.inputs["Color"].default_value, (0.1, 0.2, 0.3, 0.4)))
     if tree.bl_idname == nodes.SHADER_TREE:
@@ -234,6 +247,7 @@ def _round_trip(nodes, tree, assert_grade_current):
     assert tree.nodes[original_name] == shared
     assert injected
     assert _edges(tree) == original_edges, (_edges(tree), original_edges)
+    assert_subtract_inputs(shared)
     _assert_values(_settings(nodes, shared.pg_grade), expected)
     assert nodes._hue_claims(shared.pg_grade.pg_color) == claims
 

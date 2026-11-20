@@ -74,6 +74,7 @@ class CompositorGuiTests(unittest.TestCase):
                         self.assertEqual(len(data["rows"]), 2, details)
                         self.assertTrue(data["stack_viewer_refinement"], details)
                         self.assertTrue(data["stack_viewer_adoption"], details)
+                        self.assertTrue(data["stack_viewer_scenes"], details)
 
 
 if __name__ == "__main__":

@@ -278,18 +278,23 @@ def connect_grade_graph(tree, node, compositor=False):
     if not compositor:
         alpha_source = tree.nodes.new("ShaderNodeValue")
         alpha_sink = tree.nodes.new("ShaderNodeMath")
+        alpha_sink.operation = "SUBTRACT"
+        assert alpha_sink.inputs[0].name == alpha_sink.inputs[1].name
+        first_operand = tree.nodes.new("ShaderNodeValue").outputs[0]
         alpha_default = 0.73
         node.inputs["Alpha"].default_value = alpha_default
         tree.links.new(alpha_source.outputs["Value"], node.inputs["Alpha"])
-        tree.links.new(node.outputs["Alpha"], alpha_sink.inputs[0])
+        tree.links.new(first_operand, alpha_sink.inputs[0])
+        tree.links.new(node.outputs["Alpha"], alpha_sink.inputs[1])
         edges.extend((
             (alpha_source, "Value", node, "Alpha"),
-            (node, "Alpha", alpha_sink, alpha_sink.inputs[0].name),
+            (node, "Alpha", alpha_sink, alpha_sink.inputs[1].name),
         ))
         defaults["Alpha"] = alpha_default
 
     return {"tree": tree, "node": node, "edges": tuple(edges),
-            "defaults": defaults}
+            "defaults": defaults,
+            "alpha_operands": None if compositor else (alpha_sink, first_operand)}
 
 
 def assert_grade_graph(graph):
@@ -305,6 +310,10 @@ def assert_grade_graph(graph):
         if link.from_node == node or link.to_node == node
     }
     assert actual_edges == expected_edges, (actual_edges, expected_edges)
+    if graph["alpha_operands"] is not None:
+        math_node, first_operand = graph["alpha_operands"]
+        assert [link.from_socket for link in math_node.inputs[0].links] == [first_operand]
+        assert [link.from_socket for link in math_node.inputs[1].links] == [node.outputs["Alpha"]]
     for name, expected in graph["defaults"].items():
         actual = node.inputs[name].default_value
         if isinstance(expected, tuple):
@@ -2263,6 +2272,7 @@ def fail_once_after_candidate_restore(node, kernel, snapshot):
     original_restore_snapshot(node, kernel, snapshot)
     restore_calls.append(kernel)
     if node == stale_node and kernel == candidate_kernel and len(restore_calls) == 1:
+        assert_grade_graph(stale_shader_graph)
         raise RuntimeError("simulated post-install verification failure")
 
 
