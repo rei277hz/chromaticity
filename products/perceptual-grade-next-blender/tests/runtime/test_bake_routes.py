@@ -126,6 +126,7 @@ class BakeRouteTests(unittest.TestCase):
         self.scene = ID("Scene", frame_current=7, frame_subframe=.25, world=None,
                         compositing_node_group=None, objects=Collection(),
                         cycles=SimpleNamespace(device="CPU"),
+                        eevee=SimpleNamespace(taa_render_samples=64),
                         render=SimpleNamespace(engine="CYCLES", resolution_x=100,
                                                resolution_y=80, resolution_percentage=50))
         self.context = SimpleNamespace(scene=self.scene, object=None,
@@ -193,95 +194,57 @@ class BakeRouteTests(unittest.TestCase):
         self.assertIsNone(route["object_name"])
         self.assertEqual(self.module.describe(self.grade, route)["signature"], route["signature"])
 
-    def test_shader_backend_follows_engine_and_cycles_device_with_cpu_fallback(self):
+    def test_shader_backend_always_uses_private_cycles_cpu(self):
         cases = (
-            ("CYCLES", "CPU", "CYCLES_CPU"),
-            ("CYCLES", "GPU", "CYCLES_GPU"),
-            ("BLENDER_EEVEE", "CPU", "EEVEE"),
-            ("BLENDER_EEVEE_NEXT", "GPU", "EEVEE"),
-            ("BLENDER_WORKBENCH", "GPU", "CYCLES_CPU"),
-            ("UNKNOWN_RENDER_ENGINE", "GPU", "CYCLES_CPU"),
+            ("CYCLES", "CPU"),
+            ("CYCLES", "GPU"),
+            ("BLENDER_EEVEE", "CPU"),
+            ("BLENDER_EEVEE_NEXT", "GPU"),
+            ("BLENDER_WORKBENCH", "GPU"),
+            ("UNKNOWN_RENDER_ENGINE", "GPU"),
         )
-        for engine, device, expected in cases:
+        for engine, device in cases:
             with self.subTest(engine=engine, device=device):
                 self.scene.render.engine = engine
                 self.scene.cycles.device = device
                 route = self.module.describe(self.grade, self.context)
-                self.assertEqual(route["shader_backend"], expected)
-                self.assertEqual(route["render_engine"], engine)
-                self.assertEqual(route["cycles_device"],
-                                 None if expected == "EEVEE" else
-                                 "GPU" if expected == "CYCLES_GPU" else "CPU")
+                self.assertEqual(route["shader_backend"], "CYCLES_CPU")
+                self.assertEqual(route["render_engine"], "CYCLES")
+                self.assertEqual(route["cycles_device"], "CPU")
 
-    def test_cycles_device_and_enabled_gpu_set_are_part_of_bake_identity(self):
+    def test_render_engine_and_cycles_device_do_not_change_shader_identity(self):
         texture = self.texture()
         link(texture, "Color", self.grade, "Color")
         first = self.module.describe(self.grade, self.context)
         self.scene.cycles.device = "GPU"
-        self.context.preferences = SimpleNamespace(addons={
-            "cycles": SimpleNamespace(preferences=SimpleNamespace(
-                compute_device_type="METAL",
-                devices=[
-                    SimpleNamespace(id="gpu-2", name="GPU 2", type="METAL", use=True),
-                    SimpleNamespace(id="gpu-1", name="GPU 1", type="METAL", use=True),
-                    SimpleNamespace(id="cpu", name="CPU", type="CPU", use=False),
-                ],
-            )),
-        })
-        gpu = self.module.describe(self.grade, self.context)
-        self.assertEqual(gpu["shader_backend"], "CYCLES_GPU")
-        self.assertEqual(gpu["cycles_gpu"]["compute_device_type"], "METAL")
-        self.assertEqual(tuple(item["id"] for item in gpu["cycles_gpu"]["devices"]),
-                         ("gpu-1", "gpu-2"))
-        self.assertNotEqual(first["signature"], gpu["signature"])
-        self.assertNotEqual(first["receipt_signature"], gpu["receipt_signature"])
-        self.context.preferences.addons["cycles"].preferences.devices[0].use = False
         changed = self.module.describe(self.grade, self.context)
-        self.assertNotEqual(gpu["signature"], changed["signature"])
+        self.assertEqual(first["signature"], changed["signature"])
+        self.assertEqual(first["receipt_signature"], changed["receipt_signature"])
+        self.scene.render.engine = "BLENDER_EEVEE"
+        eevee = self.module.describe(self.grade, self.context)
+        self.assertEqual(first["signature"], eevee["signature"])
+        self.assertEqual(first["receipt_signature"], eevee["receipt_signature"])
 
-    def test_only_bake_request_refreshes_enabled_gpu_devices(self):
-        self.scene.cycles.device = "GPU"
-        discoveries = []
-        preferences = SimpleNamespace(
-            compute_device_type="METAL",
-            devices=[SimpleNamespace(id="gpu", name="GPU", type="METAL", use=True)],
-            get_devices=lambda: discoveries.append("refreshed"),
-        )
-        self.context.preferences = SimpleNamespace(addons={
-            "cycles": SimpleNamespace(preferences=preferences),
-        })
-        preview = self.module.preview(self.grade, self.context)
-        self.assertEqual(preview["cycles_gpu"]["devices"][0]["id"], "gpu")
-        self.assertEqual(discoveries, [])
-        route = self.module.describe(self.grade, self.context)
-        self.assertEqual(route["cycles_gpu"]["devices"][0]["id"], "gpu")
-        self.assertEqual(discoveries, ["refreshed"])
-
-    def test_uv_backend_honors_cycles_device(self):
+    def test_uv_backend_uses_cycles_cpu_in_any_scene_engine(self):
         self.mapped_texture()
         self.mesh()
+        self.scene.render.engine = "BLENDER_EEVEE"
         self.scene.cycles.device = "GPU"
         route = self.module.describe(self.grade, self.context)
         self.assertEqual((route["domain"], route["shader_backend"]),
-                         ("UV", "CYCLES_GPU"))
+                         ("UV", "CYCLES_CPU"))
 
-    def test_engine_and_gpu_compute_backend_changes_invalidate_bake_identity(self):
+    def test_engine_and_gpu_compute_backend_changes_do_not_invalidate_shader_identity(self):
         first = self.module.describe(self.grade, self.context)
         self.scene.render.engine = "BLENDER_EEVEE"
         eevee = self.module.describe(self.grade, self.context)
         for key in ("signature", "receipt_signature", "observation_signature"):
-            self.assertNotEqual(first[key], eevee[key])
+            self.assertEqual(first[key], eevee[key])
         self.scene.render.engine = "CYCLES"
         self.scene.cycles.device = "GPU"
-        preferences = SimpleNamespace(compute_device_type="CUDA", devices=[])
-        self.context.preferences = SimpleNamespace(addons={
-            "cycles": SimpleNamespace(preferences=preferences),
-        })
-        cuda = self.module.describe(self.grade, self.context)
-        preferences.compute_device_type = "OPTIX"
-        optix = self.module.describe(self.grade, self.context)
+        changed = self.module.describe(self.grade, self.context)
         for key in ("signature", "receipt_signature", "observation_signature"):
-            self.assertNotEqual(cuda[key], optix[key])
+            self.assertEqual(first[key], changed[key])
 
     def test_per_node_grade_is_not_a_bake_target(self):
         self.grade.bl_idname = "PGShaderGradePerNode"
@@ -631,7 +594,7 @@ class BakeRouteTests(unittest.TestCase):
         obj.data.loop_triangles = [SimpleNamespace(loops=(0, 1, 2)), SimpleNamespace(loops=(0, 1, 2))]
         self.blocked("uv_overlap")
 
-    def test_shader_to_rgb_and_eevee_uv_bakes_are_rejected(self):
+    def test_shader_to_rgb_is_rejected_and_eevee_uv_bakes_are_allowed(self):
         source = Node(self.tree, "ShaderNodeShaderToRGB", outputs=(("Color", None),))
         link(source, "Color", self.grade, "Color")
         self.blocked("shader_to_rgb")
@@ -639,7 +602,7 @@ class BakeRouteTests(unittest.TestCase):
         self.mapped_texture()
         self.mesh()
         self.scene.render.engine = "BLENDER_EEVEE"
-        self.blocked("cycles")
+        self.assertEqual(self.module.describe(self.grade, self.context)["domain"], "UV")
 
     def test_uv_rejects_render_modifiers_that_can_duplicate_or_change_uvs(self):
         self.mapped_texture()
@@ -859,7 +822,7 @@ class BakeRouteTests(unittest.TestCase):
         upstream.pg_bake_image["_pg_next_bake_operation"] = "rebake"
         self.assertNotEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
 
-    def test_upstream_uv_bake_forces_surface_route_and_cycles(self):
+    def test_upstream_uv_bake_forces_surface_route_and_private_cycles(self):
         self.mesh()
         upstream = self.make_grade(self.tree, name="UV baked upstream")
         upstream.pg_use_bake = True
@@ -868,9 +831,6 @@ class BakeRouteTests(unittest.TestCase):
         link(upstream, "Color", self.grade, "Color")
 
         self.scene.render.engine = "BLENDER_EEVEE"
-        self.blocked("cycles")
-
-        self.scene.render.engine = "CYCLES"
         route = self.module.describe(self.grade, self.context)
         self.assertEqual(route["domain"], "UV")
         self.assertIn("upstream_uv_bake", route["reasons"])
@@ -923,6 +883,56 @@ class BakeRouteTests(unittest.TestCase):
         route = self.module.describe(target, context)
         self.assertIsNone(route["width"])
         self.assertIsNone(route["height"])
+
+    def test_compositor_override_settings_do_not_change_bake_identity(self):
+        tree = Tree("Compositor", "CompositorNodeTree")
+        self.scene.compositing_node_group = tree
+        target = self.make_grade(tree)
+        context = SimpleNamespace(scene=self.scene, object=None,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+        first = self.module.describe(target, context)
+        self.scene.render.engine = "BLENDER_EEVEE"
+        self.scene.cycles.device = "GPU"
+        self.scene.render.compositor_device = "GPU"
+        self.scene.render.compositor_precision = "AUTO"
+        changed = self.module.describe(target, context)
+        for key in ("signature", "receipt_signature", "observation_signature"):
+            self.assertEqual(first[key], changed[key])
+
+    def test_render_layers_engine_and_effective_cycles_device_change_identity(self):
+        tree = Tree("Render Layers Compositor", "CompositorNodeTree")
+        self.scene.compositing_node_group = tree
+        target = self.make_grade(tree)
+        context = SimpleNamespace(scene=self.scene, object=None,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+        layers = Node(tree, "CompositorNodeRLayers", outputs=(("Image", None),),
+                      scene=self.scene)
+        link(layers, "Image", target, "Color")
+        cycles = self.module.describe(target, context)
+        self.scene.render.engine = "BLENDER_EEVEE"
+        eevee = self.module.describe(target, context)
+        self.assertNotEqual(cycles["signature"], eevee["signature"])
+        self.scene.cycles.device = "GPU"
+        eevee_gpu_setting = self.module.describe(target, context)
+        self.assertEqual(eevee["signature"], eevee_gpu_setting["signature"])
+        self.scene.render.engine = "CYCLES"
+        gpu = self.module.describe(target, context)
+        self.assertNotEqual(cycles["signature"], gpu["signature"])
+
+    def test_render_layers_eevee_settings_change_bake_identity(self):
+        tree = Tree("EEVEE Render Layers Compositor", "CompositorNodeTree")
+        self.scene.compositing_node_group = tree
+        target = self.make_grade(tree)
+        context = SimpleNamespace(scene=self.scene, object=None,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+        layers = Node(tree, "CompositorNodeRLayers", outputs=(("Image", None),),
+                      scene=self.scene)
+        link(layers, "Image", target, "Color")
+        self.scene.render.engine = "BLENDER_EEVEE"
+        first = self.module.describe(target, context)
+        self.scene.eevee.taa_render_samples = 128
+        changed = self.module.describe(target, context)
+        self.assertNotEqual(first["signature"], changed["signature"])
 
     def test_compositor_camera_settings_change_bake_identity(self):
         camera_data = ID("Bake Camera Data", lens=50.0, sensor_width=36.0)

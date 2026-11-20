@@ -95,7 +95,7 @@ class GestureUndoGuiTests(unittest.TestCase):
                     details += "\nNative crash:\n" + crash.read_text(errors="replace")[-24000:]
                 self.assertEqual(process.returncode, 0, details)
                 self.assertTrue(data.get("passed"), details)
-                self.assertEqual(data.get("push_results"), [True] * 5, details)
+                self.assertEqual(data.get("push_results"), [True] * 6, details)
                 self.assertEqual(data.get("fallback_pool"), {
                     "repeated_reconciliation": True,
                     "shared_readers_and_removal": True,

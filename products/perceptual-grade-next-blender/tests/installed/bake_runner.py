@@ -20,7 +20,6 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_bake.perceptual_grade")
 nodes = importlib.import_module("bl_ext.pg_bake.perceptual_grade.nodes")
-bake_worker = importlib.import_module("bl_ext.pg_bake.perceptual_grade.runtime.bake_worker")
 errors = []
 assert addon_utils.enable(extension.__name__, default_set=False, handle_error=errors.append) is extension
 assert not errors, errors
@@ -130,17 +129,30 @@ def assert_shader_uses_image(node, image):
     assert selectors and all(float(item.inputs[0].default_value) == 1.0 for item in selectors)
 
 
-def bake(node, context, *, backend=None):
-    scene_state = (context.scene.render.engine, context.scene.cycles.device,
-                   context.scene.render.resolution_x, context.scene.render.resolution_y,
-                   context.scene.render.resolution_percentage)
-    gpu_state = nodes.bake_routes._cycles_gpu_preferences(bpy)
+def foreground_cycles_settings(scene):
+    addon = bpy.context.preferences.addons.get("cycles")
+    preferences = None if addon is None else addon.preferences
+    return (scene.cycles.device,
+            None if preferences is None else preferences.compute_device_type,
+            () if preferences is None else tuple(
+                (device.id, device.type, device.use) for device in preferences.devices))
+
+
+def foreground_render_settings(scene):
+    return (scene.render.engine, scene.render.resolution_x, scene.render.resolution_y,
+            scene.render.resolution_percentage, scene.render.use_compositing,
+            scene.render.use_sequencer, scene.render.compositor_device,
+            scene.render.compositor_precision)
+
+
+def bake(node, context):
+    is_shader = node.id_data.bl_idname == nodes.SHADER_TREE
+    original_cycles_settings = foreground_cycles_settings(context.scene) if is_shader else None
+    original_render_settings = foreground_render_settings(context.scene)
     operator = SimpleNamespace(cancel=False, node_pointer="", tree_pointer="")
     assert nodes.PG_OT_bake.execute(operator, context) == {"FINISHED"}
     assert bpy.app.timers.is_registered(nodes._bake_tick), "Bake request did not wake its timer"
     request = nodes._bake_manager.jobs[nodes._bake_manager._node_key(node)]
-    if backend is not None:
-        assert request["route"]["shader_backend"] == backend, request["route"]
     wait_bake(node)
     assert node.pg_bake_image is not None, node.get(nodes._BAKE_ERROR)
     assert node.pg_bake_image.packed_file is not None
@@ -149,16 +161,16 @@ def bake(node, context, *, backend=None):
     assert node.pg_use_bake
     values = np.asarray(node.pg_bake_image.pixels[:], dtype=np.float32)
     assert values.size and np.isfinite(values).all()
-    assert scene_state == (context.scene.render.engine, context.scene.cycles.device,
-                           context.scene.render.resolution_x, context.scene.render.resolution_y,
-                           context.scene.render.resolution_percentage)
-    assert gpu_state == nodes.bake_routes._cycles_gpu_preferences(bpy)
-    if backend is not None:
-        expected = ("EEVEE", "GPU") if backend == "EEVEE" else (
-            "CYCLES", "GPU" if backend == "CYCLES_GPU" else "CPU")
-        result = request["result"]
-        assert (result["backend"], result["device"]) == expected, result
-        assert result["shader_backend"] == backend, result
+    render_settings = foreground_render_settings(context.scene)
+    assert original_render_settings == render_settings, (original_render_settings, render_settings)
+    result = request["result"]
+    if is_shader:
+        cycles_settings = foreground_cycles_settings(context.scene)
+        assert original_cycles_settings == cycles_settings, (original_cycles_settings, cycles_settings)
+        assert request["route"]["shader_backend"] == "CYCLES_CPU", request["route"]
+        assert (result["backend"], result["device"]) == ("CYCLES", "CPU"), result
+    else:
+        assert result["backend"] == "COMPOSITOR", result
     return values
 
 
@@ -184,77 +196,6 @@ def link_source(tree, node, source, *, uv=False):
     tree.links.new(source.outputs["Alpha"], node.inputs["Alpha"])
 
 
-class _BakeCheckpoint:
-    @staticmethod
-    def checkpoint():
-        pass
-
-
-def assert_eevee_transport(width, height):
-    values = np.empty((height, width, 4), dtype=np.float32)
-    samples = np.array([
-        [-3.25, 0.0005, 131073.0, 0.125],
-        [131073.0, -65.5, 1.5, 0.75],
-        [0.001, 33.0, -0.5, 1.25],
-        [65537.0, -0.125, 256.0, -0.25],
-    ], dtype=np.float32)
-    values[:] = samples[np.arange(width * height) % len(samples)].reshape(height, width, 4)
-    input_image = image("EEVEE Signed HDR Input", values, width, height)
-    material = bpy.data.materials.new("EEVEE Signed HDR Transport")
-    material.use_nodes = True
-    tree = material.node_tree
-    tree.nodes.clear()
-    texture = tree.nodes.new("ShaderNodeTexImage")
-    texture.image = input_image
-    texture.projection = "FLAT"
-    texture.interpolation = "Closest"
-    texture.extension = "CLIP"
-    coordinates = tree.nodes.new("ShaderNodeTexCoord")
-    tree.links.new(coordinates.outputs["UV"], texture.inputs["Vector"])
-    emission = tree.nodes.new("ShaderNodeEmission")
-    output = tree.nodes.new("ShaderNodeOutputMaterial")
-    output.is_active_output = True
-    tree.links.new(texture.outputs["Color"], emission.inputs["Color"])
-    tree.links.new(emission.outputs[0], output.inputs["Surface"])
-    previous_scene = bpy.context.scene
-    scene = bpy.data.scenes.new("EEVEE Signed HDR Scene")
-    scene.render.engine = "BLENDER_EEVEE"
-    world = bpy.data.worlds.new("EEVEE Inherited Volume World")
-    world.use_nodes = True
-    world_tree = world.node_tree
-    world_tree.nodes.clear()
-    volume = world_tree.nodes.new("ShaderNodeVolumePrincipled")
-    world_output = world_tree.nodes.new("ShaderNodeOutputWorld")
-    world_tree.links.new(volume.outputs["Volume"], world_output.inputs["Volume"])
-    scene.world = world
-    override = bpy.data.materials.new("EEVEE Inherited Material Override")
-    override.use_nodes = True
-    scene.view_layers[0].material_override = override
-    try:
-        with bpy.context.temp_override(scene=scene, view_layer=scene.view_layers[0]):
-            actual = bake_worker._eevee_image(
-                scene, material, tree, texture.outputs["Color"], texture.outputs["Alpha"],
-                width, height, _BakeCheckpoint(),
-            )
-        assert scene.world is None
-        assert scene.view_layers[0].material_override is None
-    finally:
-        if bpy.context.window is not None:
-            bpy.context.window.scene = previous_scene
-        for obj in tuple(scene.objects):
-            bpy.data.objects.remove(obj, do_unlink=True)
-        bpy.data.materials.remove(override, do_unlink=True)
-        bpy.data.worlds.remove(world, do_unlink=True)
-        bpy.data.scenes.remove(scene)
-        bpy.data.materials.remove(material, do_unlink=True)
-        bpy.data.images.remove(input_image, do_unlink=True)
-    np.testing.assert_allclose(actual, values, rtol=2e-6, atol=2e-6)
-    assert np.min(actual[..., :3]) < 0.0, float(np.min(actual[..., :3]))
-    assert np.max(actual[..., :3]) > 65504.0, (
-        float(np.max(actual[..., :3])), actual.tolist(), values.tolist())
-    return (width, height)
-
-
 scene = bpy.context.scene
 scene.frame_set(1)
 scene.render.resolution_percentage = 100
@@ -271,12 +212,15 @@ shader_tree.nodes.clear()
 grade_data = nodes._make_grade()
 shader = nodes.create_node(shader_tree)
 shader.pg_grade = grade_data
-source_image = image("Bake Source", np.array([
-    [.10, .20, .30, .20], [.30, .40, .50, .40],
-    [.50, .60, .70, .60], [.70, .80, .90, .80],
-], dtype=np.float32), 2, 2)
+# In-gamut AP1 colors can have negative or above-one channels in Rec.709.
+source_rgba = np.array([
+    [-.025, .20, .30, .20], [.30, .40, .50, .40],
+    [.50, .60, .70, .60], [1.35, .80, .90, .80],
+], dtype=np.float32)
+source_image = image("Bake Source", source_rgba, 2, 2)
 source = shader_tree.nodes.new("ShaderNodeTexImage")
 source.image = source_image
+source.interpolation = "Closest"
 link_source(shader_tree, shader, source)
 wait_ready(shader)
 
@@ -333,26 +277,21 @@ finally:
     source_image.pack()
     nodes.invalidate_source(source_image)
 
-shader_values = bake(shader, shader_context(material, scene, node=shader), backend="CYCLES_CPU")
+shader_values = bake(shader, shader_context(material, scene, node=shader))
 assert nodes._bake_receipt_signature(shader) == nodes._bake_observed_signature(
     shader, nodes._stored_bake_context(shader)), ("post-rebake", shader.get(nodes._BAKE_ERROR))
 assert shader.pg_bake_image.get(nodes._BAKE_DOMAIN) == "IMAGE"
 assert np.unique(np.round(shader_values.reshape(-1, 4)[:, 3], 5)).size > 1
-source_rgba = np.array([
-    [.10, .20, .30, .20], [.30, .40, .50, .40],
-    [.50, .60, .70, .60], [.70, .80, .90, .80],
-], dtype=np.float32)
 image_pixels = shader_values.reshape(-1, 4)
-# Default Linear/Tone anchors describe identity.  These source values are
-# inside the Rec.709 domain, so the native Grade tree should return the same
-# texels, including the independent Alpha pass, up to floating point error.
+# The default anchors reproduce these in-gamut values and independent alpha.
 np.testing.assert_allclose(image_pixels, source_rgba, rtol=0, atol=0.002)
 identity_match = True
 
-# Image evaluation respects EEVEE and falls back only for unsupported engines.
+# Shader bakes use the same private Cycles CPU worker from an EEVEE scene.
 scene.render.engine = "BLENDER_EEVEE"
+scene.cycles.device = "GPU"
 image_context = shader_context(material, scene, node=shader)
-eevee_values = bake(shader, image_context, backend="EEVEE")
+eevee_values = bake(shader, image_context)
 np.testing.assert_allclose(eevee_values.reshape(-1, 4), source_rgba, rtol=0, atol=0.002)
 assert tuple(shader.pg_bake_image.size) == (2, 2)
 
@@ -365,7 +304,7 @@ bpy.context.view_layer.update()
 nodes._reconcile_bake_outputs((shader,), exact=False)
 assert_shader_uses_image(shader, eevee_image)
 assert nodes._bake_receipt_signature(shader) == eevee_receipt
-assert_bake_controls(shader, image_context, "status.bake_stale_engine")
+assert_bake_controls(shader, image_context, can_bake=True)
 scene.render.engine = "BLENDER_EEVEE"
 bpy.context.view_layer.update()
 nodes._reconcile_bake_outputs((shader,), exact=False)
@@ -409,46 +348,14 @@ assert_bake_controls(shader, image_context)
 
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.cycles.device = "GPU"
-fallback_values = bake(shader, shader_context(material, scene, node=shader), backend="CYCLES_CPU")
+fallback_values = bake(shader, shader_context(material, scene, node=shader))
 np.testing.assert_allclose(fallback_values.reshape(-1, 4), source_rgba, rtol=0, atol=0.002)
 
-# The CI software graphics device is not a Cycles GPU. Exercise a real Cycles
-# GPU only when Blender exposes one, and retain an explicit skip receipt.
-gpu_acceptance = {"status": "skipped", "reason": "No Cycles-compatible GPU is available"}
-addon_utils.enable("cycles", default_set=False, persistent=False)
-cycles_preferences = bpy.context.preferences.addons["cycles"].preferences
-saved_compute = cycles_preferences.compute_device_type
-saved_devices = {item.id: bool(item.use) for item in cycles_preferences.devices}
-try:
-    # Dynamic RNA enum_items can omit supported compute backends. Probe the
-    # identifiers used by the pinned Blender versions and skip rejected ones.
-    for compute_type in ("METAL", "OPTIX", "CUDA", "HIP", "ONEAPI"):
-        try:
-            cycles_preferences.compute_device_type = compute_type
-            cycles_preferences.get_devices()
-        except (RuntimeError, TypeError, ValueError):
-            continue
-        available = tuple(item for item in cycles_preferences.devices
-                          if item.type == compute_type)
-        if not available:
-            continue
-        selected = available[0]
-        for item in cycles_preferences.devices:
-            item.use = item.id == selected.id and item.type == compute_type
-        scene.render.engine = "CYCLES"
-        scene.cycles.device = "GPU"
-        gpu_values = bake(shader, shader_context(material, scene, node=shader), backend="CYCLES_GPU")
-        np.testing.assert_allclose(gpu_values.reshape(-1, 4), source_rgba, rtol=0, atol=0.002)
-        gpu_acceptance = {"status": "passed", "compute_device_type": compute_type}
-        break
-finally:
-    cycles_preferences.compute_device_type = saved_compute
-    cycles_preferences.get_devices()
-    for item in cycles_preferences.devices:
-        item.use = saved_devices.get(item.id, False)
-    scene.render.engine = "CYCLES"
-    scene.cycles.device = "CPU"
-shader_values = bake(shader, shader_context(material, scene, node=shader), backend="CYCLES_CPU")
+scene.render.engine = "CYCLES"
+shader_values = bake(shader, image_context)
+np.testing.assert_allclose(shader_values.reshape(-1, 4), source_rgba, rtol=0, atol=0.002)
+scene.cycles.device = "CPU"
+assert_bake_controls(shader, image_context)
 
 # Use Bake can be disabled and restored without unbinding the managed Image.
 shader.pg_use_bake = False
@@ -697,7 +604,7 @@ scene.collection.objects.link(obj)
 mesh.materials.append(material)
 obj.active_material_index = 0
 uv_node = nodes.create_node(shader_tree)
-uv_node.pg_grade = grade_data
+uv_node.pg_grade = nodes._make_grade()
 link_source(shader_tree, uv_node, source, uv=True)
 uv_node.pg_bake_width = 16
 uv_node.pg_bake_height = 16
@@ -706,16 +613,23 @@ wait_ready(uv_node)
 uv_values = bake(uv_node, shader_context(material, scene, obj, uv_node))
 assert uv_node.pg_bake_image.get(nodes._BAKE_DOMAIN) == "UV"
 assert uv_values.shape == (16 * 16 * 4,)
+expected_uv_grade = source_rgba.reshape(2, 2, 4).repeat(8, axis=0).repeat(8, axis=1)
+np.testing.assert_allclose(uv_values.reshape(16, 16, 4), expected_uv_grade, rtol=0, atol=0.002)
 uv_context = shader_context(material, scene, obj, uv_node)
 uv_image = uv_node.pg_bake_image
 uv_receipt = nodes._bake_receipt_signature(uv_node)
-# EEVEE blocks new UV bakes. The published UV Image remains usable.
+# Engine and device switches preserve the published result and allow rebaking on the same mesh.
 scene.render.engine = "BLENDER_EEVEE"
 bpy.context.view_layer.update()
 nodes._reconcile_bake_outputs((uv_node,), exact=False)
 assert_shader_uses_image(uv_node, uv_image)
 assert nodes._bake_receipt_signature(uv_node) == uv_receipt
-assert_bake_controls(uv_node, uv_context, "status.bake_stale_engine", can_bake=False)
+assert_bake_controls(uv_node, uv_context, can_bake=True)
+scene.cycles.device = "GPU"
+eevee_uv_values = bake(uv_node, uv_context)
+np.testing.assert_allclose(eevee_uv_values, uv_values, rtol=0, atol=0.002)
+assert tuple(uv_node.pg_bake_image.size) == (16, 16)
+scene.cycles.device = "CPU"
 scene.render.engine = "CYCLES"
 bpy.context.view_layer.update()
 nodes._reconcile_bake_outputs((uv_node,), exact=False)
@@ -739,6 +653,8 @@ assert_bake_controls(uv_node, uv_context)
 
 # Compositor route uses the native compositor capture path.
 scene.render.engine = "BLENDER_EEVEE"
+scene.render.compositor_device = "GPU"
+scene.render.compositor_precision = "AUTO"
 camera_data = bpy.data.cameras.new("Bake Camera Data")
 camera = bpy.data.objects.new("Bake Camera", camera_data)
 scene.collection.objects.link(camera)
@@ -764,6 +680,46 @@ comp_grade.pg_use_bake = True
 assert comp_grade.pg_use_bake, comp_grade.get(nodes._BAKE_ERROR)
 comp_grade.pg_use_bake = False
 
+# Render Layers still use the scene engine. This native Compositor Bake
+# should preserve that dependency and the render canvas.
+comp_grade.pg_bake_image = None
+for link in tuple(comp_grade.inputs["Color"].links):
+    compositor.links.remove(link)
+comp_layers = compositor.nodes.new("CompositorNodeRLayers")
+comp_layers.scene = scene
+comp_layers.layer = scene.view_layers[0].name
+compositor.links.new(comp_layers.outputs["Image"], comp_grade.inputs["Color"])
+comp_context = compositor_context(scene, compositor, comp_grade)
+comp_layer_values = bake(comp_grade, comp_context)
+assert comp_layer_values.size == scene.render.resolution_x * scene.render.resolution_y * 4
+assert_bake_controls(comp_grade, comp_context, can_bake=True)
+scene.render.engine = "CYCLES"
+assert_bake_controls(comp_grade, comp_context, "status.bake_stale_engine", can_bake=True)
+scene.render.engine = "BLENDER_EEVEE"
+assert_bake_controls(comp_grade, comp_context, can_bake=True)
+
+# A compositor constant has no source-image dimensions, so native capture
+# should use the scene canvas while preserving its constant pixel value.
+constant_tree = bpy.data.node_groups.new("Bake Constant Compositor", nodes.COMPOSITOR_TREE)
+constant_tree.interface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+constant_output = constant_tree.nodes.new("NodeGroupOutput")
+constant_output.is_active_output = True
+constant_grade = nodes.create_node(constant_tree)
+constant_grade.pg_grade = nodes._make_grade()
+constant_grade.inputs["Color"].default_value = (.2, .3, .4, .65)
+constant_tree.links.new(constant_grade.outputs["Color"], constant_output.inputs["Image"])
+scene.compositing_node_group = constant_tree
+constant_context = compositor_context(scene, constant_tree, constant_grade)
+wait_ready(constant_grade)
+constant_values = bake(constant_grade, constant_context)
+assert tuple(constant_grade.pg_bake_image.size) == (
+    scene.render.resolution_x, scene.render.resolution_y,
+)
+np.testing.assert_allclose(constant_values.reshape(-1, 4),
+                           np.broadcast_to((.2, .3, .4, .65),
+                                           (constant_values.size // 4, 4)),
+                           rtol=0, atol=0.002)
+
 # A signature change before the first poll invalidates the queued request.
 scene.render.engine = "CYCLES"
 stale = nodes.create_node(shader_tree)
@@ -778,23 +734,34 @@ assert not stale.pg_use_bake and stale.pg_bake_image is None
 assert nodes._bake_manager._node_key(stale) not in nodes._bake_manager.jobs
 stale_discarded = True
 
-# Changing the selected Image-bake device while a request is queued revokes it
-# through the same receipt check; the helper must never publish the old mode.
-engine_stale = nodes.create_node(shader_tree)
-engine_stale.pg_grade = nodes._make_grade(grade_data)
-engine_source = shader_tree.nodes.new("ShaderNodeTexImage")
-engine_source.image = source_image
-link_source(shader_tree, engine_stale, engine_source)
+# Change the foreground engine/device at both queue and execution boundaries.
+pending = nodes.create_node(shader_tree)
+pending.pg_grade = nodes._make_grade()
+pending_source = shader_tree.nodes.new("ShaderNodeTexImage")
+pending_source.image = source_image
+link_source(shader_tree, pending, pending_source)
+pending_context = shader_context(material, scene, node=pending)
+wait_ready(pending)
+nodes._bake_request(pending, pending_context)
+pending_key = manager._node_key(pending)
+pending_request = manager.jobs[pending_key]
+scene.render.engine = "BLENDER_EEVEE"
+scene.cycles.device = "GPU"
+bpy.context.view_layer.update()
+nodes._reconcile_bake_outputs((pending,), exact=True)
+assert manager.jobs[pending_key] is pending_request and pending_request["state"].phase == "queued"
+manager._start_next()
+assert manager.active is pending_request and pending_request["state"].phase == "running"
 scene.render.engine = "CYCLES"
 scene.cycles.device = "CPU"
-wait_ready(engine_stale)
-nodes._bake_request(engine_stale, shader_context(material, scene, node=engine_stale))
-scene.cycles.device = "GPU"
-nodes._bake_tick()
-assert not engine_stale.pg_use_bake
-assert nodes._bake_manager._node_key(engine_stale) not in nodes._bake_manager.jobs
-scene.cycles.device = "CPU"
-engine_selection_stale = True
+bpy.context.view_layer.update()
+nodes._reconcile_bake_outputs((pending,), exact=True)
+assert manager.active is pending_request and pending_request["state"].phase == "running"
+wait_bake(pending)
+assert pending.pg_use_bake and pending.pg_bake_image is not None, pending.get(nodes._BAKE_ERROR)
+np.testing.assert_allclose(np.asarray(pending.pg_bake_image.pixels[:]).reshape(4, 4),
+                           source_rgba, rtol=0, atol=0.002)
+assert_bake_controls(pending, pending_context, can_bake=True)
 
 # Both shader Bake routes capture the native full Stack, including Inverse.
 inverse_grade = nodes._make_grade()
@@ -844,8 +811,9 @@ assert nodes._bake_receipt_signature(image_stack) is None
 inverse_entry.enabled = True
 
 scene.render.engine = "BLENDER_EEVEE"
+scene.cycles.device = "GPU"
 bpy.context.view_layer.update()
-stack_eevee_values = bake(image_stack, image_stack_context, backend="EEVEE")
+stack_eevee_values = bake(image_stack, image_stack_context)
 stack_image = image_stack.pg_bake_image
 stack_receipt = nodes._bake_receipt_signature(image_stack)
 assert stack_receipt is not None
@@ -863,17 +831,18 @@ inverse_entry.direction = "INVERSE"
 assert_shader_uses_image(image_stack, stack_image)
 assert_bake_controls(image_stack, image_stack_context)
 
-for engine, warning in (("CYCLES", "status.bake_stale_engine"), ("BLENDER_EEVEE", None)):
+for engine in ("CYCLES", "BLENDER_EEVEE"):
     scene.render.engine = engine
     bpy.context.view_layer.update()
     nodes._reconcile_bake_outputs((image_stack,), exact=False)
     assert_shader_uses_image(image_stack, stack_image)
     assert nodes._bake_receipt_signature(image_stack) == stack_receipt
-    assert_bake_controls(image_stack, image_stack_context, warning)
+    assert_bake_controls(image_stack, image_stack_context, can_bake=True)
 
 scene.render.engine = "CYCLES"
+scene.cycles.device = "CPU"
 bpy.context.view_layer.update()
-stack_cycles_values = bake(image_stack, image_stack_context, backend="CYCLES_CPU")
+stack_cycles_values = bake(image_stack, image_stack_context)
 assert image_stack.pg_bake_image.get(nodes._BAKE_DOMAIN) == "IMAGE"
 assert tuple(image_stack.pg_bake_image.size) == (2, 2)
 np.testing.assert_allclose(stack_cycles_values.reshape(4, 4), expected_stack_rgba,
@@ -887,7 +856,7 @@ image_stack.pg_bake_width = 16
 image_stack.pg_bake_height = 8
 uv_stack_context = shader_context(material, scene, obj, image_stack)
 bpy.context.view_layer.update()
-stack_uv_values = bake(image_stack, uv_stack_context, backend="CYCLES_CPU")
+stack_uv_values = bake(image_stack, uv_stack_context)
 stack_uv_image = image_stack.pg_bake_image
 stack_uv_receipt = nodes._bake_receipt_signature(image_stack)
 assert stack_uv_receipt is not None
@@ -902,7 +871,12 @@ bpy.context.view_layer.update()
 nodes._reconcile_bake_outputs((image_stack,), exact=False)
 assert_shader_uses_image(image_stack, stack_uv_image)
 assert nodes._bake_receipt_signature(image_stack) == stack_uv_receipt
-assert_bake_controls(image_stack, uv_stack_context, "status.bake_stale_engine", can_bake=False)
+assert_bake_controls(image_stack, uv_stack_context, can_bake=True)
+scene.cycles.device = "GPU"
+eevee_stack_uv = bake(image_stack, uv_stack_context)
+np.testing.assert_allclose(eevee_stack_uv.reshape(8, 16, 4), expected_uv_rgba,
+                           rtol=0, atol=0.002)
+scene.cycles.device = "CPU"
 scene.render.engine = "CYCLES"
 bpy.context.view_layer.update()
 nodes._reconcile_bake_outputs((image_stack,), exact=False)
@@ -926,20 +900,16 @@ stack_tree.links.new(stack.outputs["Color"], stack_output.inputs["Image"])
 try:
     wait_ready(stack, stack=True)
     stack_values = bake(stack, stack_context)
+    assert tuple(stack.pg_bake_image.size) == (scene.render.resolution_x, scene.render.resolution_y)
     stack_ok = bool(stack_values.size and stack.pg_bake_image is not None)
 except (AssertionError, RuntimeError, TimeoutError, ValueError) as error:
     raise AssertionError("Stack Bake acceptance failed: " + str(error)) from error
-
-# EEVEE AOV capture must preserve signed float32 HDR values and exact image
-# dimensions, including dimensions smaller than Blender's minimum render size.
-eevee_transport_shapes = tuple(assert_eevee_transport(width, height)
-                               for width, height in ((1, 1), (2, 2), (2, 5), (5, 2)))
 
 report = {
     "passed": True,
     "domains": ["IMAGE", "UV", "COMPOSITOR"],
     "stack": stack_ok,
-    "stack_shader_bakes": ["IMAGE_EEVEE", "IMAGE_CYCLES", "UV_CYCLES"],
+    "stack_shader_bakes": ["IMAGE_EEVEE", "IMAGE_CYCLES", "UV_EEVEE", "UV_CYCLES"],
     "stack_entry_bake_invalidation": True,
     "packed_float": all(item.pg_bake_image is not None and item.pg_bake_image.is_float
                          and item.pg_bake_image.packed_file is not None
@@ -947,16 +917,16 @@ report = {
     "live_restored": live_restored,
     "shared_rebake": shared_rebake,
     "stale_discarded": stale_discarded,
-    "engine_selection_stale": engine_selection_stale,
+    "pending_engine_switch": True,
     "wrapper_independent": True,
     "wrapper_recovery": True,
     "baked_conversion": True,
     "grade_edit_stale_warning": True,
     "identity_match": identity_match,
-    "engine_selection": True,
+    "cycles_cpu_shader_bakes": True,
+    "compositor_render_layers": True,
+    "compositor_constant": True,
     "engine_roundtrip": True,
-    "cycles_gpu_acceptance": gpu_acceptance,
-    "eevee_transport_shapes": [list(item) for item in eevee_transport_shapes],
     "render_admission": True,
     "source_edit_invalidation": True,
     "source_edit_stale_warning": True,

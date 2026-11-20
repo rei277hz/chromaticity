@@ -23,7 +23,7 @@
   "action.reset_directions_description": "Reset balance, spread, and heading controls.",
   "action.reset_tone_description": "Reset the tone curve to its default mapping.",
   "action.new_grade_description": "Create a new Grade or make an independent copy of the selected Grade.",
-  "action.bake_description": "Bake this Grade output into a managed float Image.",
+  "action.bake_description": "Bake this output into a managed float Image. Shader Image and UV bakes use Cycles CPU. Compositor bakes use the CPU compositor.",
   "action.invalidate_image_description": "Notify Grade bakes after a script changes this source Image's pixels.",
   "action.unlink_bake_image_description": "Stop using the managed Bake Image while keeping it available to other readers.",
   "action.unlink_grade_description": "Clear this node's Grade and restore default values.",

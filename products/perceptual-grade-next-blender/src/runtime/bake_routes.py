@@ -23,7 +23,7 @@ SCHEMA = 1
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
-EEVEE_ENGINES = frozenset(("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"))
+_COMPOSITOR_OVERRIDES = frozenset(("compositor_device", "compositor_precision"))
 # These modifiers preserve loop topology and UV coordinates. Blender exposes
 # a viewport evaluated mesh to Python, which cannot certify render-only
 # topology/UV changes, so other enabled render modifiers require application
@@ -112,68 +112,10 @@ def _same(left, right):
     return left is not None and right is not None and _identity(left) == _identity(right)
 
 
-def _cycles_device_identity(device):
-    """Return a value-only identity for one Cycles device."""
-    return {
-        "id": str(getattr(device, "id", "")),
-        "name": str(getattr(device, "name", "")),
-        "type": str(getattr(device, "type", "")),
-    }
-
-
-def _cycles_gpu_preferences(host, *, exact=False):
-    """Read configured Cycles devices, probing only for an accepted request."""
-    preferences = getattr(getattr(host, "context", None), "preferences", None)
-    addons = getattr(preferences, "addons", None)
-    addon = addons.get("cycles") if addons is not None and hasattr(addons, "get") else None
-    cycles = getattr(addon, "preferences", None)
-    if cycles is None:
-        return {"compute_device_type": None, "devices": ()}
-    if exact:
-        try:
-            cycles.get_devices()
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
-    compute_type = str(getattr(cycles, "compute_device_type", "NONE"))
-    devices = tuple(
-        _cycles_device_identity(device)
-        for device in getattr(cycles, "devices", ())
-        if bool(getattr(device, "use", False))
-        and str(getattr(device, "type", "")) in {"CPU", compute_type}
-    )
-    return {
-        "compute_device_type": compute_type,
-        "devices": tuple(sorted(devices, key=lambda item: (item["id"], item["type"], item["name"]))),
-    }
-
-
-def _shader_backend(host, scene, *, domain, exact=False):
-    """Resolve the native backend used by a shader bake."""
-    render_engine = str(getattr(getattr(scene, "render", None), "engine", ""))
-    cycles = getattr(scene, "cycles", None)
-    cycles_device = str(getattr(cycles, "device", "CPU")).upper()
-    if domain == "UV" and render_engine != "CYCLES":
-        raise RouteBlocked("cycles", "UV Bake requires the Cycles render engine")
-    if render_engine in EEVEE_ENGINES and domain == "IMAGE":
-        backend = "EEVEE"
-    elif render_engine == "CYCLES":
-        backend = "CYCLES_GPU" if cycles_device == "GPU" else "CYCLES_CPU"
-    else:
-        backend = "CYCLES_CPU"
-    return {
-        "cycles_device": ("GPU" if backend == "CYCLES_GPU" else
-                          "CPU" if backend == "CYCLES_CPU" else None),
-        "shader_backend": backend,
-        "cycles_gpu": (_cycles_gpu_preferences(host, exact=exact)
-                        if backend == "CYCLES_GPU" else None),
-    }
-
-
 def backend_signature(route):
-    """Fingerprint the engine and device facts already observed for this route."""
-    return _digest(tuple(route.get(key) for key in (
-        "render_engine", "shader_backend", "cycles_device", "cycles_gpu",
-    )))
+    """Fingerprint the evaluator used for the bake."""
+    return _digest((route["render_engine"], route.get("cycles_device"),
+                    route.get("render_layers_backends")))
 
 
 def _plain(value):
@@ -201,7 +143,8 @@ def _collect_dependency(value, dependencies, dependency_seen):
                                 dependency_seen)
 
 
-def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=None):
+def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=None,
+               *, exclude=()):
     """Snapshot writable semantic RNA, including ramps, curves and mappings."""
     if value is None or isinstance(value, (bool, int, float, str)):
         return _plain(value)
@@ -219,6 +162,7 @@ def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=Non
                 item, seen | {key}, depth + 1, dependencies, dependency_seen,
             ))
                                 for name, item in vars(value).items()
+                                if name not in exclude
                                 if name not in _UI_PROPERTIES and not name.startswith("_")
                                 and not callable(item)))
         return _plain(value)
@@ -227,7 +171,8 @@ def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=Non
         name = prop.identifier
         if name == "color" and hasattr(value, "inputs") and hasattr(value, "outputs"):
             continue
-        if name in _UI_PROPERTIES or (prop.is_readonly and prop.type not in {"POINTER", "COLLECTION"}):
+        if (name in exclude or name in _UI_PROPERTIES
+                or (prop.is_readonly and prop.type not in {"POINTER", "COLLECTION"})):
             continue
         item = getattr(value, name)
         if prop.type == "POINTER" and item is not None and hasattr(item, "session_uid"):
@@ -729,7 +674,7 @@ class _Walker:
         self.reasons = set()
         self.visiting = set()
         self.visited = set()
-        self.rendered = set()
+        self.rendered = {}
         self.render_states = []
         self.render_observations = []
         self.coordinate_depth = 0
@@ -902,12 +847,22 @@ class _Walker:
         key = _identity(scene)
         if key in self.rendered:
             return
-        self.rendered.add(key)
+        engine = scene.render.engine
+        if engine == "CYCLES":
+            engine_settings = getattr(scene, "cycles", None)
+        elif engine in {"BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"}:
+            engine_settings = getattr(scene, "eevee", None)
+        else:
+            engine_settings = None
+        self.rendered[key] = (
+            engine, getattr(engine_settings, "device", None) if engine == "CYCLES" else None,
+        )
         objects = tuple(scene.objects)
         camera = getattr(scene, "camera", None)
         self._add_dependency(camera)
-        summary = (_semantic_identity(scene), _rna_state(scene.render),
-                   _rna_state(getattr(scene, "cycles", None)),
+        summary = (_semantic_identity(scene),
+                   _rna_state(scene.render, exclude=_COMPOSITOR_OVERRIDES),
+                   _rna_state(engine_settings),
                    _semantic_identity(camera), _dependency_state(camera),
                    _rna_state(getattr(scene, "world", None),
                               dependencies=self.dependencies,
@@ -1083,8 +1038,6 @@ def _describe(node, context, *, full, dependencies=None):
     obj = None
     uv_map = material_slot = None
     if domain == "UV":
-        if scene.render.engine != "CYCLES":
-            raise RouteBlocked("cycles", "UV Bake requires the Cycles render engine")
         if kind != "material":
             raise RouteBlocked("world_uv", "World Bake supports only Image-domain inputs")
         if isinstance(context, Mapping):
@@ -1124,12 +1077,12 @@ def _describe(node, context, *, full, dependencies=None):
     if width is not None and height is not None:
         if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES or (domain == "UV" and max(width, height) > MAX_UV_SIZE):
             raise RouteBlocked("dimensions", "Bake dimensions exceed the 512 MiB pixel budget")
-    shader_backend = None if compositor else _shader_backend(
-        bpy, scene, domain=domain, exact=full,
-    )
+    render_engine = None if compositor else "CYCLES"
+    evaluator = ({"render_layers_backends": tuple(walker.rendered.values())} if compositor
+                 else {"shader_backend": "CYCLES_CPU", "cycles_device": "CPU"})
     result = dict(schema=SCHEMA, domain=domain, width=width, height=height,
                   scene=str(scene.name), frame=int(scene.frame_current),
-                  subframe=float(scene.frame_subframe), render_engine=scene.render.engine,
+                  subframe=float(scene.frame_subframe), render_engine=render_engine,
                   owner_kind=kind, owner_name=str(owner.name),
                   group_path=tuple(str(item.name) for item in parents), node_name=str(node.name),
                   object_name=str(obj.name) if obj is not None else None,
@@ -1137,7 +1090,7 @@ def _describe(node, context, *, full, dependencies=None):
                   reasons=tuple(sorted(walker.reasons)),
                   images=tuple(item[1] for item in walker.images.values()),
                   upstream=tuple(walker.upstream.values()), signature=None,
-                  **({} if shader_backend is None else shader_backend))
+                  **evaluator)
     colorspace = getattr(bpy.data, "colorspace", None)
     working_space = (getattr(colorspace, "working_space_interop_id", None),
                      getattr(colorspace, "working_space", None))
@@ -1146,10 +1099,8 @@ def _describe(node, context, *, full, dependencies=None):
         height if domain == "UV" else None, _semantic_identity(scene),
         _semantic_identity(owner), _semantic_identity(node),
         tuple(_semantic_identity(item) for item in parents),
-        result["frame"], result["subframe"], scene.render.engine, working_space,
-        None if shader_backend is None else (
-            shader_backend["shader_backend"], shader_backend["cycles_device"],
-            shader_backend["cycles_gpu"]),
+        result["frame"], result["subframe"], render_engine, working_space,
+        evaluator.get("cycles_device"),
         _grade_settings(node), tuple(walker.graph),
         tuple((key, state) for key, (state, _dirty) in walker.image_observations.items()),
         _geometry_observation(obj) if obj is not None else None,
@@ -1170,13 +1121,13 @@ def _describe(node, context, *, full, dependencies=None):
         signature = (SCHEMA, domain, width, height, _semantic_identity(scene),
                      _semantic_identity(owner), _semantic_identity(node),
                      tuple(_semantic_identity(item) for item in parents),
-                     result["frame"], result["subframe"], scene.render.engine, working_space,
-                     None if shader_backend is None else (
-                         shader_backend["shader_backend"], shader_backend["cycles_device"],
-                         shader_backend["cycles_gpu"]),
+                     result["frame"], result["subframe"], render_engine, working_space,
+                     evaluator.get("cycles_device"),
                      _grade_settings(node), terminal, tuple(walker.graph),
                      tuple((key, item[0]) for key, item in walker.images.items()),
-                     tuple(walker.render_states), _rna_state(scene.render) if compositor else None,
+                     tuple(walker.render_states),
+                     (_rna_state(scene.render, exclude=_COMPOSITOR_OVERRIDES | {"engine"})
+                      if compositor else None),
                      _geometry_state(obj) if obj is not None else None,
                      material_slot, uv_map)
         result["signature"] = _digest(signature)

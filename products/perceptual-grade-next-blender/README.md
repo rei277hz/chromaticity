@@ -161,23 +161,20 @@ node displays a warning with the reason when the bake may be outdated. A
 managed Image may be selected by multiple nodes, so a rebake updates every
 reader of that Image.
 
-Shader bakes retain the legacy route distinction. A pointwise graph with one
-still Image source uses the Image route and evaluates one output pixel per
-source texel. Linked coordinates, surface-dependent nodes, an upstream managed
-UV bake, or multiple source Images use the UV route and require a Cycles mesh
-with one non-overlapping UV map. Compositor bakes use native compositor evaluation and retain its output
-image domain.
-Value-only Shader graphs with no source Image use the Image route and publish a
-1x1 managed Image. Compositor constants retain the compositor canvas dimensions.
-Image-domain Shader bakes follow the active Scene render choice: EEVEE uses a
-private orthographic node-tree render, while Cycles uses the Scene's CPU or GPU
-selection. Workbench and unknown engines use Cycles CPU. UV bakes remain
-Cycles-only but honor the Scene's CPU/GPU choice. A GPU request freezes the
-Cycles compute backend and exact enabled device identities at click time; an
-unavailable selection fails visibly and is never silently changed to CPU.
-The helper does not modify the user's Scene or preferences. EEVEE's limited
-color-pass precision is handled with split signed-HDR AOV readback before the
-float Image is published.
+Shader Image and UV bakes run on Cycles CPU in a private copy of the scene.
+You can request either bake directly in EEVEE. Switching the scene engine or
+Cycles device keeps a current Shader bake current and lets a pending bake
+finish. A pointwise graph with one still Image source uses the Image route and
+evaluates one output pixel per source texel. A value-only graph produces a 1x1
+Image.
+Linked coordinates, surface-dependent nodes, an upstream managed UV bake, or
+multiple source Images use the UV route and require a mesh with a
+non-overlapping render UV map.
+
+Compositor bakes use Blender's full-precision CPU compositor and retain its
+output dimensions. A constant uses the scene canvas. For Render Layers inputs,
+the scene's chosen render engine produces the pixels supplied to the compositor.
+
 The Shader Vector input controls only baked sampling. When unlinked, it uses
 the recorded bake UV map (or the active render UV map for Image bakes).
 Grade parameters are evaluated through the native Grade helper-image tree, and
@@ -193,7 +190,8 @@ Subdivision, Geometry Nodes, Armature, Curve, Lattice, and Displace. The support
 unapplied modifiers are Cast, Corrective Smooth, Laplacian Smooth, Normal Edit,
 Simple Deform, Smooth, Warp, Wave, and Weighted Normal. Requests are serialized through one
 helper lane and capture a frozen click-time snapshot; an edit, frame change, or
-invalidated source discards the in-flight result rather than publishing stale pixels.
+invalidated source discards the in-flight result rather than publishing stale
+pixels.
 
 Bake freshness uses small graph/settings digests, cheap Image metadata, and
 per-ID change generations for referenced Images, Meshes, and Objects. The
@@ -204,8 +202,8 @@ Image bytes, and `.blend`, `.npy`, or EXR bake payloads are never hashed.
 Accepting a request copies each unique source Image once to freeze its
 click-time state. Request, publication, and render boundaries compare receipts
 and tokens without image-sized hashing. File load and undo rebaseline transient
-generations against the saved receipt. Engine and settings warnings clear when
-their recorded values return. Detected source updates are recorded on the
+generations against the saved receipt. Settings warnings clear when their
+recorded values return. Detected source updates are recorded on the
 receipt, including while Use Bake is off. A successful rebake creates a new
 receipt and clears the source warning.
 

@@ -30,8 +30,8 @@ class Gesture:
     press_y: int
     undo_owner: Literal["native", "adapter"]
     targets: tuple[Target, ...]
-    auto_key: bool = False
     keyframe_frame: Optional[float] = None
+    color_pair: bool = False
 
 
 @dataclass(frozen=True)
@@ -46,13 +46,14 @@ class Action:
     kind: Literal[
         "invoke_observer", "schedule_handoff", "schedule_finish", "node_begin",
         "node_release", "refresh", "keyframe", "forget_node", "clear_registry",
-        "report_install_failure",
+        "report_install_failure", "write_color_pair", "restore_color_pair",
     ]
     window_id: Optional[int] = None
     token: Optional[int] = None
     gesture_token: Optional[int] = None
     node_id: Optional[int] = None
     frame: Optional[float] = None
+    color_values: Optional[tuple[float, float]] = None
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,7 @@ class Event:
     kind: Literal[
         "window_seen", "window_gone", "observer_install_result", "observer_lost",
         "press", "move", "activate", "finish", "finish_requested", "finish_observed",
-        "handoff_due", "node_disposed", "reset",
+        "handoff_due", "node_disposed", "edit_color_pair", "cancel_color_pair", "reset",
     ]
     window_id: Optional[int] = None
     token: Optional[int] = None
@@ -80,8 +81,9 @@ class Event:
     observed: tuple[Target, ...] = ()
     success: bool = False
     latest: Literal["none", "move", "finish"] = "none"
-    auto_key: bool = False
     frame: Optional[float] = None
+    color_values: Optional[tuple[float, float]] = None
+    color_pair: bool = False
 
 
 def new() -> State:
@@ -156,6 +158,11 @@ def gesture_index(gestures: tuple[Gesture, ...], window_id: int) -> Optional[int
     return selected
 
 
+def editing_color(state: State, window_id: int) -> bool:
+    index = gesture_index(state.gestures, window_id)
+    return index is not None and state.gestures[index].color_pair
+
+
 def replace_gesture(gestures: tuple[Gesture, ...], index: int, gesture: Gesture) -> tuple[Gesture, ...]:
     if index < 0 or index >= len(gestures):
         return gestures
@@ -216,22 +223,24 @@ def _observer_event(state: State, event: Event) -> tuple[State, Effects]:
             "observer_install_result": "installed", "observer_lost": "lost"}[event.kind]
     before = policy.State(state.serial, current_observer(state, window),
                           pending_observer(state, window))
+    color_pair = editing_color(state, window)
+    native_gesture = None if color_pair else current_gesture(state, window)
+    native_phase = None if color_pair else gesture_phase(state, window)
     observed, effects = policy.step(before, policy.Event(
         kind, token=event.token, success=event.success, gesture_token=event.gesture_token,
-        current_gesture_token=current_gesture(state, window), phase=gesture_phase(state, window)))
+        current_gesture_token=native_gesture, phase=native_phase))
     updated = state
     if observed != before:
         updated = put_observer(replace(state, serial=observed.serial),
                                Observer(window, observed.current_token, observed.pending_token))
     actions = ()
     if effects.invoke_token is not None:
-        actions += (Action("invoke_observer", window, effects.invoke_token,
-                           current_gesture(updated, window)),)
+        actions += (Action("invoke_observer", window, effects.invoke_token, native_gesture),)
     if effects.report_failure:
         actions += (Action("report_install_failure", window, event.token),)
     if effects.installed:
-        replay = policy.after_install(current_gesture(updated, window), event.gesture_token,
-                                      gesture_phase(updated, window), event.latest)
+        replay = policy.after_install(native_gesture, event.gesture_token,
+                                      native_phase, event.latest)
         if replay == "finish":
             return request_finish(updated, window, event.gesture_token)
         if replay == "move":
@@ -285,24 +294,25 @@ def request_finish(state: State, window_id: int, token: Optional[int]) -> tuple[
 
 
 def finish_actions(after: State, gesture: Gesture,
-                   observed: tuple[Target, ...]) -> Effects:
+                   observed: tuple[Target, ...], *, confirmed: bool) -> Effects:
     actions: tuple[Action, ...] = ()
     changed = False
     for target in gesture.targets:
         target_changed = target.signature != signature_for(observed, target.node_id)
         action = policy.participant_finish(gesture.phase, has_target(observed, target.node_id),
                                            target_changed, active_for(after, target.node_id))
-        if target_changed and gesture.auto_key and gesture.keyframe_frame is not None:
+        if confirmed and target_changed and gesture.keyframe_frame is not None:
             actions += (Action("keyframe", gesture_token=gesture.token,
                                node_id=target.node_id, frame=gesture.keyframe_frame),)
         if action is not None:
             actions += (Action(action, node_id=target.node_id),)
             changed = changed or target_changed
-    return Effects(actions, gesture.window_id if policy.manual_undo(gesture.undo_owner, changed) else None)
+    undo = confirmed and policy.manual_undo(gesture.undo_owner, changed)
+    return Effects(actions, gesture.window_id if undo else None)
 
 
 def finish(state: State, window_id: int, token: Optional[int],
-           observed: tuple[Target, ...]) -> tuple[State, Effects]:
+           observed: tuple[Target, ...], *, confirmed: bool = True) -> tuple[State, Effects]:
     index = gesture_index(state.gestures, window_id)
     if index is None:
         return state, Effects()
@@ -310,7 +320,15 @@ def finish(state: State, window_id: int, token: Optional[int],
     if not policy.finish_allowed(gesture.token, token):
         return state, Effects()
     updated = replace(state, gestures=without_gesture(state.gestures, window_id))
-    return updated, finish_actions(updated, gesture, observed)
+    return updated, finish_actions(updated, gesture, observed, confirmed=confirmed)
+
+
+def cancel_color(state: State, window_id: int, token: int,
+                 observed: tuple[Target, ...]) -> tuple[State, Effects]:
+    updated, effects = finish(state, window_id, token, observed, confirmed=False)
+    return updated, Effects((
+        Action("restore_color_pair", gesture_token=token), *effects.actions,
+    ))
 
 
 def dispose_target(state: State, node_id: int) -> tuple[State, Effects]:
@@ -337,8 +355,11 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
     if event.kind in ("window_seen", "observer_install_result", "observer_lost"):
         return _observer_event(state, event)
     if event.kind == "window_gone":
-        updated, effects = finish(state, window, current_gesture(state, window),
-                                  event.observed)
+        token = current_gesture(state, window)
+        if editing_color(state, window):
+            updated, effects = cancel_color(state, window, token, event.observed)
+        else:
+            updated, effects = finish(state, window, token, event.observed)
         return replace(updated, observers=without_observer(updated.observers, window)), effects
     if event.kind == "finish_observed":
         if not policy.observation_allowed(gesture_phase(state, window)):
@@ -346,10 +367,25 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         return finish(state, window, event.gesture_token, event.observed)
     if event.kind == "finish":
         return finish(state, window, event.gesture_token, event.observed)
+    if event.kind in ("edit_color_pair", "cancel_color_pair"):
+        index = gesture_index(state.gestures, window)
+        if index is None:
+            return state, Effects()
+        gesture = state.gestures[index]
+        if not gesture.color_pair or not policy.finish_allowed(gesture.token, event.gesture_token):
+            return state, Effects()
+        if event.kind == "edit_color_pair":
+            if not policy.active_participant(gesture.phase) or event.color_values is None:
+                return state, Effects()
+            return state, Effects((Action(
+                "write_color_pair", gesture_token=gesture.token, color_values=event.color_values,
+            ),))
+        return cancel_color(state, window, gesture.token, event.observed)
     if event.kind == "activate":
         return activate(state, window, event.gesture_token)
     if event.kind in ("press", "move", "finish_requested", "handoff_due"):
-        if not policy.input_allowed(current_observer(state, window), event.token):
+        if (editing_color(state, window)
+                or not policy.input_allowed(current_observer(state, window), event.token)):
             return state, Effects()
         if event.kind == "press":
             updated, effects = finish(state, window, current_gesture(state, window),
@@ -358,7 +394,7 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
                 return updated, effects
             token = policy.allocate(updated.serial)
             gesture = Gesture(window, token, "armed", event.x, event.y,
-                              event.undo_owner, event.targets, event.auto_key, event.frame)
+                              event.undo_owner, event.targets, event.frame, event.color_pair)
             updated = replace(updated, serial=token, gestures=updated.gestures + (gesture,))
             actions = effects.actions
             if policy.press_handoff(event.token):

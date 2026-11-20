@@ -225,6 +225,27 @@ assert nodes._grade_settings(node.pg_grade, nodes._working_space()).color.web.hu
 del node
 assert push_results == [True] * 5, push_results
 
+node = current_node()
+color = node.pg_grade.pg_color
+fields = ("j_a_1", "j_b_1")
+token = nodes._begin_color_gesture(window_key, node, fields)
+assert token is not None
+assert nodes._edit_color_gesture(window_key, token, node, (4.0, -2.0))
+assert nodes._end_color_gesture(window_key, token, node)
+assert (color.j_a_1, color.j_b_1) == (4.0, -2.0)
+assert push_results == [True] * 6, push_results
+token = nodes._begin_color_gesture(window_key, node, fields)
+assert token is not None
+assert nodes._edit_color_gesture(window_key, token, node, (3.0, 1.0))
+nodes._cancel_color_gesture(window_key, token)
+assert (color.j_a_1, color.j_b_1) == (4.0, -2.0)
+assert push_results == [True] * 6, push_results
+del node, color
+undo()
+color = current_node().pg_grade.pg_color
+assert (color.j_a_1, color.j_b_1) == (0.0, 0.0)
+del color
+
 # Reconciliation is idempotent, and independent nodes share the same immutable
 # fallback. Removing either reader must preserve the ID held by undo history.
 node = current_node()

@@ -48,16 +48,64 @@ class GestureDecisionTests(unittest.TestCase):
 
     def test_changed_auto_key_target_authorizes_keyframe_effect(self):
         state, _ = runtime.step(runtime.new(), runtime.Event(
-            "press", window_id=1, undo_owner="native", auto_key=True,
+            "press", window_id=1, undo_owner="native",
             frame=6.25, targets=(runtime.Target(10, "before"),)))
         token = runtime.current_gesture(state, 1)
         _state, effects = runtime.step(state, runtime.Event(
-            "finish", window_id=1, gesture_token=token, auto_key=False,
+            "finish", window_id=1, gesture_token=token,
             observed=(runtime.Target(10, "after"),)))
         self.assertEqual(effects.actions, (
             runtime.Action("keyframe", gesture_token=token, node_id=10, frame=6.25),
             runtime.Action("refresh", node_id=10),
         ))
+
+    def test_cancel_restores_pair_and_releases_without_keyframe_or_undo(self):
+        state, _ = runtime.step(runtime.new(), runtime.Event(
+            "press", window_id=1, undo_owner="adapter", frame=6.25,
+            color_pair=True, targets=(runtime.Target(10, "before"),)))
+        token = runtime.current_gesture(state, 1)
+        state, _ = runtime.step(state, runtime.Event(
+            "activate", window_id=1, gesture_token=token))
+        moved, effects = runtime.step(state, runtime.Event(
+            "edit_color_pair", window_id=1, gesture_token=token, color_values=(2.0, 0.5)))
+        self.assertIs(moved, state)
+        self.assertEqual(effects.actions, (
+            runtime.Action("write_color_pair", gesture_token=token, color_values=(2.0, 0.5)),
+        ))
+        state, effects = runtime.step(state, runtime.Event(
+            "cancel_color_pair", window_id=1, gesture_token=token,
+            observed=(runtime.Target(10, "after"),)))
+        self.assertEqual(effects.actions, (
+            runtime.Action("restore_color_pair", gesture_token=token),
+            runtime.Action("node_release", node_id=10),
+        ))
+        self.assertIsNone(effects.undo_window)
+        self.assertIsNone(runtime.current_gesture(state, 1))
+
+    def test_native_observation_cannot_finish_color_edit(self):
+        state, _ = runtime.step(runtime.new(), runtime.Event("window_seen", window_id=1))
+        pending = runtime.pending_observer(state, 1)
+        state, _ = runtime.step(state, runtime.Event(
+            "press", window_id=1, undo_owner="adapter", color_pair=True,
+            targets=(runtime.Target(10, "before"),)))
+        token = runtime.current_gesture(state, 1)
+        state, _ = runtime.step(state, runtime.Event(
+            "activate", window_id=1, gesture_token=token))
+        state, effects = runtime.step(state, runtime.Event(
+            "observer_install_result", window_id=1, token=pending,
+            success=True, gesture_token=token, latest="finish"))
+        self.assertEqual(effects, runtime.Effects())
+        for kind in ("press", "finish_requested"):
+            self.assertEqual(runtime.step(state, runtime.Event(
+                kind, window_id=1, token=pending, gesture_token=token,
+            )), (state, runtime.Effects()))
+        state, effects = runtime.step(state, runtime.Event(
+            "window_gone", window_id=1, observed=(runtime.Target(10, "after"),)))
+        self.assertEqual(effects.actions, (
+            runtime.Action("restore_color_pair", gesture_token=token),
+            runtime.Action("node_release", node_id=10),
+        ))
+        self.assertIsNone(effects.undo_window)
 
 
 if __name__ == "__main__":

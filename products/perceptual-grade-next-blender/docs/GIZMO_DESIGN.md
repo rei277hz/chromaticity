@@ -94,7 +94,26 @@ horizontal movement for `a` and vertical movement for `b`.
 - Bind both views to the same authored settings as the sidebar, using the
   existing Grade ownership, gesture, and keyframe paths. The fit and gain
   fields are `lightness_fit`, `chroma_fit`, and `global_gain`.
+- Capture the node, settings owner, and active Stack entry at gesture start.
+  Changing any of them cancels the gesture, even when both entries reference
+  the same Grade. Restore the edited fields on the original owner if it still
+  exists. A cancelled gesture adds no keys or undo step.
+- With Auto Key enabled on a per-node Grade, key only the fields changed on
+  confirmation, at the frame captured when the gesture began.
 - Store view, tone, driver, and layer selection as UI state outside grading and
   preparation signatures. Existing Next files open on Contributions with their
   grading and animation data intact. If a future importer reads legacy Gizmo
   focus, it can map saved J or C focus to the matching opponent layer.
+
+## Waveform and vectorscope
+
+Both plots analyze the selected node's output. While editing a Stack entry,
+they show the output of the entire Stack, including enabled entries after the
+selected one. With Use Bake enabled, sample the bound image and show the same
+freshness warning as the node. The plots can therefore stay still while a drag
+changes the authored Grade behind a bake.
+
+While a new capture of the same output is pending, display the last complete
+plots with an **Updating** label. Clear the plots when the user selects a
+different output. Publish a capture only if it still matches the current
+selection and the most recent demand for that output.

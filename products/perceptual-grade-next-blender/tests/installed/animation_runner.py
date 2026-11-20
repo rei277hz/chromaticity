@@ -97,11 +97,7 @@ scene.frame_set(6)
 scene.tool_settings.use_keyframe_insert_auto = True
 window_key = 744
 gesture_token = nodes._begin_gesture(window_key, shader_node)
-gesture_targets = nodes._live_gesture_targets(nodes._gesture_related_nodes(shader_node))
-nodes._gesture_keyframe_baselines[gesture_token] = nodes._capture_gesture_keyframe_baseline(
-    tuple(nodes.gesture_policy.Target(nodes._gesture_identity(target), None)
-          for target in gesture_targets)
-)
+assert gesture_token in nodes._gesture_keyframe_baselines
 shader_node.exposure = 1.25
 shader_node.web_hue_1_0 = 30.0
 shader_node.web_hue_2_0 = 180.0
@@ -136,6 +132,54 @@ for name, value in pushed_hues.items():
 with nodes._suspend(shader_node):
     for handle in range(6):
         setattr(shader_node, f"web_hue_2_{handle}", 0.0)
+
+fields = ("j_low_0", "c_low_0")
+keyframe_frame = scene.frame_current
+scene.tool_settings.use_keyframe_insert_auto = True
+gesture_token = nodes._begin_color_gesture(window_key, shader_node, fields)
+assert gesture_token is not None
+assert nodes._edit_color_gesture(window_key, gesture_token, shader_node, (3.0, 0.0))
+assert nodes._end_color_gesture(window_key, gesture_token, shader_node)
+pair_paths = tuple(shader_node.path_from_id(name) for name in fields)
+pair_curves = tuple(item for item in curves if item.data_path in pair_paths)
+assert tuple(item.data_path for item in pair_curves) == pair_paths[:1]
+assert tuple(pair_curves[0].keyframe_points[0].co) == (keyframe_frame, 3.0)
+
+gesture_token = nodes._begin_color_gesture(window_key, shader_node, fields)
+assert gesture_token is not None
+assert nodes._edit_color_gesture(window_key, gesture_token, shader_node, (6.0, 0.5))
+nodes._cancel_color_gesture(window_key, gesture_token)
+assert not nodes._edit_color_gesture(window_key, gesture_token, shader_node, (7.0, 1.0))
+assert not nodes._end_color_gesture(window_key, gesture_token, shader_node)
+assert gesture_token not in nodes._gesture_keyframe_baselines
+assert (shader_node.j_low_0, shader_node.c_low_0) == (3.0, 0.0)
+assert not shader_node.is_property_set("c_low_0")
+assert tuple(item.data_path for item in curves if item.data_path in pair_paths) == pair_paths[:1]
+assert tuple(pair_curves[0].keyframe_points[0].co) == (keyframe_frame, 3.0)
+curves.remove(pair_curves[0])
+shader_node.property_unset("j_low_0")
+scene.tool_settings.use_keyframe_insert_auto = False
+
+stack = nodes.create_stack_node(material.node_tree)
+first_grade = nodes._make_grade()
+second_grade = nodes._make_grade()
+for grade in (first_grade, first_grade, second_grade):
+    stack.pg_stack_entries.add().grade = grade
+first_grade.pg_color.j_low_0 = -2.0
+for next_index in (1, 2):
+    stack.pg_active_index = 0
+    gesture_token = nodes._begin_color_gesture(window_key, stack, fields)
+    assert gesture_token is not None
+    assert nodes._edit_color_gesture(window_key, gesture_token, stack, (4.0, 1.0))
+    assert (first_grade.pg_color.j_low_0, first_grade.pg_color.c_low_0) == (4.0, 1.0)
+    stack.pg_active_index = next_index
+    assert nodes._gesture_token(window_key) is None
+    assert not nodes._edit_color_gesture(window_key, gesture_token, stack, (5.0, 2.0))
+    assert (first_grade.pg_color.j_low_0, first_grade.pg_color.c_low_0) == (-2.0, 0.0)
+    assert (second_grade.pg_color.j_low_0, second_grade.pg_color.c_low_0) == (0.0, 0.0)
+material.node_tree.nodes.remove(stack)
+for grade in (first_grade, second_grade):
+    bpy.data.node_groups.remove(grade)
 
 # Repeated same-time callbacks retain provenance. Actual frame/subframe
 # changes expire every per-node claim, even while rendering blocks refresh.

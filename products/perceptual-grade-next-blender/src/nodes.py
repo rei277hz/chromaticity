@@ -141,6 +141,7 @@ _gesture_node_serial = count(1)
 _gesture_nodes = {}
 _gesture_invocations = {}
 _gesture_keyframe_baselines = {}
+_color_gestures = {}
 _compositor_receipts = CompositorReceipts()
 _frame_change_active = False
 _frame_reconcile_pending = False
@@ -749,8 +750,7 @@ def _bake_warning(node, observation):
         return "status.bake_stale_source"
     route = observation["route"]
     if route is None:
-        return ("status.bake_stale_engine" if observation["code"] == "cycles"
-                else "status.bake_stale_route")
+        return "status.bake_stale_route"
     if route["receipt_signature"] == receipt.signature:
         return None
     if (receipt.backend_signature is not None
@@ -3516,6 +3516,7 @@ def _run_node_disposal_lifecycle(kernel, fence, detach):
 
 
 def _dispose_node(node):
+    _cancel_stale_color_gestures(node, removed=True)
     failures = _dispatch(node, node_policy.Event("dispose"))
     if failures:
         raise RuntimeError("Could not dispose Grade resources: "
@@ -3718,11 +3719,13 @@ def _stack_owner(entry):
 def _stack_changed(entry, _context):
     node = _stack_owner(entry)
     if node is not None:
+        _cancel_stale_color_gestures(node)
         _refresh_stack_policy(node)
 
 
 def _refresh_stack_policy(node):
     _index_output_node(node)
+    _cancel_stale_color_gestures(node)
     failures = _dispatch_stack_replacement(node)
     if failures:
         print("Perceptual Grade Stack update failed:", failures[-1])
@@ -3741,6 +3744,7 @@ def _dispatch_stack_replacement(node):
 def _stack_focus_changed(node, _context):
     if _is_stack_node(node):
         node.id_data.nodes.active = node
+        _cancel_stale_color_gestures(node)
 
 
 def _gesture_related_nodes(node):
@@ -3821,13 +3825,14 @@ def _gesture_observations(window_key):
     return tuple(observed)
 
 
-def _capture_gesture_keyframe_baseline(targets):
+def _capture_gesture_keyframe_baseline(targets, fields=None):
     values = {}
     for target in targets:
         node = _gesture_node(target.node_id)
         if node is None or not _is_per_node_grade_node(node):
             continue
-        values[target.node_id] = dict(_animated_values_for_node(node))
+        values[target.node_id] = (dict(_animated_values_for_node(node)) if fields is None
+                                  else {name: float(getattr(node, name)) for name in fields})
     return values
 
 
@@ -3929,23 +3934,37 @@ def _gesture_signature_for(node):
                           .encode("ascii")).hexdigest()
 
 
-def _arm_gesture(window_key, node, position):
-    """Explicit adapter entrypoint; native routing supplies its observer token."""
-    scene = bpy.context.scene
+def _press_gesture(window_key, node, position, scene, *, observer=None, fields=None):
+    previous = _gesture_token(window_key)
+    if previous in _color_gestures:
+        if observer is not None:
+            return None
+        _cancel_color_gesture(window_key, previous)
     auto_key = bool(scene is not None and _is_per_node_grade_node(node)
                     and scene.tool_settings.use_keyframe_insert_auto)
     frame = (float(scene.frame_current + scene.frame_subframe)
              if auto_key else None)
+    targets = tuple(gesture_policy.Target(_gesture_identity(target),
+                                         _gesture_signature_for(target))
+                    for target in _live_gesture_targets(_gesture_related_nodes(node)))
     _dispatch_gesture(gesture_policy.Event(
-        "press", window_id=window_key, x=int(position[0]), y=int(position[1]),
-        undo_owner="adapter",
-        auto_key=auto_key, frame=frame,
-        targets=tuple(gesture_policy.Target(_gesture_identity(target),
-                                           _gesture_signature_for(target))
-                      for target in _live_gesture_targets(_gesture_related_nodes(node))),
-        observed=_gesture_observations(window_key),
+        "press", window_id=window_key, token=observer,
+        x=int(position[0]), y=int(position[1]),
+        undo_owner="adapter" if observer is None else "native",
+        frame=frame, color_pair=fields is not None,
+        targets=targets, observed=_gesture_observations(window_key),
     ))
-    return _gesture_token(window_key)
+    token = _gesture_token(window_key)
+    if token is None or token == previous:
+        return None
+    if frame is not None:
+        _gesture_keyframe_baselines[token] = _capture_gesture_keyframe_baseline(targets, fields)
+    return token
+
+
+def _arm_gesture(window_key, node, position):
+    """Explicit adapter entry point."""
+    return _press_gesture(window_key, node, position, bpy.context.scene)
 
 
 def _activate_gesture(window_key, token):
@@ -3967,6 +3986,126 @@ def _end_gesture(window_key, token):
                                           gesture_token=token,
                                           observed=_gesture_observations(window_key)))
     return None
+
+
+@dataclass(frozen=True)
+class _ColorGesture:
+    node_id: int
+    owner: object
+    entry_identity: str | int | None
+    baseline: tuple[tuple[str, float | None], ...]
+
+
+def _color_gesture_entry(node):
+    entry = _stack_active_entry(node) if _is_stack_node(node) else None
+    return None if entry is None else (entry.key or entry.as_pointer())
+
+
+def _begin_color_gesture(window_key, node, fields):
+    """Bind one Contributions or Opponent a/b handle to its settings owner."""
+    if fields not in {
+        pair for tone in range(len(_COLOR_TONES)) for pair in (
+            (f"j_low_{tone}", f"c_low_{tone}"),
+            (f"j_high_{tone}", f"c_high_{tone}"),
+            (f"j_a_{tone}", f"j_b_{tone}"),
+            (f"c_a_{tone}", f"c_b_{tone}"),
+        )
+    }:
+        raise ValueError("Invalid Color gesture fields")
+    if not _is_output_node(node) or _gesture_token(window_key) in _color_gestures:
+        return None
+    owner, settings = _color_settings_for_node(node)
+    if owner is None or any(gesture.owner == owner for gesture in _color_gestures.values()):
+        return None
+    entry = _color_gesture_entry(node)
+    baseline = tuple((name, float(getattr(settings, name))
+                      if settings.is_property_set(name) else None) for name in fields)
+    token = _press_gesture(window_key, node, (0, 0), bpy.context.scene, fields=fields)
+    if token is not None:
+        _color_gestures[token] = _ColorGesture(
+            _gesture_identity(node), owner, entry, baseline,
+        )
+        _activate_gesture(window_key, token)
+    return token
+
+
+def _color_gesture_matches(gesture, node):
+    try:
+        if node is None or _gesture_node(gesture.node_id) != node:
+            return False
+        owner, _settings = _color_settings_for_node(node)
+        return owner == gesture.owner and _color_gesture_entry(node) == gesture.entry_identity
+    except (AttributeError, ReferenceError, RuntimeError):
+        return False
+
+
+def _cancel_color_gesture(window_key, token):
+    """Restore the press-time pair for Escape, right click, or a lost owner."""
+    if token in _color_gestures:
+        _dispatch_gesture(gesture_policy.Event(
+            "cancel_color_pair", window_id=window_key, gesture_token=token,
+            observed=_gesture_observations(window_key),
+        ))
+
+
+def _cancel_stale_color_gestures(node, *, removed=False):
+    identity = _gesture_identity_for_pointer(node.as_pointer())
+    if identity is None:
+        return
+    for active in _gesture_state.gestures:
+        gesture = _color_gestures.get(active.token)
+        if (gesture is not None and gesture.node_id == identity
+                and (removed or not _color_gesture_matches(gesture, node))):
+            _cancel_color_gesture(active.window_id, active.token)
+
+
+def _color_gesture_is_current(window_key, token, node):
+    gesture = _color_gestures.get(token)
+    if gesture is None or _gesture_token(window_key) != token:
+        return False
+    if _color_gesture_matches(gesture, node):
+        return True
+    _cancel_color_gesture(window_key, token)
+    return False
+
+
+def _edit_color_gesture(window_key, token, node, values):
+    if not _color_gesture_is_current(window_key, token, node):
+        return False
+    x, y = map(float, values)
+    if not (math.isfinite(x) and math.isfinite(y)):
+        raise ValueError("Color gesture values must be finite")
+    _dispatch_gesture(gesture_policy.Event(
+        "edit_color_pair", window_id=window_key, gesture_token=token, color_values=(x, y),
+    ))
+    return True
+
+
+def _end_color_gesture(window_key, token, node):
+    if not _color_gesture_is_current(window_key, token, node):
+        return False
+    _end_gesture(window_key, token)
+    return True
+
+
+def _write_color_gesture(gesture, values):
+    try:
+        settings = _color_controls(gesture.owner)
+    except ReferenceError:
+        # A deleted owner has no surviving settings to restore.
+        return
+    writes = (gesture.baseline if values is None else
+              tuple((name, value) for (name, _baseline), value in zip(gesture.baseline, values)
+                    if value != float(getattr(settings, name))))
+    if not writes:
+        return
+    with _suspend(settings):
+        for name, value in writes:
+            if value is None:
+                _unset_color_property(settings, name)
+            else:
+                setattr(settings, name, value)
+    _color_changed(settings, bpy.context)
 
 
 def _push_gesture_undo(window_key):
@@ -4010,7 +4149,6 @@ def _observe_gesture_finish(window_key, token):
         "finish_observed", window_id=window_key, gesture_token=token,
         observed=_gesture_observations(window_key),
     ))
-    _gesture_keyframe_baselines.pop(token, None)
     return None
 
 
@@ -4100,10 +4238,15 @@ def _consume_gesture_effects(effects):
             _gesture_nodes.clear()
             _gesture_invocations.clear()
             _gesture_keyframe_baselines.clear()
+            _color_gestures.clear()
         elif action.kind == "report_install_failure":
             print("Perceptual Grade could not install gesture observer for window",
                   action.window_id, ":", _gesture_invocations.get(action.token, {}).get("error")
                   or "Blender did not retain the modal observer")
+        elif action.kind in ("write_color_pair", "restore_color_pair"):
+            gesture = _color_gestures.get(action.gesture_token)
+            if gesture is not None:
+                _write_color_gesture(gesture, action.color_values)
     flush_refresh()
     if effects.undo_window is not None:
         _push_gesture_undo(effects.undo_window)
@@ -4111,13 +4254,16 @@ def _consume_gesture_effects(effects):
 
 def _dispatch_gesture(event):
     global _gesture_state
-    token = (event.gesture_token if event.gesture_token is not None else
-             gesture_policy.current_gesture(_gesture_state, event.window_id)
-             if event.window_id is not None else None)
+    previous = _gesture_state.gestures
     _gesture_state, effects = gesture_policy.step(_gesture_state, event)
-    _consume_gesture_effects(effects)
-    if event.kind in ("finish", "finish_observed", "window_gone"):
-        _gesture_keyframe_baselines.pop(token, None)
+    try:
+        _consume_gesture_effects(effects)
+    finally:
+        if _gesture_state.gestures is not previous:
+            for gesture in previous:
+                if _gesture_token(gesture.window_id) != gesture.token:
+                    _gesture_keyframe_baselines.pop(gesture.token, None)
+                    _color_gestures.pop(gesture.token, None)
 
 
 class PG_OT_gesture_router(bpy.types.Operator):
@@ -4154,33 +4300,13 @@ class PG_OT_gesture_router(bpy.types.Operator):
             return {"PASS_THROUGH"}
         if admission == "stale":
             return {"CANCELLED", "PASS_THROUGH"}
+        if _gesture_token(self.window_key) in _color_gestures:
+            return {"PASS_THROUGH"}
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
             active = _gesture_target_at(context.window, event.mouse_x, event.mouse_y)
             if active is not None:
-                targets = _live_gesture_targets(_gesture_related_nodes(active))
-                scene = getattr(context, "scene", None)
-                auto_key = bool(scene is not None and _is_per_node_grade_node(active)
-                                and scene.tool_settings.use_keyframe_insert_auto)
-                keyframe_frame = (float(scene.frame_current + scene.frame_subframe)
-                                  if auto_key else None)
-                _dispatch_gesture(gesture_policy.Event(
-                    "press", window_id=self.window_key, token=self.token,
-                    x=int(event.mouse_x), y=int(event.mouse_y), undo_owner="native",
-                    targets=tuple(gesture_policy.Target(_gesture_identity(target),
-                                                       _gesture_signature_for(target))
-                                  for target in targets),
-                    observed=_gesture_observations(self.window_key),
-                    auto_key=auto_key,
-                    frame=keyframe_frame,
-                ))
-                gesture_token = _gesture_token(self.window_key)
-                if gesture_token is not None and auto_key:
-                    _gesture_keyframe_baselines[gesture_token] = (
-                        _capture_gesture_keyframe_baseline(
-                            tuple(gesture_policy.Target(_gesture_identity(target), None)
-                                  for target in targets)
-                        )
-                    )
+                _press_gesture(self.window_key, active, (event.mouse_x, event.mouse_y),
+                               getattr(context, "scene", None), observer=self.token)
         elif event.type == "MOUSEMOVE":
             _dispatch_gesture(gesture_policy.Event(
                 "move", window_id=self.window_key, token=self.token,
@@ -4229,6 +4355,9 @@ def _gesture_router_tick():
                 _dispatch_gesture(gesture_policy.Event("window_seen", window_id=key))
             except (AttributeError, ReferenceError, RuntimeError):
                 continue
+    for gesture in _gesture_state.gestures:
+        if gesture.window_id not in live_windows:
+            _cancel_color_gesture(gesture.window_id, gesture.token)
     for observer in _gesture_state.observers:
         if observer.window_id not in live_windows:
             _dispatch_gesture(gesture_policy.Event(
@@ -4242,12 +4371,22 @@ def _clear_gestures():
     _dispatch_gesture(gesture_policy.Event("reset"))
 
 
+def _cancel_color_gestures():
+    for gesture in _gesture_state.gestures:
+        _cancel_color_gesture(gesture.window_id, gesture.token)
+
+
 def _stack_active_grade(node):
+    item = _stack_active_entry(node)
+    return None if item is None else item.grade
+
+
+def _stack_active_entry(node):
     if not node.pg_stack_entries:
         return None
     index = min(max(0, node.pg_active_index), len(node.pg_stack_entries) - 1)
     item = node.pg_stack_entries[index]
-    return item.grade if item.enabled else None
+    return item if item.enabled else None
 
 
 def _grade_changed(grade):
@@ -4477,6 +4616,7 @@ def _restore_bake_sources():
 
 @persistent
 def _load_pre(_filepath):
+    _cancel_color_gestures()
     _frame_color_keys.clear()
     _frame_color_invalidations.clear()
     if _bake_manager is not None:
@@ -4507,6 +4647,7 @@ def _load_post(_filepath):
 
 @persistent
 def _undo_redo_pre(*_args):
+    _cancel_color_gestures()
     _clear_gestures()
     try:
         if _bake_manager is not None:
@@ -4950,6 +5091,7 @@ def _source_white_changed(axis):
 def _selection_changed(node, _context):
     if node.as_pointer() in _syncing:
         return
+    _cancel_stale_color_gestures(node)
     _index_output_node(node)
     if node.pg_grade is None:
         _reset_linear(node.pg_linear)
