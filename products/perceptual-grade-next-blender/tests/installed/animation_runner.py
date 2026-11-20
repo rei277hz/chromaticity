@@ -364,6 +364,67 @@ assert shader_node in reopened_nodes and compositor_node in reopened_nodes
 assert nodes._animation_outputs_current(reopened_nodes, reopened_signatures) == (True, None)
 
 
+def check_playback_publication():
+    saved_time = scene.frame_current, float(scene.frame_subframe)
+    record = nodes._node_stores[shader_node.as_pointer()]
+    baseline = record["state"].applied_signature
+
+    def prepared_frame():
+        publications = nodes._preparation_runtime.wait()
+        receipt, = (item for item in publications if item.source is record["source"])
+        assert receipt.error is None and receipt.quality == "full", receipt.error
+        signature = nodes._settings_signature_for(shader_node)
+        assert nodes._publication_signature(record, receipt.prepared) == signature
+        return receipt, signature
+
+    def check_visible(applied, desired):
+        state = record["state"]
+        assert state.applied_signature == applied and state.desired_signature == desired, state
+        assert shader_node.node_tree[nodes._KERNEL_SIGNATURE] == applied
+        assert nodes.node_policy.output_mode(state) == "preview", state
+        assert shader_node.get(nodes._NODE_PENDING) == "status.showing_last_good"
+
+    nodes._playback_begin(scene)
+    try:
+        scene.frame_set(2, subframe=.375)
+        previous, previous_signature = prepared_frame()
+        assert previous.playback_session is not None
+        nodes._compositor_pre(scene)
+        try:
+            assert not nodes._handle_preparation_completions((previous,))
+            scene.frame_set(2, subframe=.625)
+            nodes._playback_end(scene)
+            nodes._playback_begin(scene)
+            assert record["state"].desired_signature == previous_signature
+        finally:
+            nodes._compositor_post(scene)
+
+        # The publication timer wins the race against the deferred frame timer.
+        # The previous run's receipt is still in its mailbox when this turn begins.
+        assert not nodes._handle_preparation_completions(())
+        check_visible(baseline, nodes._settings_signature_for(shader_node))
+        intermediate, intermediate_signature = prepared_frame()
+        assert intermediate.playback_session not in (None, previous.playback_session)
+
+        scene.frame_set(2, subframe=.75)
+        assert not nodes._handle_preparation_completions((intermediate,))
+        check_visible(intermediate_signature, nodes._settings_signature_for(shader_node))
+        delayed, _ = prepared_frame()
+        scene.frame_set(2, subframe=.875)
+        nodes._playback_end(scene)
+        assert not nodes._handle_preparation_completions((delayed,))
+        check_visible(intermediate_signature, nodes._settings_signature_for(shader_node))
+        failures = nodes._drain_preparations()
+        assert not failures, failures
+        targets, signatures, _ = nodes._animation_snapshot(scene)
+        assert nodes._animation_outputs_current(targets, signatures) == (True, None)
+    finally:
+        nodes._playback_end(scene)
+        scene.frame_set(saved_time[0], subframe=saved_time[1])
+        failures = nodes._drain_preparations()
+        assert not failures, failures
+
+
 def check_indirect_shader_grades():
     render = scene.render
     view_layer = scene.view_layers[0]
@@ -444,6 +505,7 @@ def check_indirect_shader_grades():
 
 
 if bpy.app.background:
+    check_playback_publication()
     check_indirect_shader_grades()
 
 # A successful Grade reconciliation must not release a render ticket if the

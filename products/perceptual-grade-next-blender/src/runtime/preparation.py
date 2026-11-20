@@ -20,6 +20,7 @@ class _Input:
     payload: object
     lane: str
     progressive: bool
+    playback_session: Optional[int] = None
 
     @property
     def request_signature(self):
@@ -44,6 +45,17 @@ class Publication:
     quality: str
     lane: str
     progressive: bool
+    playback_session: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class _WorkResult:
+    """Correlate a receipt with the request that supplied its prepared value."""
+
+    job_key: tuple[str, str, bool]
+    prepared: object
+    error: Optional[Exception]
+    playback_session: Optional[int]
 
 
 @dataclass
@@ -234,8 +246,11 @@ class PreparationRuntime:
             return pending or bool(self._host_queue or self._host_active)
 
     def request(self, source, signature, payload, *, lane=None,
-                progressive=None):
-        """Replace this source's one newest snapshot, without queuing history."""
+                progressive=None, playback_session: Optional[int] = None):
+        """Replace this source's newest snapshot without queuing history.
+
+        A playback session correlates delivery and leaves work identity unchanged.
+        """
         if not isinstance(signature, str):
             raise TypeError("Preparation signature must be a string")
         if lane is None:
@@ -270,7 +285,7 @@ class PreparationRuntime:
                 if not mailbox:
                     self._publications.pop(subscription, None)
             subscription.latest = _Input(
-                signature, payload, lane, bool(progressive)
+                signature, payload, lane, bool(progressive), playback_session
             )
             subscription.dirty = True
             self._pending.add(subscription)
@@ -364,18 +379,20 @@ class PreparationRuntime:
 
     def _consume_locked(self, source, record, effects, snapshot, outcome=None):
         if effects.result_signature is not None:
-            lane, signature, progressive, prepared, error = outcome
+            lane, signature, progressive = outcome.job_key
             request_signature = _request_signature(lane, signature, progressive)
             if request_signature != effects.result_signature:
                 raise RuntimeError("Preparation effect does not match its result")
             if self._sources.get(source.key) is source:
+                error = outcome.error
                 if effects.error is None:
-                    source.last_success = (lane, signature, progressive)
+                    source.last_success = outcome.job_key
                     error = None
                 elif error is None:
                     error = RuntimeError(effects.error)
                 self._publish_locked(source, Publication(
-                    source.key, signature, prepared, error, "full", lane, progressive
+                    source.key, signature, outcome.prepared, error, "full", lane,
+                    progressive, outcome.playback_session,
                 ))
         if effects.preview_signature is not None:
             if snapshot is None or snapshot.request_signature != effects.preview_signature:
@@ -383,7 +400,7 @@ class PreparationRuntime:
             if self._sources.get(source.key) is source:
                 self._publish_locked(source, Publication(
                     source.key, snapshot.signature, outcome, None, "preview",
-                    snapshot.lane, snapshot.progressive,
+                    snapshot.lane, snapshot.progressive, snapshot.playback_session,
                 ))
         if effects.prepare_signature is not None:
             if snapshot is None or snapshot.request_signature != effects.prepare_signature:
@@ -481,6 +498,7 @@ class PreparationRuntime:
                         )
                     call = call_with_preview
                 prepared = await self.loop.run_in_executor(lane.executor, call)
+            result = _WorkResult(job_key, prepared, None, snapshot.playback_session)
             with self._lock:
                 self._prepared[job_key] = prepared
             if self.on_event is not None:
@@ -488,7 +506,7 @@ class PreparationRuntime:
                     "preparation_execute_finish", signature=snapshot.signature,
                     lane=snapshot.lane, progressive=snapshot.progressive, error=None,
                 )
-            return prepared
+            return result
         except BaseException as error:
             if self.on_event is not None:
                 self._observe(
@@ -496,7 +514,9 @@ class PreparationRuntime:
                     lane=snapshot.lane, progressive=snapshot.progressive,
                     error=str(error), error_type=type(error).__name__,
                 )
-            raise
+            if not isinstance(error, Exception):
+                raise
+            return _WorkResult(job_key, None, error, snapshot.playback_session)
         finally:
             with self._lock:
                 if self._jobs.get(job_key) is asyncio.current_task():
@@ -610,27 +630,24 @@ class PreparationRuntime:
 
     async def _prepare(self, source, record, snapshot):
         job_key = (snapshot.lane, snapshot.signature, snapshot.progressive)
-        try:
-            with self._lock:
-                prepared = self._prepared.get(job_key)
-                has_prepared = job_key in self._prepared
-                job = self._jobs.get(job_key)
-                if not has_prepared and job is None:
-                    job = self.loop.create_task(self._execute(snapshot))
-                    self._jobs[job_key] = job
-                elif self.on_event is not None:
-                    self._observe(
-                        "preparation_reuse", source_id=id(source.key),
-                        subscription_id=id(source), signature=snapshot.signature,
-                        lane=snapshot.lane, progressive=snapshot.progressive,
-                        kind="cache" if has_prepared else "inflight",
-                    )
-            if not has_prepared:
-                prepared = await asyncio.shield(job)
-        except Exception as error:
-            outcome = (snapshot.lane, snapshot.signature, snapshot.progressive, None, error)
+        with self._lock:
+            prepared = self._prepared.get(job_key)
+            has_prepared = job_key in self._prepared
+            job = self._jobs.get(job_key)
+            if not has_prepared and job is None:
+                job = self.loop.create_task(self._execute(snapshot))
+                self._jobs[job_key] = job
+            elif self.on_event is not None:
+                self._observe(
+                    "preparation_reuse", source_id=id(source.key),
+                    subscription_id=id(source), signature=snapshot.signature,
+                    lane=snapshot.lane, progressive=snapshot.progressive,
+                    kind="cache" if has_prepared else "inflight",
+                )
+        if has_prepared:
+            outcome = _WorkResult(job_key, prepared, None, snapshot.playback_session)
         else:
-            outcome = (snapshot.lane, snapshot.signature, snapshot.progressive, prepared, None)
+            outcome = await asyncio.shield(job)
 
         with self._lock:
             if self._records.get(source) is not record:
@@ -643,7 +660,7 @@ class PreparationRuntime:
                 return
             # Admit slider updates before completion chooses its successor.
             self._sync_locked(source)
-            error = outcome[4]
+            error = outcome.error
             record.state, effects = preparation_policy.step(record.state,
                 preparation_policy.Event(
                 "preparation_result", snapshot.request_signature,

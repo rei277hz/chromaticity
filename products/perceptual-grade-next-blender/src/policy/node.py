@@ -36,6 +36,7 @@ class Event:
     preparation_signature: Optional[str] = None
     stack_changed: bool = False
     grade_referenced: bool = False
+    playback_preview: bool = False  # Adapter correlated this receipt with active playback.
 
 
 @dataclass(frozen=True)
@@ -229,7 +230,10 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
         )
         if is_current and preparation_signature != state.desired_preparation_signature:
             return state, _effects(state)
-    if not is_current and not state.gesture_active:
+    lagging_preview_allowed = state.gesture_active or (
+        event.playback_preview and event.quality == "full"
+    )
+    if not is_current and not lagging_preview_allowed:
         return state, _effects(state)
 
     already_applied = (

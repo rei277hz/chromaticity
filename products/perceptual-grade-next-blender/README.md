@@ -261,9 +261,11 @@ the native Dope Sheet and Graph Editor when that tree is reachable from the scen
 The containing tree owns the animation: reusing a material or node group shares those
 curves across its users and instances. Per-Node means each Grade node has its own
 channels in the tree Action, not that each object or node-group instance has a separate
-animation. Blender's timeline preview reconciles Grade kernels asynchronously, so it
-may show an `Updating` result while a replacement is prepared; native animation renders
-use exact per-frame preflight before rendering each output frame.
+animation. During forward or reverse playback, a Per-Node Grade can display a
+completed kernel from an earlier frame in the same playback session. The node
+shows `Updating` while its kernel lags the playhead. Stopping playback or
+scrubbing requests the exact settings at the selected frame. Native animation
+renders require the exact full kernel for every output frame.
 Regular Grade and Grade Stack controls do not support keyframes. The discrete
 `peak_nits` control also remains static. Use Blender's F-curve controls to choose
 interpolation and edit keyframes. Render
@@ -367,6 +369,17 @@ buck2 run //products/perceptual-grade-next-blender/tools/reports:compositor_disp
 This drag-only baseline uses a 438 × 841 image, GPU/AUTO Compositor, and the
 same controls and timing definitions. Its [measurement contract](docs/performance/compositor-display.md)
 describes the workload and the separate Compositor baseline.
+
+Check native timeline playback and exact convergence on stop for Exposure and
+Tone Fit in the Shader viewport and Compositor Viewer:
+
+```sh
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:playback_display_native
+```
+
+The `shader_playback_timing` and `compositor_playback_timing` targets under
+`tools/reports` build JSON reports with visible update rates from playback and
+slider drags through the same Grade values.
 
 Check interactive compositor pixels and automatic refresh on the installed
 extension with:

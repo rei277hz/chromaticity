@@ -804,6 +804,21 @@ python_test(
 )
 
 python_test(
+    name = "playback_display_native",
+    srcs = ["tools/test_playback_display_native.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["gpu"],
+    resources = {
+        surface + ".json": "//products/perceptual-grade-next-blender/tools/reports:" + surface + "_playback_timing[json]"
+        for surface in ("shader", "compositor")
+    },
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+)
+
+python_test(
     name = "gate_policy",
     srcs = ["tools/test_gate_policy.py"],
     base_module = "tests.perceptual_grade_blender",

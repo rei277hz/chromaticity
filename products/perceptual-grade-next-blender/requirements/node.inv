@@ -161,10 +161,10 @@
       "assert": "released[0].applied_signature == 'a' and released[0].applied_quality == 'preview' and released[1].output_mode == 'preview' and not output_allowed(released[0])"
     },
     {
-      "name": "stale_completion_requires_gesture",
+      "name": "stale_partial_completion_requires_gesture",
       "variables": {},
       "lets": {
-        "late": "step(new('b'), Event('installation_result', 'a', quality='preview'))"
+        "late": "step(new('b'), Event('installation_result', 'a', quality='preview', playback_preview=True))"
       },
       "assert": "late[0] == new('b') and late[1].build_signature is None and late[1].output_mode == 'pending'"
     },
@@ -175,6 +175,17 @@
         "installed": "step(new('b', gesture_active=True), Event('installation_result', 'a'))"
       },
       "assert": "installed[0].applied_signature == 'a' and installed[0].applied_quality == 'full' and installed[1].output_mode == 'preview' and not output_allowed(installed[0])"
+    },
+    {
+      "name": "lagging_full_playback_receipt_requires_authorization_at_delivery",
+      "variables": {
+        "authorized": "bool"
+      },
+      "lets": {
+        "prepared": "step(new('b'), Event('preparation_result', 'a', playback_preview=authorized))",
+        "installed": "step(new('b'), Event('installation_result', 'a', playback_preview=authorized))"
+      },
+      "assert": "prepared[1].build_signature == ('a' if authorized else None) and installed[0].applied_signature == ('a' if authorized else None) and installed[1].output_mode == ('preview' if authorized else 'pending') and not output_allowed(installed[0])"
     },
     {
       "name": "late_lower_quality_never_replaces_full_quality",
@@ -328,6 +339,24 @@
   ],
   "witnesses": [],
   "mutations": [
+    {
+      "name": "lagging_playback_ignores_authorization",
+      "function": "_transition",
+      "target": "event.playback_preview",
+      "replacement": "True",
+      "detects": [
+        "property.lagging_full_playback_receipt_requires_authorization_at_delivery"
+      ]
+    },
+    {
+      "name": "lagging_playback_accepts_partial_quality",
+      "function": "_transition",
+      "target": "event.playback_preview and event.quality == \"full\"",
+      "replacement": "event.playback_preview",
+      "detects": [
+        "property.stale_partial_completion_requires_gesture"
+      ]
+    },
     {
       "name": "recovery_ignores_current_signature",
       "function": "_transition",

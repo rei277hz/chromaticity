@@ -193,10 +193,10 @@ def main():
         original_receive = nodes._handle_preparation_result
 
         def timed_receive(source, preparation_signature, prepared, error,
-                          quality="full", lane="grade", admitted=False):
+                          quality="full", lane="grade", admitted=False, playback_session=None):
             before = time.perf_counter()
             result = original_receive(source, preparation_signature, prepared, error,
-                                      quality, lane, admitted)
+                                      quality, lane, admitted, playback_session)
             if lane == "grade":
                 report["received_results"].append({
                     "at_seconds": stamp(), "duration_seconds": time.perf_counter() - before,

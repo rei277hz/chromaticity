@@ -58,6 +58,8 @@ def main():
     from color_tools.perceptual_grade_reference import appearance, grading, model
     from color_tools.perceptual_grade_reference.responses import GAMMA, INVERSE, eccentricity
 
+    playback = config.get("playback", False)
+    changed_callback = "_per_node_grade_changed" if playback else "_grade_changed"
     destination = Path(config["report"])
     request_path = Path(config["capture_request"])
     trace_path = Path(config["capture_trace"])
@@ -132,7 +134,7 @@ def main():
             return None
         finished = True
         if original_changed is not None:
-            nodes._grade_changed = original_changed
+            setattr(nodes, changed_callback, original_changed)
         if draw_handler is not None:
             bpy.types.SpaceView3D.draw_handler_remove(draw_handler, "WINDOW")
             draw_handler = None
@@ -221,9 +223,13 @@ def main():
         obj.data.materials.append(material)
         tree = material.node_tree
         tree.nodes.clear()
-        grade_node = nodes.create_node(tree)
-        grade_node.pg_grade = nodes._make_grade()
-        grade = grade_node.pg_grade
+        if playback:
+            grade_node = nodes.create_per_node_node(tree)
+            grade = grade_node
+        else:
+            grade_node = nodes.create_node(tree)
+            grade_node.pg_grade = nodes._make_grade()
+            grade = grade_node.pg_grade
         # Neutral inputs keep all four independently calculated outputs within
         # the cube, so entry repair and export gamut guards are inactive.
         inputs = np.asarray([(.005,) * 3, (.025,) * 3, (.10,) * 3, (.30,) * 3])
@@ -279,7 +285,7 @@ def main():
         # Strongly nonidentity anchors make Fit changes distinguishable. Setting
         # up the fixture uses RNA, while every measured edit uses native events.
         for name, value in zip(nodes.TONE_LEVEL_FIELDS, (0., 10., 20., 300., 1200.)):
-            setattr(grade.pg_tone, name, value)
+            setattr(nodes._tone_controls(grade), name, value)
         report["profile"]["baseline_settings"] = asdict(nodes._grade_settings(grade, nodes._working_space()))
 
         def current_window():
@@ -363,8 +369,8 @@ def main():
                         injection["accepted_ns"] = accepted_ns
             return original_changed(owner)
 
-        original_changed = nodes._grade_changed
-        nodes._grade_changed = observed_change
+        original_changed = getattr(nodes, changed_callback)
+        setattr(nodes, changed_callback, observed_change)
 
         def draw():
             if not finished and bpy.context.area == area_for(viewport_key):
@@ -453,7 +459,7 @@ def main():
                         bpy.ops.ui.copy_data_path_button()
                         path = manager.clipboard
                     for control, suffix in (("exposure", "pg_linear.exposure"), ("fit", "pg_tone.fit")):
-                        if path.endswith(suffix) and control not in found:
+                        if path.endswith(grade_node.path_from_id(control) if playback else suffix) and control not in found:
                             found[control] = (x, y - 2)
                     if len(found) == 2:
                         return found
@@ -500,11 +506,11 @@ def main():
                                 "Native slider release did not finish the gesture")
             yield .05
 
-        def baseline(control):
+        def baseline():
             nonlocal active
             active = None
-            grade.pg_linear.exposure = 0.
-            grade.pg_tone.fit = 0.
+            nodes._linear_controls(grade).exposure = 0.
+            nodes._tone_controls(grade).fit = 0.
             yield from wait_for(current, "Baseline Grade did not become current")
             cache_settings(signature(), snap())
 
@@ -553,7 +559,7 @@ def main():
             report["profile"]["viewport_region"] = [region.x, region.y, region.width, region.height]
             report["profile"]["capture_points_root"] = points
             capture_enabled(True)
-            yield from baseline("exposure")
+            yield from baseline()
             yield from wait_palette(signature())
             widgets = yield from find_widgets()
             report["widgets"] = {name: list(point) for name, point in widgets.items()}
@@ -570,7 +576,7 @@ def main():
             for control in controls:
                 point = widgets[control]
                 *offsets, final_offset = recipes[control]
-                yield from baseline(control)
+                yield from baseline()
                 yield from press(point)
                 before = len(calibration_callbacks)
                 calibrating = True
@@ -598,10 +604,21 @@ def main():
                     for sig, settings in calibration_callbacks[before:]
                 ]
 
+            if playback:
+                from tools.perceptual_grade.reports.display_playback import compare_controls
+                yield from compare_controls(
+                    bpy, nodes, scene, current_window(), grade_node, widgets, recipes, report, config,
+                    classify=classify_palette, capture_request=request_id,
+                    baseline=baseline, press=press, release=release, send=send,
+                    signature=signature, settled=lambda sig: current() and state().applied_signature == sig,
+                    wait_for=wait_for, wait_palette=wait_palette, save=save,
+                )
+                return
+
             for control in controls:
                 point = widgets[control]
                 *offsets, _final_offset = recipes[control]
-                yield from baseline(control)
+                yield from baseline()
                 yield from wait_palette(signature())
                 yield from press(point)
                 active = {"control": control, "scenario": "isolated"}
@@ -622,7 +639,7 @@ def main():
                 point = widgets[control]
                 *offsets, final_offset = recipes[control]
                 for observer in (True, False):
-                    yield from baseline(control)
+                    yield from baseline()
                     if observer:
                         yield from wait_palette(signature())
                     else:

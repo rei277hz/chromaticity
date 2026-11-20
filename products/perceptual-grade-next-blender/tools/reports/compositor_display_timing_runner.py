@@ -55,6 +55,8 @@ def main():
     from color_tools.perceptual_grade_reference import appearance, grading, model
     from color_tools.perceptual_grade_reference.responses import GAMMA, INVERSE, eccentricity
 
+    playback = config.get("playback", False)
+    changed_callback = "_per_node_grade_changed" if playback else "_grade_changed"
     destination = Path(config["report"])
     request_path = Path(config["capture_request"])
     trace_path = Path(config["capture_trace"])
@@ -130,7 +132,7 @@ def main():
             return None
         finished = True
         if original_changed is not None:
-            nodes._grade_changed = original_changed
+            setattr(nodes, changed_callback, original_changed)
         if draw_handler is not None:
             bpy.types.SpaceImageEditor.draw_handler_remove(draw_handler, "WINDOW")
             draw_handler = None
@@ -233,10 +235,14 @@ def main():
         output = root.nodes.new("NodeGroupOutput")
         source = root.nodes.new("CompositorNodeImage")
         source.image = image
-        grade_node = nodes.create_node(root)
+        if playback:
+            grade_node = nodes.create_per_node_node(root)
+            grade = grade_node
+        else:
+            grade_node = nodes.create_node(root)
+            grade_node.pg_grade = nodes._make_grade()
+            grade = grade_node.pg_grade
         grade_node.name = "Measured Grade"
-        grade_node.pg_grade = nodes._make_grade()
-        grade = grade_node.pg_grade
         viewer = root.nodes.new("CompositorNodeViewer")
         root.nodes.active = viewer
         root.links.new(source.outputs["Image"], grade_node.inputs["Color"])
@@ -285,7 +291,7 @@ def main():
             "observer_off": "external capture disabled; Image Editor draw cadence retained; acceptance snapshots disabled",
         }
         for name, value in zip(nodes.TONE_LEVEL_FIELDS, (0., 10., 20., 300., 1200.)):
-            setattr(grade.pg_tone, name, value)
+            setattr(nodes._tone_controls(grade), name, value)
         report["profile"]["baseline_settings"] = asdict(nodes._grade_settings(grade, nodes._working_space()))
 
         def current_window():
@@ -408,8 +414,8 @@ def main():
                         injection["accepted_ns"] = accepted_ns
             return original_changed(owner)
 
-        original_changed = nodes._grade_changed
-        nodes._grade_changed = observed_change
+        original_changed = getattr(nodes, changed_callback)
+        setattr(nodes, changed_callback, observed_change)
         report["compositor_evaluations"] = []
         bpy.app.handlers.composite_pre.append(on_composite_pre)
         bpy.app.handlers.composite_post.append(on_composite_post)
@@ -505,7 +511,7 @@ def main():
                         path = manager.clipboard
                     for control, suffix in (("exposure", "pg_linear.exposure"),
                                             ("fit", "pg_tone.fit")):
-                        if path.endswith(suffix) and control not in found:
+                        if path.endswith(grade_node.path_from_id(control) if playback else suffix) and control not in found:
                             found[control] = (x, y - 2)
                     if len(found) == 2:
                         return found
@@ -555,8 +561,8 @@ def main():
         def baseline():
             nonlocal active
             active = None
-            grade.pg_linear.exposure = 0.
-            grade.pg_tone.fit = 0.
+            nodes._linear_controls(grade).exposure = 0.
+            nodes._tone_controls(grade).fit = 0.
             yield from wait_for(current, "Baseline Grade did not become current")
             cache_settings(signature(), snap())
 
@@ -666,6 +672,17 @@ def main():
                      "expected": palette_cache[sig]}
                     for sig, settings in calibration_callbacks[before:]
                 ]
+
+            if playback:
+                from tools.perceptual_grade.reports.display_playback import compare_controls
+                yield from compare_controls(
+                    bpy, nodes, scene, current_window(), grade_node, widgets, recipes, report, config,
+                    classify=classify_palette, capture_request=request_id,
+                    baseline=baseline, press=press, release=release, send=send,
+                    signature=signature, settled=lambda sig: current() and state().applied_signature == sig,
+                    wait_for=wait_for, wait_palette=wait_palette, save=save,
+                )
+                return
 
             for control in controls:
                 point = widgets[control]

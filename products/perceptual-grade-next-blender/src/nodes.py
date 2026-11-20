@@ -148,8 +148,9 @@ _gesture_keyframe_baselines = {}
 _color_gestures = {}
 _compositor_receipts = CompositorReceipts()
 _frame_change_active = False
-_frame_reconcile_pending = False
 _frame_reconcile_scenes = {}
+_playback_sessions = {}
+_playback_serial = count(1)
 _frame_color_keys = {}
 _frame_color_invalidations = set()
 _KERNEL_SCHEMA = 6
@@ -835,6 +836,8 @@ def _persist_bake_source_change(node):
 def _consume_bake_invalidations():
     """Apply source observations only inside an admitted graph transaction."""
     affected = set(_bake_pending_invalidations)
+    if not affected:
+        return affected
     nodes = {node.as_pointer(): node for node in _all_grade_nodes()}
     for pointer in affected:
         node = nodes.get(pointer)
@@ -2216,6 +2219,7 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
             payload = settings if lane == "grade" else (settings, working_space)
             _preparation_runtime.request(
                 source, signature, payload, lane=lane, progressive=progressive,
+                playback_session=record.get("playback_session"),
             )
             _ensure_timer()
         except Exception as error:
@@ -2258,7 +2262,7 @@ def _dispatch(node, event, preparation=None):
         _reconciling = previous_reconciling
 
 
-def _request_node(node, working_space, snapshots=None):
+def _request_node(node, working_space, snapshots=None, *, frame_scene=None):
     if _node_reset_pending:
         return ()
     if _is_shared_grade_node(node) and node.pg_grade is None:
@@ -2281,6 +2285,11 @@ def _request_node(node, working_space, snapshots=None):
         preparation_signature = _preparation_signature(snapshot, working_space)
         lane = "grade"
     record = _record_for(node, signature, source)
+    if _is_per_node_grade_node(node):
+        if frame_scene is not None:
+            record["playback_session"] = _playback_sessions.get(frame_scene)
+        elif record.get("playback_session") not in _playback_sessions.values():
+            record.pop("playback_session", None)
     state = record["state"]
     failures = []
     needs_compositor_adoption = (
@@ -2346,8 +2355,14 @@ def _publication_signature(record, prepared):
     )
 
 
+def _playback_preview(record, session):
+    return (session is not None and record.get("playback_session") == session
+            and session in _playback_sessions.values())
+
+
 def _handle_preparation_result(source, preparation_signature, prepared, error,
-                               quality="full", lane="grade", admitted=False):
+                               quality="full", lane="grade", admitted=False,
+                               playback_session=None):
     global _reconciling
     failures = []
     authorized_builds = {}
@@ -2376,7 +2391,8 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
                 node_policy.Event("preparation_result", signature,
                                        None if error is None else str(error),
                                        quality=quality,
-                                       preparation_signature=preparation_signature),
+                                       preparation_signature=preparation_signature,
+                                       playback_preview=_playback_preview(record, playback_session)),
                 defer_build=True,
             )
             failures.extend(transition_failures)
@@ -2395,7 +2411,8 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
                 grade_records.extend(records)
         if grade_records:
             failures.extend(_publish_grade_parameters(
-                source, tuple(grade_records), prepared, admitted=admitted))
+                source, tuple(grade_records), prepared, admitted=admitted,
+                playback_session=playback_session))
     finally:
         _reconciling = previous_reconciling
     return tuple(failures)
@@ -2578,7 +2595,8 @@ def _set_parameter_selector(kernel, bank):
         raise RuntimeError("Grade selector belongs to an unsupported tree")
 
 
-def _publish_grade_parameters(source, authorized_records, prepared, *, admitted):
+def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
+                              playback_session=None):
     """Stage a fixed inactive role bundle, select it, and deliver its generation."""
     users = tuple(record for record in authorized_records
                   if record.get("source") is source
@@ -2595,6 +2613,13 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
     generation = _grade_resources.next_generation(resource)
     active_valid = (resource.banks is None
                     or _parameter_image_content_matches(resource.banks[old_active]))
+    if playback_session is not None and not active_valid and any(
+            _publication_signature(record, prepared) != record["state"].desired_signature
+            for record in users):
+        # A recovery must install the exact demand. An older playback result
+        # cannot repair a corrupt active bank and certify its replacement.
+        return _fail_installation(users, None, RuntimeError(
+            "Grade parameter bank is corrupt"))
     context.update(
         previous_trees=dict(resource.trees),
         repairing=not active_valid,
@@ -2776,7 +2801,8 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted)
         for record in users:
             event_kind = "recovery_result" if context["repairing"] else "installation_result"
             delivery_errors.extend(_dispatch(record["node"], node_policy.Event(
-                event_kind, _publication_signature(record, prepared))))
+                event_kind, _publication_signature(record, prepared),
+                playback_preview=_playback_preview(record, playback_session))))
         if delivery_errors:
             raise ExceptionGroup("Grade installation delivery failed", delivery_errors)
         # Scene invalidation can start a live evaluation. Publish its generation
@@ -3374,7 +3400,8 @@ def _publish_pending_preparations(*, drain=False, sources=None):
             deferred = error
             continue
         del _grade_resources.pending[key]
-        failures.extend(_consume_preparation_publication(publication, admitted=admitted))
+        failures.extend(_consume_preparation_publication(
+            publication, admitted=admitted, interactive=not drain))
         if not drain:
             return tuple(failures)
     if deferred is not None:
@@ -3390,17 +3417,26 @@ def _handle_preparation_completions(completions):
         return ()
     try:
         with _grade_resources.gate.commit():
+            # A frame may have advanced under a compositor lease. Observe its
+            # evaluated settings before judging an earlier completed kernel.
+            if _frame_change_active:
+                return ()
+            if _frame_reconcile_scenes:
+                _reconcile_pending_frames()
+                if _frame_reconcile_scenes:
+                    return ()
             return _publish_pending_preparations()
-    except PublicationDeferred as error:
-        reason = str(error)
+    except PublicationDeferred:
+        pass
     return ()
 
 
-def _consume_preparation_publication(publication, *, admitted=False):
+def _consume_preparation_publication(publication, *, admitted=False, interactive=True):
     if hasattr(publication, "quality"):
         return _handle_preparation_result(
             publication.source, publication.signature, publication.prepared,
             publication.error, publication.quality, publication.lane, admitted,
+            publication.playback_session if interactive else None,
         )
     source, signature, prepared, error = publication
     return _handle_preparation_result(source, signature, prepared, error)
@@ -3422,9 +3458,6 @@ def _preparation_tick():
     if not pending:
         return None
     if _grade_resources is not None and _grade_resources.gate.blocked():
-        gate = _grade_resources.gate
-        if gate.current_compositor() is not None:
-            return 0.02
         return 0.02
     return 0.0
 
@@ -3519,7 +3552,8 @@ def _retire_images():
     return tuple(failures)
 
 
-def _refresh_nodes(nodes, working_space=None, *, defer_failure_mutations=False):
+def _refresh_nodes(nodes, working_space=None, *, defer_failure_mutations=False,
+                   frame_scene=None):
     if _node_reset_pending:
         return ()
     nodes = tuple(node for node in nodes if _is_output_node(node))
@@ -3536,7 +3570,8 @@ def _refresh_nodes(nodes, working_space=None, *, defer_failure_mutations=False):
     snapshots = {}
     for node in nodes:
         try:
-            failures.extend(((node,), error) for error in _request_node(node, working_space, snapshots))
+            errors = _request_node(node, working_space, snapshots, frame_scene=frame_scene)
+            failures.extend(((node,), error) for error in errors)
         except Exception as error:
             if defer_failure_mutations:
                 failures.append(((node,), error))
@@ -3668,12 +3703,12 @@ def _dispose_node(node):
 
 
 def _invalidate_node_stores():
-    global _node_reset_pending, _frame_reconcile_pending, _lifecycle_displaced_kernels
+    global _node_reset_pending, _lifecycle_displaced_kernels
     _node_reset_pending = True
     if _lifecycle_displaced_kernels is None:
         _lifecycle_displaced_kernels = {}
-    _frame_reconcile_pending = False
     _frame_reconcile_scenes.clear()
+    _playback_sessions.clear()
     _render_validated_scenes.clear()
     _bake_sources.clear()
     _bake_pending_invalidations.clear()
@@ -4552,9 +4587,7 @@ def _stack_active_entry(node):
 
 
 def _grade_changed(grade):
-    global _frame_reconcile_pending
     if _frame_change_active:
-        _frame_reconcile_pending = True
         return
     grade_pointer = grade.as_pointer()
     users = []
@@ -4641,55 +4674,74 @@ def _frame_reconcile_blocked(scene_identity):
             or bpy.app.is_job_running("COMPOSITE"))
 
 
+def _reconcile_pending_frames():
+    if _node_reset_pending or _frame_change_active:
+        return
+    for pointer, scene in tuple(_frame_reconcile_scenes.items()):
+        try:
+            live = scene.as_pointer() == pointer
+        except ReferenceError:
+            live = False
+        if live:
+            if _frame_reconcile_blocked(pointer):
+                continue
+            nodes = _scene_grade_nodes(scene)
+            _clear_frame_color_claims(scene, nodes)
+            failures = _refresh_nodes(nodes, frame_scene=pointer)
+            _reconcile_bake_outputs(nodes)
+            for failed_nodes, error in failures:
+                names = ", ".join(getattr(node, "name", "Grade") for node in failed_nodes)
+                print(f"Perceptual Grade frame update failed for {names}: {error}")
+        _frame_reconcile_scenes.pop(pointer, None)
+
+
+def _observe_evaluated_frame(scene):
+    _frame_reconcile_scenes[scene.as_pointer()] = scene
+    if threading.current_thread() is threading.main_thread():
+        _frame_reconcile_tick()
+
+
 @persistent
 def _frame_change_post(scene, *_args):
-    global _frame_change_active, _frame_reconcile_pending
+    global _frame_change_active
     _frame_change_active = False
-    _frame_reconcile_pending = True
-    pointer = scene.as_pointer()
-    _frame_reconcile_scenes[pointer] = scene
-    if threading.current_thread() is not threading.main_thread():
-        return
-    try:
-        nodes = _scene_grade_nodes(scene)
-        _clear_frame_color_claims(scene, nodes)
-        if _frame_reconcile_blocked(pointer):
-            return
-        failures = _refresh_nodes(nodes)
-        _reconcile_bake_outputs(nodes)
-        _frame_reconcile_scenes.pop(pointer, None)
-        _frame_reconcile_pending = bool(_frame_reconcile_scenes)
-        for nodes, error in failures:
-            names = ", ".join(getattr(node, "name", "Grade") for node in nodes)
-            print(f"Perceptual Grade frame update failed for {names}: {error}")
-    except Exception as error:
-        print("Perceptual Grade frame update failed:", error)
+    _observe_evaluated_frame(scene)
+    if (threading.current_thread() is threading.main_thread()
+            and scene.as_pointer() in _playback_sessions
+            and _preparation_runtime is not None and not _node_reset_pending):
+        try:
+            # Publish in the gap between native Viewer jobs. A timer retry
+            # can miss that gap when playback immediately starts the next job.
+            for _nodes, error in _handle_preparation_completions(
+                    _preparation_runtime.collect()):
+                print("Perceptual Grade frame publication failed:", error)
+        except Exception as error:
+            _block_nodes(_scene_grade_nodes(scene), error)
+
+
+@persistent
+def _playback_begin(scene, *_args):
+    scene = scene or getattr(bpy.context, "scene", None)
+    if scene is not None:
+        _playback_sessions[scene.as_pointer()] = next(_playback_serial)
+
+
+@persistent
+def _playback_end(scene, *_args):
+    scene = scene or getattr(bpy.context, "scene", None)
+    if scene is not None:
+        _playback_sessions.pop(scene.as_pointer(), None)
+        _observe_evaluated_frame(scene)
 
 
 def _frame_reconcile_tick():
-    global _frame_reconcile_pending
     if PGShaderGrade not in _registered_classes:
         return None
-    if _frame_reconcile_pending and not _node_reset_pending:
+    if _frame_reconcile_scenes:
         try:
-            if not _frame_reconcile_scenes:
-                scene = getattr(bpy.context, "scene", None)
-                if scene is not None:
-                    _frame_reconcile_scenes[scene.as_pointer()] = scene
-            for pointer, scene in tuple(_frame_reconcile_scenes.items()):
-                nodes = _scene_grade_nodes(scene)
-                _clear_frame_color_claims(scene, nodes)
-                if _frame_reconcile_blocked(pointer):
-                    continue
-                try:
-                    if scene.as_pointer() == pointer:
-                        _refresh_nodes(nodes)
-                except (AttributeError, ReferenceError, RuntimeError):
-                    pass
-                _frame_reconcile_scenes.pop(pointer, None)
-            _frame_reconcile_pending = bool(_frame_reconcile_scenes)
+            _reconcile_pending_frames()
         except PublicationDeferred:
-            _frame_reconcile_pending = True
+            pass  # Keep the scene queued until the next admitted turn.
         except Exception as error:
             nodes = tuple(node for scene in _frame_reconcile_scenes.values()
                           for node in _scene_grade_nodes(scene))
@@ -5228,9 +5280,7 @@ def _peak_changed(settings, context):
 
 
 def _per_node_grade_changed(node):
-    global _frame_reconcile_pending
     if _frame_change_active:
-        _frame_reconcile_pending = True
         return
     if _gesture_is_armed(node.as_pointer()):
         return
@@ -6885,6 +6935,8 @@ def _register_handlers():
         (bpy.app.handlers.redo_post, _undo_redo_post),
         (bpy.app.handlers.frame_change_pre, _frame_change_pre),
         (bpy.app.handlers.frame_change_post, _frame_change_post),
+        (bpy.app.handlers.animation_playback_pre, _playback_begin),
+        (bpy.app.handlers.animation_playback_post, _playback_end),
         (bpy.app.handlers.render_pre, _render_pre),
         (bpy.app.handlers.render_init, _render_init),
         (bpy.app.handlers.render_complete, _render_finished),

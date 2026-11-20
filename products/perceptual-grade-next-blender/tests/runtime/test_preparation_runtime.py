@@ -170,15 +170,19 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime = self.runtime(prepare, on_event=observer)
         self.addCleanup(release.set)
         first, second, third = object(), object(), object()
-        runtime.request(first, "same", "prepared")
+        runtime.request(first, "same", "prepared", playback_session=1)
         self.wait_started(started)
-        runtime.request(second, "same", "prepared")
+        runtime.request(second, "same", "prepared", playback_session=2)
         self.wait_started(joined)
         release.set()
-        runtime.wait()
-        runtime.request(third, "same", "prepared")
-        self.assertEqual(self.outcomes(runtime.wait()),
+        publications = runtime.wait()
+        self.assertEqual({item.source: item.playback_session for item in publications},
+                         {first: 1, second: 1})
+        runtime.request(third, "same", "prepared", playback_session=2)
+        cached = runtime.wait()
+        self.assertEqual(self.outcomes(cached),
                          ((third, "same", "prepared", None),))
+        self.assertEqual(cached[0].playback_session, 2)
 
         reused = [fields for event, fields in observed if event == "preparation_reuse"]
         self.assertEqual([(row["source_id"], row["signature"], row["kind"])
@@ -260,7 +264,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.addCleanup(continue_after_preview.set)
         self.addCleanup(release_b.set)
         source = object()
-        runtime.request(source, "A", "A", lane="lut")
+        runtime.request(source, "A", "A", lane="lut", playback_session=1)
         self.wait_started(started_a)
         runtime.request(source, "B", "B", lane="lut")
         release_a.set()
@@ -271,6 +275,7 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertEqual((previews[0].signature, previews[0].prepared,
                           previews[0].quality, previews[0].lane),
                          ("A", ("33-cube", "A"), "preview", "lut"))
+        self.assertEqual(previews[0].playback_session, 1)
         state = self.loop_read(
             runtime, lambda: next(iter(runtime._records.values())).state
         )
@@ -287,10 +292,12 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertEqual(self.outcomes(first_final),
                          ((source, "A", ("65-cube", "A"), None),))
         self.assertEqual(first_final[0].quality, "full")
+        self.assertEqual(first_final[0].playback_session, 1)
         release_b.set()
         latest = runtime.wait()
         self.assertEqual(self.outcomes(latest),
                          ((source, "B", ("65-cube", "B"), None),))
+        self.assertIsNone(latest[0].playback_session)
         self.assertEqual(calls, ["A", "B"])
 
     def test_default_and_registered_thread_lanes_run_on_separate_pools(self):
@@ -778,6 +785,33 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime.request(source, "A", "A")
         self.assertEqual(self.outcomes(runtime.wait()), ((source, "A", "A", None),))
         self.assertEqual(calls, ["A", "A"])
+
+    def test_shared_failure_keeps_the_originating_playback_session(self):
+        started, joined, release = (threading.Event() for _ in range(3))
+        failure = ValueError("shared preparation failed")
+
+        def observer(event, **fields):
+            if event == "preparation_reuse" and fields["kind"] == "inflight":
+                joined.set()
+
+        def prepare(_payload):
+            started.set()
+            self.assertTrue(release.wait(10))
+            raise failure
+
+        runtime = self.runtime(prepare, on_event=observer)
+        self.addCleanup(release.set)
+        first, second = object(), object()
+        runtime.request(first, "same", 42, playback_session=1)
+        self.wait_started(started)
+        runtime.request(second, "same", 42, playback_session=2)
+        self.wait_started(joined)
+        release.set()
+
+        publications = runtime.wait()
+        self.assertEqual({item.source: item.playback_session for item in publications},
+                         {first: 1, second: 1})
+        self.assertTrue(all(item.error is failure for item in publications))
 
     def test_equal_sources_share_work_and_collected_result_remains_reusable(self):
         started, release = threading.Event(), threading.Event()

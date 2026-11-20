@@ -19,7 +19,7 @@ class KernelReadinessTests(unittest.TestCase):
             self.assertEqual(effects, Effects(output_mode=output_mode(state), error=state.error))
 
     def transition(self, state, kind, signature=None, error=None, quality="full",
-                   preparation_signature=None):
+                   preparation_signature=None, playback_preview=False):
         if kind == "preparation_result" and error is not None \
                 and preparation_signature is None:
             preparation_signature = signature
@@ -27,7 +27,7 @@ class KernelReadinessTests(unittest.TestCase):
             state,
             Event(
                 kind, signature, error, quality,
-                preparation_signature=preparation_signature,
+                preparation_signature=preparation_signature, playback_preview=playback_preview,
             ),
         )
         self.assertEqual(effects.output_mode, output_mode(updated))
@@ -162,6 +162,36 @@ class KernelReadinessTests(unittest.TestCase):
         )
         self.assertEqual(state.applied_quality, "full")
         self.assertEqual(effects.output_mode, "current")
+
+    def test_lagging_playback_install_requires_authorization_on_each_receipt(self):
+        state, _ = self.transition(self.installed("first"), "request", "latest")
+        state, effects = self.transition(
+            state, "preparation_result", "intermediate", playback_preview=True)
+        self.assertEqual(effects.build_signature, "intermediate")
+        self.assertEqual(effects.build_quality, "full")
+        self.assertEqual(state.applied_signature, "first")
+        stopped, _ = self.transition(state, "installation_result", "intermediate")
+        self.assertEqual(stopped, state)
+
+        state, effects = self.transition(
+            state, "installation_result", "intermediate", playback_preview=True)
+        self.assertEqual(state.applied_signature, "intermediate")
+        self.assertEqual(state.desired_signature, "latest")
+        self.assertFalse(state.gesture_active)
+        self.assertEqual(effects.output_mode, "preview")
+        state, effects = self.transition(state, "installation_result", "latest")
+        self.assertTrue(output_allowed(state))
+
+    def test_lagging_playback_cannot_replace_current_or_failed_output_or_install_partial(self):
+        for state, quality in ((self.installed("latest"), "full"),
+                               (new("latest", error="failed"), "full"),
+                               (new("latest"), "preview")):
+            for kind in ("preparation_result", "installation_result"):
+                with self.subTest(state=state, quality=quality, kind=kind):
+                    unchanged, effects = self.transition(
+                        state, kind, "earlier", quality=quality, playback_preview=True)
+                    self.assertEqual(unchanged, state)
+                    self.assertIsNone(effects.build_signature)
 
     def test_preview_failure_clears_applied_output_and_waits_for_retry(self):
         state = self.installed("grade-b", quality="preview")

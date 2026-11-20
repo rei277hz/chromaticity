@@ -301,7 +301,7 @@ def main():
     original_request = runtime.request
 
     def timed_request(self, source, signature, payload, *, lane="linear",
-                      progressive=None):
+                      progressive=None, playback_session=None):
         sample = state["active_sample"]
         if lane == "lut" and sample is not None:
             progressive = (self._lanes[lane].progressive
@@ -313,7 +313,8 @@ def main():
             if not progressive:
                 sample["final_signature"] = signature
         return original_request(source, signature, payload,
-                                lane=lane, progressive=progressive)
+                                lane=lane, progressive=progressive,
+                                playback_session=playback_session)
 
     runtime.request = MethodType(timed_request, runtime)
 
