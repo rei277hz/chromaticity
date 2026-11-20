@@ -409,8 +409,18 @@ class BakeRouteTests(unittest.TestCase):
         link(mix, "Value", self.grade, "Color")
         route = self.module.describe(self.grade, self.context)
         self.assertEqual((route["domain"], route["width"], route["height"]), ("IMAGE", 3, 2))
-        self.assertEqual(route["images"][0]["image_name"], texture.image.name)
+        self.assertEqual(route["images"][0]["image_key"], (texture.image.name, None))
         self.assertEqual(texture.image.pixels.reads, 0)
+
+    def test_keeps_library_image_identity_in_the_sampler_descriptor(self):
+        texture = self.texture()
+        texture.image.library = SimpleNamespace(filepath="/tmp/bake-assets/library.blend")
+        link(texture, "Color", self.grade, "Color")
+        route = self.module.describe(self.grade, self.context)
+        self.assertEqual(route["images"][0]["image_key"],
+                         (texture.image.name, "/tmp/bake-assets/library.blend"))
+        self.assertEqual(route["images"][0]["owner"], ("material", ("Material", None)))
+        self.assertEqual(route["images"][0]["reader_path"], ())
 
     def test_explicit_uv_link_selects_uv_and_saved_context_keeps_the_object(self):
         self.mapped_texture()
@@ -814,13 +824,21 @@ class BakeRouteTests(unittest.TestCase):
         upstream.pg_bake_image = Image("Stored bake")
         upstream.pg_bake_image[self.module.BAKE_DOMAIN] = "IMAGE"
         link(upstream, "Color", self.grade, "Color")
+        upstream.node_tree = Tree("Managed upstream bake")
+        upstream.node_tree[self.module.bake_graph.WRAPPER] = 1
+        reader = Node(upstream.node_tree, "ShaderNodeTexImage", "Baked Image",
+                      image=upstream.pg_bake_image)
+        reader[self.module.bake_graph.READER] = 1
         first = self.module.describe(self.grade, self.context)
+        self.assertEqual(first["images"][0]["reader_path"], ("Baked Image",))
         upstream.pg_grade.pg_linear.exposure = 1.
         upstream.pg_grade.pg_color.web_hue_1_2 = 12.
         self.assertEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
         self.assertFalse(first["upstream"])
         upstream.pg_bake_image["_pg_next_bake_operation"] = "rebake"
         self.assertNotEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
+        reader.image = Image("Different Image")
+        self.blocked("baked_sampler")
 
     def test_upstream_uv_bake_forces_surface_route_and_private_cycles(self):
         self.mesh()

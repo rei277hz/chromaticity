@@ -90,6 +90,7 @@
   "status.bake_stale_inputs": "烘焙可能已过时（输入已更改）",
   "status.bake_stale_canvas_size": "烘焙可能已过时（渲染画布尺寸已更改）",
   "status.bake_stale_unverified": "烘焙可能已过时（没有可与当前输入比较的记录）",
+  "status.bake_legacy_source_unverified": "此烘焙创建时尚未验证来源",
   "label.bake": "烘焙",
   "error.autokey_failed": "无法创建动画关键帧",
   "error.output_magenta": "调色输出为洋红色",

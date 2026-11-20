@@ -337,8 +337,91 @@ def finish(error=None):
     bpy.ops.wm.quit_blender()
 
 
-def exercise_stack_viewer():
-    """Verify Viewer completion for Stack refinement, adoption and scene attachment."""
+def exercise_grade_viewer_adoption():
+    """A restored Grade requests a new Viewer evaluation after graph admission."""
+    grade = consumers()[0]
+    pointer = grade.as_pointer()
+    scene_id = bpy.context.scene.as_pointer()
+    receipts = nodes._compositor_receipts
+    gate = nodes._grade_resources.gate
+    kernel = grade.node_tree
+    bank_generation = kernel[nodes.PARAMETER_GENERATION]
+    banks = tuple(kernel[key] for key in nodes.PARAMETER_BANK_BINDINGS)
+    viewer = next(image for image in bpy.data.images if image.type == "COMPOSITING")
+    pixels = np.asarray(viewer.pixels[:], dtype=np.float32)
+    requested = []
+    held = {}
+    request = nodes._request_compositor_evaluation
+    deliver = receipts.completed
+
+    def generation():
+        return receipts.snapshot(scene_id).get(pointer)
+
+    def track_request(scene):
+        if scene.as_pointer() == scene_id:
+            requested.append(generation())
+        request(scene)
+
+    def hold_completion(receipt):
+        if receipt is not None and receipt.successful and receipt.identity == scene_id:
+            binding = dict(receipt.snapshot).get(pointer)
+            if binding is not None:
+                held[binding] = receipt
+                return
+        deliver(receipt)
+
+    while gate.blocked() or nodes._compositor_output_pending(grade):
+        yield "current Grade Viewer"
+    previous = generation()
+    assert previous is not None
+    receipts.completed = hold_completion
+    nodes._request_compositor_evaluation = track_request
+    try:
+        receipts.forget(pointer)
+        assert not nodes._refresh_nodes((grade,))
+        first = generation()
+        assert first is not None and first != previous and requested == [first], requested
+        while first not in held or gate.blocked():
+            yield "first adopted Grade Viewer completion"
+
+        gate.evaluation_started(
+            "compositor", scene_id, snapshot=receipts.snapshot(scene_id),
+        )
+        receipts.forget(pointer)
+        try:
+            assert not nodes._refresh_nodes((grade,))
+            nodes._collect_compositor_receipts()
+            assert generation() is None and requested == [first], requested
+            assert grade.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        finally:
+            receipt = gate.evaluation_finished("compositor", scene_id)
+            deliver(receipt)
+
+        # The regular membership pass retries the unbound node once admission returns.
+        nodes._collect_compositor_receipts()
+        second = generation()
+        assert second != first and requested == [first, second], requested
+        deliver(held[first])
+        nodes._collect_compositor_receipts()
+        assert nodes._compositor_output_pending(grade)
+        assert grade.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        while second not in held:
+            yield "retried Grade Viewer completion"
+        deliver(held[second])
+        nodes._collect_compositor_receipts()
+        assert not nodes._compositor_output_pending(grade)
+        assert not grade.get(nodes._NODE_PENDING)
+        assert grade.node_tree == kernel and kernel[nodes.PARAMETER_GENERATION] == bank_generation
+        assert tuple(kernel[key] for key in nodes.PARAMETER_BANK_BINDINGS) == banks
+        np.testing.assert_array_equal(viewer.pixels[:], pixels)
+        result["grade_viewer_adoption"] = True
+    finally:
+        receipts.completed = deliver
+        nodes._request_compositor_evaluation = request
+
+
+def exercise_viewer_receipts():
+    yield from exercise_grade_viewer_adoption()
     helper = importlib.import_module(extension.__name__ + ".lut_helper")
     scene = bpy.context.scene
     scene.render.compositor_device = "CPU"
@@ -513,15 +596,15 @@ def complete():
     else:
         result["repaired_schema"] = [node.node_tree[nodes._KERNEL_KIND] for node in consumers()]
         assert result["repaired_schema"] == [nodes._KERNEL_SCHEMA] * 3
-        exercise = exercise_stack_viewer()
+        exercise = exercise_viewer_receipts()
         deadline = time.monotonic() + 120
         waiting_for = None
 
-        def stack_tick():
+        def viewer_tick():
             nonlocal waiting_for
             try:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(f"Timed out waiting for {waiting_for or 'Stack Viewer completion'}")
+                    raise TimeoutError(f"Timed out waiting for {waiting_for or 'Viewer completion'}")
                 waiting_for = next(exercise)
             except StopIteration:
                 finish()
@@ -532,7 +615,7 @@ def complete():
                 return None
             return .05
 
-        bpy.app.timers.register(stack_tick, first_interval=.05)
+        bpy.app.timers.register(viewer_tick, first_interval=.05)
         return
     finish()
 

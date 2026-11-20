@@ -162,6 +162,9 @@ node displays a warning with the reason when the bake may be outdated. A
 managed Image may be selected by multiple nodes, so a rebake updates every
 reader of that Image.
 
+Bakes created before source Image identity was verified remain usable and show
+a warning until a successful rebake verifies their captured sources.
+
 Shader Image and UV bakes run on Cycles CPU in a private copy of the scene.
 You can request either bake directly in EEVEE. Switching the scene engine or
 Cycles device keeps a current Shader bake current and lets a pending bake

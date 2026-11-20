@@ -82,6 +82,8 @@ class BakeInstalledTests(unittest.TestCase):
                 self.assertTrue(data.get("source_edit_while_off"), details)
                 self.assertTrue(data.get("engine_roundtrip"), details)
                 self.assertTrue(data.get("persistence"), details)
+                self.assertTrue(data.get("legacy_bake_source_verification"), details)
+                self.assertTrue(data.get("linked_bake_image_identity"), details)
                 self.assertTrue(data.get("teardown"), details)
 
 

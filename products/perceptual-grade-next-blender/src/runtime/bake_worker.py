@@ -14,6 +14,8 @@ import tempfile
 
 import numpy as np
 
+from .bake_images import image_format, resolve_datablocks, route_datablock
+
 
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 _GRADE_NODES = frozenset({
@@ -59,51 +61,71 @@ def _open_snapshot(inputs):
     result = bpy.ops.wm.open_mainfile(filepath=str(path), use_scripts=False, load_ui=False)
     if "FINISHED" not in result:
         raise RuntimeError("Bake snapshot could not be opened")
-    _restore_images(inputs.get("images", ()))
+    route = inputs.get("route", {})
+    _restore_images(inputs.get("images", ()), route.get("images", ()))
 
 
-def _restore_images(records):
+def _verify_sampler_bindings(host, occurrences, images):
+    """Require the native sampler at every recorded occurrence to use its frozen Image."""
+    collections = {
+        "material": "materials", "world": "worlds", "light": "lights", "compositor": "scenes",
+    }
+    owners = {}
+    for kind, key in (item["owner"] for item in occurrences):
+        owners.setdefault(kind, set()).add(tuple(key))
+    roots = {
+        kind: resolve_datablocks(host, getattr(host.data, collections[kind]), keys)
+        for kind, keys in owners.items()
+    }
+    for occurrence in occurrences:
+        kind, owner_key = occurrence["owner"]
+        owner = roots[kind][tuple(owner_key)]
+        tree = owner.compositing_node_group if kind == "compositor" else owner.node_tree
+        reader_path = occurrence["reader_path"]
+        if reader_path is None:
+            raise ValueError("Bake source has no bound native Image reader")
+        path = (*occurrence["group_path"], occurrence["node_name"], *reader_path)
+        node = None
+        for name in path:
+            node = tree.nodes.get(name) if tree is not None else None
+            if node is None:
+                raise ValueError(f"Bake source sampler is missing at {path!r}")
+            tree = getattr(node, "node_tree", None)
+        if (node.bl_idname not in {"ShaderNodeTexImage", "CompositorNodeImage"}
+                or node.image != images[tuple(occurrence["image_key"])]):
+            raise ValueError(f"Bake source sampler at {path!r} has a different Image")
+
+
+def _restore_images(records, occurrences):
     import bpy
 
-    for record in tuple(records or ()):
-        if not isinstance(record, dict):
-            raise TypeError("Bake image records must be mappings")
-        name = str(record.get("name", ""))
-        path_value = record.get("pixels_path") or record.get("path")
-        if not name or not isinstance(path_value, str):
-            raise ValueError("Bake image record is incomplete")
-        path = Path(path_value)
+    required = {tuple(item["image_key"]) for item in occurrences}
+    provided = {tuple(record["image_key"]) for record in records}
+    if len(provided) != len(records) or provided != required:
+        raise ValueError("Bake Image payload identities do not match the requested samplers")
+    if not required:
+        return
+    images = resolve_datablocks(bpy, bpy.data.images, required)
+    _verify_sampler_bindings(bpy, occurrences, images)
+    for record in records:
+        image = images[tuple(record["image_key"])]
+        width, height = (int(value) for value in image.size)
+        if ((width, height) != (record["width"], record["height"])
+                or any(record[name] != value for name, value in image_format(image).items())):
+            raise ValueError(f"Bake source Image format changed: {record['image_key']!r}")
+        if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES:
+            raise ValueError("Bake source Image exceeds the pixel budget")
+        path = Path(record["pixels_path"])
         if not path.is_absolute() or path.is_symlink() or not path.is_file():
             raise ValueError("Invalid bake image payload")
         values = np.load(path, allow_pickle=False)
-        if values.dtype.kind != "f" or values.ndim != 3 or values.shape[-1] not in (1, 2, 3, 4):
-            raise ValueError("Bake image payload is not a float image")
+        if (values.dtype != np.float32 or not 1 <= record["channels"] <= 4
+                or values.shape != (height, width, record["channels"])):
+            raise ValueError("Bake Image payload does not match its captured storage")
         if not np.isfinite(values).all():
             raise ValueError("Bake image payload contains nonfinite pixels")
-        height, width, channels = values.shape
-        if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES:
-            raise ValueError("Bake source image exceeds the pixel budget")
-        image = bpy.data.images.get(name)
-        if image is None:
-            image = bpy.data.images.new(name, width=width, height=height,
-                                        alpha=True, float_buffer=True)
-        if tuple(image.size) != (width, height):
-            raise ValueError("Bake source dimensions changed after the scene snapshot")
-        if channels == 1:
-            values = np.concatenate((np.repeat(values, 3, axis=-1),
-                                     np.ones((height, width, 1), np.float32)), axis=-1)
-        elif channels == 2:
-            values = np.concatenate((np.repeat(values[..., :1], 3, axis=-1),
-                                     values[..., 1:2]), axis=-1)
-        elif channels == 3:
-            values = np.concatenate((values, np.ones((height, width, 1), np.float32)), axis=-1)
-        image.pixels.foreach_set(np.asarray(values, dtype=np.float32).ravel())
+        image.pixels.foreach_set(values.ravel())
         image.update()
-        try:
-            image.colorspace_settings.name = str(record.get("colorspace", "Non-Color"))
-            image.alpha_mode = str(record.get("alpha_mode", "CHANNEL_PACKED"))
-        except (AttributeError, RuntimeError, ValueError):
-            pass
 
 
 def _checkpoint(context):
@@ -443,13 +465,15 @@ def _shader(inputs, context):
 
     descriptor = dict(inputs.get("shader_bake") or inputs.get("descriptor") or {})
     target = dict(inputs.get("target") or {})
-    scene = bpy.data.scenes.get(str(target.get("scene", descriptor.get("scene", ""))))
+    scene = route_datablock(bpy, bpy.data.scenes, target or descriptor, "scene")
     if scene is None:
         raise ValueError("Bake scene is absent")
     _set_frame(scene, descriptor)
     owner_kind = str(target.get("owner_kind", descriptor.get("owner_kind", "material"))).lower()
-    owner_name = str(target.get("owner_name", descriptor.get("owner_name", "")))
-    owner = ((bpy.data.materials if owner_kind == "material" else bpy.data.worlds).get(owner_name))
+    owner = route_datablock(
+        bpy, bpy.data.materials if owner_kind == "material" else bpy.data.worlds,
+        target or descriptor, "owner",
+    )
     if owner is None or owner.node_tree is None:
         raise ValueError("Bake shader owner is absent")
     width, height = int(descriptor["width"]), int(descriptor["height"])
@@ -472,8 +496,8 @@ def _shader(inputs, context):
 
         if owner_kind != "material":
             raise ValueError("UV Bake requires a material")
-        obj = bpy.data.objects.get(str(descriptor.get("object_name", "")))
-        if obj is None or obj.type != "MESH" or obj.name not in scene.objects:
+        obj = route_datablock(bpy, bpy.data.objects, descriptor, "object")
+        if obj is None or obj.type != "MESH" or obj not in tuple(scene.objects):
             raise ValueError("UV Shader Bake requires the frozen active mesh")
         if any(modifier.type in {"MESH_SEQUENCE_CACHE", "MESH_CACHE"}
                or getattr(modifier, "cache_file", None) is not None for modifier in obj.modifiers):
@@ -539,7 +563,7 @@ def _compositor(inputs, context):
     import bpy
 
     target = dict(inputs.get("target") or {})
-    scene = bpy.data.scenes.get(str(target.get("scene", "")))
+    scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
     if scene is None:
         raise ValueError("Compositor Bake scene is absent")
     _set_frame(scene, target)
@@ -590,7 +614,9 @@ def _compositor(inputs, context):
             scene.render.compositor_precision = "FULL"
             _configure_linear(scene)
             _checkpoint(context)
-            result = bpy.ops.render.render(write_still=False, scene=scene.name)
+            if bpy.context.scene != scene:
+                raise RuntimeError("Compositor Bake's selected scene changed before rendering")
+            result = bpy.ops.render.render(write_still=False)
             _checkpoint(context)
             if "FINISHED" not in result:
                 raise RuntimeError("Native Compositor Bake did not finish")
@@ -643,7 +669,7 @@ def _result(pixels, inputs, target, descriptor, *, backend, device=None):
     if pixels.shape[1] * pixels.shape[0] * 16 > MAX_PIXEL_BYTES:
         raise MemoryError("Native Bake output exceeds the pixel budget")
     image = _new_image("PG Next Bake Completed", int(pixels.shape[1]), int(pixels.shape[0]))
-    scene = bpy.data.scenes.get(str(target.get("scene", "")))
+    scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
     if scene is None:
         raise ValueError("Bake output scene is absent")
     try:
@@ -706,7 +732,7 @@ class BakeWorker:
             else:
                 kind = str(inputs.get("kind", "shader")).lower()
             target = inputs.get("target", {})
-            scene = bpy.data.scenes.get(str(target.get("scene", "")))
+            scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
             if scene is not None and bpy.context.window is not None:
                 bpy.context.window.scene = scene
                 if scene.view_layers:

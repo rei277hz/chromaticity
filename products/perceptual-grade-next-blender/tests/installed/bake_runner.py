@@ -52,9 +52,9 @@ def wait_bake(node):
     raise TimeoutError("Bake did not retire")
 
 
-def image(name, pixels, width, height):
+def image(name, pixels, width, height, *, float_buffer=True):
     value = bpy.data.images.new(name, width=width, height=height,
-                                alpha=True, float_buffer=True)
+                                alpha=True, float_buffer=float_buffer)
     value.colorspace_settings.name = "Non-Color"
     value.alpha_mode = "CHANNEL_PACKED"
     if hasattr(value, "use_half_precision"):
@@ -78,7 +78,7 @@ def compositor_context(scene, tree, node=None):
                                                       node_tree=tree, path=()))
 
 
-def assert_bake_controls(node, context, warning=None, *, can_bake=None):
+def assert_bake_controls(node, context, warning=None, *, can_bake=None, legacy=False):
     observed = {"labels": []}
 
     class Layout:
@@ -119,6 +119,8 @@ def assert_bake_controls(node, context, warning=None, *, can_bake=None):
     }
     expected = set() if warning is None else {nodes.localization.tr(warning)}
     assert warning_texts.intersection(observed["labels"]) == expected, observed["labels"]
+    legacy_label = nodes.localization.tr("status.bake_legacy_source_unverified")
+    assert (legacy_label in observed["labels"]) == legacy, observed["labels"]
 
 
 def assert_shader_uses_image(node, image):
@@ -157,6 +159,7 @@ def bake(node, context):
     assert node.pg_bake_image is not None, node.get(nodes._BAKE_ERROR)
     assert node.pg_bake_image.packed_file is not None
     assert node.pg_bake_image.is_float
+    assert node.pg_bake_image.get(nodes._BAKE_SOURCE_VERIFICATION) == 1
     assert not node.pg_bake_image.is_dirty
     assert node.pg_use_bake
     values = np.asarray(node.pg_bake_image.pixels[:], dtype=np.float32)
@@ -194,6 +197,102 @@ def link_source(tree, node, source, *, uv=False):
         tree.links.new(coordinates.outputs["UV"], source.inputs["Vector"])
     tree.links.new(source.outputs["Color"], node.inputs["Color"])
     tree.links.new(source.outputs["Alpha"], node.inputs["Alpha"])
+
+
+def bake_linked_images(scene, mesh_object, material, directory):
+    """Evaluate exact Image datablocks even when all three share one name."""
+    name = "Bake Duplicate Image Name"
+    float_rgba = np.array([
+        [-.025, .20, .30, 1.], [1.35, .80, .90, 1.],
+    ], dtype=np.float32)
+    byte_rgba = np.array([
+        [51, 102, 153, 64], [153, 102, 51, 192],
+    ], dtype=np.float32) / 255
+    linked = []
+    library_paths = (directory / "bake-float.blend", directory / "bake-byte.blend")
+    packed_rgba = np.full((2, 4), .5, dtype=np.float32)
+    for path, is_float in zip(library_paths, (True, False)):
+        test_image = image(name, packed_rgba, 2, 1, float_buffer=is_float)
+        if not is_float:
+            test_image.colorspace_settings.name = "sRGB"
+            test_image.alpha_mode = "STRAIGHT"
+        bpy.data.libraries.write(str(path), {test_image}, fake_user=True)
+        bpy.data.images.remove(test_image)
+    for path in library_paths:
+        with bpy.data.libraries.load(str(path), link=True) as (available, imported):
+            assert name in available.images
+            imported.images = [name]
+        linked.append(imported.images[0])
+    decoy = image(name, ((.5, .5, .5, 1.),), 1, 1)
+    assert len({source.as_pointer() for source in (*linked, decoy)}) == 3
+    assert all(source.name == name for source in (*linked, decoy))
+    assert tuple(source.is_float for source in linked) == (True, False)
+    assert tuple(Path(bpy.path.abspath(source.library.filepath)).resolve()
+                 for source in linked) == library_paths
+    for source, values in zip(linked, (float_rgba, byte_rgba)):
+        # The private snapshot must receive the live buffer. Loading the
+        # linked library alone would produce the original gray pixels.
+        source.pixels.foreach_set(values.ravel())
+        source.update()
+        np.testing.assert_allclose(np.asarray(source.pixels[:]).reshape(2, 4),
+                                   values, rtol=0, atol=1e-6)
+
+    shader_tree = material.node_tree
+    float_texture, byte_texture, decoy_texture = (
+        shader_tree.nodes.new("ShaderNodeTexImage") for _ in range(3))
+    for texture, source in zip((float_texture, byte_texture, decoy_texture), (*linked, decoy)):
+        texture.image = source
+        texture.interpolation = "Closest"
+    grade = nodes._make_grade()
+    shader = nodes.create_node(shader_tree)
+    shader.pg_grade = grade
+    coordinates = shader_tree.nodes.new("ShaderNodeUVMap")
+    for texture in (float_texture, byte_texture):
+        shader_tree.links.new(coordinates.outputs["UV"], texture.inputs["Vector"])
+    shader_tree.links.new(float_texture.outputs["Color"], shader.inputs["Color"])
+    shader_tree.links.new(byte_texture.outputs["Alpha"], shader.inputs["Alpha"])
+    shader.pg_bake_width = 8
+    shader.pg_bake_height = 4
+    wait_ready(shader)
+    bpy.context.view_layer.update()
+    shader_pixels = bake(shader, shader_context(material, scene, mesh_object, shader))
+    assert shader.pg_bake_image.get(nodes._BAKE_DOMAIN) == "UV"
+    expected_uv = float_rgba.copy()
+    expected_uv[:, 3] = byte_rgba[:, 3]
+    expected_uv = expected_uv.reshape(1, 2, 4).repeat(4, axis=0).repeat(4, axis=1)
+    np.testing.assert_allclose(shader_pixels.reshape(4, 8, 4), expected_uv,
+                               rtol=0, atol=0.002)
+
+    compositor = bpy.data.node_groups.new("Linked Bake Compositor", nodes.COMPOSITOR_TREE)
+    compositor.interface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    output = compositor.nodes.new("NodeGroupOutput")
+    output.is_active_output = True
+    source = compositor.nodes.new("CompositorNodeImage")
+    source.image = linked[1]
+    # Use opaque colors here so file output and alpha association are independent
+    # of the exact Image and byte-storage behavior exercised by this capture.
+    byte_rgba[:, 3] = 1.
+    linked[1].pixels.foreach_set(byte_rgba.ravel())
+    linked[1].update()
+    nodes.invalidate_source(linked[1])
+    compositor.nodes.new("CompositorNodeImage").image = decoy
+    comp_grade = nodes.create_node(compositor)
+    comp_grade.pg_grade = grade
+    compositor.links.new(source.outputs["Image"], comp_grade.inputs["Color"])
+    compositor.links.new(comp_grade.outputs["Color"], output.inputs["Image"])
+    scene.compositing_node_group = compositor
+    wait_ready(comp_grade)
+    comp_pixels = bake(comp_grade, compositor_context(scene, compositor, comp_grade))
+    assert tuple(comp_grade.pg_bake_image.size) == (2, 1)
+    # All sampled sRGB channels are above the transfer function's linear segment.
+    expected_linear = byte_rgba.copy()
+    expected_linear[:, :3] = ((byte_rgba[:, :3] + 0.055) / 1.055) ** 2.4
+    np.testing.assert_allclose(comp_pixels.reshape(2, 4), expected_linear, rtol=0, atol=0.002)
+    assert float_texture.image == linked[0] and byte_texture.image == linked[1]
+    assert source.image == linked[1]
+    for source, values in zip(linked, (float_rgba, byte_rgba)):
+        np.testing.assert_allclose(np.asarray(source.pixels[:]).reshape(2, 4),
+                                   values, rtol=0, atol=1e-6)
 
 
 scene = bpy.context.scene
@@ -314,6 +413,7 @@ assert_bake_controls(shader, image_context)
 
 # A failed replacement restores the selected image, pixels, and receipt.
 previous_image = shader.pg_bake_image
+del previous_image[nodes._BAKE_SOURCE_VERIFICATION]
 previous_receipt = nodes._bake_receipt_signature(shader)
 previous_pixels = np.asarray(previous_image.pixels[:], dtype=np.float32).copy()
 previous_gain = grade_data.pg_color.global_gain
@@ -344,7 +444,8 @@ np.testing.assert_array_equal(
     np.asarray(previous_image.pixels[:], dtype=np.float32), previous_pixels,
 )
 assert nodes._bake_receipt_signature(shader) == previous_receipt
-assert_bake_controls(shader, image_context)
+assert previous_image.get(nodes._BAKE_SOURCE_VERIFICATION) is None
+assert_bake_controls(shader, image_context, legacy=True)
 
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.cycles.device = "GPU"
@@ -991,6 +1092,7 @@ uv_values = bake(uv_node, shader_context(material, scene, obj, uv_node))
 # pointer again after open_mainfile, including the nested live kernel.
 stack_tree_name, stack_name = stack_tree.name, stack.name
 material_name, uv_name, source_image_name = material.name, uv_node.name, source_image.name
+mesh_object_name = obj.name
 packed_values = np.asarray(stack.pg_bake_image.pixels[:], dtype=np.float32)
 assert uv_node.pg_use_bake and nodes._bake_toggle_available(uv_node)
 with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
@@ -1057,18 +1159,80 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     restored_uv.pg_use_bake = True
     assert restored_uv.pg_use_bake
     assert nodes._bake_receipt_signature(restored_uv) == original_receipt
+
+    # Legacy verification is image metadata, independent of per-node freshness.
+    del restored_uv.pg_bake_image[nodes._BAKE_SOURCE_VERIFICATION]
+    assert_bake_controls(restored_uv, nodes._stored_bake_context(restored_uv),
+                         "status.bake_stale_source", legacy=True)
     assert "FINISHED" in bpy.ops.wm.save_as_mainfile(filepath=blend_path)
     assert "FINISHED" in bpy.ops.wm.open_mainfile(filepath=blend_path)
+    restored_scene = bpy.context.scene
     restored_material = bpy.data.materials.get(material_name)
     restored_uv = restored_material.node_tree.nodes.get(uv_name)
+    restored_mesh_object = bpy.data.objects[mesh_object_name]
+    restored_uv_context = shader_context(restored_material, restored_scene, restored_mesh_object,
+                                         restored_uv)
     assert restored_uv.pg_use_bake
     assert nodes._bake_receipt_signature(restored_uv) == original_receipt
-    assert_bake_controls(
-        restored_uv, nodes._stored_bake_context(restored_uv), "status.bake_stale_source",
-    )
+    assert_bake_controls(restored_uv, restored_uv_context, "status.bake_stale_source", legacy=True)
+
+    legacy_image = restored_uv.pg_bake_image
+    legacy_pixels = np.asarray(legacy_image.pixels[:], dtype=np.float32)
+    legacy_operation = legacy_image.get(nodes._BAKE_OPERATION)
+    restored_tree = restored_material.node_tree
+    legacy_reader = nodes.create_node(restored_tree)
+    legacy_reader.pg_grade = restored_uv.pg_grade
+    texture = restored_uv.inputs["Color"].links[0].from_node
+    link_source(restored_tree, legacy_reader, texture)
+    legacy_reader_context = shader_context(restored_material, restored_scene, restored_mesh_object,
+                                           legacy_reader)
+    wait_ready(legacy_reader)
+    bpy.context.view_layer.objects.active = restored_mesh_object
+    bpy.context.view_layer.update()
+    legacy_reader.pg_bake_image = legacy_image
+    legacy_reader.pg_use_bake = True
+    assert_shader_uses_image(legacy_reader, legacy_image)
+    assert_bake_controls(legacy_reader, legacy_reader_context, legacy=True)
+
+    # Reject a missing exact image before native bake and preserve the selected
+    # artifact, receipt, and verification state.
+    manager = nodes._bake_manager
+    original_snapshot = manager._snapshot
+
+    def snapshot_with_missing_source(route):
+        root, snapshot, images = original_snapshot(route)
+        images[0]["image_key"] = ("Missing Bake Image", None)
+        return root, snapshot, images
+
+    try:
+        manager._snapshot = snapshot_with_missing_source
+        nodes._bake_request(restored_uv, restored_uv_context)
+        wait_bake(restored_uv)
+        assert restored_uv.get(nodes._BAKE_ERROR)
+    finally:
+        del manager._snapshot
+    assert_shader_uses_image(restored_uv, legacy_image)
+    assert_shader_uses_image(legacy_reader, legacy_image)
+    np.testing.assert_array_equal(legacy_image.pixels[:], legacy_pixels)
+    assert legacy_image.get(nodes._BAKE_OPERATION) == legacy_operation
+    assert legacy_image.get(nodes._BAKE_SOURCE_VERIFICATION) is None
+    assert nodes._bake_receipt_signature(restored_uv) == original_receipt
+    assert_bake_controls(restored_uv, restored_uv_context, "status.bake_stale_source", legacy=True)
+    assert_bake_controls(legacy_reader, legacy_reader_context, legacy=True)
+
+    bake(restored_uv, restored_uv_context)
+    assert_shader_uses_image(restored_uv, legacy_image)
+    assert_shader_uses_image(legacy_reader, legacy_image)
+    assert legacy_image.get(nodes._BAKE_OPERATION) != legacy_operation
+    assert_bake_controls(restored_uv, restored_uv_context)
+    assert_bake_controls(legacy_reader, legacy_reader_context, "status.bake_stale_source")
+
+    bake_linked_images(restored_scene, restored_mesh_object, restored_material, Path(directory))
 report["persistence"] = True
 report["undo_valid_bake"] = True
 report["source_edit_while_off"] = True
+report["legacy_bake_source_verification"] = True
+report["linked_bake_image_identity"] = True
 
 # Exercise the add-on teardown after all native helper work has retired.
 extension.unregister()

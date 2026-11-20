@@ -165,6 +165,8 @@ _HUE_CLAIM_FRAME = "_perceptual_grade_hue_claim_frame_v1"
 _CONVERSION_BACKUP = "_perceptual_grade_conversion_backup"
 _BAKE_SCHEMA = 2
 _BAKE_IMAGE_SCHEMA = "_pg_next_bake_schema"
+_BAKE_SOURCE_VERIFICATION = "_pg_next_bake_source_verification"
+_BAKE_SOURCE_VERIFICATION_VERSION = 1
 _BAKE_DOMAIN = "_pg_next_bake_domain"
 _BAKE_SIGNATURE = "_pg_next_bake_signature"
 _BAKE_OPERATION = "_pg_next_bake_operation"
@@ -357,6 +359,7 @@ def _write_bake_receipt(node, signature, backend_signature=None,
 def _bake_image_metadata(image, route, result):
     return (
         (image, _BAKE_IMAGE_SCHEMA, _BAKE_SCHEMA),
+        (image, _BAKE_SOURCE_VERIFICATION, _BAKE_SOURCE_VERIFICATION_VERSION),
         (image, _BAKE_DOMAIN, str(route.get("domain", "COMPOSITOR"))),
         (image, _BAKE_SIGNATURE, str(result.get(
             "artifact_signature", route.get("source_signature", route.get("signature", ""))))),
@@ -630,9 +633,10 @@ def _bake_route(node, context, dependencies):
 
 
 def _bake_context(route):
-    return {key: route.get(key) for key in (
+    return {key: route[key] for key in (
         "scene", "owner_kind", "owner_name", "group_path", "object_name",
-    )}
+        "scene_key", "owner_key", "object_key",
+    ) if key in route}
 
 
 def _stored_bake_context(node):
@@ -903,6 +907,8 @@ def _draw_bake_controls(node, context, layout):
     toggle.enabled = _bake_toggle_available(node)
     toggle.prop(node, "pg_use_bake", toggle=True)
     if _bake_image_valid(node):
+        if node.pg_bake_image.get(_BAKE_SOURCE_VERIFICATION) != _BAKE_SOURCE_VERIFICATION_VERSION:
+            box.label(text=localization.tr("status.bake_legacy_source_unverified"), icon="INFO")
         stored_context = _stored_bake_context(node)
         freshness = status
         if stored_context is not None and stored_context != context:
@@ -1732,20 +1738,21 @@ def _record_compositor_bindings(records):
 
 
 def _publish_compositor_binding(record):
-    previous = _record_compositor_bindings((record,))
-    if not previous:
-        return
-    try:
-        _refresh_compositor_presentation(record)
-        _tag_compositor_outputs((record,))
-    except Exception as error:
-        _compositor_receipts.restore(previous)
-        failures = _fail_installation((record,), None, error)
-        if failures:
-            raise ExceptionGroup(
-                "Could not deliver compositor output", [error, *failures],
-            ) from error
-        raise
+    with _grade_resources.gate.graph_commit():
+        previous = _record_compositor_bindings((record,))
+        if not previous:
+            return
+        try:
+            _refresh_compositor_presentation(record)
+            _tag_compositor_outputs((record,))
+        except Exception as error:
+            _compositor_receipts.restore(previous)
+            failures = _fail_installation((record,), None, error)
+            if failures:
+                raise ExceptionGroup(
+                    "Could not deliver compositor output", [error, *failures],
+                ) from error
+            raise
 
 
 def _restore_compositor_bindings(previous):
@@ -2287,16 +2294,20 @@ def _request_node(node, working_space, snapshots=None):
         )
     if needs_compositor_adoption and current:
         # Loaded/undone graphs can already satisfy demand and skip publication.
-        if record["stack"]:
-            _publish_compositor_binding(record)
-        else:
+        adopt = record["stack"]
+        if not adopt:
             resource = _grade_resources.resource(node, working_space)
             live_kernel = _kernel_for_node(node)
-            if (resource.generation is not None
-                    and tuple(live_kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
-                    == resource.banks
-                    and live_kernel.get(PARAMETER_ACTIVE_BANK) == resource.active_bank):
-                _record_compositor_bindings((record,))
+            adopt = (resource.generation is not None
+                     and tuple(live_kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
+                     == resource.banks
+                     and live_kernel.get(PARAMETER_ACTIVE_BANK) == resource.active_bank)
+        if adopt:
+            try:
+                _publish_compositor_binding(record)
+            except PublicationDeferred:
+                # The compositor membership tick retries the unbound output.
+                pass
     if not current:
         failures.extend(_dispatch(node, node_policy.Event(
             "installation_result", None, "Installed Grade kernel is missing or stale")))

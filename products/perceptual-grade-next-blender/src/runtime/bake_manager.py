@@ -14,6 +14,7 @@ import numpy as np
 
 from ..policy import bake as bake_policy
 from .bake_helper import BakeHelperBackend
+from .bake_images import image_format, resolve_datablocks, route_datablock
 from .publication import PublicationDeferred
 
 
@@ -58,35 +59,33 @@ class BakeManager:
         root = Path(tempfile.mkdtemp(prefix="pg-next-bake-"))
         try:
             snapshot = root / "snapshot.blend"
-            scene = self.bpy.data.scenes.get(str(route["scene"]))
+            scene = route_datablock(self.bpy, self.bpy.data.scenes, route, "scene")
             if scene is None:
                 raise RuntimeError("Bake scene disappeared before snapshot")
             ids = {scene}
             owner_kind = route.get("owner_kind")
             if owner_kind == "material":
-                owner = self.bpy.data.materials.get(str(route.get("owner_name", "")))
+                owner = route_datablock(self.bpy, self.bpy.data.materials, route, "owner")
             elif owner_kind == "world":
-                owner = self.bpy.data.worlds.get(str(route.get("owner_name", "")))
+                owner = route_datablock(self.bpy, self.bpy.data.worlds, route, "owner")
             else:
                 owner = scene
             if owner is not None:
                 ids.add(owner)
-            obj = self.bpy.data.objects.get(str(route.get("object_name", "")))
+            obj = route_datablock(self.bpy, self.bpy.data.objects, route, "object")
             if obj is not None:
                 ids.add(obj)
             self.bpy.data.libraries.write(
                 str(snapshot), ids, path_remap="ABSOLUTE", fake_user=True,
             )
+            image_keys = {
+                tuple(descriptor["image_key"]) for descriptor in route.get("images", ())
+            }
+            source_images = resolve_datablocks(
+                self.bpy, self.bpy.data.images, image_keys,
+            )
             images = []
-            copied_images = set()
-            for descriptor in route.get("images", ()):
-                name = str(descriptor.get("image_name", ""))
-                if name in copied_images:
-                    continue
-                copied_images.add(name)
-                image = self.bpy.data.images.get(name)
-                if image is None:
-                    raise RuntimeError("Bake source Image disappeared before snapshot")
+            for key, image in source_images.items():
                 width, height = (int(value) for value in image.size)
                 channels = int(image.channels)
                 if min(width, height) < 1 or width * height * max(channels, 4) * 4 > 512 * 1024 * 1024:
@@ -95,11 +94,10 @@ class BakeManager:
                 image.pixels.foreach_get(values)
                 path = root / ("image-" + uuid.uuid4().hex + ".npy")
                 np.save(path, values.reshape(height, width, channels), allow_pickle=False)
-                images.append({
-                    "name": name, "pixels_path": str(path),
-                    "colorspace": str(image.colorspace_settings.name),
-                    "alpha_mode": str(image.alpha_mode),
-                })
+                images.append(dict(
+                    image_key=key, width=width, height=height, pixels_path=str(path),
+                    **image_format(image),
+                ))
             return root, snapshot, images
         except BaseException:
             shutil.rmtree(root, ignore_errors=True)

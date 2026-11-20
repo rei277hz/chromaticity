@@ -17,6 +17,8 @@ from pathlib import Path
 
 from ..kernel.color_ui import COLOR_FIELDS
 from ..kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
+from . import bake_graph
+from .bake_images import datablock_key, route_datablock
 
 
 SCHEMA = 1
@@ -294,10 +296,10 @@ def _owner(host, node, context):
     compositor = tree.bl_idname == "CompositorNodeTree"
     if isinstance(context, Mapping):
         kind = context.get("owner_kind")
-        scene = host.data.scenes.get(context.get("scene"))
+        scene = route_datablock(host, host.data.scenes, context, "scene")
         values = {"material": host.data.materials, "world": host.data.worlds,
                   "compositor": host.data.scenes}.get(kind)
-        owner = values.get(context.get("owner_name")) if values is not None else None
+        owner = route_datablock(host, values, context, "owner") if values is not None else None
         root = (getattr(owner, "compositing_node_group", None) if kind == "compositor"
                 else getattr(owner, "node_tree", None))
         path = tuple(context.get("group_path", ()))
@@ -472,10 +474,16 @@ def _cache_geometry(obj):
 
 def _baked_sampler(node, image):
     """Find only the native sampler bound to the authoritative baked Image."""
-    pending = [getattr(node, "node_tree", None)]
+    tree = getattr(node, "node_tree", None)
+    if tree is not None and tree.get(bake_graph.WRAPPER):
+        reader = bake_graph.marked(tree, bake_graph.READER)
+        if reader is None or not _same(getattr(reader, "image", None), image):
+            raise RouteBlocked("baked_sampler", "Bake source wrapper has no matching Image reader")
+        return reader, (str(reader.name),)
+    pending = [(tree, ())]
     seen = set()
     while pending:
-        tree = pending.pop()
+        tree, path = pending.pop()
         key = _identity(tree)
         if tree is None or key in seen:
             continue
@@ -483,11 +491,11 @@ def _baked_sampler(node, image):
         for candidate in tree.nodes:
             if (candidate.bl_idname in {"ShaderNodeTexImage", "CompositorNodeImage"}
                     and _same(getattr(candidate, "image", None), image)):
-                return candidate
+                return candidate, (*path, str(candidate.name))
             child = getattr(candidate, "node_tree", None)
             if child is not None:
-                pending.append(child)
-    return node
+                pending.append((child, (*path, str(candidate.name))))
+    return node, None
 
 
 def _geometry_digest(label, values):
@@ -663,8 +671,9 @@ def _geometry_observation(obj):
 
 
 class _Walker:
-    def __init__(self, host, scene, *, full, compositor, dependencies=None):
+    def __init__(self, host, scene, *, owner_kind, owner, full, compositor, dependencies=None):
         self.host, self.scene, self.full = host, scene, full
+        self.owner = (owner_kind, datablock_key(host, owner))
         self.compositor = compositor
         self.dependencies = dependencies
         self.graph = []
@@ -725,9 +734,10 @@ class _Walker:
                _semantic_identity(node), _semantic_identity(image))
         previous = self.images.get(key)
         alpha = output.name in {"Alpha", "Baked Alpha"}
-        sampler = _baked_sampler(node, image) if baked else node
+        sampler, reader_path = _baked_sampler(node, image) if baked else (node, ())
         item = dict(group_path=tuple(str(item.name) for item in parents), node_name=str(node.name),
-                    image_name=str(image.name), width=width, height=height,
+                    owner=self.owner, reader_path=reader_path,
+                    image_key=datablock_key(self.host, image), width=width, height=height,
                     alpha_linked=alpha or bool(previous and previous[1]["alpha_linked"]),
                     interpolation=str(getattr(sampler, "interpolation", "Linear")),
                     extension=str(getattr(sampler, "extension", "REPEAT")), baked=baked)
@@ -881,31 +891,36 @@ class _Walker:
                          for obj in objects) if self.full
                     else tuple(_geometry_observation(obj) for obj in objects))
         self.render_states.append((*summary, geometry))
-        owners = [getattr(scene, "world", None)]
+        owners = [("world", getattr(scene, "world", None))]
         for obj in objects:
             self._add_dependency(obj)
             self._add_dependency(getattr(obj, "data", None))
-            owners.extend(slot.material for slot in getattr(obj, "material_slots", ()))
+            owners.extend(("material", slot.material) for slot in getattr(obj, "material_slots", ()))
             if getattr(obj, "type", None) == "LIGHT":
-                owners.append(obj.data)
-        for owner in owners:
+                owners.append(("light", obj.data))
+        for _kind, owner in owners:
             self._add_dependency(owner)
         owner_settings = tuple((_semantic_identity(owner), _rna_state(
             owner, dependencies=self.dependencies,
             dependency_seen=self.dependency_pointers,
         ))
-                               for owner in owners if owner is not None)
+                               for _kind, owner in owners if owner is not None)
         self.render_states.append(("owner_settings", owner_settings))
         self.render_observations.append(("owner_settings", owner_settings))
-        for owner in owners:
-            tree = getattr(owner, "node_tree", None)
-            if tree is None:
-                continue
-            for endpoint in tree.nodes:
-                if (endpoint.bl_idname in {"ShaderNodeOutputMaterial", "ShaderNodeOutputWorld", "ShaderNodeOutputLight"}
-                        and getattr(endpoint, "is_active_output", True)):
-                    for socket in endpoint.inputs:
-                        self.input(socket, ())
+        previous_owner = self.owner
+        try:
+            for kind, owner in owners:
+                tree = getattr(owner, "node_tree", None)
+                if tree is None:
+                    continue
+                self.owner = (kind, datablock_key(self.host, owner))
+                for endpoint in tree.nodes:
+                    if (endpoint.bl_idname in {"ShaderNodeOutputMaterial", "ShaderNodeOutputWorld", "ShaderNodeOutputLight"}
+                            and getattr(endpoint, "is_active_output", True)):
+                        for socket in endpoint.inputs:
+                            self.input(socket, ())
+        finally:
+            self.owner = previous_owner
 
     def _add_dependency(self, value):
         _collect_dependency(value, self.dependencies, self.dependency_pointers)
@@ -1019,7 +1034,7 @@ def _describe(node, context, *, full, dependencies=None):
     kind, owner, scene, root, parents = _owner(bpy, node, context)
     compositor = kind == "compositor"
     collected_dependencies = [] if dependencies is not None else None
-    walker = _Walker(bpy, scene, full=full, compositor=compositor,
+    walker = _Walker(bpy, scene, owner_kind=kind, owner=owner, full=full, compositor=compositor,
                      dependencies=collected_dependencies)
     for socket in node.inputs:
         if socket.name in {"Color", "Alpha"}:
@@ -1046,7 +1061,7 @@ def _describe(node, context, *, full, dependencies=None):
         if kind != "material":
             raise RouteBlocked("world_uv", "World Bake supports only Image-domain inputs")
         if isinstance(context, Mapping):
-            obj = bpy.data.objects.get(context.get("object_name")) if context.get("object_name") else None
+            obj = route_datablock(bpy, bpy.data.objects, context, "object")
         else:
             obj = getattr(context or bpy.context, "object", None)
         uv_map = _uv(obj, full=full)
@@ -1088,11 +1103,13 @@ def _describe(node, context, *, full, dependencies=None):
     evaluator = ({"render_layers_backends": tuple(walker.rendered.values())} if compositor
                  else {"shader_backend": "CYCLES_CPU", "cycles_device": "CPU"})
     result = dict(schema=SCHEMA, domain=domain, width=width, height=height,
-                  scene=str(scene.name), frame=int(scene.frame_current),
+                  scene=str(scene.name), scene_key=datablock_key(bpy, scene),
+                  frame=int(scene.frame_current),
                   subframe=float(scene.frame_subframe), render_engine=render_engine,
-                  owner_kind=kind, owner_name=str(owner.name),
+                  owner_kind=kind, owner_name=str(owner.name), owner_key=datablock_key(bpy, owner),
                   group_path=tuple(str(item.name) for item in parents), node_name=str(node.name),
                   object_name=str(obj.name) if obj is not None else None,
+                  object_key=datablock_key(bpy, obj) if obj is not None else None,
                   material_slot=material_slot, uv_map=uv_map,
                   reasons=tuple(sorted(walker.reasons)),
                   images=tuple(item[1] for item in walker.images.values()),

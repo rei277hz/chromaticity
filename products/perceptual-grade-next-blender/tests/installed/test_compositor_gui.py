@@ -72,6 +72,7 @@ class CompositorGuiTests(unittest.TestCase):
                         self.assertEqual(data["repaired_schema"], [6, 6, 6], details)
                         self.assertTrue(data["settings_preserved"], details)
                         self.assertEqual(len(data["rows"]), 2, details)
+                        self.assertTrue(data["grade_viewer_adoption"], details)
                         self.assertTrue(data["stack_viewer_refinement"], details)
                         self.assertTrue(data["stack_viewer_adoption"], details)
                         self.assertTrue(data["stack_viewer_scenes"], details)
