@@ -309,14 +309,14 @@ def request_reopen():
             if mode_index == 1:
                 bpy.app.timers.unregister(nodes._gesture_router_tick)
             if mode_index == 2:
-                gate = nodes._grade_resources.gate
-                original_reset = gate.reset
+                resources = nodes._grade_resources
+                original_release = resources.release_lifecycle_images
 
                 def defer_once():
-                    gate.reset = original_reset
-                    raise nodes.PublicationDeferred("Injected one-load reset deferral")
+                    resources.release_lifecycle_images = original_release
+                    raise nodes.PublicationDeferred("Injected one-load pin release deferral")
 
-                gate.reset = defer_once
+                resources.release_lifecycle_images = defer_once
             bpy.ops.wm.open_mainfile(filepath=str(path))
         except BaseException:
             finish(traceback.format_exc())

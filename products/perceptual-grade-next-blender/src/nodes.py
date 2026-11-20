@@ -1,6 +1,6 @@
 """Guarded Grade nodes and their shared Linear, Tone, and Color settings UI."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from itertools import count
@@ -86,6 +86,7 @@ from .runtime.compositor_receipts import CompositorReceipts
 from .runtime.resource_lifecycle import run_resource_lifecycle
 from .runtime.node_conversion_animation import NodeAnimationConversion
 from .runtime.stack_observations import grade_is_referenced, stack_changed
+from .runtime.shader_scene import shader_scene_inventory
 from .runtime.image_publication import (
     ImageSnapshot, pack_image_for_save, write_metadata,
 )
@@ -131,6 +132,8 @@ _indexed_node_entries = {}
 _indexed_output_nodes = {}
 _output_registry_ready = False
 _node_reset_pending = False
+_lifecycle_changing = False
+_lifecycle_displaced_kernels = None
 _preparation_runtime = None
 _grade_preparer = None
 _grade_resources = None
@@ -2045,7 +2048,7 @@ def _apply_output_kernel(node, mode):
     _replace_node_kernel(node, kernel, emergency=not keep_bake)
 
 
-def _apply_output_effect(node, effects):
+def _apply_output_effect(node, effects, *, retire=True):
     if effects.output_mode is None:
         return
     failures = []
@@ -2060,9 +2063,9 @@ def _apply_output_effect(node, effects):
         except Exception as failure:
             failures.append(failure)
     current = getattr(node, "node_tree", None)
-    if previous != current:
+    if retire and previous != current:
         failures.extend(_retire_kernels((previous,)))
-    elif previous_live != bake_graph.live_tree(current):
+    elif retire and previous_live != bake_graph.live_tree(current):
         failures.extend(_retire_kernels((previous_live,)))
     if failures:
         if len(failures) == 1:
@@ -2140,6 +2143,18 @@ def _record_for(node, desired_signature=None, source=None):
             kernel_quality, stack=_is_stack_node(node))):
         applied_signature = desired_signature
         applied_quality = kernel_quality
+    elif (_lifecycle_displaced_kernels is not None and readers_valid
+          and desired_signature is not None and not _is_stack_node(node)
+          and kernel is not None and _kernel_belongs_to_node(node, kernel)):
+        # After undo the evaluated frame may already differ from the restored
+        # bank. Keep the validated reader tree attached as a preview while
+        # publication stages the new frame into its inactive bank.
+        previous_signature = kernel.get(_KERNEL_SIGNATURE)
+        if previous_signature is not None and _kernel_is_current(
+                kernel, node.id_data.bl_idname, previous_signature,
+                kernel_quality, stack=False, validate_graph=False):
+            applied_signature = previous_signature
+            applied_quality = kernel_quality
     stack_entries = _stack_entry_observations(node) if _is_stack_node(node) else ()
     state = node_policy.new(
         desired_signature=desired_signature,
@@ -3452,6 +3467,11 @@ def _resource_retirement_operations(resource, *, image=False):
 
 
 def _retire_kernels(kernels):
+    if _lifecycle_displaced_kernels is not None:
+        for kernel in kernels:
+            if kernel is not None:
+                _lifecycle_displaced_kernels[id(kernel)] = kernel
+        return ()
     failures = []
     seen = set()
     for kernel in kernels:
@@ -3508,17 +3528,20 @@ def _refresh_nodes(nodes, working_space=None, *, defer_failure_mutations=False):
     return tuple(failures)
 
 
-def _block_nodes(nodes, error):
+def _block_nodes(nodes, error, *, during_reset=False):
     failures = []
     message = f"{type(error).__name__}: {error}"[:240]
     for node in nodes:
         try:
-            record = _record_for(node)
-            signature = record["state"].desired_signature
-            failures.extend(_dispatch(
-                node,
-                node_policy.Event("installation_result", signature, message),
-            ))
+            if during_reset:
+                # Blender may still be replacing IDs. Apply the output policy
+                # without reusing or recreating runtime records.
+                _state, effects = node_policy.step(node_policy.new(), node_policy.Event(
+                    "installation_result", error=message))
+                _apply_output_effect(node, effects, retire=False)
+            else:
+                failures.extend(_dispatch(
+                    node, node_policy.Event("installation_result", error=message)))
         except Exception as failure:
             failures.append(((node,), failure))
     return tuple(failures)
@@ -3627,19 +3650,19 @@ def _dispose_node(node):
                            + "; ".join(map(str, failures))) from failures[0]
 
 
-def _reset_node_stores():
-    global _node_reset_pending, _frame_reconcile_pending
+def _invalidate_node_stores():
+    global _node_reset_pending, _frame_reconcile_pending, _lifecycle_displaced_kernels
     _node_reset_pending = True
+    if _lifecycle_displaced_kernels is None:
+        _lifecycle_displaced_kernels = {}
     _frame_reconcile_pending = False
     _frame_reconcile_scenes.clear()
     _render_validated_scenes.clear()
     _bake_sources.clear()
     _bake_pending_invalidations.clear()
     if _grade_resources is not None:
-        # Load/undo invalidates callback identities, but only actual host
-        # quiescence permits releasing the retained native image versions.
-        _grade_resources.gate.reset()
-        _grade_resources.clear()
+        _grade_resources.gate.invalidate_render_preflights()
+        _grade_resources.invalidate()
     sources = tuple(_preparation_sources.values())
     _node_stores.clear()
     _clear_output_registry()
@@ -3648,7 +3671,25 @@ def _reset_node_stores():
         for source in sources:
             _preparation_runtime.forget(source)
     _reset_compositor_receipts()
+
+
+def _reset_node_stores():
+    global _node_reset_pending
+    if _grade_resources is not None:
+        _grade_resources.gate.reset()
+    _invalidate_node_stores()
+    if _grade_resources is not None:
+        _grade_resources.clear()
+    _retire_displaced_lifecycle_kernels()
     _node_reset_pending = False
+
+
+def _retire_displaced_lifecycle_kernels():
+    global _lifecycle_displaced_kernels
+    displaced = _lifecycle_displaced_kernels
+    _lifecycle_displaced_kernels = None
+    if displaced:
+        _retire_kernels(displaced.values())
 
 
 def _replace_kernel(node):
@@ -4706,42 +4747,32 @@ def _startup_reconcile_tick():
 
 
 @contextmanager
-def _restore_bake_sources():
+def _restore_bake_sources(*, update_view_layer=True):
     """Drain reconstruction updates before arming restored source revisions."""
     global _bake_restoring
     previous = _bake_restoring
     _bake_restoring = True
     try:
         yield
-        bpy.context.view_layer.update()
+        if update_view_layer:
+            bpy.context.view_layer.update()
     finally:
         _bake_restoring = previous
 
 
 @persistent
 def _load_pre(_filepath):
-    _cancel_color_gestures()
     _frame_color_keys.clear()
     _frame_color_invalidations.clear()
-    if _bake_manager is not None:
-        _bake_manager.cancel_all()
+    _begin_lifecycle_change()
 
 
 @persistent
 def _load_post(_filepath):
     try:
-        if _bake_manager is not None:
-            _bake_manager.cancel_all()
-        with _restore_bake_sources():
-            _clear_gestures()
-            _cleanup_conversion_backups()
-            _reset_node_stores()
-            _rebuild_output_registry()
-            _clear_frame_color_claims(bpy.context.scene)
-            _ensure_all_kernels()
-        _reconcile_bake_outputs()
-    except PublicationDeferred:
-        _undo_redo_post()
+        _finish_lifecycle_change()
+        if _undo_redo_reconcile_tick() is not None:
+            _schedule_lifecycle_reconciliation()
     except Exception as error:
         print("Perceptual Grade load repair failed:", error)
     finally:
@@ -4751,30 +4782,56 @@ def _load_post(_filepath):
 
 @persistent
 def _undo_redo_pre(*_args):
+    _begin_lifecycle_change()
+
+
+def _begin_lifecycle_change():
+    global _lifecycle_changing
+    _lifecycle_changing = True
     _cancel_color_gestures()
     _clear_gestures()
     try:
         if _bake_manager is not None:
             _bake_manager.cancel_all()
-        _reset_node_stores()
-    except PublicationDeferred:
-        # Preserve native-reader pins until the post-undo timer can reset.
-        pass
+    finally:
+        _invalidate_node_stores()
+
+
+def _finish_lifecycle_change():
+    global _lifecycle_changing
+    if not _lifecycle_changing:
+        return
+    if _grade_resources is not None:
+        # Fence any requests made while Blender was replacing IDs as well.
+        _grade_resources.gate.invalidate_render_preflights()
+    _lifecycle_changing = False
 
 
 @persistent
 def _undo_redo_post(*_args):
+    _finish_lifecycle_change()
+    _schedule_lifecycle_reconciliation()
+
+
+def _schedule_lifecycle_reconciliation():
     _ensure_bake_timer()
     if not bpy.app.timers.is_registered(_undo_redo_reconcile_tick):
         bpy.app.timers.register(_undo_redo_reconcile_tick, first_interval=0.0)
 
 
 def _undo_redo_reconcile_tick():
+    global _node_reset_pending
     if PGShaderGrade not in _registered_classes:
         return None
+    if _lifecycle_changing:
+        return 0.02
     try:
+        if _grade_resources is not None:
+            _grade_resources.release_lifecycle_images()
+        _retire_displaced_lifecycle_kernels()
+        _node_reset_pending = False
         with _restore_bake_sources():
-            _reset_node_stores()
+            _cleanup_conversion_backups()
             _rebuild_output_registry()
             _clear_frame_color_claims(bpy.context.scene)
             _ensure_all_kernels()
@@ -4782,7 +4839,7 @@ def _undo_redo_reconcile_tick():
     except PublicationDeferred:
         return 0.02
     except Exception as error:
-        print("Perceptual Grade undo repair failed:", error)
+        print("Perceptual Grade lifecycle repair failed:", error)
     finally:
         _ensure_gesture_router_timer()
     return None
@@ -4816,21 +4873,11 @@ def _render_pre(scene):
 
 
 def _service_render_preflight(*, defer=True):
+    global _node_reset_pending
     if _grade_resources is None:
         return
     gate = _grade_resources.gate
-    if _node_reset_pending:
-        if defer:
-            ticket = gate.take_render_preflight(failed_only=True)
-            if ticket is not None:
-                _fail_render_preflight(
-                    ticket, RuntimeError(ticket.state.error or "Render preflight failed"))
-            return
-        ticket = gate.take_render_preflight()
-        if ticket is None:
-            raise PublicationDeferred("Grade lifecycle reconciliation is pending")
-        _fail_render_preflight(
-            ticket, PublicationDeferred("Grade lifecycle reconciliation is pending"))
+    if _lifecycle_changing and defer:
         return
     ticket = gate.take_render_preflight()
     if ticket is not None:
@@ -4840,7 +4887,11 @@ def _service_render_preflight(*, defer=True):
             return
         try:
             with gate.render_preflight(ticket, defer=defer, deliver_failure=False):
+                restoring = _node_reset_pending
                 try:
+                    if _lifecycle_changing:
+                        raise PublicationDeferred("Blender is replacing Grade scene data")
+                    _node_reset_pending = False
                     request = ticket.state
                     scene = next((candidate for candidate in bpy.data.scenes
                                   if candidate.as_pointer() == request.scene_identity), None)
@@ -4853,7 +4904,9 @@ def _service_render_preflight(*, defer=True):
                     # copy while the original ID still exposes the previous
                     # frame's RNA values. Re-assert the exact ticket time on
                     # the main-thread scene before reading animated Grade data.
-                    scene.frame_set(request.frame, subframe=float.fromhex(request.subframe))
+                    with (_restore_bake_sources(update_view_layer=False)
+                          if restoring else nullcontext()):
+                        scene.frame_set(request.frame, subframe=float.fromhex(request.subframe))
                     _reconcile_bake_outputs(_scene_grade_nodes(scene))
                     nodes, _signatures, signature = _animation_snapshot(scene)
                     failures = []
@@ -4891,6 +4944,8 @@ def _service_render_preflight(*, defer=True):
                 except Exception as error:
                     ticket.fail(error)
                     print("Perceptual Grade frame output failed closed:", error)
+                if ticket.failure_authorized:
+                    _revoke_render_output(ticket)
         except PublicationDeferred as error:
             if not defer:
                 _fail_render_preflight(ticket, error)
@@ -4898,20 +4953,29 @@ def _service_render_preflight(*, defer=True):
             _fail_render_preflight(ticket, error)
         else:
             if ticket.failure_authorized:
-                _fail_render_preflight(
-                    ticket, RuntimeError(ticket.state.error or "Render preflight failed"))
+                gate.finish_render_preflight_failure(ticket)
+
+
+def _revoke_render_output(ticket):
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("Render failure reconciliation requires Blender's main thread")
+    scene = next((candidate for candidate in bpy.data.scenes
+                  if candidate.as_pointer() == ticket.state.scene_identity), None)
+    if scene is not None:
+        error = RuntimeError(ticket.state.error or "Render preflight failed")
+        failures = _block_nodes(_scene_grade_nodes(scene), error,
+                                during_reset=_node_reset_pending)
+        for _nodes, failure in failures:
+            print("Perceptual Grade could not install render failure output:", failure)
 
 
 def _fail_render_preflight(ticket, error):
-    if threading.current_thread() is not threading.main_thread():
-        raise RuntimeError("Render failure reconciliation requires Blender's main thread")
     ticket.fail(error)
     if ticket.failure_authorized:
-        scene = next((candidate for candidate in bpy.data.scenes
-                      if candidate.as_pointer() == ticket.state.scene_identity), None)
-        if scene is not None:
-            _block_nodes(_scene_grade_nodes(scene), error)
-        _grade_resources.gate.finish_render_preflight_failure(ticket)
+        try:
+            _revoke_render_output(ticket)
+        finally:
+            _grade_resources.gate.finish_render_preflight_failure(ticket)
 
 
 def _render_preflight_tick():
@@ -6292,22 +6356,11 @@ class PG_OT_new_stack_grade(bpy.types.Operator):
 
 def _scene_grade_nodes(scene):
     roots = []
-    for owner in (getattr(scene, "world", None),
-                  getattr(scene, "compositing_node_group", None),
-                  getattr(scene, "node_tree", None)):
-        tree = getattr(owner, "node_tree", owner)
-        if tree is not None:
-            roots.append(tree)
-    for obj in tuple(getattr(scene, "objects", ())):
-        for slot in tuple(getattr(obj, "material_slots", ())):
-            material = getattr(slot, "material", None)
-            if material is not None and getattr(material, "use_nodes", False):
-                roots.append(material.node_tree)
-        data = getattr(obj, "data", None)
-        if getattr(data, "use_nodes", False):
-            tree = getattr(data, "node_tree", None)
-            if tree is not None:
-                roots.append(tree)
+    roots.extend(getattr(scene, name, None)
+                 for name in ("compositing_node_group", "node_tree"))
+    for _kind, owner in shader_scene_inventory(scene).owners:
+        if getattr(owner, "use_nodes", True):
+            roots.append(getattr(owner, "node_tree", None))
 
     outputs = {}
     seen = set()
@@ -6810,6 +6863,7 @@ def _register_handlers():
     for collection, callback in (
         (bpy.app.handlers.load_pre, _load_pre),
         (bpy.app.handlers.load_post, _load_post),
+        (bpy.app.handlers.load_post_fail, _load_post),
         (bpy.app.handlers.undo_pre, _undo_redo_pre),
         (bpy.app.handlers.redo_pre, _undo_redo_pre),
         (bpy.app.handlers.undo_post, _undo_redo_post),

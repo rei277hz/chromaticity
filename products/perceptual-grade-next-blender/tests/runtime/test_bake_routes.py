@@ -1053,6 +1053,66 @@ class BakeRouteTests(unittest.TestCase):
         changed = self.module.describe(target, context)
         self.assertNotEqual(first["signature"], changed["signature"])
 
+    def test_render_layers_capture_indirect_owners_and_layer_specific_overrides(self):
+        tree = Tree("Scene Compositor", "CompositorNodeTree")
+        self.scene.compositing_node_group = tree
+        target = self.make_grade(tree)
+        context = SimpleNamespace(scene=self.scene, object=None,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+        render_scene = ID("Rendered Scene", world=None, objects=Collection(),
+                          render=self.scene.render, cycles=self.scene.cycles)
+        layers = Node(tree, "CompositorNodeRLayers", outputs=(("Image", None),),
+                      scene=render_scene, layer="Selected")
+        link(layers, "Image", target, "Color")
+
+        def owner(name, output_type):
+            root = Tree(name)
+            node = self.make_grade(root)
+            output = Node(root, output_type, inputs=(("Surface", None),))
+            link(node, "Color", output, "Surface")
+            return ID(name, node_tree=root), node
+
+        material, indirect = owner("Instance material", "ShaderNodeOutputMaterial")
+        override, override_grade = owner("Override material", "ShaderNodeOutputMaterial")
+        world, world_grade = owner("Override world", "ShaderNodeOutputWorld")
+        unused, unrelated_grade = owner("Other layer material", "ShaderNodeOutputMaterial")
+        selected = ID("Selected", material_override=override, world_override=world)
+        other = ID("Other", material_override=unused)
+        render_scene.view_layers = (other, selected)
+        source = ID("Source", material_slots=[SimpleNamespace(material=material)])
+        nested = ID("Nested collection", objects=[source], children=[])
+        inner = ID("Nested instancer", instance_type="COLLECTION", instance_collection=nested)
+        child = ID("Child collection", objects=[inner], children=[])
+        outer = ID("Outer collection", objects=[], children=[child])
+        instancer = ID("Instancer", instance_type="COLLECTION", instance_collection=outer)
+        render_scene.objects.extend((instancer, inner))  # Shared source reached twice.
+
+        upstream, dependencies = [], []
+        baseline = self.module.describe(target, context, upstream_grades=upstream,
+                                        dependencies=dependencies)
+        self.assertCountEqual([node.as_pointer() for node in upstream],
+                              [node.as_pointer() for node in (indirect, override_grade, world_grade)])
+        self.assertTrue({item.as_pointer() for item in (source, nested, child, outer, world, override)}
+                        <= {item.as_pointer() for item in dependencies})
+
+        def current():
+            return self.module.preview(target, context)["request_signature"]
+
+        self.assertEqual(baseline["request_signature"], current())
+        unrelated_grade.pg_grade.pg_linear.exposure = 1.0
+        self.assertEqual(baseline["request_signature"], current())
+        for node in (indirect, override_grade, world_grade):
+            with self.subTest(node=node.id_data.name):
+                node.pg_grade.pg_linear.exposure = 1.0
+                self.assertNotEqual(baseline["request_signature"], current())
+                node.pg_grade.pg_linear.exposure = 0.0
+                self.assertEqual(baseline["request_signature"], current())
+        selected.material_override = unused
+        self.assertNotEqual(baseline["request_signature"], current())
+        selected.material_override = override
+        outer.children.clear()  # Same object set, different placement.
+        self.assertNotEqual(baseline["request_signature"], current())
+
     def test_compositor_camera_settings_change_bake_identity(self):
         camera_data = ID("Bake Camera Data", lens=50.0, sensor_width=36.0)
         camera = ID("Bake Camera", type="CAMERA", data=camera_data,

@@ -57,6 +57,9 @@ class BakeInstalledTests(unittest.TestCase):
                     self.fail("Native bake test timed out\n" + output[-20000:])
                 data = json.loads(report.read_text()) if report.exists() else {}
                 details = output[-20000:] + "\n" + json.dumps(data, indent=2)
+                crash = Path(tempfile.gettempdir()) / "blender.crash.txt"
+                if process.returncode and crash.is_file():
+                    details += "\nNative crash:\n" + crash.read_text(errors="replace")[-12000:]
                 self.assertEqual(process.returncode, 0, details)
                 self.assertTrue(data.get("passed"), details)
                 self.assertEqual(data.get("domains"), ["IMAGE", "UV", "COMPOSITOR"], details)

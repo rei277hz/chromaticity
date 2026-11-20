@@ -19,6 +19,7 @@ from ..kernel.color_ui import COLOR_FIELDS
 from ..kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
 from . import bake_graph
 from .bake_images import datablock_key, route_datablock
+from .shader_scene import shader_scene_inventory
 
 
 SCHEMA = 1
@@ -670,6 +671,20 @@ def _geometry_observation(obj):
             tuple(_semantic_identity(item.material) for item in getattr(obj, "material_slots", ())))
 
 
+def _instance_observations(inventory):
+    bindings = tuple((_semantic_identity(obj), _semantic_identity(obj.instance_collection))
+                     for obj in inventory.objects
+                     if getattr(obj, "instance_type", None) == "COLLECTION")
+    collections = tuple(
+        (_semantic_identity(collection), bool(getattr(collection, "hide_render", False)),
+         _plain(getattr(collection, "instance_offset", ())),
+         tuple(_semantic_identity(obj) for obj in collection.objects),
+         tuple(_semantic_identity(child) for child in collection.children))
+        for collection in inventory.collections
+    )
+    return bindings, collections
+
+
 class _Walker:
     def __init__(self, host, scene, *, owner_kind, owner, full, compositor, dependencies=None):
         self.host, self.scene, self.full = host, scene, full
@@ -687,6 +702,7 @@ class _Walker:
         self.visiting = set()
         self.visited = set()
         self.rendered = {}
+        self.render_layers = set()
         self.render_states = []
         self.render_observations = []
         self.coordinate_depth = 0
@@ -842,7 +858,9 @@ class _Walker:
                 return
             if kind == "CompositorNodeRLayers":
                 self.unknown_compositor_extent = True
-                self._render_scene(getattr(node, "scene", None) or self.scene)
+                render_scene = getattr(node, "scene", None)
+                self._render_scene(self.scene if render_scene is None else render_scene,
+                                   getattr(node, "layer", None))
             elif self.compositor:
                 if kind not in _COMPOSITOR_POINTWISE and kind not in POINTWISE:
                     self.unknown_compositor_extent = True
@@ -854,10 +872,12 @@ class _Walker:
             self.visiting.remove(key)
             self.visited.add(key)
 
-    def _render_scene(self, scene):
-        key = _identity(scene)
-        if key in self.rendered:
+    def _render_scene(self, scene, layer_name):
+        scene_key = _identity(scene)
+        key = scene_key, layer_name
+        if key in self.render_layers:
             return
+        self.render_layers.add(key)
         engine = scene.render.engine
         if engine == "CYCLES":
             engine_settings = getattr(scene, "cycles", None)
@@ -865,13 +885,23 @@ class _Walker:
             engine_settings = getattr(scene, "eevee", None)
         else:
             engine_settings = None
-        self.rendered[key] = (
+        self.rendered[scene_key] = (
             engine, getattr(engine_settings, "device", None) if engine == "CYCLES" else None,
         )
-        objects = tuple(scene.objects)
+        selected = (None if not layer_name else tuple(
+            layer for layer in getattr(scene, "view_layers", ()) if layer.name == layer_name))
+        inventory = shader_scene_inventory(scene, view_layers=selected)
+        layer_overrides = tuple(
+            (layer.name, bool(getattr(layer, "use", True)),
+             _semantic_identity(getattr(layer, "material_override", None)),
+             _semantic_identity(getattr(layer, "world_override", None)))
+            for layer in inventory.view_layers
+        )
+        objects = inventory.objects
         camera = getattr(scene, "camera", None)
         self._add_dependency(camera)
-        summary = (_semantic_identity(scene),
+        summary = (_semantic_identity(scene), layer_name, layer_overrides,
+                   _instance_observations(inventory),
                    _rna_state(scene.render, exclude=_COMPOSITOR_OVERRIDES),
                    _rna_state(engine_settings),
                    _semantic_identity(camera), _dependency_state(camera),
@@ -888,27 +918,26 @@ class _Walker:
                          for obj in objects) if self.full
                     else tuple(_geometry_observation(obj) for obj in objects))
         self.render_states.append((*summary, geometry))
-        owners = [("world", getattr(scene, "world", None))]
         for obj in objects:
             self._add_dependency(obj)
             self._add_dependency(getattr(obj, "data", None))
-            owners.extend(("material", slot.material) for slot in getattr(obj, "material_slots", ()))
-            if getattr(obj, "type", None) == "LIGHT":
-                owners.append(("light", obj.data))
+        for collection in inventory.collections:
+            self._add_dependency(collection)
+        owners = inventory.owners
         for _kind, owner in owners:
             self._add_dependency(owner)
         owner_settings = tuple((_semantic_identity(owner), _rna_state(
             owner, dependencies=self.dependencies,
             dependency_seen=self.dependency_pointers,
         ))
-                               for _kind, owner in owners if owner is not None)
+                               for _kind, owner in owners)
         self.render_states.append(("owner_settings", owner_settings))
         self.render_observations.append(("owner_settings", owner_settings))
         previous_owner = self.owner
         try:
             for kind, owner in owners:
                 tree = getattr(owner, "node_tree", None)
-                if tree is None:
+                if tree is None or not getattr(owner, "use_nodes", True):
                     continue
                 self.owner = (kind, datablock_key(self.host, owner))
                 for endpoint in tree.nodes:

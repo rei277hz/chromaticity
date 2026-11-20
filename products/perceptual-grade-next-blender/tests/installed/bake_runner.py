@@ -359,6 +359,85 @@ def check_bake_upstream_grade_identity(scene, directory):
         nodes._bake_sources.forget(("request", target.as_pointer()))
 
 
+def check_render_layers_indirect_sources(scene, target, context):
+    layer = scene.view_layers[0]
+    original_override = layer.material_override
+    camera = scene.camera
+    original_camera = (camera.location.copy(), camera.data.type, camera.data.ortho_scale)
+    material = bpy.data.materials.new("Bake indirect source material")
+    material.use_nodes = True
+    tree = material.node_tree
+    grade = nodes.create_node(tree)
+    grade.pg_grade = nodes._make_grade()
+    grade.inputs["Color"].default_value = (.22, .15, .09, 1.)
+    emission = tree.nodes.new("ShaderNodeEmission")
+    tree.links.new(grade.outputs["Color"], emission.inputs["Color"])
+    tree.links.new(emission.outputs["Emission"], tree.nodes["Material Output"].inputs["Surface"])
+    wait_ready(grade)
+    replacement = bpy.data.materials.new("Bake replacement layer override")
+    replacement.use_nodes = True
+    replacement_tree = replacement.node_tree
+    replacement_emission = replacement_tree.nodes.new("ShaderNodeEmission")
+    replacement_emission.inputs["Color"].default_value = (.02, .45, .20, 1.)
+    replacement_tree.links.new(replacement_emission.outputs["Emission"],
+                               replacement_tree.nodes["Material Output"].inputs["Surface"])
+    source = bpy.data.collections.new("Bake instance source")
+    mesh = bpy.data.meshes.new("Bake indirect mesh")
+    mesh.from_pydata(((-2, -2, 3), (2, -2, 3), (2, 2, 3), (-2, 2, 3)), (), ((0, 1, 2, 3),))
+    obj = bpy.data.objects.new("Bake indirect object", mesh)
+    source.objects.link(obj)
+    mesh.materials.append(material)
+    instance = bpy.data.objects.new("Bake collection instance", None)
+    scene.collection.objects.link(instance)
+    instance.instance_type = "COLLECTION"
+    instance.instance_collection = source
+    try:
+        for binding in ("instance", "override"):
+            if binding == "override":
+                instance.instance_type = "NONE"
+                layer.material_override = material
+            bpy.context.view_layer.update()
+            upstream = []
+            nodes.bake_routes.describe(target, context, upstream_grades=upstream)
+            assert upstream.count(grade) == 1, (binding, upstream)
+            nodes._bake_request(target, context)
+            key = target.as_pointer()
+            pending = nodes._bake_manager.jobs[key]
+            signature = pending["signature"]
+            grade.pg_grade.pg_linear.exposure += .25
+            assert nodes._bake_current_signature(target, pending["route"]) != signature, binding
+            nodes._bake_tick()
+            assert key not in nodes._bake_manager.jobs, binding
+            assert target.pg_use_bake and target.pg_bake_image is not None
+
+        # Give only the selected view layer's override control of these pixels.
+        scene.collection.objects.link(obj)
+        mesh.materials.clear()
+        camera.location = (0., 0., 5.)
+        camera.data.type = "ORTHO"
+        camera.data.ortho_scale = 2.
+        bpy.context.view_layer.update()
+        before = bake(target, context)
+        image = target.pg_bake_image
+        assert_bake_controls(target, context, can_bake=True)
+        layer.material_override = replacement
+        bpy.context.view_layer.update()
+        assert_bake_controls(target, context, "status.bake_stale_inputs", can_bake=True)
+        assert target.pg_use_bake and target.pg_bake_image == image
+        np.testing.assert_array_equal(np.asarray(image.pixels[:]), before)
+        after = bake(target, context)
+        assert_bake_controls(target, context, can_bake=True)
+        width, height = tuple(image.size)
+        old_rgb = before.reshape(height, width, 4)[height // 2, width // 2, :3]
+        new_rgb = after.reshape(height, width, 4)[height // 2, width // 2, :3]
+        assert np.max(np.abs(new_rgb - old_rgb)) > .03, (old_rgb, new_rgb)
+    finally:
+        camera.location, camera.data.type, camera.data.ortho_scale = original_camera
+        layer.material_override = original_override
+        scene.collection.objects.unlink(instance)
+        scene.collection.objects.unlink(obj)
+
+
 scene = bpy.context.scene
 scene.frame_set(1)
 scene.render.resolution_percentage = 100
@@ -862,6 +941,7 @@ scene.render.engine = "CYCLES"
 assert_bake_controls(comp_grade, comp_context, "status.bake_stale_engine", can_bake=True)
 scene.render.engine = "BLENDER_EEVEE"
 assert_bake_controls(comp_grade, comp_context, can_bake=True)
+check_render_layers_indirect_sources(scene, comp_grade, comp_context)
 
 # A compositor constant has no source-image dimensions, so native capture
 # should use the scene canvas while preserving its constant pixel value.

@@ -200,14 +200,22 @@ class PublicationGate:
             self._preflight_queue.append(ticket)
             return ticket
 
-    def take_render_preflight(self, *, failed_only=False) -> Optional[RenderPreflightTicket]:
+    def invalidate_render_preflights(self):
+        """Fence tickets issued before Blender replaces the working scene IDs."""
+        with self._lock:
+            tickets = list(self._preflight_queue)
+            if self._preflight_active is not None:
+                tickets.append(self._preflight_active)
+            for ticket in tickets:
+                ticket.fail(PublicationDeferred(
+                    "Render preflight was invalidated by host lifecycle reset"))
+
+    def take_render_preflight(self) -> Optional[RenderPreflightTicket]:
         """Take one request on the main thread; a timer should poll this method."""
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("Render preflight must be taken on Blender's main thread")
         with self._lock:
             if self._preflight_active is not None or not self._preflight_queue:
-                return None
-            if failed_only and not self._preflight_queue[0].failure_authorized:
                 return None
             ticket = self._preflight_queue.popleft()
             self._preflight_active = ticket
