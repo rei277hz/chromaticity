@@ -151,9 +151,8 @@ checks the stored row against the public 4° minimum; an already-valid row is
 preserved exactly. Finite out-of-range Adaptance targets
 are shortened along their a/b ray; nonfinite requests fail visibly. These
 effective settings feed preparation without changing authored values,
-keyframes, or ownership claims. **Auto** is derived from current displacement
-and identifies the owning handle; **Limited** compares raw with effective
-settings. Neither indication is an independent persisted validity flag.
+keyframes, or ownership claims. **Limited** compares raw with effective
+settings and is not an independent persisted validity flag.
 
 ![Color authoring and evaluated constraints](../assets/illustrations/next-policy/10-color-authoring-sequence.svg)
 
@@ -578,28 +577,24 @@ retains ownership and its error for retry. Terminal retirement removes the job
 and temporary snapshot files. `terminal` is absorbing and does not itself imply
 success.
 
-`output_policy()` is derived from the node's Use Bake setting, the current
-small signature, the persisted receipt signature, image validity, and any
-live-kernel error; it is not another stored
-mode or readiness flag. Use Bake can be disabled while retaining the managed
-Image binding. A stale artifact automatically selects the live Grade or Stack
-result, including when explicit source invalidation arrives with an unchanged
-signature. An invalid managed image or an unrecoverable live kernel selects the
-visible error path and clears baked selection rather than rendering stale
-pixels. When a shared Image is selected by several Grade nodes, a successful
-rebake updates the Image once and synchronizes every reader; rollback likewise
-fans out to all readers. The freshness decision extends the same bake policy;
-it adds no independent stored mode. Its returned effects are the sole authority
-to revoke a receipt, turn Use Bake off, or reconcile readers. Toggle availability
-is derived from those same facts and stays false after revocation until rebake.
+`output_policy()` derives output from the node's Use Bake setting, managed
+Image validity, and live-kernel error. Turning Use Bake off selects live output
+and retains the Image binding. When Use Bake is on, a valid Image remains
+selected across input or render-engine changes and the node displays a freshness
+warning with the reason. An invalid selected Image or an unrecoverable live
+kernel selects the visible error path. Toggle availability depends on Image
+validity and live-kernel health. When several Grade nodes select a shared
+Image, a successful rebake updates the Image once and synchronizes every
+reader. Rollback likewise synchronizes all readers. Each reader keeps its own
+input receipt.
 
 ![Bake request and publication policy](../assets/illustrations/next-policy/09-bake.svg)
 
-<p class="figure-caption">A stale or cancelled request is retired before publication. Publication admission, image commit, activation, and rollback are one fenced transaction; derived output policy falls back to live output when the signature no longer matches.</p>
+<p class="figure-caption">A stale or cancelled request is retired before publication. Publication admission, image commit, activation, and rollback are one fenced transaction. An already published Image remains selectable with a warning when its inputs change.</p>
 
 ![Bake request workflow](../assets/illustrations/next-policy/09-bake-sequence.svg)
 
-<p class="figure-caption">The helper writes bake.exr in the request's private artifact directory. A changed graph/settings digest or dependency generation before publication discards the artifact. The gate commits a managed float Image, activates the requesting node, and synchronizes shared readers. A publication or activation error restores the ImageSnapshot. Load and undo rebaseline cheap persisted receipts before preserving baked selection.</p>
+<p class="figure-caption">The helper writes bake.exr in the request's private artifact directory. A changed graph/settings digest or dependency generation before publication discards the artifact. The gate commits a managed float Image, activates the requesting node, and synchronizes shared readers. A publication or activation error restores the ImageSnapshot. Load and undo restore the selection and receipt and rebaseline transient source generations.</p>
 
 ### Route selection and source constraints
 
@@ -655,14 +650,16 @@ It covers the bake target, every enabled Stack Grade, and live upstream Grade
 or Stack nodes. This keeps completion fencing and persisted load/undo receipts
 sensitive to Stage 3 changes as well as the immediate edit callbacks.
 
-The freshness decision is derived from the current receipt, cheap Image
-metadata, per-ID generations, graph/settings digest, and live-kernel status; no
-stored `ready` or `stale` flag duplicates those facts. Nodes bound to a managed
-Image are tracked even while Use Bake is off, so a shared Image change can
-revoke every dependent receipt. A detected source, route, Grade, or Stack
-change revokes the affected receipt, selects live output, turns Use Bake off,
-and disables (greys out) the control until a new bake publishes. Policy effects
-authorize the corresponding metadata and graph mutations.
+Freshness warnings are derived from the receipt, cheap Image metadata, per-ID
+generations, graph/settings digest, and live route observation; no duplicate
+`ready` or `stale` flag is stored. Nodes bound to a managed Image remain tracked
+while Use Bake is off. A notified source update persists a source-invalidated
+marker on each affected node's receipt, including when its cheap signature is
+unchanged. A detected route, Grade, or Stack mismatch leaves the receipt
+intact and warns while a valid Image remains selected when Use Bake is on.
+Rebaking or explicitly binding an Image records a new node-specific baseline.
+Output selection separately fails closed for an invalid Image or failed live
+Grade.
 
 Dependency notifications advance generations for changed Images, Mesh geometry,
 and Object transforms. When Blender supplies update flags, an Object notification
@@ -670,16 +667,17 @@ with geometry or shading set but no transform update is ignored: Blender also
 emits those flags for material changes, node changes, and derived selector
 reconciliation. Mesh data has its own generation, while Object transforms,
 material slots, modifiers, and other relevant metadata are observed separately.
-Mesh shading-only notifications are also ignored. This avoids revoking a bake
-merely because its managed graph was recovered or synchronized.
+Mesh shading-only notifications are also ignored. Recovery and synchronization
+of the managed graph can emit these notifications.
 
 After file load or undo, transient per-ID generations are rebaselined against
-the cheap persisted metadata. A matching receipt preserves `pg_use_bake`; a
-missing, unsupported, or mismatched receipt is revoked and returns the node to
-live output with Use Bake disabled until rebake. Earlier receipt schemas are
-not migrated. Rebaseline does not rewrite the receipt or claim that pixel
-contents were checked. External-file changes that preserve
-the recorded metadata may therefore be missed. Scripts that change an Image
+the cheap persisted metadata. A matching receipt with no recorded source update
+clears the freshness warning.
+A mismatched receipt remains available for a warning and does not disable a
+valid selected Image. A valid Image without a readable receipt is marked
+unverified. Rebaseline does not claim that pixel contents were checked.
+External-file changes that preserve the recorded metadata may therefore be
+missed. Scripts that change an Image
 must explicitly invalidate it with
 `bpy.ops.perceptual_grade.invalidate_image(image="Image Name")` or the
 extension's exported `invalidate_image(image)` Python function; calling
@@ -1004,14 +1002,20 @@ Bake uses `request_requires_valid_signature`,
 `completion_requires_current_signature`,
 `publication_requires_current_signature`,
 `publication_failure_authorizes_rollback`,
-`activation_failure_authorizes_rollback`, and
-`stale_bake_automatically_uses_live_output`. These properties establish the
-policy's authorization boundary; native snapshot correctness and rollback
-success remain adapter premises. The `request_runs_and_publishes` and
+`activation_failure_authorizes_rollback`,
+`valid_artifact_remains_baked`,
+`source_invalidation_requires_tracked_receipt`,
+`toggle_requires_valid_artifact_and_live_kernel`, and
+`manual_bypass_selects_live_output`. These properties establish the policy's
+authorization boundary; native snapshot correctness and rollback success remain
+adapter premises. The `request_runs_and_publishes` and
 `failed_request_retires_without_publishing` witnesses exercise successful and
-failed request paths. Mutations remove current-signature matching or stale-output
-fallback to check that the corresponding properties detect each weakened check.
-Helper session, job ID, and result-signature validation are runtime contracts.
+failed request paths. The mutations `skip_current_signature_check`,
+`select_live_for_valid_bake`, `allow_invalid_artifact`,
+`drop_live_error_guard`, `drop_source_tracking_requirement`, and
+`allow_invalid_toggle` check that the corresponding properties detect weakened
+contracts. Helper session, job ID, and result-signature validation are runtime
+contracts.
 
 ## Follow one edit through the layer
 

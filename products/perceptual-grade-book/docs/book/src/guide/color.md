@@ -44,11 +44,10 @@ numeric fields and does not provide a draggable diagram.
 
 Neighboring destination hues keep at least 4° of cyclic separation, including
 the magenta-to-red seam. An edit pins the selected hue and pushes neighbors
-when needed, in either direction around the web. **Auto** marks a hue moved
-by that edit; its tooltip identifies the initiating hue. Later edits of that
-initiating hue solve its automatic return positions together, approaching each
-saved position as far as the neighboring gaps allow. A blocked return stays
-pending. Editing one of those hues yourself starts from its current position
+when needed, in either direction around the web. Later edits of the initiating
+hue solve its automatic return positions together, approaching each saved
+position as far as neighboring gaps allow. A blocked return stays pending.
+Editing one of those hues yourself starts from its current position
 and detaches only that hue from the earlier automatic adjustment.
 
 Changing Peak clears the automatic return relationships and resolves the new

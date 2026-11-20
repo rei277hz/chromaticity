@@ -2,7 +2,7 @@ import unittest
 
 from policy.bake import (
     Effects, Event, State, bake_toggle_available, binding_policy, can_enqueue,
-    new, output_policy, step,
+    new, output_policy, persist_source_invalidation, step,
 )
 
 
@@ -57,34 +57,33 @@ class BakePolicyTests(unittest.TestCase):
         self.assertFalse(can_enqueue(8, False))
         self.assertFalse(can_enqueue(0, True))
 
-    def test_toggle_off_is_represented_by_output_policy(self):
-        output = output_policy(False, "a", "a", True)
+    def test_toggle_off_selects_live_output(self):
+        output = output_policy(False, True)
         self.assertEqual((output.mode, output.error), ("live", None))
 
-    def test_stale_bake_automatically_uses_live_output(self):
-        output = output_policy(True, "new", "old", True)
-        self.assertEqual((output.mode, output.error), ("live", None))
+    def test_valid_stale_bake_remains_selected(self):
+        # Freshness is an adapter warning and does not enter output selection.
+        output = output_policy(True, True)
+        self.assertEqual((output.mode, output.error), ("baked", None))
 
-    def test_explicit_source_invalidation_revokes_matching_receipt(self):
-        output = output_policy(True, "same", "same", True, source_invalidated=True)
-        self.assertEqual((output.mode, output.revoke_receipt), ("live", True))
+    def test_source_invalidation_is_authorized_only_for_tracked_receipt(self):
+        self.assertTrue(persist_source_invalidation(True, True))
+        self.assertFalse(persist_source_invalidation(False, True))
+        self.assertFalse(persist_source_invalidation(True, False))
 
     def test_invalid_selected_image_fails_closed(self):
-        output = output_policy(True, "a", "a", False)
+        output = output_policy(True, False)
         self.assertEqual(output.mode, "error")
         self.assertIsNotNone(output.error)
 
-    def test_toggle_requires_current_receipt_and_valid_image(self):
-        self.assertTrue(bake_toggle_available("same", "same", True))
-        self.assertFalse(bake_toggle_available("changed", "same", True))
-        self.assertFalse(bake_toggle_available("same", "same", False))
-        self.assertFalse(bake_toggle_available("same", "same", True, "live failed"))
+    def test_toggle_requires_valid_image_and_live_kernel(self):
+        self.assertTrue(bake_toggle_available(True))
+        self.assertFalse(bake_toggle_available(False))
+        self.assertFalse(bake_toggle_available(True, "live failed"))
 
-    def test_stale_receipt_is_revoked_and_valid_manual_off_is_retained(self):
-        stale = output_policy(False, "changed", "old", True)
-        self.assertEqual((stale.mode, stale.revoke_receipt), ("live", True))
-        current = output_policy(False, "same", "same", True)
-        self.assertFalse(current.revoke_receipt)
+    def test_manual_off_retains_valid_bake_binding(self):
+        output = output_policy(False, True)
+        self.assertEqual((output.mode, output.error), ("live", None))
 
     def test_shared_image_binding_requires_matching_route_and_valid_artifact(self):
         self.assertEqual(binding_policy("route", True, True).receipt_signature,

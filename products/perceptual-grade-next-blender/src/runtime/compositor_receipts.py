@@ -1,7 +1,17 @@
 """Plain compositor binding and completion facts shared with native callbacks."""
 
 from collections import deque
+from dataclasses import dataclass
 import threading
+
+
+@dataclass(frozen=True)
+class MembershipEffects:
+    previous: dict
+
+    @property
+    def reevaluate_scenes(self):
+        return {scene for (scene, _node), old in self.previous.items() if old is None}
 
 
 class CompositorReceipts:
@@ -10,17 +20,55 @@ class CompositorReceipts:
         self._bindings = {}
         self._completed = {}
         self._pending = deque()
+        self._serial = 0
 
-    def bind(self, nodes_by_scene, generation):
-        """Record one successful publication; return exact rollback facts."""
+    def bind(self, nodes_by_scene, *, baked_nodes=()):
+        """Bind live outputs under a fresh generation and withdraw baked outputs."""
         previous = {}
         with self._lock:
+            if nodes_by_scene:
+                self._serial += 1
             for scene, nodes in nodes_by_scene.items():
                 bindings = self._bindings.setdefault(scene, {})
                 for node in nodes:
                     previous[scene, node] = bindings.get(node)
-                    bindings[node] = generation
+                    bindings[node] = self._serial
+            if baked_nodes:
+                for scene, bindings in tuple(self._bindings.items()):
+                    for node in baked_nodes:
+                        if node in bindings:
+                            previous[scene, node] = bindings.pop(node)
+                    if not bindings:
+                        del self._bindings[scene]
         return previous
+
+    def reconcile(self, nodes_by_scene):
+        """Match scene membership, preserving generations for unchanged pairs."""
+        desired = {
+            (scene, node)
+            for scene, nodes in nodes_by_scene.items()
+            for node in nodes
+        }
+        previous = {}
+        with self._lock:
+            current = {
+                (scene, node)
+                for scene, bindings in self._bindings.items()
+                for node in bindings
+            }
+            removed = current - desired
+            added = desired - current
+            if added:
+                self._serial += 1
+            for scene, node in removed:
+                bindings = self._bindings[scene]
+                previous[scene, node] = bindings.pop(node)
+                if not bindings:
+                    del self._bindings[scene]
+            for scene, node in added:
+                previous[scene, node] = None
+                self._bindings.setdefault(scene, {})[node] = self._serial
+        return MembershipEffects(previous)
 
     def restore(self, previous):
         with self._lock:
@@ -59,7 +107,7 @@ class CompositorReceipts:
             for scene in scenes:
                 generation = self._bindings.get(scene, {}).get(node)
                 if generation is None:
-                    continue
+                    return True
                 completed = self._completed.get(scene)
                 if completed is None or completed[1].get(node) != generation:
                     return True

@@ -279,7 +279,9 @@ def main():
             record_initial("gpu_probe_seconds", state["gpu_probe_seconds"])
         if receipt is not None:
             quality, prepared = receipt
-            signature = nodes._stack_signature(prepared.settings, prepared.space)
+            signature = nodes._stack_settings_signature(
+                prepared.settings, prepared.space, prepared.directions,
+            )
             state["ready_at"][(signature, quality)] = received_at
             job = state["jobs"].get(id(self)) or next(
                 (candidate for candidate in state["jobs"].values()

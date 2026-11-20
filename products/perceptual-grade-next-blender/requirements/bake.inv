@@ -102,52 +102,42 @@
       "assert": "transition == (State('terminal'), Effects())"
     },
     {
-      "name": "stale_bake_automatically_uses_live_output",
-      "variables": {
-        "use_bake": "bool"
-      },
-      "lets": {
-        "output": "output_policy(use_bake, 'new', 'old', True)"
-      },
-      "assert": "output.mode == 'live' and output.error is None"
-    },
-    {
-      "name": "source_invalidation_overrides_matching_signature",
-      "variables": {
-        "use_bake": "bool"
-      },
-      "lets": {
-        "output": "output_policy(use_bake, 'same', 'same', True, None, True)"
-      },
-      "assert": "output.mode == 'live' and output.revoke_receipt"
-    },
-    {
-      "name": "toggle_requires_current_receipt_and_valid_artifact",
-      "variables": {
-        "current": "Optional[str]",
-        "receipt": "Optional[str]",
-        "valid": "bool"
-      },
-      "lets": {
-        "available": "bake_toggle_available(current, receipt, valid)"
-      },
-      "assert": "not available or (valid and current is not None and current == receipt)"
-    },
-    {
-      "name": "stale_disabled_bake_revokes_receipt",
+      "name": "valid_artifact_remains_baked",
       "variables": {},
       "lets": {
-        "output": "output_policy(False, 'new', 'old', True)"
+        "output": "output_policy(True, True)"
       },
-      "assert": "output.mode == 'live' and output.revoke_receipt"
+      "assert": "output == Output('baked')"
     },
     {
-      "name": "matching_disabled_bake_retains_receipt",
+      "name": "source_invalidation_requires_tracked_receipt",
+      "variables": {
+        "has_receipt": "bool",
+        "source_changed": "bool"
+      },
+      "lets": {
+        "authorized": "persist_source_invalidation(has_receipt, source_changed)"
+      },
+      "assert": "authorized == (has_receipt and source_changed)"
+    },
+    {
+      "name": "toggle_requires_valid_artifact_and_live_kernel",
+      "variables": {
+        "valid": "bool",
+        "live_error": "Optional[str]"
+      },
+      "lets": {
+        "available": "bake_toggle_available(valid, live_error)"
+      },
+      "assert": "available == (valid and live_error is None)"
+    },
+    {
+      "name": "manual_bypass_selects_live_output",
       "variables": {},
       "lets": {
-        "output": "output_policy(False, 'same', 'same', True)"
+        "output": "output_policy(False, True)"
       },
-      "assert": "output.mode == 'live' and not output.revoke_receipt"
+      "assert": "output == Output('live')"
     },
     {
       "name": "shared_image_binding_requires_valid_matching_route",
@@ -163,7 +153,7 @@
       "name": "invalid_selected_image_fails_closed",
       "variables": {},
       "lets": {
-        "output": "output_policy(True, 'a', 'a', False)"
+        "output": "output_policy(True, False)"
       },
       "assert": "output.mode == 'error' and output.error is not None"
     },
@@ -173,7 +163,7 @@
         "artifact_valid": "bool"
       },
       "lets": {
-        "output": "output_policy(True, 'a', 'a', artifact_valid, 'kernel lost')"
+        "output": "output_policy(True, artifact_valid, 'kernel lost')"
       },
       "assert": "output.mode == 'error' and output.error == 'kernel lost'"
     }
@@ -213,21 +203,48 @@
       ]
     },
     {
-      "name": "keep_stale_bake_selected",
+      "name": "select_live_for_valid_bake",
       "function": "output_policy",
-      "target": "not bake_toggle_available(desired_signature, artifact_signature, artifact_valid)",
-      "replacement": "False",
+      "target": "Output(\"baked\")",
+      "replacement": "Output(\"live\")",
       "detects": [
-        "property.stale_bake_automatically_uses_live_output"
+        "property.valid_artifact_remains_baked"
       ]
     },
     {
-      "name": "allow_stale_toggle",
+      "name": "allow_invalid_artifact",
+      "function": "output_policy",
+      "target": "not artifact_valid",
+      "replacement": "False",
+      "detects": [
+        "property.invalid_selected_image_fails_closed"
+      ]
+    },
+    {
+      "name": "drop_live_error_guard",
+      "function": "output_policy",
+      "target": "live_error is not None",
+      "replacement": "False",
+      "detects": [
+        "property.live_failure_overrides_baked_output"
+      ]
+    },
+    {
+      "name": "drop_source_tracking_requirement",
+      "function": "persist_source_invalidation",
+      "target": "has_receipt and source_changed",
+      "replacement": "source_changed",
+      "detects": [
+        "property.source_invalidation_requires_tracked_receipt"
+      ]
+    },
+    {
+      "name": "allow_invalid_toggle",
       "function": "bake_toggle_available",
-      "target": "desired_signature == artifact_signature",
+      "target": "live_error is None and artifact_valid",
       "replacement": "True",
       "detects": [
-        "property.toggle_requires_current_receipt_and_valid_artifact"
+        "property.toggle_requires_valid_artifact_and_live_kernel"
       ]
     }
   ]

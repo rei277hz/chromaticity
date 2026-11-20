@@ -31,6 +31,7 @@ class Layout:
         self.parent = parent
         self.enabled = True
         if parent is None:
+            self.labels = []
             self.operators = []
             self.properties = []
             self.context = {}
@@ -40,7 +41,7 @@ class Layout:
             self.templates = []
             self.rows = []
         else:
-            for name in ("operators", "properties", "context", "property_states",
+            for name in ("labels", "operators", "properties", "context", "property_states",
                          "operator_states", "operator_options", "templates", "rows"):
                 setattr(self, name, getattr(parent, name))
 
@@ -82,8 +83,8 @@ class Layout:
     def separator(self):
         pass
 
-    def label(self, **_kwargs):
-        pass
+    def label(self, *, text="", **_kwargs):
+        self.labels.append(text)
 
 
 def _check_color_sidebar(nodes, context, owner, *, enabled):
@@ -382,8 +383,10 @@ def check_stack_ui(nodes, tree):
         assert len(layout.rows) == len(entries)
         assert all(row.alignment == "EXPAND" for row in layout.rows)
         assert all(entry.grade is None for entry in entries)
+        assert all(entry.direction == "FORWARD" for entry in entries)
         assert layout.properties == [
-            (entry.as_pointer(), "enabled") for entry in entries
+            (entry.as_pointer(), name) for entry in entries
+            for name in ("enabled", "direction")
         ]
         assert [button.index for button in buttons] == [0, 1]
         assert layout.context["pg_stack_node"] == node
@@ -434,7 +437,8 @@ def check_stack_ui(nodes, tree):
         assert all(row.alignment == "EXPAND" for row in populated_layout.rows)
         assert all(entry.grade is not None for entry in node.pg_stack_entries)
         assert populated_layout.properties == [
-            (entry.as_pointer(), "enabled") for entry in node.pg_stack_entries
+            (entry.as_pointer(), name) for entry in node.pg_stack_entries
+            for name in ("enabled", "direction")
         ]
 
         tree.nodes.active = node

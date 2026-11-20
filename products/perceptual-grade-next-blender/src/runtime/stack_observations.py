@@ -1,9 +1,12 @@
-"""Runtime-owned observations over ordered Grade Stack membership."""
+"""Runtime-owned observations over enabled Grade Stack entries."""
 
 
-def stack_changed(previous_ids: tuple[int, ...], current_ids: tuple[int, ...]) -> bool:
-    return previous_ids != current_ids
+Entry = tuple[int, str]
 
 
-def grade_is_referenced(grade_ids: tuple[int, ...], grade_id: int) -> bool:
-    return grade_id in grade_ids
+def stack_changed(previous: tuple[Entry, ...], current: tuple[Entry, ...]) -> bool:
+    return previous != current
+
+
+def grade_is_referenced(entries: tuple[Entry, ...], grade_id: int) -> bool:
+    return any(pointer == grade_id for pointer, _direction in entries)

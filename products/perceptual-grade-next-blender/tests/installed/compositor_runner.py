@@ -337,6 +337,246 @@ def finish(error=None):
     bpy.ops.wm.quit_blender()
 
 
+def exercise_grade_viewer_adoption():
+    """A restored Grade requests a new Viewer evaluation after graph admission."""
+    grade = consumers()[0]
+    pointer = grade.as_pointer()
+    scene_id = bpy.context.scene.as_pointer()
+    receipts = nodes._compositor_receipts
+    gate = nodes._grade_resources.gate
+    kernel = grade.node_tree
+    bank_generation = kernel[nodes.PARAMETER_GENERATION]
+    banks = tuple(kernel[key] for key in nodes.PARAMETER_BANK_BINDINGS)
+    viewer = next(image for image in bpy.data.images if image.type == "COMPOSITING")
+    pixels = np.asarray(viewer.pixels[:], dtype=np.float32)
+    requested = []
+    held = {}
+    request = nodes._request_compositor_evaluation
+    deliver = receipts.completed
+
+    def generation():
+        return receipts.snapshot(scene_id).get(pointer)
+
+    def track_request(scene):
+        if scene.as_pointer() == scene_id:
+            requested.append(generation())
+        request(scene)
+
+    def hold_completion(receipt):
+        if receipt is not None and receipt.successful and receipt.identity == scene_id:
+            binding = dict(receipt.snapshot).get(pointer)
+            if binding is not None:
+                held[binding] = receipt
+                return
+        deliver(receipt)
+
+    while gate.blocked() or nodes._compositor_output_pending(grade):
+        yield "current Grade Viewer"
+    previous = generation()
+    assert previous is not None
+    receipts.completed = hold_completion
+    nodes._request_compositor_evaluation = track_request
+    try:
+        receipts.forget(pointer)
+        assert not nodes._refresh_nodes((grade,))
+        first = generation()
+        assert first is not None and first != previous and requested == [first], requested
+        while first not in held or gate.blocked():
+            yield "first adopted Grade Viewer completion"
+
+        gate.evaluation_started(
+            "compositor", scene_id, snapshot=receipts.snapshot(scene_id),
+        )
+        receipts.forget(pointer)
+        try:
+            assert not nodes._refresh_nodes((grade,))
+            nodes._collect_compositor_receipts()
+            assert generation() is None and requested == [first], requested
+            assert grade.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        finally:
+            receipt = gate.evaluation_finished("compositor", scene_id)
+            deliver(receipt)
+
+        # The regular membership pass retries the unbound node once admission returns.
+        nodes._collect_compositor_receipts()
+        second = generation()
+        assert second != first and requested == [first, second], requested
+        deliver(held[first])
+        nodes._collect_compositor_receipts()
+        assert nodes._compositor_output_pending(grade)
+        assert grade.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        while second not in held:
+            yield "retried Grade Viewer completion"
+        deliver(held[second])
+        nodes._collect_compositor_receipts()
+        assert not nodes._compositor_output_pending(grade)
+        assert not grade.get(nodes._NODE_PENDING)
+        assert grade.node_tree == kernel and kernel[nodes.PARAMETER_GENERATION] == bank_generation
+        assert tuple(kernel[key] for key in nodes.PARAMETER_BANK_BINDINGS) == banks
+        np.testing.assert_array_equal(viewer.pixels[:], pixels)
+        result["grade_viewer_adoption"] = True
+    finally:
+        receipts.completed = deliver
+        nodes._request_compositor_evaluation = request
+
+
+def exercise_viewer_receipts():
+    yield from exercise_grade_viewer_adoption()
+    helper = importlib.import_module(extension.__name__ + ".lut_helper")
+    scene = bpy.context.scene
+    scene.render.compositor_device = "CPU"
+    scene.render.compositor_precision = "FULL"
+    width, height = 16, 8
+    scene.render.resolution_x = width
+    scene.render.resolution_y = height
+    scene.render.resolution_percentage = 100
+    tree = scene.compositing_node_group
+    stack = nodes.create_stack_node(tree)
+    grade = nodes._make_grade()
+    stack.pg_stack_entries.add().grade = grade
+    source = next(node for node in tree.nodes if node.bl_idname == "CompositorNodeImage")
+    viewer = next(node for node in tree.nodes if node.bl_idname == "CompositorNodeViewer")
+    image = bpy.data.images.new("Stack Viewer source", width, height, alpha=True, float_buffer=True)
+    image.colorspace_settings.name = "Non-Color"
+    image.alpha_mode = "CHANNEL_PACKED"
+    image.use_half_precision = False
+    neutral_patches = np.asarray(((.005, .005, .005, .4), (.01, .01, .01, .65)), dtype=np.float32)
+    image.pixels.foreach_set(np.tile(np.repeat(neutral_patches, width // 2, axis=0), (height, 1)).ravel())
+    image.update()
+    source.image = image
+    tree.links.new(source.outputs["Image"], stack.inputs["Color"])
+    tree.links.new(stack.outputs["Color"], viewer.inputs["Image"])
+    tree.nodes.active = viewer
+    stack_id = stack.as_pointer()
+    scene_id = scene.as_pointer()
+    receipts = nodes._compositor_receipts
+
+    def generation(identity=scene_id):
+        return receipts.snapshot(identity).get(stack_id)
+
+    def quality():
+        state = nodes._record_for(stack)["state"]
+        assert state.error is None, state.error
+        return state.applied_quality if state.applied_signature == state.desired_signature else None
+
+    def viewer_patches():
+        pixels = next(image for image in bpy.data.images if image.type == "COMPOSITING")
+        assert tuple(pixels.size) == (width, height), tuple(pixels.size)
+        rgba = np.asarray(pixels.pixels[:], dtype=np.float32).reshape(height, width, 4)
+        return rgba[height // 2, [width // 4, 3 * width // 4]]
+
+    while quality() != "full" or generation() is None or nodes._compositor_output_pending(stack):
+        yield
+    initial = viewer_patches()
+    assert np.isfinite(initial).all() and np.all(initial[:, :3] > 1e-5), initial
+    np.testing.assert_allclose(initial[:, 3], neutral_patches[:, 3], atol=1e-6, rtol=0)
+    held = {}
+    deliver = receipts.completed
+    advance = helper.HelperStackJob.advance
+    allow_refinement = False
+
+    def hold_completion(receipt):
+        if receipt is not None and receipt.successful:
+            binding = dict(receipt.snapshot).get(stack_id)
+            if binding is not None:
+                held[receipt.identity, binding] = receipt
+                return
+        deliver(receipt)
+
+    def hold_refinement(job):
+        if job.preview_emitted and not job.cancelled and not allow_refinement:
+            return None
+        return advance(job)
+
+    receipts.completed = hold_completion
+    helper.HelperStackJob.advance = hold_refinement
+    try:
+        window = bpy.context.window
+        gesture = nodes._begin_gesture(window.as_pointer(), stack)
+        grade.pg_linear.exposure = 1.0
+        while quality() != "preview" or (scene_id, generation()) not in held:
+            yield
+        preview = generation()
+        allow_refinement = True
+        nodes._end_gesture(window.as_pointer(), gesture)
+        while quality() != "full" or (scene_id, generation()) not in held:
+            yield
+        full = generation()
+        assert full != preview, (full, preview)
+        deliver(held[scene_id, preview])
+        nodes._collect_compositor_receipts()
+        assert nodes._compositor_output_pending(stack)
+        assert stack.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        deliver(held[scene_id, full])
+        nodes._collect_compositor_receipts()
+        assert not nodes._compositor_output_pending(stack)
+        assert not stack.get(nodes._NODE_PENDING)
+        actual = viewer_patches()
+        np.testing.assert_allclose(actual[:, :3], 2 * initial[:, :3], atol=1e-5, rtol=.03)
+        assert np.any(np.abs(actual[:, :3] - initial[:, :3]) > 1e-5)
+        np.testing.assert_allclose(actual[:, 3], initial[:, 3], atol=1e-6, rtol=0)
+        result["stack_viewer_refinement"] = True
+
+        kernel = stack.node_tree
+        nodes._reset_compositor_receipts()
+        assert generation() is None
+        failures = nodes._refresh_nodes((stack,))
+        assert not failures, failures
+        adopted = generation()
+        assert adopted is not None and adopted != full, (adopted, full)
+        assert stack.node_tree == kernel and quality() == "full"
+        deliver(held[scene_id, full])
+        nodes._collect_compositor_receipts()
+        assert nodes._compositor_output_pending(stack)
+        assert stack.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        while (scene_id, adopted) not in held:
+            yield
+        deliver(held[scene_id, adopted])
+        nodes._collect_compositor_receipts()
+        assert not nodes._compositor_output_pending(stack)
+        assert not stack.get(nodes._NODE_PENDING)
+        np.testing.assert_allclose(viewer_patches(), actual, atol=1e-6, rtol=0)
+        result["stack_viewer_adoption"] = True
+
+        second_scene = bpy.data.scenes.new("Second Stack Viewer Scene")
+        second_scene.render.compositor_device = "CPU"
+        second_scene.render.compositor_precision = "FULL"
+        second_scene.render.resolution_x = width
+        second_scene.render.resolution_y = height
+        second_scene.render.resolution_percentage = 100
+        second_id = second_scene.as_pointer()
+        window.scene = second_scene
+        second_scene.compositing_node_group = tree
+        while generation(second_id) is None:
+            yield "second scene binding"
+        second = generation(second_id)
+        assert second != adopted and generation() == adopted, (second, generation(), adopted)
+        assert stack.node_tree == kernel
+        assert nodes._compositor_output_pending(stack)
+        assert stack.get(nodes._NODE_PENDING) == "status.waiting_compositor"
+        deliver(held[scene_id, adopted])
+        nodes._collect_compositor_receipts()
+        assert nodes._compositor_output_pending(stack)
+        while (second_id, second) not in held:
+            yield "second scene Viewer completion"
+        deliver(held[second_id, second])
+        nodes._collect_compositor_receipts()
+        assert not nodes._compositor_output_pending(stack)
+        assert not stack.get(nodes._NODE_PENDING)
+
+        second_scene.compositing_node_group = None
+        while generation(second_id) is not None:
+            yield "second scene detachment"
+        window.scene = scene
+        assert generation() == adopted
+        assert not nodes._compositor_output_pending(stack)
+        assert not stack.get(nodes._NODE_PENDING)
+        result["stack_viewer_scenes"] = True
+    finally:
+        receipts.completed = deliver
+        helper.HelperStackJob.advance = advance
+
+
 def complete():
     baseline = reference_rows["rows"] if reference_rows else rows
     references = {row["config"]: np.asarray(row["pixels"], dtype=np.float32)
@@ -356,6 +596,27 @@ def complete():
     else:
         result["repaired_schema"] = [node.node_tree[nodes._KERNEL_KIND] for node in consumers()]
         assert result["repaired_schema"] == [nodes._KERNEL_SCHEMA] * 3
+        exercise = exercise_viewer_receipts()
+        deadline = time.monotonic() + 120
+        waiting_for = None
+
+        def viewer_tick():
+            nonlocal waiting_for
+            try:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Timed out waiting for {waiting_for or 'Viewer completion'}")
+                waiting_for = next(exercise)
+            except StopIteration:
+                finish()
+                return None
+            except Exception:
+                exercise.close()
+                finish(traceback.format_exc())
+                return None
+            return .05
+
+        bpy.app.timers.register(viewer_tick, first_interval=.05)
+        return
     finish()
 
 

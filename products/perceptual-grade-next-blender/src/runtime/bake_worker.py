@@ -14,6 +14,8 @@ import tempfile
 
 import numpy as np
 
+from .bake_images import image_format, resolve_datablocks, route_datablock
+
 
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 _GRADE_NODES = frozenset({
@@ -59,51 +61,71 @@ def _open_snapshot(inputs):
     result = bpy.ops.wm.open_mainfile(filepath=str(path), use_scripts=False, load_ui=False)
     if "FINISHED" not in result:
         raise RuntimeError("Bake snapshot could not be opened")
-    _restore_images(inputs.get("images", ()))
+    route = inputs.get("route", {})
+    _restore_images(inputs.get("images", ()), route.get("images", ()))
 
 
-def _restore_images(records):
+def _verify_sampler_bindings(host, occurrences, images):
+    """Require the native sampler at every recorded occurrence to use its frozen Image."""
+    collections = {
+        "material": "materials", "world": "worlds", "light": "lights", "compositor": "scenes",
+    }
+    owners = {}
+    for kind, key in (item["owner"] for item in occurrences):
+        owners.setdefault(kind, set()).add(tuple(key))
+    roots = {
+        kind: resolve_datablocks(host, getattr(host.data, collections[kind]), keys)
+        for kind, keys in owners.items()
+    }
+    for occurrence in occurrences:
+        kind, owner_key = occurrence["owner"]
+        owner = roots[kind][tuple(owner_key)]
+        tree = owner.compositing_node_group if kind == "compositor" else owner.node_tree
+        reader_path = occurrence["reader_path"]
+        if reader_path is None:
+            raise ValueError("Bake source has no bound native Image reader")
+        path = (*occurrence["group_path"], occurrence["node_name"], *reader_path)
+        node = None
+        for name in path:
+            node = tree.nodes.get(name) if tree is not None else None
+            if node is None:
+                raise ValueError(f"Bake source sampler is missing at {path!r}")
+            tree = getattr(node, "node_tree", None)
+        if (node.bl_idname not in {"ShaderNodeTexImage", "CompositorNodeImage"}
+                or node.image != images[tuple(occurrence["image_key"])]):
+            raise ValueError(f"Bake source sampler at {path!r} has a different Image")
+
+
+def _restore_images(records, occurrences):
     import bpy
 
-    for record in tuple(records or ()):
-        if not isinstance(record, dict):
-            raise TypeError("Bake image records must be mappings")
-        name = str(record.get("name", ""))
-        path_value = record.get("pixels_path") or record.get("path")
-        if not name or not isinstance(path_value, str):
-            raise ValueError("Bake image record is incomplete")
-        path = Path(path_value)
+    required = {tuple(item["image_key"]) for item in occurrences}
+    provided = {tuple(record["image_key"]) for record in records}
+    if len(provided) != len(records) or provided != required:
+        raise ValueError("Bake Image payload identities do not match the requested samplers")
+    if not required:
+        return
+    images = resolve_datablocks(bpy, bpy.data.images, required)
+    _verify_sampler_bindings(bpy, occurrences, images)
+    for record in records:
+        image = images[tuple(record["image_key"])]
+        width, height = (int(value) for value in image.size)
+        if ((width, height) != (record["width"], record["height"])
+                or any(record[name] != value for name, value in image_format(image).items())):
+            raise ValueError(f"Bake source Image format changed: {record['image_key']!r}")
+        if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES:
+            raise ValueError("Bake source Image exceeds the pixel budget")
+        path = Path(record["pixels_path"])
         if not path.is_absolute() or path.is_symlink() or not path.is_file():
             raise ValueError("Invalid bake image payload")
         values = np.load(path, allow_pickle=False)
-        if values.dtype.kind != "f" or values.ndim != 3 or values.shape[-1] not in (1, 2, 3, 4):
-            raise ValueError("Bake image payload is not a float image")
+        if (values.dtype != np.float32 or not 1 <= record["channels"] <= 4
+                or values.shape != (height, width, record["channels"])):
+            raise ValueError("Bake Image payload does not match its captured storage")
         if not np.isfinite(values).all():
             raise ValueError("Bake image payload contains nonfinite pixels")
-        height, width, channels = values.shape
-        if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES:
-            raise ValueError("Bake source image exceeds the pixel budget")
-        image = bpy.data.images.get(name)
-        if image is None:
-            image = bpy.data.images.new(name, width=width, height=height,
-                                        alpha=True, float_buffer=True)
-        if tuple(image.size) != (width, height):
-            raise ValueError("Bake source dimensions changed after the scene snapshot")
-        if channels == 1:
-            values = np.concatenate((np.repeat(values, 3, axis=-1),
-                                     np.ones((height, width, 1), np.float32)), axis=-1)
-        elif channels == 2:
-            values = np.concatenate((np.repeat(values[..., :1], 3, axis=-1),
-                                     values[..., 1:2]), axis=-1)
-        elif channels == 3:
-            values = np.concatenate((values, np.ones((height, width, 1), np.float32)), axis=-1)
-        image.pixels.foreach_set(np.asarray(values, dtype=np.float32).ravel())
+        image.pixels.foreach_set(values.ravel())
         image.update()
-        try:
-            image.colorspace_settings.name = str(record.get("colorspace", "Non-Color"))
-            image.alpha_mode = str(record.get("alpha_mode", "CHANNEL_PACKED"))
-        except (AttributeError, RuntimeError, ValueError):
-            pass
 
 
 def _checkpoint(context):
@@ -261,21 +283,6 @@ def _prepare_shader_sources(root, descriptor):
             tree.links.new(scale.outputs["Vector"], destination)
 
 
-def _prepare_eevee_image_sources(root, descriptor):
-    """Use the bake plane's explicit UV grid for one-texel EEVEE sampling."""
-    for occurrence in descriptor.get("images", ()):
-        if occurrence.get("baked"):
-            continue
-        tree = _copy_path(root, tuple(occurrence.get("group_path", ())))
-        source = tree.nodes.get(str(occurrence.get("node_name", "")))
-        if source is None or source.bl_idname != "ShaderNodeTexImage":
-            raise ValueError("EEVEE Bake source occurrence is absent")
-        if _links(source.inputs["Vector"]):
-            raise ValueError("Image Bake source acquired linked coordinates")
-        coordinates = tree.nodes.new("ShaderNodeTexCoord")
-        tree.links.new(coordinates.outputs["UV"], source.inputs["Vector"])
-
-
 def _target_outputs(root, path, node_name):
     """Expose nested Color and Alpha outputs at the private root tree.
 
@@ -362,289 +369,12 @@ def _plane(scene):
     return obj, uv.name
 
 
-def _half_precision_split(tree, socket):
-    """Encode a float vector into AOV-safe high/low/exponent vectors.
-
-    EEVEE stores color AOVs as half-float values.  The three-channel split keeps
-    the render path precise for the float values produced by the Grade tree,
-    including signed HDR values, while still evaluating the graph only once.
-    """
-    separate = tree.nodes.new("ShaderNodeSeparateXYZ")
-    tree.links.new(socket, separate.inputs[0])
-    high, low, exponents = [], [], []
-
-    def value_node(operation, *values):
-        node = tree.nodes.new("ShaderNodeMath")
-        node.operation = operation
-        for input_socket, value in zip(node.inputs, values):
-            if hasattr(value, "as_pointer"):
-                tree.links.new(value, input_socket)
-            else:
-                input_socket.default_value = float(value)
-        return node.outputs[0]
-
-    for component in separate.outputs:
-        absolute = value_node("ABSOLUTE", component)
-        safe = value_node("MAXIMUM", absolute, 2. ** -126)
-        exponent = value_node("MINIMUM", 127., value_node("FLOOR",
-                                                            value_node("LOGARITHM", safe, 2.)))
-        scale = value_node("POWER", 2., exponent)
-        normalized = value_node("MULTIPLY", value_node("DIVIDE", component, scale), 1024.)
-        coarse = value_node("FLOOR", normalized)
-        residual = value_node("MULTIPLY", value_node("SUBTRACT", normalized, coarse), 1024.)
-        high.append(coarse)
-        low.append(residual)
-        exponents.append(exponent)
-
-    def combine(values):
-        node = tree.nodes.new("ShaderNodeCombineXYZ")
-        for value, input_socket in zip(values, node.inputs):
-            tree.links.new(value, input_socket)
-        return node.outputs[0]
-
-    return combine(high), combine(low), combine(exponents)
-
-
-def _aov(tree, view_layer, name, socket):
-    aov = view_layer.aovs.add()
-    aov.name = name
-    aov.type = "COLOR"
-    node = tree.nodes.new("ShaderNodeOutputAOV")
-    node.aov_name = name
-    tree.links.new(socket, node.inputs["Color"])
-
-
-def _read_render_image(path):
-    import bpy
-
-    image = bpy.data.images.load(str(path), check_existing=False)
-    try:
-        image.colorspace_settings.name = "Non-Color"
-        image.alpha_mode = "CHANNEL_PACKED"
-        if hasattr(image, "use_half_precision"):
-            image.use_half_precision = False
-        return _read_image(image)
-    finally:
-        bpy.data.images.remove(image)
-
-
-def _file_output(tree, directory, name, socket):
-    endpoint = tree.nodes.new("CompositorNodeOutputFile")
-    endpoint.directory = str(directory)
-    endpoint.file_name = str(name)
-    endpoint.format.media_type = "IMAGE"
-    endpoint.format.file_format = "OPEN_EXR"
-    endpoint.format.color_mode = "RGBA"
-    endpoint.format.color_depth = "32"
-    endpoint.format.exr_codec = "ZIPS"
-    endpoint.save_as_render = False
-    try:
-        endpoint.format.color_management = "OVERRIDE"
-        endpoint.format.linear_colorspace_settings.name = "scene_linear"
-    except (AttributeError, RuntimeError, ValueError):
-        pass
-    item = endpoint.file_output_items.new("RGBA", "Image")
-    tree.links.new(socket, endpoint.inputs[item.name])
-
-
-def _eevee_plane(scene, width, height, uv_width=1.0, uv_height=1.0):
-    """Create a camera-facing plane whose UVs map one output pixel per texel."""
-    import bpy
-
-    aspect = float(height) / float(width)
-    mesh = bpy.data.meshes.new("PG Next Bake EEVEE Plane")
-    mesh.from_pydata(((-1., -aspect, 0.), (1., -aspect, 0.),
-                     (1., aspect, 0.), (-1., aspect, 0.)), (), ((0, 1, 2, 3),))
-    uv = mesh.uv_layers.new(name="PG Next Bake EEVEE UV")
-    for item, value in zip(uv.data, ((0., 0.), (uv_width, 0.),
-                                    (uv_width, uv_height), (0., uv_height))):
-        item.uv = value
-    uv.active_render = True
-    mesh.uv_layers.active = uv
-    obj = bpy.data.objects.new("PG Next Bake EEVEE Plane", mesh)
-    scene.collection.objects.link(obj)
-    camera_data = bpy.data.cameras.new("PG Next Bake EEVEE Camera")
-    camera = bpy.data.objects.new("PG Next Bake EEVEE Camera", camera_data)
-    scene.collection.objects.link(camera)
-    camera.location = (0., 0., 2.)
-    camera_data.type = "ORTHO"
-    camera_data.sensor_fit = "HORIZONTAL"
-    camera_data.ortho_scale = 2.
-    camera_data.dof.use_dof = False
-    scene.camera = camera
-    return obj, uv.name
-
-
-def _eevee_image(scene, material, tree, color, alpha, width, height, context):
-    """Render an Image-domain shader once with precise EEVEE AOV readback."""
-    import bpy
-
-    for item in scene.objects:
-        item.hide_render = True
-    scene.world = None
-    # The native render canvas has a 4-pixel minimum. Extend the texel grid
-    # beyond the source then crop it, preserving exact source texel centers.
-    render_width, render_height = max(4, width), max(4, height)
-    obj, uv_name = _eevee_plane(scene, render_width, render_height,
-                                render_width / width, render_height / height)
-    obj.data.materials.append(material)
-    if bpy.context.window is not None:
-        bpy.context.window.scene = scene
-        bpy.context.window.view_layer = scene.view_layers[0]
-    view_layer = scene.view_layers[0]
-    view_layer.material_override = None
-    _select(scene, obj, uv_name, view_layer=view_layer)
-    for layer in scene.view_layers:
-        layer.use = layer == view_layer
-    view_layer.use_pass_combined = True
-    for item in tuple(view_layer.aovs):
-        view_layer.aovs.remove(item)
-    color_high, color_low, color_exponent = _half_precision_split(tree, color)
-    _aov(tree, view_layer, "PGNextColorHigh", color_high)
-    _aov(tree, view_layer, "PGNextColorLow", color_low)
-    _aov(tree, view_layer, "PGNextColorExponent", color_exponent)
-    if alpha is None:
-        alpha = tree.nodes.new("ShaderNodeValue")
-        alpha.outputs[0].default_value = 1.0
-        alpha_socket = alpha.outputs[0]
-    else:
-        alpha_socket = alpha
-    alpha_vector = tree.nodes.new("ShaderNodeCombineXYZ")
-    for input_socket in alpha_vector.inputs:
-        tree.links.new(alpha_socket, input_socket)
-    alpha_high, alpha_low, alpha_exponent = _half_precision_split(tree, alpha_vector.outputs[0])
-    _aov(tree, view_layer, "PGNextAlphaHigh", alpha_high)
-    _aov(tree, view_layer, "PGNextAlphaLow", alpha_low)
-    _aov(tree, view_layer, "PGNextAlphaExponent", alpha_exponent)
-
-    if scene.render.engine not in {"BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"}:
-        raise RuntimeError("Image Bake snapshot no longer selects EEVEE")
-    try:
-        scene.eevee.taa_samples = 1
-        scene.eevee.taa_render_samples = 1
-        scene.eevee.use_taa_reprojection = False
-    except (AttributeError, RuntimeError, ValueError):
-        pass
-    scene.render.filter_size = 0.01
-    scene.render.resolution_x = int(render_width)
-    scene.render.resolution_y = int(render_height)
-    scene.render.resolution_percentage = 100
-    scene.render.use_sequencer = False
-    scene.render.use_compositing = True
-    scene.render.use_border = False
-    scene.render.use_crop_to_border = False
-    scene.render.pixel_aspect_x = 1.0
-    scene.render.pixel_aspect_y = 1.0
-    scene.render.use_file_extension = True
-    scene.render.use_multiview = False
-    for owner in (scene.render, getattr(scene, "eevee", None)):
-        if owner is not None and hasattr(owner, "use_motion_blur"):
-            owner.use_motion_blur = False
-    scene.render.compositor_device = "CPU"
-    scene.render.compositor_precision = "FULL"
-    _configure_linear(scene)
-    view_layer.update_render_passes()
-
-    with tempfile.TemporaryDirectory(prefix="pg-next-eevee-bake-") as directory:
-        compositor = bpy.data.node_groups.new("PG Next EEVEE Bake Output", "CompositorNodeTree")
-        layers = compositor.nodes.new("CompositorNodeRLayers")
-        layers.layer = view_layer.name
-        output_field = compositor.interface.new_socket(
-            name="Image", in_out="OUTPUT", socket_type="NodeSocketColor",
-        )
-        output = compositor.nodes.new("NodeGroupOutput")
-        output.is_active_output = True
-        tree_output = layers.outputs.get("Image")
-        if tree_output is not None:
-            compositor.links.new(tree_output, output.inputs[output_field.identifier])
-        for name in (
-                "PGNextColorHigh", "PGNextColorLow", "PGNextColorExponent",
-                "PGNextAlphaHigh", "PGNextAlphaLow", "PGNextAlphaExponent"):
-            socket = layers.outputs.get(name)
-            if socket is None:
-                raise RuntimeError("EEVEE Bake AOV is absent: " + name)
-            _file_output(compositor, directory, name, socket)
-        previous = scene.compositing_node_group
-        scene.compositing_node_group = compositor
-        try:
-            _checkpoint(context)
-            result = bpy.ops.render.render(write_still=False, scene=scene.name)
-            _checkpoint(context)
-            if "FINISHED" not in result:
-                raise RuntimeError("Native EEVEE Image Bake did not finish")
-            values = {}
-            for name in (
-                    "PGNextColorHigh", "PGNextColorLow", "PGNextColorExponent",
-                    "PGNextAlphaHigh", "PGNextAlphaLow", "PGNextAlphaExponent"):
-                files = tuple(Path(directory).glob(name + "*.exr"))
-                if len(files) != 1:
-                    raise RuntimeError("Native EEVEE Image Bake produced no unique " + name)
-                values[name] = _read_render_image(files[0])
-        finally:
-            scene.compositing_node_group = previous
-            try:
-                bpy.data.node_groups.remove(compositor)
-            except (ReferenceError, RuntimeError):
-                pass
-    rgb = (values["PGNextColorHigh"][..., :3]
-           + values["PGNextColorLow"][..., :3] / 1024.)
-    rgb *= np.exp2(values["PGNextColorExponent"][..., :3] - 10.)
-    alpha_value = (values["PGNextAlphaHigh"][..., 0]
-                   + values["PGNextAlphaLow"][..., 0] / 1024.)
-    alpha_value *= np.exp2(values["PGNextAlphaExponent"][..., 0] - 10.)
-    rgb = rgb[:height, :width]
-    alpha_value = alpha_value[:height, :width]
-    if rgb.shape[:2] != (height, width) or alpha_value.shape != (height, width):
-        raise RuntimeError("Native EEVEE Image Bake render dimensions changed")
-    return np.concatenate((rgb, alpha_value[..., None]), axis=-1)
-
-
-def _configure_cycles_device(scene, descriptor):
-    """Apply the click-time Cycles device selection inside factory-startup."""
-    backend = str(descriptor.get("shader_backend", "CYCLES_CPU"))
-    if backend != "CYCLES_GPU":
-        scene.cycles.device = "CPU"
-        return "CPU"
-    scene.cycles.device = "GPU"
-    config = descriptor.get("cycles_gpu")
-    if not isinstance(config, dict):
-        raise RuntimeError("Requested Cycles GPU configuration is absent")
-    requested = tuple((str(item.get("id", "")), str(item.get("name", "")),
-                       str(item.get("type", ""))) for item in config.get("devices", ()))
-    if any(not all(item) for item in requested):
-        raise RuntimeError("Requested Cycles GPU device identity is incomplete")
-    try:
-        import addon_utils
-        addon_utils.enable("cycles", default_set=False, persistent=False)
-        import bpy
-        preferences = bpy.context.preferences.addons["cycles"].preferences
-        compute_type = config.get("compute_device_type")
-        if (not isinstance(compute_type, str) or not compute_type.strip()
-                or compute_type == "NONE"):
-            raise RuntimeError("Requested Cycles GPU compute backend is absent")
-        preferences.compute_device_type = compute_type
-        if hasattr(preferences, "refresh_devices"):
-            preferences.refresh_devices()
-        else:
-            preferences.get_devices()
-        devices = tuple(getattr(preferences, "devices", ()))
-        available = tuple((str(getattr(item, "id", "")), str(getattr(item, "name", "")),
-                           str(getattr(item, "type", ""))) for item in devices)
-        selected = set(requested)
-        if (not selected or not any(item[2] != "CPU" for item in selected)
-                or any(item[2] not in {"CPU", compute_type} for item in selected)
-                or not selected.issubset(set(available))):
-            raise RuntimeError("Requested Cycles GPU devices are unavailable")
-        for item in devices:
-            item.use = (str(getattr(item, "id", "")), str(getattr(item, "name", "")),
-                        str(getattr(item, "type", ""))) in selected
-        enabled = tuple((str(getattr(item, "id", "")), str(getattr(item, "name", "")),
-                         str(getattr(item, "type", ""))) for item in devices if item.use)
-        if set(enabled) != selected:
-            raise RuntimeError("Cycles GPU device selection could not be applied")
-        return "GPU"
-    except Exception as error:
-        raise RuntimeError("Requested Cycles GPU is unavailable: " + str(error)) from error
+def _configure_cycles_cpu(scene):
+    """Select the fixed native Shader Bake evaluator in the private scene."""
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = 1
+    scene.cycles.use_denoising = False
 
 
 def _material(root, color, alpha):
@@ -687,14 +417,12 @@ def _set_alpha_output(tree, group, emission, alpha_name):
     tree.links.new(_socket(group.outputs, alpha_name), emission.inputs["Color"])
 
 
-def _select(scene, obj, uv_name, *, view_layer=None):
+def _select(scene, obj, uv_name):
     import bpy
 
     if bpy.context.window is not None:
         bpy.context.window.scene = scene
-        if view_layer is not None:
-            bpy.context.window.view_layer = view_layer
-    layer = view_layer if view_layer is not None else scene.view_layers[0]
+    layer = scene.view_layers[0]
     if obj.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
     layer.material_override = None
@@ -737,13 +465,15 @@ def _shader(inputs, context):
 
     descriptor = dict(inputs.get("shader_bake") or inputs.get("descriptor") or {})
     target = dict(inputs.get("target") or {})
-    scene = bpy.data.scenes.get(str(target.get("scene", descriptor.get("scene", ""))))
+    scene = route_datablock(bpy, bpy.data.scenes, target or descriptor, "scene")
     if scene is None:
         raise ValueError("Bake scene is absent")
     _set_frame(scene, descriptor)
     owner_kind = str(target.get("owner_kind", descriptor.get("owner_kind", "material"))).lower()
-    owner_name = str(target.get("owner_name", descriptor.get("owner_name", "")))
-    owner = ((bpy.data.materials if owner_kind == "material" else bpy.data.worlds).get(owner_name))
+    owner = route_datablock(
+        bpy, bpy.data.materials if owner_kind == "material" else bpy.data.worlds,
+        target or descriptor, "owner",
+    )
     if owner is None or owner.node_tree is None:
         raise ValueError("Bake shader owner is absent")
     width, height = int(descriptor["width"]), int(descriptor["height"])
@@ -752,8 +482,6 @@ def _shader(inputs, context):
     root = owner.node_tree.copy()
     _prepare_shader_sources(root, descriptor)
     backend = str(descriptor.get("shader_backend", "CYCLES_CPU"))
-    if backend == "EEVEE":
-        _prepare_eevee_image_sources(root, descriptor)
     path = tuple(target.get("group_path", descriptor.get("group_path", ())))
     color, alpha, root = _target_outputs(
         root, path, str(target.get("node_name", descriptor.get("node_name", ""))))
@@ -761,24 +489,15 @@ def _shader(inputs, context):
         raise ValueError("Bake target has no Color output")
     material, tree, group, emission, sink, alpha_name = _material(root, color, alpha)
     domain = str(descriptor.get("domain", "IMAGE"))
-    if backend == "EEVEE":
-        if domain != "IMAGE":
-            raise ValueError("EEVEE Bake supports only the Image domain")
-        color = tuple(emission.inputs["Color"].links)[0].from_socket
-        alpha = _socket(group.outputs, alpha_name) if alpha_name is not None else None
-        pixels = _eevee_image(scene, material, tree, color, alpha, width, height, context)
-        _checkpoint(context)
-        return _result(pixels, inputs, target, descriptor, backend="EEVEE", device="GPU")
-    if backend not in {"CYCLES_CPU", "CYCLES_GPU"}:
+    if backend != "CYCLES_CPU":
         raise ValueError("Unknown Shader Bake backend: " + backend)
-    obj = None
     if domain == "UV":
         from .bake_routes import _uv
 
-        if owner_kind != "material" or scene.render.engine != "CYCLES":
-            raise ValueError("UV Bake requires a Cycles material")
-        obj = bpy.data.objects.get(str(descriptor.get("object_name", "")))
-        if obj is None or obj.type != "MESH" or obj.name not in scene.objects:
+        if owner_kind != "material":
+            raise ValueError("UV Bake requires a material")
+        obj = route_datablock(bpy, bpy.data.objects, descriptor, "object")
+        if obj is None or obj.type != "MESH" or obj not in tuple(scene.objects):
             raise ValueError("UV Shader Bake requires the frozen active mesh")
         if any(modifier.type in {"MESH_SEQUENCE_CACHE", "MESH_CACHE"}
                or getattr(modifier, "cache_file", None) is not None for modifier in obj.modifiers):
@@ -809,10 +528,7 @@ def _shader(inputs, context):
         obj, uv_name = _plane(scene)
         obj.data.materials.append(material)
         margin = 0
-    scene.render.engine = "CYCLES"
-    scene.cycles.samples = 1
-    scene.cycles.use_denoising = False
-    device = _configure_cycles_device(scene, descriptor)
+    _configure_cycles_cpu(scene)
     scene.render.resolution_x = width
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
@@ -828,7 +544,7 @@ def _shader(inputs, context):
         rgb[..., 3] = alpha_pixels[..., 0]
     else:
         rgb[..., 3] = 1.0
-    if descriptor.get("domain") == "UV":
+    if domain == "UV":
         # Bake a coverage mask separately; black graded pixels are valid texels.
         value = tree.nodes.new("ShaderNodeValue")
         value.outputs[0].default_value = 1.0
@@ -840,14 +556,14 @@ def _shader(inputs, context):
                               coverage_image, context, margin)
         rgb[np.max(coverage[..., :3], axis=-1) <= 0.0] = 0.0
     _checkpoint(context)
-    return _result(rgb, inputs, target, descriptor, backend="CYCLES", device=device)
+    return _result(rgb, inputs, target, descriptor, backend="CYCLES", device=scene.cycles.device)
 
 
 def _compositor(inputs, context):
     import bpy
 
     target = dict(inputs.get("target") or {})
-    scene = bpy.data.scenes.get(str(target.get("scene", "")))
+    scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
     if scene is None:
         raise ValueError("Compositor Bake scene is absent")
     _set_frame(scene, target)
@@ -898,7 +614,9 @@ def _compositor(inputs, context):
             scene.render.compositor_precision = "FULL"
             _configure_linear(scene)
             _checkpoint(context)
-            result = bpy.ops.render.render(write_still=False, scene=scene.name)
+            if bpy.context.scene != scene:
+                raise RuntimeError("Compositor Bake's selected scene changed before rendering")
+            result = bpy.ops.render.render(write_still=False)
             _checkpoint(context)
             if "FINISHED" not in result:
                 raise RuntimeError("Native Compositor Bake did not finish")
@@ -951,7 +669,7 @@ def _result(pixels, inputs, target, descriptor, *, backend, device=None):
     if pixels.shape[1] * pixels.shape[0] * 16 > MAX_PIXEL_BYTES:
         raise MemoryError("Native Bake output exceeds the pixel budget")
     image = _new_image("PG Next Bake Completed", int(pixels.shape[1]), int(pixels.shape[0]))
-    scene = bpy.data.scenes.get(str(target.get("scene", "")))
+    scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
     if scene is None:
         raise ValueError("Bake output scene is absent")
     try:
@@ -1014,7 +732,7 @@ class BakeWorker:
             else:
                 kind = str(inputs.get("kind", "shader")).lower()
             target = inputs.get("target", {})
-            scene = bpy.data.scenes.get(str(target.get("scene", "")))
+            scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
             if scene is not None and bpy.context.window is not None:
                 bpy.context.window.scene = scene
                 if scene.view_layers:

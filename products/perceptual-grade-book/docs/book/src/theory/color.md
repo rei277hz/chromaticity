@@ -110,8 +110,7 @@ rounded repair is not claimed to be the exact real-valued projection onto the
 Preparation derives this effective row without writing authored values,
 keyframes, or ownership claims. This evaluated projection differs from an
 edit's pinned push-and-return behavior. A **Limited** indication reports an
-effective restriction; **Auto**
-identifies automatically displaced authored controls. The
+effective restriction. The
 [authoring policy](../development/next-policies.md#next-policy.color-authoring)
 defines the mutation boundary.
 

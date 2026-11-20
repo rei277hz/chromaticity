@@ -9,16 +9,19 @@ from color_tools.runtime.stack_observations import (
 
 class StackObservationTests(unittest.TestCase):
     def test_stack_change_preserves_order_and_multiplicity(self):
-        previous = (11, 12, 11)
-        self.assertFalse(stack_changed(previous, (11, 12, 11)))
-        self.assertTrue(stack_changed(previous, (12, 11, 11)))
-        self.assertTrue(stack_changed(previous, (11, 12)))
+        first = (11, "FORWARD")
+        second = (12, "FORWARD")
+        previous = (first, second, first)
+        self.assertFalse(stack_changed(previous, (first, second, first)))
+        self.assertTrue(stack_changed(previous, (second, first, first)))
+        self.assertTrue(stack_changed(previous, (first, second)))
         self.assertTrue(stack_changed(previous, ()))
+        self.assertTrue(stack_changed(previous, (first, second, (11, "INVERSE"))))
 
     def test_grade_reference_uses_current_stack_membership(self):
-        grade_ids = (5, 8, 5)
-        self.assertTrue(grade_is_referenced(grade_ids, 8))
-        self.assertFalse(grade_is_referenced(grade_ids, 13))
+        entries = ((5, "FORWARD"), (8, "INVERSE"), (5, "INVERSE"))
+        self.assertTrue(grade_is_referenced(entries, 8))
+        self.assertFalse(grade_is_referenced(entries, 13))
 
 
 class StackPolicyTests(unittest.TestCase):

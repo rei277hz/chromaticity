@@ -16,13 +16,19 @@ import math
 from pathlib import Path
 
 from ..kernel.color_ui import COLOR_FIELDS
+from ..kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
+from . import bake_graph
+from .bake_images import datablock_key, route_datablock
 
 
 SCHEMA = 1
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
-EEVEE_ENGINES = frozenset(("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"))
+_COMPOSITOR_OVERRIDES = frozenset(("compositor_device", "compositor_precision"))
+_COMPOSITOR_POINTWISE = frozenset((
+    "CompositorNodeRGB", "CompositorNodeValue", "CompositorNodeMath", "CompositorNodeMixRGB",
+))
 # These modifiers preserve loop topology and UV coordinates. Blender exposes
 # a viewport evaluated mesh to Python, which cannot certify render-only
 # topology/UV changes, so other enabled render modifiers require application
@@ -111,62 +117,10 @@ def _same(left, right):
     return left is not None and right is not None and _identity(left) == _identity(right)
 
 
-def _cycles_device_identity(device):
-    """Return a value-only identity for one Cycles device."""
-    return {
-        "id": str(getattr(device, "id", "")),
-        "name": str(getattr(device, "name", "")),
-        "type": str(getattr(device, "type", "")),
-    }
-
-
-def _cycles_gpu_preferences(host, *, exact=False):
-    """Read configured Cycles devices, probing only for an accepted request."""
-    preferences = getattr(getattr(host, "context", None), "preferences", None)
-    addons = getattr(preferences, "addons", None)
-    addon = addons.get("cycles") if addons is not None and hasattr(addons, "get") else None
-    cycles = getattr(addon, "preferences", None)
-    if cycles is None:
-        return {"compute_device_type": None, "devices": ()}
-    if exact:
-        try:
-            cycles.get_devices()
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
-    compute_type = str(getattr(cycles, "compute_device_type", "NONE"))
-    devices = tuple(
-        _cycles_device_identity(device)
-        for device in getattr(cycles, "devices", ())
-        if bool(getattr(device, "use", False))
-        and str(getattr(device, "type", "")) in {"CPU", compute_type}
-    )
-    return {
-        "compute_device_type": compute_type,
-        "devices": tuple(sorted(devices, key=lambda item: (item["id"], item["type"], item["name"]))),
-    }
-
-
-def _shader_backend(host, scene, *, domain, exact=False):
-    """Resolve the native backend used by a shader bake."""
-    render_engine = str(getattr(getattr(scene, "render", None), "engine", ""))
-    cycles = getattr(scene, "cycles", None)
-    cycles_device = str(getattr(cycles, "device", "CPU")).upper()
-    if domain == "UV" and render_engine != "CYCLES":
-        raise RouteBlocked("cycles", "UV Bake requires the Cycles render engine")
-    if render_engine in EEVEE_ENGINES and domain == "IMAGE":
-        backend = "EEVEE"
-    elif render_engine == "CYCLES":
-        backend = "CYCLES_GPU" if cycles_device == "GPU" else "CYCLES_CPU"
-    else:
-        backend = "CYCLES_CPU"
-    return {
-        "render_engine": render_engine,
-        "cycles_device": ("GPU" if backend == "CYCLES_GPU" else
-                          "CPU" if backend == "CYCLES_CPU" else None),
-        "shader_backend": backend,
-        "cycles_gpu": (_cycles_gpu_preferences(host, exact=exact)
-                        if backend == "CYCLES_GPU" else None),
-    }
+def backend_signature(route):
+    """Fingerprint the evaluator used for the bake."""
+    return _digest((route["render_engine"], route.get("cycles_device"),
+                    route.get("render_layers_backends")))
 
 
 def _plain(value):
@@ -194,7 +148,8 @@ def _collect_dependency(value, dependencies, dependency_seen):
                                 dependency_seen)
 
 
-def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=None):
+def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=None,
+               *, exclude=()):
     """Snapshot writable semantic RNA, including ramps, curves and mappings."""
     if value is None or isinstance(value, (bool, int, float, str)):
         return _plain(value)
@@ -212,6 +167,7 @@ def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=Non
                 item, seen | {key}, depth + 1, dependencies, dependency_seen,
             ))
                                 for name, item in vars(value).items()
+                                if name not in exclude
                                 if name not in _UI_PROPERTIES and not name.startswith("_")
                                 and not callable(item)))
         return _plain(value)
@@ -220,7 +176,8 @@ def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=Non
         name = prop.identifier
         if name == "color" and hasattr(value, "inputs") and hasattr(value, "outputs"):
             continue
-        if name in _UI_PROPERTIES or (prop.is_readonly and prop.type not in {"POINTER", "COLLECTION"}):
+        if (name in exclude or name in _UI_PROPERTIES
+                or (prop.is_readonly and prop.type not in {"POINTER", "COLLECTION"})):
             continue
         item = getattr(value, name)
         if prop.type == "POINTER" and item is not None and hasattr(item, "session_uid"):
@@ -339,10 +296,10 @@ def _owner(host, node, context):
     compositor = tree.bl_idname == "CompositorNodeTree"
     if isinstance(context, Mapping):
         kind = context.get("owner_kind")
-        scene = host.data.scenes.get(context.get("scene"))
+        scene = route_datablock(host, host.data.scenes, context, "scene")
         values = {"material": host.data.materials, "world": host.data.worlds,
                   "compositor": host.data.scenes}.get(kind)
-        owner = values.get(context.get("owner_name")) if values is not None else None
+        owner = route_datablock(host, values, context, "owner") if values is not None else None
         root = (getattr(owner, "compositing_node_group", None) if kind == "compositor"
                 else getattr(owner, "node_tree", None))
         path = tuple(context.get("group_path", ()))
@@ -399,8 +356,15 @@ def _owner(host, node, context):
 def _grade_settings(node):
     kind = node.bl_idname
     if kind in STACK_TYPES:
-        return tuple(_grade_values(entry.grade) for entry in node.pg_stack_entries
-                     if entry.enabled and entry.grade is not None)
+        active = tuple(entry for entry in node.pg_stack_entries
+                       if entry.enabled and entry.grade is not None)
+        entries = tuple(_grade_values(entry.grade) for entry in active)
+        directions = tuple(getattr(entry, "direction", "FORWARD") for entry in active)
+        if "INVERSE" in directions:
+            return ("stack_composition", STACK_COMPOSITION_SCHEMA, entries, STACK_INVERSE_SCHEMA, directions)
+        if len(entries) > 1:
+            return ("stack_composition", STACK_COMPOSITION_SCHEMA, entries)
+        return entries
     owner = getattr(node, "pg_grade", None) if kind in GRADE_TYPES else node
     return _grade_values(owner if owner is not None else node)
 
@@ -510,10 +474,16 @@ def _cache_geometry(obj):
 
 def _baked_sampler(node, image):
     """Find only the native sampler bound to the authoritative baked Image."""
-    pending = [getattr(node, "node_tree", None)]
+    tree = getattr(node, "node_tree", None)
+    if tree is not None and tree.get(bake_graph.WRAPPER):
+        reader = bake_graph.marked(tree, bake_graph.READER)
+        if reader is None or not _same(getattr(reader, "image", None), image):
+            raise RouteBlocked("baked_sampler", "Bake source wrapper has no matching Image reader")
+        return reader, (str(reader.name),)
+    pending = [(tree, ())]
     seen = set()
     while pending:
-        tree = pending.pop()
+        tree, path = pending.pop()
         key = _identity(tree)
         if tree is None or key in seen:
             continue
@@ -521,11 +491,11 @@ def _baked_sampler(node, image):
         for candidate in tree.nodes:
             if (candidate.bl_idname in {"ShaderNodeTexImage", "CompositorNodeImage"}
                     and _same(getattr(candidate, "image", None), image)):
-                return candidate
+                return candidate, (*path, str(candidate.name))
             child = getattr(candidate, "node_tree", None)
             if child is not None:
-                pending.append(child)
-    return node
+                pending.append((child, (*path, str(candidate.name))))
+    return node, None
 
 
 def _geometry_digest(label, values):
@@ -701,8 +671,9 @@ def _geometry_observation(obj):
 
 
 class _Walker:
-    def __init__(self, host, scene, *, full, compositor, dependencies=None):
+    def __init__(self, host, scene, *, owner_kind, owner, full, compositor, dependencies=None):
         self.host, self.scene, self.full = host, scene, full
+        self.owner = (owner_kind, datablock_key(host, owner))
         self.compositor = compositor
         self.dependencies = dependencies
         self.graph = []
@@ -711,15 +682,15 @@ class _Walker:
         self.image_pointers = set()
         self.image_states = {}
         self.dependency_pointers = set()
-        self.upstream = {}
+        self.upstream_grades = {}
         self.reasons = set()
         self.visiting = set()
         self.visited = set()
-        self.rendered = set()
+        self.rendered = {}
         self.render_states = []
         self.render_observations = []
         self.coordinate_depth = 0
-        self.compositor_native = False
+        self.unknown_compositor_extent = False
 
     def input(self, socket, parents):
         links = _links(socket)
@@ -763,9 +734,10 @@ class _Walker:
                _semantic_identity(node), _semantic_identity(image))
         previous = self.images.get(key)
         alpha = output.name in {"Alpha", "Baked Alpha"}
-        sampler = _baked_sampler(node, image) if baked else node
+        sampler, reader_path = _baked_sampler(node, image) if baked else (node, ())
         item = dict(group_path=tuple(str(item.name) for item in parents), node_name=str(node.name),
-                    image_name=str(image.name), width=width, height=height,
+                    owner=self.owner, reader_path=reader_path,
+                    image_key=datablock_key(self.host, image), width=width, height=height,
                     alpha_linked=alpha or bool(previous and previous[1]["alpha_linked"]),
                     interpolation=str(getattr(sampler, "interpolation", "Linear")),
                     extension=str(getattr(sampler, "extension", "REPEAT")), baked=baked)
@@ -791,7 +763,8 @@ class _Walker:
                 self.coordinate_depth -= 1
 
     def output(self, node, output, parents):
-        key = (_identity(node), _socket_name(output), tuple(_identity(item) for item in parents))
+        node_key = _identity(node)
+        key = (node_key, _socket_name(output), tuple(_identity(item) for item in parents))
         if key in self.visiting:
             raise RouteBlocked("cycle", "Bake input contains a node cycle")
         if key in self.visited:
@@ -827,11 +800,7 @@ class _Walker:
                         self.input(alpha, parents)
                     return
                 self._observe(node, output, parents, _grade_settings(node))
-                self.upstream[key] = dict(
-                    tree_name=str(getattr(getattr(node, "id_data", None), "name", "")),
-                    tree_type=str(getattr(getattr(node, "id_data", None), "bl_idname", "")),
-                    group_path=tuple(str(item.name) for item in parents),
-                    node_name=str(node.name), kind="STACK" if kind in STACK_TYPES else "GRADE")
+                self.upstream_grades.setdefault(node_key, node)
                 for socket in node.inputs:
                     if socket.name in {"Color", "Alpha"}:
                         self.input(socket, parents)
@@ -872,10 +841,11 @@ class _Walker:
                 self.input(socket, (*parents, node))
                 return
             if kind == "CompositorNodeRLayers":
-                self.compositor_native = True
+                self.unknown_compositor_extent = True
                 self._render_scene(getattr(node, "scene", None) or self.scene)
-            elif kind.startswith("CompositorNode") and kind not in {"CompositorNodeRGB", "CompositorNodeValue"}:
-                self.compositor_native = True
+            elif self.compositor:
+                if kind not in _COMPOSITOR_POINTWISE and kind not in POINTWISE:
+                    self.unknown_compositor_extent = True
             elif kind not in POINTWISE and not self.coordinate_depth:
                 self.reasons.add("surface_dependency")
             for socket in node.inputs:
@@ -888,12 +858,22 @@ class _Walker:
         key = _identity(scene)
         if key in self.rendered:
             return
-        self.rendered.add(key)
+        engine = scene.render.engine
+        if engine == "CYCLES":
+            engine_settings = getattr(scene, "cycles", None)
+        elif engine in {"BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"}:
+            engine_settings = getattr(scene, "eevee", None)
+        else:
+            engine_settings = None
+        self.rendered[key] = (
+            engine, getattr(engine_settings, "device", None) if engine == "CYCLES" else None,
+        )
         objects = tuple(scene.objects)
         camera = getattr(scene, "camera", None)
         self._add_dependency(camera)
-        summary = (_semantic_identity(scene), _rna_state(scene.render),
-                   _rna_state(getattr(scene, "cycles", None)),
+        summary = (_semantic_identity(scene),
+                   _rna_state(scene.render, exclude=_COMPOSITOR_OVERRIDES),
+                   _rna_state(engine_settings),
                    _semantic_identity(camera), _dependency_state(camera),
                    _rna_state(getattr(scene, "world", None),
                               dependencies=self.dependencies,
@@ -908,31 +888,36 @@ class _Walker:
                          for obj in objects) if self.full
                     else tuple(_geometry_observation(obj) for obj in objects))
         self.render_states.append((*summary, geometry))
-        owners = [getattr(scene, "world", None)]
+        owners = [("world", getattr(scene, "world", None))]
         for obj in objects:
             self._add_dependency(obj)
             self._add_dependency(getattr(obj, "data", None))
-            owners.extend(slot.material for slot in getattr(obj, "material_slots", ()))
+            owners.extend(("material", slot.material) for slot in getattr(obj, "material_slots", ()))
             if getattr(obj, "type", None) == "LIGHT":
-                owners.append(obj.data)
-        for owner in owners:
+                owners.append(("light", obj.data))
+        for _kind, owner in owners:
             self._add_dependency(owner)
         owner_settings = tuple((_semantic_identity(owner), _rna_state(
             owner, dependencies=self.dependencies,
             dependency_seen=self.dependency_pointers,
         ))
-                               for owner in owners if owner is not None)
+                               for _kind, owner in owners if owner is not None)
         self.render_states.append(("owner_settings", owner_settings))
         self.render_observations.append(("owner_settings", owner_settings))
-        for owner in owners:
-            tree = getattr(owner, "node_tree", None)
-            if tree is None:
-                continue
-            for endpoint in tree.nodes:
-                if (endpoint.bl_idname in {"ShaderNodeOutputMaterial", "ShaderNodeOutputWorld", "ShaderNodeOutputLight"}
-                        and getattr(endpoint, "is_active_output", True)):
-                    for socket in endpoint.inputs:
-                        self.input(socket, ())
+        previous_owner = self.owner
+        try:
+            for kind, owner in owners:
+                tree = getattr(owner, "node_tree", None)
+                if tree is None:
+                    continue
+                self.owner = (kind, datablock_key(self.host, owner))
+                for endpoint in tree.nodes:
+                    if (endpoint.bl_idname in {"ShaderNodeOutputMaterial", "ShaderNodeOutputWorld", "ShaderNodeOutputLight"}
+                            and getattr(endpoint, "is_active_output", True)):
+                        for socket in endpoint.inputs:
+                            self.input(socket, ())
+        finally:
+            self.owner = previous_owner
 
     def _add_dependency(self, value):
         _collect_dependency(value, self.dependencies, self.dependency_pointers)
@@ -1037,7 +1022,7 @@ def _dimension(node, key):
     return int(value)
 
 
-def _describe(node, context, *, full, dependencies=None):
+def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
     import bpy
     if not is_bake_target(node):
         raise RouteBlocked("target", "Bake is available only for shared Grade and Grade Stack nodes")
@@ -1046,7 +1031,7 @@ def _describe(node, context, *, full, dependencies=None):
     kind, owner, scene, root, parents = _owner(bpy, node, context)
     compositor = kind == "compositor"
     collected_dependencies = [] if dependencies is not None else None
-    walker = _Walker(bpy, scene, full=full, compositor=compositor,
+    walker = _Walker(bpy, scene, owner_kind=kind, owner=owner, full=full, compositor=compositor,
                      dependencies=collected_dependencies)
     for socket in node.inputs:
         if socket.name in {"Color", "Alpha"}:
@@ -1068,13 +1053,12 @@ def _describe(node, context, *, full, dependencies=None):
         raise RouteBlocked("destination_domain", "Compositor Bake cannot write a UV-domain destination")
     obj = None
     uv_map = material_slot = None
+    canvas_size = None
     if domain == "UV":
-        if scene.render.engine != "CYCLES":
-            raise RouteBlocked("cycles", "UV Bake requires the Cycles render engine")
         if kind != "material":
             raise RouteBlocked("world_uv", "World Bake supports only Image-domain inputs")
         if isinstance(context, Mapping):
-            obj = bpy.data.objects.get(context.get("object_name")) if context.get("object_name") else None
+            obj = route_datablock(bpy, bpy.data.objects, context, "object")
         else:
             obj = getattr(context or bpy.context, "object", None)
         uv_map = _uv(obj, full=full)
@@ -1097,32 +1081,37 @@ def _describe(node, context, *, full, dependencies=None):
     elif domain == "IMAGE":
         first = next(iter(walker.images.values()), None)
         width, height = (first[1]["width"], first[1]["height"]) if first else (1, 1)
-    elif walker.compositor_native:
+    elif walker.unknown_compositor_extent:
         width = height = None
     elif len(walker.images) == 1:
         first = next(iter(walker.images.values()))[1]
         width, height = first["width"], first["height"]
     elif not walker.images:
-        scale = int(scene.render.resolution_percentage) / 100.
-        width, height = max(1, int(scene.render.resolution_x * scale)), max(1, int(scene.render.resolution_y * scale))
+        percentage = int(scene.render.resolution_percentage)
+        width = max(1, scene.render.resolution_x * percentage // 100)
+        height = max(1, scene.render.resolution_y * percentage // 100)
+        canvas_size = (width, height)
     else:
         width = height = None
     if width is not None and height is not None:
         if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES or (domain == "UV" and max(width, height) > MAX_UV_SIZE):
             raise RouteBlocked("dimensions", "Bake dimensions exceed the 512 MiB pixel budget")
-    shader_backend = None if compositor else _shader_backend(
-        bpy, scene, domain=domain, exact=full,
-    )
+    render_engine = None if compositor else "CYCLES"
+    evaluator = ({"render_layers_backends": tuple(walker.rendered.values())} if compositor
+                 else {"shader_backend": "CYCLES_CPU", "cycles_device": "CPU"})
     result = dict(schema=SCHEMA, domain=domain, width=width, height=height,
-                  scene=str(scene.name), frame=int(scene.frame_current),
-                  subframe=float(scene.frame_subframe), owner_kind=kind, owner_name=str(owner.name),
+                  scene=str(scene.name), scene_key=datablock_key(bpy, scene),
+                  frame=int(scene.frame_current),
+                  subframe=float(scene.frame_subframe), render_engine=render_engine,
+                  owner_kind=kind, owner_name=str(owner.name), owner_key=datablock_key(bpy, owner),
                   group_path=tuple(str(item.name) for item in parents), node_name=str(node.name),
                   object_name=str(obj.name) if obj is not None else None,
+                  object_key=datablock_key(bpy, obj) if obj is not None else None,
                   material_slot=material_slot, uv_map=uv_map,
                   reasons=tuple(sorted(walker.reasons)),
                   images=tuple(item[1] for item in walker.images.values()),
-                  upstream=tuple(walker.upstream.values()), signature=None,
-                  **({} if shader_backend is None else shader_backend))
+                  canvas_size=canvas_size, signature=None,
+                  **evaluator)
     colorspace = getattr(bpy.data, "colorspace", None)
     working_space = (getattr(colorspace, "working_space_interop_id", None),
                      getattr(colorspace, "working_space", None))
@@ -1131,10 +1120,8 @@ def _describe(node, context, *, full, dependencies=None):
         height if domain == "UV" else None, _semantic_identity(scene),
         _semantic_identity(owner), _semantic_identity(node),
         tuple(_semantic_identity(item) for item in parents),
-        result["frame"], result["subframe"], scene.render.engine, working_space,
-        None if shader_backend is None else (
-            shader_backend["shader_backend"], shader_backend["cycles_device"],
-            shader_backend["cycles_gpu"]),
+        result["frame"], result["subframe"], render_engine, working_space,
+        evaluator.get("cycles_device"),
         _grade_settings(node), tuple(walker.graph),
         tuple((key, state) for key, (state, _dirty) in walker.image_observations.items()),
         _geometry_observation(obj) if obj is not None else None,
@@ -1142,11 +1129,20 @@ def _describe(node, context, *, full, dependencies=None):
         material_slot, uv_map,
     )
     result["receipt_signature"] = _digest(receipt_observation)
-    result["observation_signature"] = _digest((
+    # The managed image supplies its actual dimensions for persisted receipts.
+    # Pending requests have no image yet and must carry the expected canvas.
+    result["request_signature"] = (
+        _digest((result["receipt_signature"], "scene_canvas", canvas_size))
+        if canvas_size is not None else result["receipt_signature"]
+    )
+    observation_facts = (
         receipt_observation,
         tuple((key, dirty) for key, (_state, dirty)
               in walker.image_observations.items()),
-    ))
+    )
+    if canvas_size is not None:
+        observation_facts += (canvas_size,)
+    result["observation_signature"] = _digest(observation_facts)
     if full:
         terminal = tuple((_socket_name(socket), _plain(getattr(socket, "default_value", None)),
                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
@@ -1155,13 +1151,13 @@ def _describe(node, context, *, full, dependencies=None):
         signature = (SCHEMA, domain, width, height, _semantic_identity(scene),
                      _semantic_identity(owner), _semantic_identity(node),
                      tuple(_semantic_identity(item) for item in parents),
-                     result["frame"], result["subframe"], scene.render.engine, working_space,
-                     None if shader_backend is None else (
-                         shader_backend["shader_backend"], shader_backend["cycles_device"],
-                         shader_backend["cycles_gpu"]),
+                     result["frame"], result["subframe"], render_engine, working_space,
+                     evaluator.get("cycles_device"),
                      _grade_settings(node), terminal, tuple(walker.graph),
                      tuple((key, item[0]) for key, item in walker.images.items()),
-                     tuple(walker.render_states), _rna_state(scene.render) if compositor else None,
+                     tuple(walker.render_states),
+                     (_rna_state(scene.render, exclude=_COMPOSITOR_OVERRIDES | {"engine"})
+                      if compositor else None),
                      _geometry_state(obj) if obj is not None else None,
                      material_slot, uv_map)
         result["signature"] = _digest(signature)
@@ -1172,21 +1168,30 @@ def _describe(node, context, *, full, dependencies=None):
             if key not in existing:
                 existing.add(key)
                 dependencies.append(item)
+    if upstream_grades is not None:
+        existing = {_identity(item) for item in upstream_grades}
+        upstream_grades.extend(grade for key, grade in walker.upstream_grades.items()
+                               if key not in existing)
     return result
 
 
-def describe(node, context=None, *, dependencies=None):
+def describe(node, context=None, *, dependencies=None, upstream_grades=None):
     """Return a value-only request with exact UV/geometry and cheap Image facts.
 
     When provided, ``dependencies`` receives each effective source Image and
     referenced Object/Mesh once. It is a caller-owned transient list; the
     returned route never contains Blender IDs.
 
-    ``receipt_signature`` uses the same cheap facts as ``preview`` and omits
+    ``upstream_grades`` is another transient list. It receives each live Grade
+    or Grade Stack node whose kernel will be used by this route, once.
+
+    ``request_signature`` augments the durable receipt with the expected size
+    for canvas-sized outputs. Both are available from ``preview`` and omit
     transient dirty state. ``signature`` additionally covers validated exact
     geometry; only an explicit request needs that full geometry work.
     """
-    return _describe(node, context, full=True, dependencies=dependencies)
+    return _describe(node, context, full=True, dependencies=dependencies,
+                     upstream_grades=upstream_grades)
 
 
 def preview(node, context=None, *, dependencies=None):

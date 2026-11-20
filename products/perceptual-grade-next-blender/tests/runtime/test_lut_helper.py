@@ -86,6 +86,7 @@ class LUTHelperTests(unittest.TestCase):
         cls.module = importlib.import_module("grade_helper_test.lut_helper")
         settings_module = importlib.import_module("grade_helper_test.kernel.settings")
         cls.settings = settings_module.Settings
+        cls.stack_entry_settings = settings_module.StackEntrySettings
         cls.linear_settings = settings_module.LinearSettings
 
     @classmethod
@@ -140,6 +141,22 @@ class LUTHelperTests(unittest.TestCase):
             self.assertEqual(job.advance(), ("full", {"quality": "full"}))
         self.assertFalse(job.preview_emitted)
         self.assertFalse(backend.runtime.submissions[0][1]["progressive"])
+
+    def test_entry_directions_cross_the_helper_boundary_in_order(self):
+        group = Group(result=({"quality": "full"},), ready=True)
+        backend = self.backend(group, probe_ready=True)
+        job = self.module.HelperStackJob(
+            backend,
+            ((
+                self.stack_entry_settings(self.settings(), "INVERSE"),
+                self.stack_entry_settings(self.settings(), "FORWARD"),
+            ), "ACEScg"),
+            False,
+        )
+        with patch.object(self.module, "thaw_prepared", side_effect=lambda item: item):
+            self.assertEqual(job.advance(), ("full", {"quality": "full"}))
+        self.assertEqual(backend.runtime.submissions[0][1]["directions"],
+                         ("INVERSE", "FORWARD"))
 
     def test_superseding_preview_requests_cancellation_and_waits_for_retirement(self):
         group = Group(preview=({"quality": "preview"},),

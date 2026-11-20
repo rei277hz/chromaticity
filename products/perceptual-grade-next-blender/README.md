@@ -2,8 +2,13 @@
 
 Grade and Grade Stack nodes appear in the Shader and Compositor Color Add
 menus. Regular Grade nodes apply Linear, Tone, and Stage 3 Color through the
-product's `kernel` package; Grade Stack nodes apply ordered, forward-only complete
-Grades through progressive 33³/65³ GPU LUTs. Both use shared static Grade datablocks.
+product's `kernel` package. Each Grade Stack entry can apply or invert Linear,
+Tone, and Color in any position. Adjacent entries with opposite directions pass
+appearance values, composing different Linear transforms in CAT16 cone space
+for an Inverse → Forward pair. Only a final Forward entry applies the AP1-D65
+boundary mapping. A final Inverse entry returns recovered signed RGB.
+The Stack bakes the ordered entries into progressive 33³/65³ GPU LUTs.
+Both node types use shared static Grade datablocks.
 The Add menus provide one Grade entry. Right-click a Grade node and choose
 **Convert to Node-Owned Grade** to give it independent settings and numeric keyframes
 in Blender's native animation editors. All variants use the same Grade controls and preparation
@@ -16,14 +21,16 @@ behavior and retains a clearly labeled legacy 1.23.2 ZIP link. Stage 3 supplies
 numeric J, C, Adaptance, and Warp controls; the draggable Warp diagram is deferred.
 Warp hue is displayed as its stored degree offset. All Grade paths follow the
 reference's Adaptance → H–K repair → common positive Scale order.
+The [Stage 3 Color Gizmo design](docs/GIZMO_DESIGN.md) describes a future
+graphical editor for the J and C controls.
 
 Adaptance drags use 0.01 increments and tonal soft spans of ±4, ±10, ±20,
 and ±25. Finite requests beyond the physical response domain are limited
 radially, preserving the a/b tint direction. Warp hue edits maintain at least
-4° between cyclic target angles by pushing neighbors; the Auto indicator names
-the initiating handle. Returning that handle restores its neighbors toward
-their saved positions until blocked. A manual edit detaches only that handle;
-a new push transfers ownership using its current position as the new baseline.
+4° between cyclic target angles by pushing neighbors. Returning the initiating
+handle restores its neighbors toward their saved positions until blocked. A
+manual edit detaches only that handle. A new push transfers ownership using
+its current position as the new baseline.
 Claims persist through copy, conversion, save, and undo. Actual frame/subframe
 changes expire per-node claims; shared Grade claims remain. Animated samples
 resolve through the same immutable settings boundary for Grade and Stack,
@@ -129,7 +136,12 @@ while the helper continues; at most one latest Stack snapshot waits behind activ
 work. Direct value entry requests only the final 65³ cube. The main thread polls
 helper receipts asynchronously, so GPU dispatch and texture readback do not block
 Blender's UI thread. A matching 33³ result remains marked as a preview until the
-full cube installs.
+full cube installs. A visible Compositor Viewer keeps the Stack's updating
+indicator until it finishes evaluating that full cube.
+
+When a Stack LUT uses finite inverse approximations outside tolerance, the node
+warns how many vertices of the displayed LUT are affected and reports the worst
+error as a multiple of tolerance.
 
 A complete previous result can remain visible with an amber `Updating` indication.
 Only the exact current kernel is ready for rendering. Render reconciliation joins
@@ -144,30 +156,32 @@ Shutdown withdraws pending demand and waits for active physical work to retire.
 Shared Grade and Grade Stack nodes expose a Bake control in both Shader and
 Compositor trees. A bake captures the current native node-tree result into a
 managed packed 32-bit float RGBA Image and switches the node to that reader.
-Use Bake can be disabled at any time without unbinding the Image; changing the
-authoritative Grade or Stack settings or a detected source change revokes the
-bake receipt, returns the node to live output, and disables Use Bake until a
-new bake is published. Nodes retain source tracking while Use Bake is off. A
+Use Bake switches between the live output and the bound Image. A valid Image
+stays available when the Grade, Stack, render engine, or source changes. The
+node displays a warning with the reason when the bake may be outdated. A
 managed Image may be selected by multiple nodes, so a rebake updates every
 reader of that Image.
 
-Shader bakes retain the legacy route distinction. A pointwise graph with one
-still Image source uses the Image route and evaluates one output pixel per
-source texel. Linked coordinates, surface-dependent nodes, an upstream managed
-UV bake, or multiple source Images use the UV route and require a Cycles mesh
-with one non-overlapping UV map. Compositor bakes use native compositor evaluation and retain its output
-image domain.
-Value-only Shader graphs with no source Image use the Image route and publish a
-1x1 managed Image. Compositor constants retain the compositor canvas dimensions.
-Image-domain Shader bakes follow the active Scene render choice: EEVEE uses a
-private orthographic node-tree render, while Cycles uses the Scene's CPU or GPU
-selection. Workbench and unknown engines use Cycles CPU. UV bakes remain
-Cycles-only but honor the Scene's CPU/GPU choice. A GPU request freezes the
-Cycles compute backend and exact enabled device identities at click time; an
-unavailable selection fails visibly and is never silently changed to CPU.
-The helper does not modify the user's Scene or preferences. EEVEE's limited
-color-pass precision is handled with split signed-HDR AOV readback before the
-float Image is published.
+Bakes created before source Image identity was verified remain usable and show
+a warning until a successful rebake verifies their captured sources.
+
+Shader Image and UV bakes run on Cycles CPU in a private copy of the scene.
+You can request either bake directly in EEVEE. Switching the scene engine or
+Cycles device keeps a current Shader bake current and lets a pending bake
+finish. A pointwise graph with one still Image source uses the Image route and
+evaluates one output pixel per source texel. A value-only graph produces a 1x1
+Image.
+Linked coordinates, surface-dependent nodes, an upstream managed UV bake, or
+multiple source Images use the UV route and require a mesh with a
+non-overlapping render UV map.
+
+Compositor bakes use Blender's full-precision CPU compositor and retain its
+output dimensions. A constant uses the scene canvas at the render resolution
+percentage. If its pixel dimensions change, a pending constant bake is
+discarded. An existing bake stays usable with a canvas-size warning that
+clears when its dimensions match again. For Render Layers inputs, the scene's
+chosen render engine produces the pixels supplied to the compositor.
+
 The Shader Vector input controls only baked sampling. When unlinked, it uses
 the recorded bake UV map (or the active render UV map for Image bakes).
 Grade parameters are evaluated through the native Grade helper-image tree, and
@@ -183,7 +197,8 @@ Subdivision, Geometry Nodes, Armature, Curve, Lattice, and Displace. The support
 unapplied modifiers are Cast, Corrective Smooth, Laplacian Smooth, Normal Edit,
 Simple Deform, Smooth, Warp, Wave, and Weighted Normal. Requests are serialized through one
 helper lane and capture a frozen click-time snapshot; an edit, frame change, or
-invalidated source discards the in-flight result rather than publishing stale pixels.
+invalidated source discards the in-flight result rather than publishing stale
+pixels.
 
 Bake freshness uses small graph/settings digests, cheap Image metadata, and
 per-ID change generations for referenced Images, Meshes, and Objects. The
@@ -194,11 +209,10 @@ Image bytes, and `.blend`, `.npy`, or EXR bake payloads are never hashed.
 Accepting a request copies each unique source Image once to freeze its
 click-time state. Request, publication, and render boundaries compare receipts
 and tokens without image-sized hashing. File load and undo rebaseline transient
-generations against the persisted cheap receipt and preserve Use Bake when it
-still matches; a missing or mismatched receipt returns to live output and
-requires rebaking. Earlier receipt versions are not migrated. Toggle
-availability is derived from this same freshness decision and remains greyed
-out after revocation until a new bake publishes.
+generations against the saved receipt. Settings warnings clear when their
+recorded values return. Detected source updates are recorded on the
+receipt, including while Use Bake is off. A successful rebake creates a new
+receipt and clears the source warning.
 
 Grade and Grade Stack receipts identify their sockets by public names, so
 generated socket identifiers can change during live/wrapper/fallback kernel

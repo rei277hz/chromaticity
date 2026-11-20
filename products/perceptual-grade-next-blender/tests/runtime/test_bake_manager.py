@@ -159,7 +159,8 @@ class BakeManagerTests(unittest.TestCase):
 
         scene = object()
         image = SimpleNamespace(
-            size=(2, 1), channels=4, pixels=Pixels(),
+            name="Source", size=(2, 1), channels=4, pixels=Pixels(),
+            source="GENERATED", type="IMAGE", is_float=True,
             colorspace_settings=SimpleNamespace(name="Non-Color"),
             alpha_mode="CHANNEL_PACKED",
         )
@@ -175,18 +176,19 @@ class BakeManagerTests(unittest.TestCase):
             materials=SimpleNamespace(get=lambda _name: None),
             worlds=SimpleNamespace(get=lambda _name: None),
             objects=SimpleNamespace(get=lambda _name: None),
-            images=SimpleNamespace(get=lambda name: image if name == "Source" else None),
+            images=(image,),
             libraries=Libraries(),
         )
         manager = self.module.BakeManager(SimpleNamespace(data=data), Backend())
         with patch.object(Path, "open", side_effect=AssertionError("payload scan")), \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
             root, snapshot, records = manager._snapshot({
-                "scene": "Scene", "images": ({"image_name": "Source"},),
+                "scene": "Scene", "images": ({"image_key": ("Source", None)},) * 2,
             })
         self.addCleanup(lambda: manager._remove_files(root))
         self.assertTrue(snapshot.is_file())
-        self.assertEqual(records[0]["name"], "Source")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["image_key"], ("Source", None))
         self.assertNotIn("sha256", records[0])
         self.assertEqual(np.load(records[0]["pixels_path"], allow_pickle=False).shape,
                          (1, 2, 4))
@@ -209,38 +211,45 @@ class BakeManagerTests(unittest.TestCase):
                 patch.object(self.worker, "_restore_images") as restore, \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
             self.worker._open_snapshot({"snapshot_path": str(snapshot), "images": []})
-        restore.assert_called_once_with([])
+        restore.assert_called_once_with([], ())
 
     def test_worker_restores_finite_sidecar_without_checksum_scan(self):
         root = Path(self.snapshots.name) / "worker-images"
         root.mkdir()
         payload = root / "pixels.npy"
-        np.save(payload, np.full((1, 2, 4), 0.5, dtype=np.float32), allow_pickle=False)
-
-        class Pixels:
-            def foreach_set(self, _values):
-                pass
-
-        class Images:
-            def __init__(self):
-                self.image = SimpleNamespace(
-                    size=(2, 1), pixels=Pixels(), update=lambda: None,
-                    colorspace_settings=SimpleNamespace(name=""), alpha_mode="",
-                )
-
-            def get(self, _name):
-                return self.image
-
-        bpy = SimpleNamespace(data=SimpleNamespace(images=Images()))
-        record = {"name": "Source", "pixels_path": str(payload)}
+        np.save(payload, np.full((1, 2, 3), 0.5, dtype=np.float32), allow_pickle=False)
+        written = []
+        image = SimpleNamespace(
+            name="Source", size=(2, 1), channels=3, source="FILE", type="IMAGE",
+            is_float=False, use_half_precision=False,
+            pixels=SimpleNamespace(foreach_set=lambda values: written.append(values.copy())),
+            update=lambda: None, colorspace_settings=SimpleNamespace(name="sRGB"),
+            alpha_mode="STRAIGHT",
+        )
+        source = SimpleNamespace(node_tree=SimpleNamespace(nodes={
+            "Texture": SimpleNamespace(bl_idname="ShaderNodeTexImage", image=image),
+        }), name="Material")
+        bpy = SimpleNamespace(data=SimpleNamespace(images=(image,), materials=(source,)))
+        image_key = ("Source", None)
+        occurrence = dict(image_key=image_key, owner=("material", ("Material", None)),
+                          node_name="Texture", group_path=(), reader_path=())
+        record = dict(image_key=image_key, pixels_path=str(payload), width=2, height=1,
+                      **self.worker.image_format(image))
         with patch.dict(sys.modules, {"bpy": bpy}), \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
-            self.worker._restore_images([record])
+            self.worker._restore_images([record], (occurrence,))
+        np.testing.assert_equal(written[0], np.full(6, 0.5, dtype=np.float32))
 
-        np.save(payload, np.full((1, 2, 4), np.nan, dtype=np.float32), allow_pickle=False)
+        np.save(payload, np.full((1, 2, 3), np.nan, dtype=np.float32), allow_pickle=False)
         with patch.dict(sys.modules, {"bpy": bpy}), \
                 self.assertRaisesRegex(ValueError, "nonfinite"):
-            self.worker._restore_images([record])
+            self.worker._restore_images([record], (occurrence,))
+
+        with patch.dict(sys.modules, {"bpy": bpy}), \
+                self.assertRaisesRegex(ValueError, "different Image"):
+            source.node_tree.nodes["Texture"].image = SimpleNamespace(name="Source")
+            self.worker._restore_images([record], (occurrence,))
+        self.assertEqual(len(written), 1)
 
     def test_worker_result_does_not_hash_output_artifact(self):
         root = Path(self.snapshots.name) / "worker-result"

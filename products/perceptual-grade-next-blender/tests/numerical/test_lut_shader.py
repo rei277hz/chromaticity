@@ -22,9 +22,12 @@ class LUTShaderTests(unittest.TestCase):
             self.assert_shader_equivalent(expected, source)
         finally:
             preparer.close()
-        self.assertIn("vec3 grade_value(vec3 input_value)", source)
+        self.assertIn("vec3 grade_value(vec3 input_value, int final_grade)", source)
+        intermediate, final = source.split("if (final_grade == 0) {", 1)[1].split("}", 1)
+        self.assertIn("return", intermediate)
+        self.assertIn("uintBitsToFloat(0x7f800000u)", intermediate)
+        self.assertIn("sample_boundary(", final)
         self.assertIn("texelFetch(grade_parameters", source)
-        self.assertIn("sample_boundary", source)
 
     def assert_shader_equivalent(self, expected, actual):
         """Keep generated topology/text exact while allowing native float repr drift."""

@@ -1,10 +1,12 @@
 """Emit the shared native full Grade equations as compute GLSL."""
 
+import math
 from numbers import Real
 from types import SimpleNamespace
 
-from .graph import Graph
-from .guard_graph import output_guard
+from .graph import AppearanceSockets, Graph
+from .guard_graph import GuardedSockets, output_guard
+from .stack_inverse_shader import INVERSE_SOURCE
 from .parameter_color import ParameterColorGraph
 from ..kernel.prepare import prepare
 from ..kernel.stage2_parameters import (
@@ -85,7 +87,7 @@ class _ComputeParameters:
 class _ComputeGraph(ParameterColorGraph, Graph):
     """Compose Graph's existing equations with a GLSL arithmetic adapter."""
 
-    def __init__(self, boundary):
+    def __init__(self, boundary, color):
         self.tree = SimpleNamespace(bl_idname="ShaderNodeTree")
         self.cache = {}
         self.boundary = boundary
@@ -94,7 +96,6 @@ class _ComputeGraph(ParameterColorGraph, Graph):
         self.parameters = _ComputeParameters(self)
         # Only fixed layouts and field identities are needed from preparation;
         # all authored choices are read from each grade's uploaded role texels.
-        defaults = prepare(boundary=boundary,full_fields=True)
         self.prepared = SimpleNamespace(
             fl=boundary.fl,
             aw=boundary.aw,
@@ -104,7 +105,7 @@ class _ComputeGraph(ParameterColorGraph, Graph):
             boundary=boundary,
             tone=self.parameters.tone,
             table=SimpleNamespace(cells=256, domain=self.parameters.domain),
-            color=defaults.color,
+            color=color,
         )
 
     def _emit(self, kind, expression):
@@ -218,20 +219,94 @@ class _ComputeGraph(ParameterColorGraph, Graph):
         )
 
 
+def _appearance_functions(boundary, color):
+    """Emit independent stage entry points for mixed-direction stacks."""
+    def graph():
+        return _ComputeGraph(boundary, color)
+
+    def function(signature, stage, result):
+        return "\n".join((signature + " {", *stage.lines, f"    return {result};", "}"))
+
+    def pack(state):
+        return "vec4(" + ", ".join(_code(x) for x in (
+            state.H, state.a, state.b, state.energy)) + ")"
+
+    stage = graph()
+    encoded = stage.encode_cones(_Expression("cones", "vec3"))
+    yield function("vec4 stack_encode(vec3 cones)", stage, pack(encoded))
+    stage = graph()
+    value = _Expression("rgb", "vec3")
+    cones = stage.parameters.matrix(value)
+    yield function("vec4 stack_enter(vec3 rgb)", stage, f"stack_encode({_code(cones)})")
+    # Targets presented to an inverse are in the fixed AP1-D65 output basis.
+    # Its seed enters the canonical cones without applying this Grade's Linear.
+    stage = graph()
+    cones = stage.matrix(value, boundary.inverse)
+    yield function("vec4 stack_target(vec3 rgb)", stage, f"stack_encode({_code(cones)})")
+
+    stage = graph()
+    h, a, b, energy = (_Expression("state." + lane) for lane in "xyzw")
+    ja = stage.mul(stage.sign(energy), stage.sqrt(stage.abs(energy)))
+    chroma = stage.hypot(a, b)
+    achromatic = stage.mul(
+        boundary.aw,
+        stage.mul(stage.sign(ja),
+                  stage.power(stage.mul(.01, stage.abs(ja)), 1. / boundary.gamma)))
+    # The opponents already include eccentricity. Tone's common gain
+    # applies directly to them with a factor of one.
+    entered = AppearanceSockets(stage, ja, a, b, achromatic, 1., chroma)
+    graded = stage.color_and_guard(stage.tone(entered))
+    yield function("vec4 stack_grade(vec4 state)", stage, pack(graded))
+
+    for name, cones_only in (("stack_decode", False), ("stack_decode_cones", True)):
+        stage = graph()
+        raw = GuardedSockets(stage, h, a, b, energy, energy)
+        decoded = stage.decode_coordinates(raw.J_A, a, b, cones_only=cones_only)
+        result = f"{_code(decoded.valid)} > 0.0 ? {_code(decoded.color)} : vec3(uintBitsToFloat(0x7f800000u))"
+        yield function(f"vec3 {name}(vec4 state)", stage, result)
+    stage = graph()
+    raw = GuardedSockets(stage, h, a, b, energy, energy)
+    yield function("vec3 stack_project(vec4 state)", stage, _code(output_guard(stage, raw).native_color))
+
+    stage = graph()
+    remapped = stage.remap(_Expression("magnitude"))
+    yield function("float stack_tone_magnitude(float magnitude)", stage, _code(remapped))
+
+
 def grade_source(boundary):
     """Create the complete Grade shader using shared build-only equations."""
-    graph = _ComputeGraph(boundary)
+    color = prepare(boundary=boundary, full_fields=True).color
+    graph = _ComputeGraph(boundary, color)
     input_color = _Expression("input_value", "vec3")
     cones = graph.parameters.matrix(input_color)
     toned = graph.tone(graph.encode_cones(cones))
-    guarded = output_guard(graph, graph.color_and_guard(toned))
-    native = guarded.native_color
+    repaired = graph.color_and_guard(toned)
+    raw = graph.decode_coordinates(repaired.J_A, repaired.a, repaired.b)
+    graph.lines.extend((
+        "    if (final_grade == 0) {",
+        f"        return {_code(raw.valid)} > 0.0 ? {_code(raw.color)} : vec3(uintBitsToFloat(0x7f800000u));",
+        "    }",
+    ))
+    guarded = output_guard(graph, repaired)
+    response_limit = 400.
+    max_ja = 100. * (3.05 * response_limit / boundary.aw)**boundary.gamma
+    # Bound the eccentricity polynomial over unit hue components.
+    max_eccentricity = sum((.2312, .5388, .2828, .3459, 1.0547, .0768, .154, .1, .186))
+    max_chroma = (1204. / boundary.aw * max_eccentricity * response_limit
+                  * math.hypot(24./11., 4./9.))
+    max_magnitude = math.hypot(max_ja, math.sqrt(66. * max_chroma))
     body = "\n".join((
         _PREAMBLE,
-        "vec3 grade_value(vec3 input_value) {",
+        "vec3 grade_value(vec3 input_value, int final_grade) {",
         *graph.lines,
-        f"    return {_code(native)};",
+        f"    return {_code(guarded.native_color)};",
         "}",
+        "#ifdef STACK_INVERSE",
+        f"const vec3 stack_inverse_bound = vec3({max_ja}, {max_chroma}, {max_chroma});",
+        f"const float stack_max_magnitude = {max_magnitude};",
+        *_appearance_functions(boundary, color),
+        INVERSE_SOURCE,
+        "#endif",
     ))
     return body
 

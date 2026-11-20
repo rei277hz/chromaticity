@@ -11,6 +11,7 @@ from typing import Optional
 import numpy as np
 
 from .kernel import lut
+from .kernel.settings import stack_directions
 from .kernel.stage2_parameters import (
     MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT, MATRIX_RED_SLOT, prepare_parameters,
 )
@@ -34,13 +35,16 @@ class PreparedStack:
     space: str
     cube: object
     diagnostics: Optional[object] = None
+    directions: tuple = ()
 
 
-def _signature(settings, space):
+def _signature(settings, space, directions):
     from .kernel.color_resolution import COLOR_RESOLUTION_SCHEMA
 
-    payload = ("stage-1-2-3-guarded-stack-v2", COLOR_RESOLUTION_SCHEMA,
+    payload = ("forward-stack", lut.STACK_COMPOSITION_SCHEMA, COLOR_RESOLUTION_SCHEMA,
                space, tuple(asdict(item) for item in settings))
+    if "INVERSE" in directions:
+        payload += (lut.STACK_INVERSE_SCHEMA, directions)
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
                                      allow_nan=False).encode("utf8")).hexdigest()
 
@@ -56,17 +60,49 @@ def _parameters(prepared, from_lut):
             pixels = parameters.roles[role]
             if role == "parameter":
                 pixels = pixels.copy()
-                matrix = grade.linear_to_cones @ from_lut
-                pixels[0, MATRIX_RED_SLOT, :3] = matrix[:, 0]
-                pixels[0, MATRIX_BLUE_SLOT, :3] = matrix[:, 2]
-                pixels[0, MATRIX_NEUTRAL_SLOT, :3] = tuple(
-                    math.fsum(float(value) for value in row) for row in matrix)
+                packed = _neutral_columns(grade.linear_to_cones @ from_lut)
+                pixels[0, (MATRIX_RED_SLOT, MATRIX_NEUTRAL_SLOT, MATRIX_BLUE_SLOT), :3] = packed
             if not np.isfinite(pixels).all():
                 raise ValueError("Stack grading parameters must be finite float32")
             roles[role].append(pixels)
     return {role: (np.concatenate(pixels, axis=0) if pixels
                    else np.zeros((1, 1, 4), dtype=np.float32))
             for role, pixels in roles.items()}
+
+
+def _neutral_columns(matrix):
+    """GPU coefficients for (red - green), green, and (blue - green)."""
+    with np.errstate(over="ignore"):
+        packed = np.asarray((matrix[:, 0], tuple(math.fsum(row) for row in matrix),
+                             matrix[:, 2]), dtype=np.float32)
+    if not np.isfinite(packed).all():
+        raise ValueError("Stack Linear transform must be finite float32")
+    return packed
+
+
+def _inverse_transforms(prepared, directions, from_lut):
+    """Invert the Linear coefficients the forward shader actually receives."""
+    linear = tuple(grade.linear_to_cones @ from_lut for grade in prepared)
+    effective = []
+    for matrix in linear:
+        red, neutral, blue = _neutral_columns(matrix).astype(np.float64)
+        effective.append(np.column_stack((red, neutral - red - blue, blue)))
+    pixels = np.zeros((len(linear), 3, 4), dtype=np.float32)
+    for index, direction in enumerate(directions):
+        if direction != "INVERSE":
+            continue
+        matrix = effective[index]
+        if np.linalg.matrix_rank(linear[index]) != 3 or np.linalg.matrix_rank(matrix) != 3:
+            raise ValueError(f"Inverse Grade {index + 1} has a singular Linear transform")
+        transform = np.linalg.inv(matrix)
+        if index + 1 < len(linear) and directions[index + 1] == "FORWARD":
+            if np.array_equal(matrix, effective[index + 1]):
+                # Zero w denotes an exact appearance handoff.
+                continue
+            transform = effective[index + 1] @ transform
+        pixels[index, :, :3] = _neutral_columns(transform)
+        pixels[index, 0, 3] = 1.0
+    return pixels
 
 
 class StackGPUBackend:
@@ -78,33 +114,52 @@ class StackGPUBackend:
         self._edge_shader = None
         self._source = None
 
-    def create_prepared(self, prepared, working_space, progressive, *, settings=()):
+    def create_prepared(self, prepared, working_space, progressive, *, settings=(), directions=None):
         _require_main_thread()
         prepared = tuple(prepared)
         if any(item.space != working_space for item in prepared):
             raise ValueError("Stack preparation belongs to another working space")
+        directions = stack_directions(len(prepared), directions)
+        basis = lut.basis(working_space)
+        inverse_transforms = (
+            _inverse_transforms(prepared, directions, basis[1])
+            if "INVERSE" in directions else None
+        )
         boundary = prepared[0].boundary if prepared else None
-        self._ensure_shader(boundary)
-        return StackLUTBaker(self, prepared, working_space, progressive, tuple(settings))
+        self._ensure_shader(boundary, inverse_transforms is not None)
+        return StackLUTBaker(
+            self, prepared, working_space, progressive, tuple(settings), directions,
+            basis, inverse_transforms,
+        )
 
-    def _ensure_shader(self, boundary):
+    def _ensure_shader(self, boundary, mixed):
         import gpu
 
         _require_main_thread()
         gpu.init()
         if not gpu.capabilities.compute_shader_support_get():
             raise RuntimeError("Grade Stack LUT baking requires GPU compute shaders")
-        source = grade_source(boundary) if boundary is not None else "vec3 grade_value(vec3 value) { return value; }"
+        source = (grade_source(boundary) if boundary is not None
+                  else "vec3 grade_value(vec3 value, int final_grade) { return value; }")
+        if mixed:
+            source = "#define STACK_INVERSE\n" + source
         if self._source == source and self._shader is not None:
             return
         info = gpu.types.GPUShaderCreateInfo()
         info.local_group_size(_LOCAL_SIZE, 1, 1)
         samplers = ("axis_values", "input_values", "boundary_seed", *_ROLE_SAMPLERS.values())
+        if mixed:
+            samplers += ("inverse_transforms",)
         for binding, name in enumerate(samplers):
             info.sampler(binding, "FLOAT_2D", name)
         info.image(0, "RGBA32F", "FLOAT_2D", "output_pixels", qualifiers={"WRITE"})
-        for name in ("cube_size", "sample_start", "sample_count", "output_width", "grade_index", "first_grade"):
+        for name in ("cube_size", "sample_start", "sample_count", "output_width",
+                     "grade_index", "first_grade", "final_grade"):
             info.push_constant("INT", name)
+        if mixed:
+            info.image(1, "R32F", "FLOAT_2D", "inverse_errors", qualifiers={"WRITE"})
+            for name in ("inverse_grade", "appearance_input", "appearance_output"):
+                info.push_constant("INT", name)
         info.compute_source(source + _VALUE_SHADER)
         self._shader = gpu.shader.create_from_info(info)
         if self._edge_shader is None:
@@ -127,24 +182,28 @@ class StackGPUBackend:
 class StackLUTBaker:
     """Dispatch ordered complete grades, then derive actual grid edge vectors."""
 
-    def __init__(self, backend, prepared, space, progressive, settings):
+    def __init__(self, backend, prepared, space, progressive, settings, directions,
+                 basis, inverse_transforms):
         self.backend = backend
         self.prepared = prepared
-        self.to_lut, self.from_lut = lut.basis(space)
-        self.signature = _signature(settings, space)
+        self.shader = backend._shader
+        self.to_lut, self.from_lut = basis
+        self.signature = _signature(settings, space, directions)
         self.space = space
         self.settings = settings
+        self.directions = directions
+        self._mixed = inverse_transforms is not None
         self.progressive = bool(progressive)
         self.size = lut.PREVIEW_SIZE if progressive else lut.SIZE
         self.cursor = self._grade = 0
         self._edges = False
         self._output = self._values = self._axis_texture = None
         self._parameter_textures = {}
-        self._boundary_texture = None
+        self._boundary_texture = self._inverse_texture = self._inverse_errors = None
         self._readback_pending = self._closed = False
         self.texture_allocation_seconds = {"preview": 0.0, "full": 0.0}
         self.readback_seconds = {"preview": 0.0, "full": 0.0}
-        self._create_resources()
+        self._create_resources(inverse_transforms)
         self._create_phase()
 
     @property
@@ -159,13 +218,15 @@ class StackLUTBaker:
             data=self.backend._gpu.types.Buffer("FLOAT", pixels.shape, pixels),
         )
 
-    def _create_resources(self):
+    def _create_resources(self, inverse_transforms):
         self._parameter_textures = {
             role: self._texture(pixels)
             for role, pixels in _parameters(self.prepared, self.from_lut).items()
         }
         pixels = self.prepared[0].boundary.pixels if self.prepared else np.zeros((2, 2, 4), np.float32)
         self._boundary_texture = self._texture(pixels)
+        if inverse_transforms is not None:
+            self._inverse_texture = self._texture(inverse_transforms)
 
     def _create_phase(self):
         phase = "preview" if self.size == lut.PREVIEW_SIZE else "full"
@@ -185,6 +246,12 @@ class StackLUTBaker:
         self._output = gpu.types.GPUTexture(
             (lut.ATLAS_WIDTH, lut.atlas_height(self.size)), format="RGBA32F",
         )
+        if self._mixed:
+            self._inverse_errors = gpu.types.GPUTexture(
+                (lut.ATLAS_WIDTH, height), format="R32F",
+            )
+            self._inverse_max_residual = 0.0
+            self._inverse_approximate = np.zeros(self.sample_count, dtype=bool)
         self.texture_allocation_seconds[phase] += time.perf_counter() - started
 
     def advance(self):
@@ -193,19 +260,28 @@ class StackLUTBaker:
             raise RuntimeError("Grade Stack LUT baker is closed")
         if self._readback_pending:
             cube = self._readback()
+            diagnostics = None
+            if self._mixed:
+                diagnostics = {
+                    "inverse_approximate_vertices": int(np.count_nonzero(self._inverse_approximate)),
+                    "inverse_max_residual": self._inverse_max_residual,
+                }
+            result = PreparedStack(self.settings, self.space, cube,
+                                   diagnostics=diagnostics, directions=self.directions)
             if self.progressive:
                 self.progressive = False
                 self.size = lut.SIZE
                 self.cursor = self._grade = 0
                 self._edges = self._readback_pending = False
                 self._create_phase()
-                return "preview", PreparedStack(self.settings, self.space, cube)
-            return "full", PreparedStack(self.settings, self.space, cube)
+                return "preview", result
+            return "full", result
 
         count = min(DISPATCH_SAMPLES, self.sample_count - self.cursor)
         gpu = self.backend._gpu
-        shader = self.backend._edge_shader if self._edges else self.backend._shader
+        shader = self.backend._edge_shader if self._edges else self.shader
         shader.bind()
+        inverse = False
         if self._edges:
             shader.uniform_sampler("input_values", self._values[(self._grade - 1) % 2])
             shader.image("output_pixels", self._output)
@@ -217,6 +293,19 @@ class StackLUTBaker:
             shader.uniform_sampler("boundary_seed", self._boundary_texture)
             if self.prepared:
                 shader.uniform_int("grade_index", self._grade)
+                shader.uniform_int("final_grade", int(self._grade == len(self.prepared) - 1))
+            if self._mixed:
+                grade, directions = self._grade, self.directions
+                inverse = directions[grade] == "INVERSE"
+                shader.uniform_int("inverse_grade", int(inverse))
+                shader.uniform_int("appearance_input", int(
+                    grade > 0 and directions[grade - 1] != directions[grade],
+                ))
+                shader.uniform_int("appearance_output", int(
+                    grade + 1 < len(directions) and directions[grade + 1] != directions[grade],
+                ))
+                shader.uniform_sampler("inverse_transforms", self._inverse_texture)
+                shader.image("inverse_errors", self._inverse_errors)
             shader.uniform_int("first_grade", int(self._grade == 0))
             shader.image("output_pixels", self._values[self._grade % 2])
         for name, value in (("cube_size", self.size), ("sample_start", self.cursor),
@@ -229,6 +318,14 @@ class StackLUTBaker:
             if self._edges:
                 self._readback_pending = True
             else:
+                if inverse:
+                    errors = np.asarray(self._inverse_errors.read(), dtype=np.float32)
+                    errors = errors.reshape(-1)[:self.sample_count]
+                    maximum = float(np.max(errors))
+                    if not math.isfinite(maximum):
+                        raise ArithmeticError(f"Could not solve a finite inverse for Grade {self._grade + 1}")
+                    self._inverse_max_residual = max(self._inverse_max_residual, maximum)
+                    self._inverse_approximate |= errors > 1.0
                 self._grade += 1
                 self._edges = self._grade == max(1, len(self.prepared))
         return None
@@ -240,6 +337,8 @@ class StackLUTBaker:
         pixels = np.asarray(self._output.read(), dtype=np.float32).reshape(-1, 4)
         fields = pixels[:4 * count, :3].copy().reshape(4, size, size, size, 3)
         if not np.isfinite(fields).all():
+            if np.isposinf(fields[0]).all(axis=-1).any():
+                raise ArithmeticError("An intermediate Grade could not decode to finite RGB")
             raise ArithmeticError("Stack GPU baking produced nonfinite values")
         for array in (fields, self.to_lut, self.from_lut):
             array.flags.writeable = False
@@ -253,7 +352,7 @@ class StackLUTBaker:
         _require_main_thread()
         self._output = self._values = self._axis_texture = None
         self._parameter_textures.clear()
-        self._boundary_texture = None
+        self._boundary_texture = self._inverse_texture = self._inverse_errors = None
         self._closed = True
 
 
@@ -263,24 +362,82 @@ def _require_main_thread():
 
 
 _VALUE_SHADER = r"""
+#ifdef STACK_INVERSE
+float stack_failure() {
+    return uintBitsToFloat(0x7f800000u);
+}
+
+vec3 inverse_transform(vec3 cones, vec4 first_column, int index) {
+    vec3 neutral = texelFetch(inverse_transforms, ivec2(1, index), 0).xyz;
+    vec3 third_column = texelFetch(inverse_transforms, ivec2(2, index), 0).xyz;
+    return first_column.xyz * (cones.x - cones.y) + third_column * (cones.z - cones.y)
+         + neutral * cones.y;
+}
+
+vec4 stack_value(vec4 value, out float residual) {
+    residual = 0.0;
+    if (any(isinf(value)) || any(isnan(value))) {
+        residual = stack_failure();
+        return vec4(stack_failure());
+    }
+    if (inverse_grade != 0) {
+        vec4 solved = stack_inverse(value, appearance_input != 0, residual);
+        if (appearance_output != 0) return solved;
+        vec4 first_column = texelFetch(inverse_transforms, ivec2(0, grade_index), 0);
+        vec3 cones = stack_decode_cones(solved);
+        if (any(isinf(cones)) || any(isnan(cones))) return vec4(stack_failure());
+        return vec4(inverse_transform(cones, first_column, grade_index), 1.0);
+    }
+    vec4 entered;
+    if (appearance_input == 0) {
+        if (appearance_output == 0) return vec4(grade_value(value.xyz, final_grade), 1.0);
+        entered = stack_enter(value.xyz);
+    } else {
+        entered = value;
+        int previous = grade_index - 1;
+        vec4 first_column = texelFetch(inverse_transforms, ivec2(0, previous), 0);
+        if (first_column.w != 0.0) {
+            vec3 cones = stack_decode_cones(entered);
+            if (any(isinf(cones)) || any(isnan(cones))) return vec4(stack_failure());
+            cones = inverse_transform(cones, first_column, previous);
+            if (any(isinf(cones)) || any(isnan(cones))) return vec4(stack_failure());
+            entered = stack_encode(cones);
+        }
+    }
+    vec4 graded = stack_grade(entered);
+    if (appearance_output != 0) return graded;
+    vec3 color = final_grade != 0 ? stack_project(graded) : stack_decode(graded);
+    return vec4(color, 1.0);
+}
+#endif
+
 void main() {
     int local_index = int(gl_GlobalInvocationID.x);
     if (local_index >= sample_count) return;
     int index = sample_start + local_index;
     ivec2 pixel = ivec2(index % output_width, index / output_width);
-    vec3 value;
+    vec4 value;
     if (first_grade != 0) {
         int blue = index % cube_size;
         int green = (index / cube_size) % cube_size;
         int red = index / (cube_size * cube_size);
-        value = vec3(texelFetch(axis_values, ivec2(red, 0), 0).r,
+        value = vec4(texelFetch(axis_values, ivec2(red, 0), 0).r,
                      texelFetch(axis_values, ivec2(green, 0), 0).r,
-                     texelFetch(axis_values, ivec2(blue, 0), 0).r);
+                     texelFetch(axis_values, ivec2(blue, 0), 0).r, 1.0);
     } else {
-        value = texelFetch(input_values, pixel, 0).xyz;
+        value = texelFetch(input_values, pixel, 0);
     }
-    if (grade_index >= 0) value = grade_value(value);
-    imageStore(output_pixels, pixel, vec4(value, 1.0));
+#ifdef STACK_INVERSE
+    float residual;
+    value = stack_value(value, residual);
+    if (inverse_grade != 0) imageStore(inverse_errors, pixel, vec4(residual));
+#else
+    // Carry a failed decode through to readback without evaluating another Grade.
+    if (grade_index >= 0 && !any(isinf(value)) && !any(isnan(value))) {
+        value = vec4(grade_value(value.xyz, final_grade), 1.0);
+    }
+#endif
+    imageStore(output_pixels, pixel, value);
 }
 """
 
