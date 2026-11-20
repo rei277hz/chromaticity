@@ -19,10 +19,10 @@ python_tool(
     name = "generator",
     srcs = {"pg_dctl_tools/" + name: "tools/" + name for name in [
         "generate_dctl.py",
-        "dctl_boundary.py",
+        "warp_geometry.py",
     ]},
     main_module = "pg_dctl_tools.generate_dctl",
-    deps = ["//libraries/perceptual-grade-core:runtime"],
+    deps = ["//libraries/perceptual-grade-reference:model_code"],
 )
 
 generate(
@@ -34,11 +34,14 @@ generate(
         "$(location //libraries/color-dctl:linear)",
         "--metadata",
         "$(location :metadata)",
+        "--catalog-dir",
+        "$(location //libraries/perceptual-grade-core:catalog_sources)",
     ],
-    outputs = {locale: "Perceptual-Grade" + ("" if locale == "en" else "-" + locale.replace("_", "-")) + ".dctl" for locale in [
-        "en",
-        "zh_HANS",
-    ]},
+    outputs = {
+        stage + "_" + locale: "Perceptual-Grade-" + slug + suffix + ".dctl"
+        for stage, slug in [("linear", "1-Linear"), ("tone", "2-Tone"), ("jc", "3A-Color-JC"), ("warp", "3B-Warp")]
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
     tool = ":generator",
     visibility = ["PUBLIC"],
 )
@@ -47,10 +50,13 @@ python_tool(
     name = "quality",
     srcs = {"pg_dctl_tools/dctl_quality.py": "tools/dctl_quality.py"},
     main_module = "pg_dctl_tools.dctl_quality",
-    deps = [
-        "//libraries/perceptual-grade-reference:boundary_oracle",
-        "//products/perceptual-grade-dctl/tests:support",
-    ],
+    deps = ["//products/perceptual-grade-dctl/tests:support"],
+)
+
+generate(
+    name = "quality_report",
+    outputs = {"json": "report.json", "markdown": "summary.md"},
+    tool = ":quality",
 )
 
 export_file(

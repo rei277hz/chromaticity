@@ -19,13 +19,10 @@ python_tool(
 generate(
     name = "host_source",
     args = [
-        "--dctl",
-        "$(location //products/perceptual-grade-dctl:dctl[en])",
+        "--dctl-dir",
+        "$(location //products/perceptual-grade-dctl:dctl)",
     ],
-    outputs = {
-        "cpp": "host.cpp",
-        "kernel": "kernel.h",
-    },
+    outputs = {"cpp": "host.cpp"},
     tool = ":host_generator",
 )
 
@@ -38,26 +35,16 @@ cxx_binary(
         "-ffp-contract=off",
     ],
     header_namespace = "",
-    headers = {
-        "kernel.h": ":host_source[kernel]",
-        "float3.h": "//tools/dctl-testing:float3_shim",
-    },
+    headers = {"float3.h": "//tools/dctl-testing:float3_shim"},
     visibility = ["PUBLIC"],
 )
 
 python_library(
     name = "dctl_reference",
-    srcs = {
-        "dctl_reference.py": "support/dctl_reference.py",
-        "dctl_controls.py": "support/dctl_controls.py",
-    },
+    srcs = {"dctl_reference.py": "support/dctl_reference.py"},
     base_module = "tests.support",
     visibility = ["PUBLIC"],
-    deps = [
-        "//libraries/color-core:runtime",
-        "//libraries/perceptual-grade-core:runtime",
-        "//libraries/perceptual-grade-reference:runtime",
-    ],
+    deps = ["//libraries/perceptual-grade-reference:numerical_oracle_for_tests"],
 )
 
 python_library(
@@ -66,14 +53,12 @@ python_library(
     base_module = "tests.support",
     resources = {
         "oracle": ":oracle",
-        "Perceptual-Grade.dctl": "//products/perceptual-grade-dctl:dctl[en]",
-        "Perceptual-Grade-zh-HANS.dctl": "//products/perceptual-grade-dctl:dctl[zh_HANS]",
+        "stages": "//products/perceptual-grade-dctl:dctl",
     },
     visibility = ["PUBLIC"],
     deps = [
         ":dctl_parser",
         ":dctl_reference",
-        "//libraries/perceptual-grade-core/tests:common_support",
     ],
 )
 

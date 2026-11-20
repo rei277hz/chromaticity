@@ -1,0 +1,74 @@
+typedef struct { float low; float high; float a; float b; } PGJCDrivers;
+
+__DEVICE__ PGJCDrivers pg_jc_drivers(PGState state, float jaMagnitude, float chroma) {
+    float radius = (35.0f / 75.0f) * jaMagnitude;
+    float scale = _fmaxf(chroma, radius);
+    float cn = pg_div(chroma, scale), rn = pg_div(radius, scale);
+    float high = cn*cn, low = rn*rn;
+    float denom = pg_hypot(chroma, 2.0f);
+    float visible = chroma / denom;
+    visible *= visible;
+    PGJCDrivers drivers;
+    drivers.low = pg_div(visible * low, low + high);
+    drivers.high = pg_div(visible * high, low + high);
+    drivers.a = state.q.y / denom;
+    drivers.b = state.q.z / denom;
+    return drivers;
+}
+
+__DEVICE__ PGFour pg_jc_weights(float t, PGKernel k) {
+    PGFour u = pg_transitions(t, k);
+    u.s = _fminf(1.0f, _fmaxf(0.0f, u.s));
+    u.m = _fminf(u.s, _fmaxf(0.0f, u.m));
+    u.w = _fminf(u.m, _fmaxf(0.0f, u.w));
+    u.h = _fminf(u.w, _fmaxf(0.0f, u.h));
+    return pg_four(1.0f - u.m, u.m - u.w, u.w - u.h, u.h);
+}
+
+__DEVICE__ float pg_jc_contribution(PGFour low, PGFour high, PGFour a, PGFour b,
+                                    PGFour weights, PGJCDrivers drivers) {
+    return drivers.low * pg_four_dot(low, weights) + drivers.high * pg_four_dot(high, weights)
+         + drivers.a * pg_four_dot(a, weights) + drivers.b * pg_four_dot(b, weights);
+}
+
+__DEVICE__ PGValue pg_jc_xyz(float3 xyz,
+                              PGFour jLow, PGFour jHigh, PGFour jA, PGFour jB, int jFit,
+                              PGFour cLow, PGFour cHigh, PGFour cA, PGFour cB, int cFit,
+                              float gainStops, int peakIndex) {
+    if (!pg_four_finite(jLow) || !pg_four_finite(jHigh) ||
+        !pg_four_finite(jA) || !pg_four_finite(jB) ||
+        !pg_four_finite(cLow) || !pg_four_finite(cHigh) ||
+        !pg_four_finite(cA) || !pg_four_finite(cB) || !color_finite(gainStops) ||
+        jFit < -2 || jFit > 6 || cFit < -2 || cFit > 6 || peakIndex < 0 || peakIndex > 3)
+        return pg_value(color_zero3(), 0);
+
+    PGFour zero = pg_four(0.0f, 0.0f, 0.0f, 0.0f);
+    int adjustJ = !(pg_four_equal(jLow, zero) && pg_four_equal(jHigh, zero) &&
+                    pg_four_equal(jA, zero) && pg_four_equal(jB, zero));
+    int adjustC = !(pg_four_equal(cLow, zero) && pg_four_equal(cHigh, zero) &&
+                    pg_four_equal(cA, zero) && pg_four_equal(cB, zero));
+    if (!adjustJ && !adjustC && gainStops == 0.0f) return pg_value(xyz, 1);
+
+    PGState base = pg_enter_xyz(xyz);
+    if (!color_finite3(base.q) || !color_finite(base.e)) return pg_value(color_zero3(), 0);
+    float ja = _sqrtf(_fabs(base.e));
+    float chroma = pg_hypot(base.q.y, base.q.z);
+    float height = pg_hypot(ja, _sqrtf(66.0f * chroma));
+    if (height == 0.0f) return pg_value(xyz, 1);
+    PGJCDrivers drivers = pg_jc_drivers(base, ja, chroma);
+    PGFour anchor = pg_tone_anchors(peakIndex);
+    PGFour knots = pg_four(pg_smoother(anchor.s / anchor.h), pg_smoother(anchor.m / anchor.h),
+                           pg_smoother(anchor.w / anchor.h), 1.0f);
+    float t = pg_smoother(height / (100.0f * anchor.h));
+    PGFour jWeights = pg_jc_weights(t, pg_kernel(knots, jFit));
+    PGFour cWeights = jFit == cFit ? jWeights : pg_jc_weights(t, pg_kernel(knots, cFit));
+    float gain = _exp2f(gainStops + pg_jc_contribution(cLow, cHigh, cA, cB, cWeights, drivers));
+    float lightness = base.q.x + pg_jc_contribution(jLow, jHigh, jA, jB, jWeights, drivers);
+    float3 edited = make_float3(lightness, base.q.y * gain, base.q.z * gain);
+    if (!color_finite3(edited)) return pg_value(color_zero3(), 0);
+    PGState graded = pg_guard(pg_state(edited, pg_energy_update(base, edited)), base.e);
+    if (graded.e == base.e && graded.q.x == base.q.x &&
+        graded.q.y == base.q.y && graded.q.z == base.q.z)
+        return pg_value(xyz, 1);
+    return pg_decode_xyz(graded);
+}

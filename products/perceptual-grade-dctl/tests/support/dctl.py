@@ -1,10 +1,20 @@
-"""Perceptual Grade DCTL section markers and model declaration."""
+"""Public DCTL files and section boundaries used by the host and tests."""
 from dctl_testing.parser import controls, section
+
+STAGES = {"linear": "1-Linear", "tone": "2-Tone", "jc": "3A-Color-JC", "warp": "3B-Warp"}
+LOCALES = ("en", "zh_HANS")
+BEGIN = "/* PG_NUMERICAL_BEGIN */"
+END = "/* PG_NUMERICAL_END */"
+
+
+def filename(stage, locale="en"):
+    suffix = "" if locale == "en" else "-" + locale.replace("_", "-")
+    return f"Perceptual-Grade-{STAGES[stage]}{suffix}.dctl"
 
 
 def body(source):
-    return section(source, '/* PG_NUMERICAL_BEGIN */', '/* PG_NUMERICAL_END */')
+    return section(source, BEGIN, END)
 
 
-def model_call(source):
-    return source.split('PGModel m=', 1)[1].split(';', 1)[0]
+def entry(source):
+    return source.split(END, 1)[1]

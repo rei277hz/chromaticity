@@ -1,207 +1,147 @@
-"""Direct DCTL compact-cache and grading parity, through compiled float32 code."""
-import re
+"""Float32 Resolve entry points against independent float64 reference stages."""
 import unittest
+
 import numpy as np
-from color_tools.perceptual_grade_reference.model import Model as ReferenceModel
-from tests.support.dctl_reference import Model, Settings
-from color_tools.perceptual_grade_reference.grading import ToneSettings
-from tests.support.dctl_reference import ColorSettings
-from color_tools.perceptual_grade_reference.boundary_compact import CompactTable
-from color_tools.perceptual_grade_core.model.bake import Kernel,GAMMA
-from color_tools.perceptual_grade_core.model.tone_table import _Curve
-from color_tools.perceptual_grade_core.model import tone
-from tests.support import oracle
+from color_tools.perceptual_grade_reference.appearance import decode, encode
+from color_tools.perceptual_grade_reference.grading import Color, Tone, ToneSettings
+from color_tools.perceptual_grade_reference.model import rgb_matrix
+from color_tools.perceptual_grade_reference.responses import State, signed_hk
+from tests.support import dctl_reference as reference, oracle
+from tests.support.dctl import STAGES
+
+SAMPLES = np.array([[.25, .18, .04], [.15, .07, .42], [.5, .8, .2], [3., 1., .8],
+                    [-.09, -.07, -.04], [1.e-6, 2.e-6, 5.e-6]], dtype=np.float32)
 
 
 class NumericalTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.model=ReferenceModel(hk_guard=False);cls.data=cls.model.boundary.cache
-        cls.table=CompactTable(cls.data);cls.kernel=Kernel(cls.data,cls.model.tone,cls.model.color,cls.table,hk_guard=False)
-        cls.to_xyz=cls.model.cones_to_xyz@np.linalg.inv(cls.model.boundary.matrix)
+    def assert_stage_close(self, actual, expected):
+        ratio = np.max(abs(actual - expected), axis=-1) / reference.tolerance(expected)
+        worst = np.argmax(ratio)
+        self.assertLessEqual(ratio[worst], 1., (actual[worst], expected[worst], ratio[worst]))
 
-    def test_all_declared_constants_fit_64kib(self):
-        source=oracle.SOURCE
-        declared=re.findall(r'__CONSTANT__\s+(?:float|unsigned int)\s+\w+\[(\d+)\]',source)
-        actual=sum((int(n)*4+15)//16*16 for n in declared)
-        stated=int(re.search(r'#define PG_CONSTANT_BYTES (\d+)',source).group(1))
-        self.assertGreater(actual,55000);self.assertEqual(actual,stated);self.assertLess(actual,65536)
-        self.assertNotIn('PG_FACE_ATLAS',source)
+    def compare(self, stage, inputs, controls):
+        inputs = np.asarray(inputs, dtype=np.float32)
+        expected = reference.apply(stage, inputs, controls)
+        actual = oracle.run(stage, inputs, controls)
+        self.assert_stage_close(actual, expected)
+        return actual
 
-    def test_input_repair_rounds_inward_by_one_float_step(self):
-        # Include both neighbors of powers of two, subnormal/normal transition,
-        # and positive infinity (an overflowing repair limit yields FLT_MAX).
-        powers=np.ldexp(np.ones(254,dtype='f4'),np.arange(-126,128))
-        rng=np.random.default_rng(2011)
-        random_bits=rng.integers(1,0x7f800000,size=4096,dtype=np.uint32)
-        values=np.unique(np.r_[np.float32(0),np.uint32(1).view('f4'),
-            np.nextafter(powers,np.float32(0)),powers,
-            np.nextafter(powers,np.float32(np.inf)),random_bits.view('f4'),np.float32(np.inf)]).astype('f4')
-        samples=np.repeat(values[:,None],3,axis=1)
-        actual=oracle.run('next_down',samples)[:,:3].astype('f4')
-        expected=np.nextafter(samples,np.float32(0))
-        np.testing.assert_array_equal(actual.view('u4'),expected.view('u4'))
+    def test_reset_preserves_every_float_channel(self):
+        pixels = np.asarray([[0., -0., 0.], [-2048, 3, 128], [-1, -2, -3], [2048, 1024, 4096],
+                             [1.e-25, -1.e-25, 1.e12], [np.finfo("f4").max, 1., 0.]], dtype="f4")
+        for stage in STAGES:
+            with self.subTest(stage=stage):
+                actual = oracle.run(stage, pixels)
+                np.testing.assert_array_equal(actual.view("u4"), pixels.view("u4"))
 
-        # Exercise repair itself: exact identity for the cube, bounded output
-        # after mixed-sign repair and scaling of very large positive channels.
-        inside=np.array([[0,0,0],[1024]*3,[0,1024,0],[.2,.3,.4]],dtype='f4')
-        np.testing.assert_array_equal(oracle.run('input_repair',inside)[:,:3],inside)
-        outside=np.array([[2048,1024,512],[-1,3,128],[-1,-2,-3],
-                          [np.finfo('f4').max,1,0],[2,-.1,1]],dtype='f4')
-        repaired=oracle.run('input_repair',outside)[:,:3]
-        self.assertTrue(np.isfinite(repaired).all())
-        self.assertTrue(np.all((repaired>=0)&(repaired<=1024)))
-        np.testing.assert_array_equal(oracle.run('input_repair',repaired)[:,:3],repaired)
+    def test_active_stages_preserve_signed_and_hdr_domain(self):
+        signed_hdr = np.array([-13., 2048.])[:, None] * reference.WHITE
+        signed_hdr *= [1.02, 1., .98]
+        for stage, controls in (("linear", {"globalExposure": 1}),
+                                ("tone", {"inputMidtones": 34.}),
+                                ("jc", {"globalChromaGain": .08}),
+                                ("warp", {f"webscale{i}{j}": .1 for i in range(4) for j in range(6)})):
+            with self.subTest(stage=stage):
+                actual = self.compare(stage, signed_hdr, controls)
+                self.assertLess(np.max(actual[0]), 0.)
+                self.assertGreater(np.min(actual[1]), 1024.)
+                self.assertGreater(np.max(abs(actual - signed_hdr)), .01)
 
-    def test_fresh_and_reset_shadow_defaults_preserve_float32_identity(self):
-        # A mismatch between LOW_Y and the UI default can silently activate
-        # tone remapping. Test the compiled bypass, including chromatic input
-        # near the new shadow anchor and the neighboring float32 neutrals.
-        shadow=np.float32(tone.LOW_Y)
-        neutrals=np.array([np.nextafter(shadow,np.float32(0)),shadow,
-                           np.nextafter(shadow,np.float32(np.inf)),.18,1.,1000./203.],dtype='f4')
-        rgb=np.vstack((np.repeat(neutrals[:,None],3,axis=1),
-                       shadow*np.array([[.2,1.,1.7],[1.8,.7,.1],[1.,0.,2.]],dtype='f4')))
-        reset={name:float(np.float32(value)) for name,value in zip(
-            ('inputBlack','inputShadows','inputMidtones','inputWhite','inputHighlights'),
-            tone.LEVEL_DEFAULTS)}
-        for settings in (None,reset):
-            with self.subTest(settings=settings):
-                np.testing.assert_array_equal(oracle.run('forward_native',rgb,settings)[:,:3],rgb)
+    def test_linear_and_signed_tone(self):
+        self.compare("linear", SAMPLES, dict(srcWhite=3, globalExposure=.5,
+                                             le=.15, be=-.2, ls=-30, bs=5, la=6, ba=-4))
+        for index in range(4):
+            with self.subTest(peak=index):
+                self.compare("tone", SAMPLES, dict(peakNits=index, inputShadows=4,
+                                                   inputMidtones=42, remapFit=2))
 
-    def test_cartesian_response_controls_match_reference(self):
-        rgb=np.array([[.1,.2,.3],[.4,.07,.02],[7,20,4],[0,1,0]],dtype='f4')
-        # Fractional S/M/W coefficients retain their signs and directions;
-        # Highlights use values exactly representable by its integer sliders.
-        for family,target,pairs in (
-            ('lightness','J',((3.1,4.2),(-2.3,1.4),(0.,-3.5),(-2.,1.))),
-            ('chroma','C',((.15,-.2),(-.1,.25),(.2,0.),(1.,-1.)))):
-            for axis in (None,0,1):
-                rows=tuple((0.,0.,a if axis!=1 else 0.,b if axis!=0 else 0.) for a,b in pairs)
-                model=Model(Settings(color=ColorSettings(**{family:rows})))
-                controls={f'tone{tone}{name}To{target}':row[index+2]
-                          for tone,row in zip('SMWH',rows) for index,name in enumerate('ab')}
-                actual=oracle.run('forward_native',rgb,controls)[:,:3];expected=model.forward_native(rgb)
-                limit=np.maximum(.001*np.max(abs(expected),axis=-1),1e-7)
-                self.assertTrue(np.all(np.max(abs(actual-expected),axis=-1)<=limit),(family,axis,actual,expected))
+    def test_all_tonal_coefficients_including_fractional_highlights(self):
+        controls = {"lightnessFit": 3, "chromaFit": -1, "globalChromaGain": .03}
+        for i, tone in enumerate("SMWH"):
+            for j, driver in enumerate(("Low", "High", "a", "b")):
+                controls[f"tone{tone}{driver}ToJ"] = (i - 1.5) * (j + 1) * .2
+                controls[f"tone{tone}{driver}ToC"] = (j - 1.5) * (i + 1) * .02
+        self.compare("jc", np.vstack((SAMPLES, 20 * SAMPLES)), controls)
 
-    def test_low_high_controls_keep_the_legacy_capacity_classifier(self):
-        from tests.support.dctl_reference import capacity_drivers
-        chroma=np.array([11.25,22.5,45.])
-        q=np.column_stack((np.full(3,100.),chroma,np.zeros(3)))
-        visible=chroma*chroma/(chroma*chroma+4)
-        np.testing.assert_allclose(capacity_drivers(q,[56.25]*3)[:,:2]/visible[:,None],
-                                   [[.8,.2],[.5,.5],[.2,.8]],rtol=2e-15)
-        rgb=np.array([[.1,.2,.3],[.4,.07,.02],[7,20,4],[0,1,0]],dtype='f4')
-        for family,target,low,high in (('lightness','J',3.,-2.),('chroma','C',1.,-1.)):
-            for index,amount in ((0,low),(1,high)):
-                rows=tuple(tuple(amount if j==index else 0. for j in range(4)) for _ in range(4))
-                model=Model(Settings(color=ColorSettings(**{family:rows})))
-                driver=('Low','High')[index]
-                controls={f'tone{tone}{driver}To{target}':amount for tone in 'SMWH'}
-                actual=oracle.run('forward_native',rgb,controls)[:,:3]
-                expected=model.forward_native(rgb)
-                limit=np.maximum(.001*np.max(abs(expected),axis=-1),1e-7)
-                with self.subTest(family=family,driver=driver):
-                    self.assertTrue(np.all(np.max(abs(actual-expected),axis=-1)<=limit),(actual,expected))
+    def test_signed_low_high_crossover(self):
+        ja = np.array([-75., 75., -75., 75.])
+        chroma = np.full(4, 35.)
+        q = np.stack((signed_hk(ja, chroma), [35., 35., 0., 0.], [0., 0., 35., 35.]), axis=-1)
+        xyz = decode(q, ja * abs(ja), reference.WHITE)
+        low = self.compare("jc", xyz, {f"tone{tone}LowToJ": 2. for tone in "SMWH"})
+        high = self.compare("jc", xyz, {f"tone{tone}HighToJ": 2. for tone in "SMWH"})
+        self.assert_stage_close(low, high)
 
-    def test_faces_creases_vertices_and_hue_seam(self):
-        d=self.data;s=self.table.selector
-        heights=np.unique(np.r_[np.linspace(0,1,31),d['vertex_t']]).astype('f4')
-        t,h=np.meshgrid(heights,np.linspace(-2*np.pi,2*np.pi,61,dtype='f4'),indexing='ij')
-        ts=[t.ravel()];hs=[h.ravel()]
-        for edge in range(12):
-            low,high=d['vertex_t'][d['edges'][edge]]
-            points=np.linspace(low,high,21,dtype='f4');angle=s.curve(points,edge,0)
-            for a in (angle,np.nextafter(angle,np.float32(-np.inf)),np.nextafter(angle,np.float32(np.inf))):
-                ts.append(points);hs.append(a)
-        t=np.concatenate(ts);h=np.concatenate(hs)
-        expected=self.table.capacity(t,h);actual=oracle.run('capacity',np.column_stack((t,h,np.zeros(len(t)))))[:,0]
-        self.assertTrue(np.isfinite(actual).all())
-        np.testing.assert_allclose(actual,expected,rtol=2e-5,atol=1e-6)
+    def test_web_rays_and_interpolated_rows_on_every_peak(self):
+        controls = {}
+        for row in range(4):
+            for handle in range(6):
+                controls[f"webhue{row}{handle}"] = 3 * (handle - 2) + row
+                controls[f"webchroma{row}{handle}"] = .08 * (handle - 2) - row * .05
+                controls[f"webscale{row}{handle}"] = .10 * (row - 1) + handle * .02
+        for index, peak in enumerate(reference.PEAKS):
+            with self.subTest(peak=peak):
+                color = Color(reference.color_settings({}), Tone(ToneSettings(peak_nits=peak)))
+                geometry = color.web.geometry
+                rays = decode(geometry.q, geometry.energy, reference.WHITE).reshape(-1, 3)
+                self.compare("warp", np.vstack((rays, rays * .7, SAMPLES)),
+                             dict(controls, peakNits=index))
 
-    def test_physical_capacity_is_hue_dependent_and_zero_at_cube_tips(self):
-        t,h=np.meshgrid(np.linspace(.001,.999,31,dtype='f4'),
-                        np.linspace(-np.pi,np.pi,37,dtype='f4'),indexing='ij')
-        ja=np.float32(self.data['white'])*t**GAMMA
-        ab=np.stack((np.cos(h),np.sin(h)),-1)
-        expected=self.kernel.capacity(ja*ja,ab).ravel()
-        values=np.column_stack((ja.ravel(),h.ravel(),np.zeros(ja.size)))
-        actual=oracle.run('physical_capacity',values)[:,0]
-        np.testing.assert_allclose(actual,expected,rtol=2e-5,atol=1e-6)
-        self.assertGreater(float(np.ptp(actual.reshape(t.shape)[15])),1.)
-        outside=np.array([[-1,0,0],[0,0,0],[self.kernel.white,0,0],
-                          [self.kernel.white*2,0,0]],dtype='f4')
-        np.testing.assert_array_equal(oracle.run('physical_capacity',outside)[:,0],0)
+    def test_selective_adaptance_and_repair_before_scale(self):
+        web = {f"web{family}{i}{j}": value for i in range(4) for j in range(6)
+               for family, value in (("chroma", 1.5), ("scale", .75))}
+        for i, tone in enumerate("SMWH"):
+            web[f"tone{tone}AdaptanceA"] = i + 1
+            web[f"tone{tone}AdaptanceB"] = -2
+        web["adaptanceHalfSaturation"] = .5
+        xyz = np.vstack((SAMPLES, reference.WHITE, .18 * reference.WHITE))
+        self.compare("warp", xyz, web)
+        state = encode(SAMPLES, reference.WHITE)
+        color = Color(reference.color_settings(web), Tone(ToneSettings()))
+        raw = color.pre_repair_warp_state(State(state.q, state.ja * abs(state.ja)))
+        self.assertTrue(np.any((raw.q[:, 0] > 0) & (raw.energy < 0)))
 
-    def test_entry_is_raw_and_export_uses_actual_cube(self):
-        rng=np.random.default_rng(771)
-        rgb=np.vstack((rng.uniform(0,1024,(1000,3)),[[0,0,0],[1024]*3,[0,1,0],[2,0,128],
-            [0,1024,0],[1024,0,0],[0,0,1024],[.00001,.00002,.00003]])).astype('f4')
-        entry=oracle.run('entry',rgb);expected=self.kernel.enter(rgb)
-        actual=np.column_stack((entry[:,:3],entry[:,4]))
-        # Opponent coordinates subtract large cone responses. Compare their
-        # error at the shared appearance scale, not relative to a near-zero a.
-        limit=4e-6*np.maximum(1,np.max(abs(expected[:,:3]),axis=-1))
-        self.assertTrue(np.all(np.max(abs(actual[:,:3]-expected[:,:3]),axis=-1)<=limit))
-        np.testing.assert_allclose(actual[:,3],expected[:,3],rtol=4e-6,atol=1e-6)
-        output=oracle.run('export',expected)[:,:3];target=self.kernel.export(expected)
-        error=np.max(abs(output-target),axis=-1);limit=np.maximum(.001*np.max(abs(target),axis=-1),1e-7)
-        self.assertTrue(np.all(error<=limit),(float(np.max(error/limit)),rgb[np.argmax(error/limit)]))
-        np.testing.assert_array_equal(output[-8],0)
-        self.assertTrue(np.all((output>=0)&(output<=1024)),(float(output.min()),float(output.max())))
+    def test_adaptance_moves_neutral_at_all_tonal_centers(self):
+        controls = {f"tone{tone}Adaptance{axis}": value for i, tone in enumerate("SMWH")
+                    for axis, value in (("A", i + 1.), ("B", -2.))}
+        nits = np.array(ToneSettings().input_nits[1:])
+        xyz = (nits / 203.)[:, None] * reference.WHITE
+        actual = self.compare("warp", xyz, controls)
+        self.assertTrue(np.all(np.max(abs(actual - xyz), axis=-1) > 1.e-6))
 
-    def test_export_guard_preserves_valid_decode_and_contains_escape_rays(self):
-        ja,h=np.meshgrid(self.kernel.white*np.array([.001,.02,.2,.5,.9,.999],dtype='f4'),
-                        np.linspace(-np.pi,np.pi,41,dtype='f4'),indexing='ij')
-        ab=np.stack((np.cos(h),np.sin(h)),-1)
-        capacity=self.kernel.capacity(ja*ja,ab)
-        # Include both legal inner rays and response-pole trials far beyond
-        # the physical cube. The fit is only an initial bracket seed.
-        c=np.concatenate([capacity.ravel()*factor for factor in (.2,.9,1.1,4.,10000.)])
-        direction=np.tile(ab.reshape(-1,2),(5,1));energy=np.tile((ja*ja).ravel(),5)
-        states=np.column_stack((np.sqrt(energy+66*c),direction*c[:,None],energy)).astype('f4')
-        direct=oracle.run('decode',states);actual=oracle.run('export',states)[:,:3]
-        self.assertTrue(np.isfinite(actual).all())
-        self.assertTrue(np.all((actual>=0)&(actual<=1024)))
-        legal=(direct[:,3]!=0)&np.all((direct[:,:3]>=0)&(direct[:,:3]<=1024),axis=-1)
-        np.testing.assert_array_equal(actual[legal],direct[legal,:3])
-        expected=self.kernel.export(states)
-        limit=np.maximum(.001*np.max(abs(expected),axis=-1),1e-7)
-        self.assertTrue(np.all(np.max(abs(actual-expected),axis=-1)<=limit))
-        entered=oracle.run('entry',actual)
-        # Chroma radial projection preserves neutral lightness and hue;
-        # float32 encoding can perturb a nearly black boundary slightly.
-        np.testing.assert_allclose(entered[:,4],energy,rtol=2e-5,atol=1e-6)
-        angle=np.arctan2(entered[:,2],entered[:,1]);wanted=np.arctan2(states[:,2],states[:,1])
-        delta=np.arctan2(np.sin(angle-wanted),np.cos(angle-wanted))
-        # Re-encoding nearly neutral float32 RGB loses a few mrad of hue;
-        # the guard's tested appearance ray itself has exact hue preservation.
-        self.assertLess(float(np.max(abs(delta))),3e-3)
-        tips=np.array([[0,30,40,-1],[0,30,40,0],
-                       [0,30,40,self.kernel.white*self.kernel.white]],dtype='f4')
-        np.testing.assert_array_equal(oracle.run('export',tips)[:,:3],[[0]*3,[0]*3,[1024]*3])
+    def test_sequential_nodes_resample_their_own_selectors(self):
+        settings = {
+            "linear": {"globalExposure": .25},
+            "tone": {"inputMidtones": 40.},
+            "jc": {"globalChromaGain": .6, "toneWHighToJ": -20.},
+            "warp": {"webhue00": -25, "webhue10": 25, "webhue20": -20,
+                     "webscale04": -.5, "webscale14": .5, "webscale24": -.5,
+                     "toneMAdaptanceB": 7.},
+        }
+        actual = expected = SAMPLES[:4]
+        for stage in STAGES:
+            actual = oracle.run(stage, actual, settings[stage])
+            expected = reference.apply(stage, expected, settings[stage])
+            if stage == "tone":
+                after_tone = expected
+        self.assert_stage_close(actual, expected)
+        appearance = encode(after_tone, reference.WHITE)
+        combined = Color(reference.color_settings(settings["jc"] | settings["warp"]), Tone(ToneSettings()))
+        state = combined.apply_state(State(appearance.q, appearance.ja * abs(appearance.ja)))
+        single_pass = decode(state.q, state.energy, reference.WHITE)
+        self.assertGreater(np.max(abs(single_pass - expected)), .001)
 
-    def test_direct_forward_controls_against_compact_reference(self):
-        rng=np.random.default_rng(144);rgb=np.exp(rng.uniform(-6,6,(128,3))).astype('f4')
-        rgb=np.vstack((rgb,[[0,0,0],[.1,.2,.3],[.7,.2,.1]]))
-        for setting,controls in (
-            (Settings(color=ColorSettings(global_gain=.25)),dict(globalChromaGain=.25)),
-            (Settings(color=ColorSettings(hue=(8.,)*4)),{f'tone{x}Hue':8 for x in 'SMWH'}),
-            (Settings(tone=ToneSettings(input_nits=(0,7,45,203,1000))),dict(inputShadows=7,inputMidtones=45))):
-            model=Model(setting)
-            expected=model.forward_native(rgb)
-            actual=oracle.run('grade',rgb@self.to_xyz.T,controls)[:,:3]@np.linalg.inv(self.to_xyz).T
-            error=np.max(abs(actual-expected),axis=-1);limit=np.maximum(.001*np.max(abs(expected),axis=-1),1e-7)
-            self.assertTrue(np.all(error<=limit),(controls,float(np.max(error/limit))))
+    def test_invalid_hues_adaptance_and_response_pole_display_diagnostic(self):
+        xyz = SAMPLES[:3]
+        invalid = {"webhue20": 360}
+        diagnostic = oracle.run("warp", xyz, invalid)
+        np.testing.assert_array_equal(diagnostic, np.repeat(diagnostic[:1], len(xyz), axis=0))
+        magenta_xyz = rgb_matrix("Linear Rec.709") @ [.06, 0., .06]
+        np.testing.assert_allclose(diagnostic[0], magenta_xyz, rtol=1e-6)
+        np.testing.assert_array_equal(oracle.run("warp", xyz, {"toneSAdaptanceA": 1.e6}), diagnostic)
 
-    def test_bounded_inverse_tone_matches_float64_equation(self):
-        for fit in (-2.,0.,4.):
-            settings=ToneSettings(input_nits=(0,7,45,203,1000),fit=fit)
-            model=Model(Settings(tone=settings));curve=_Curve(model.tone)
-            height=np.r_[0,np.geomspace(1e-7,1e5,150)].astype('f4')
-            actual=oracle.run('inverse_tone',np.column_stack((height,np.zeros((len(height),2)))),
-                              dict(inputShadows=7,inputMidtones=45,remapFit=fit))[:,0]
-            expected=100*(float(model.tone.black)+float(model.tone.span)*curve.inverse(height))
-            expected[0]=0
-            np.testing.assert_allclose(actual,expected,rtol=2e-5,atol=1e-7)
+        controls = {f"webscale{i}{j}": 8. for i in range(4) for j in range(6)}
+        target = np.array([[.4, .2, .1]], dtype="f4")
+        with self.assertRaisesRegex(ValueError, "response magnitudes"):
+            reference.apply("warp", target, controls)
+        np.testing.assert_array_equal(oracle.run("warp", target, controls), diagnostic[:1])

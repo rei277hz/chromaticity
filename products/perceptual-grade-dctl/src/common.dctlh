@@ -1,0 +1,39 @@
+typedef struct { float3 v; int valid; } PGValue;
+
+__DEVICE__ PGValue pg_value(float3 v, int valid) {
+    PGValue result;
+    result.v = v;
+    result.valid = valid;
+    return result;
+}
+
+__DEVICE__ float pg_div(float numerator, float denominator) {
+    return denominator != 0.0f ? numerator / denominator : 0.0f;
+}
+
+__DEVICE__ float pg_maximum(float3 v) {
+    return _fmaxf(_fabs(v.x), _fmaxf(_fabs(v.y), _fabs(v.z)));
+}
+
+__DEVICE__ float3 pg_diagnostic(int width, int height, int x, int y) {
+    float zoom = _fmaxf(1.0f, (float)height / 500.0f);
+    float px = (float)x / zoom;
+    float py = (float)y / zoom;
+    int stripe = ((int)_floorf((px + py) / 24.0f)) % 2;
+    float magenta = stripe ? 1.0f : 0.06f;
+    float3 rgb = make_float3(magenta, 0.0f, magenta);
+    float dx = px - (float)width / (2.0f * zoom);
+    float dy = py - (float)height / (2.0f * zoom);
+    if (_fabs(dx) < 55.0f && _fabs(dy) < 20.0f) {
+        int row = (int)_floorf((dy + 10.0f) * 0.25f);
+        int position = (int)_floorf((dx + 40.0f) * 0.25f);
+        int letter = position / 4;
+        int col = position % 4;
+        // 3-by-5 bitmaps for E, R and O.
+        int glyph = letter == 0 ? 31143 : (letter == 3 ? 31599 : 27565);
+        int ink = row >= 0 && row < 5 && position >= 0 && letter < 5 && col < 3
+            ? (glyph >> (14 - 3 * row - col)) & 1 : 0;
+        rgb = make_float3((float)ink, (float)ink, (float)ink);
+    }
+    return color_rgb_xyz(rgb);
+}
