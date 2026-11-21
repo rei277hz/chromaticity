@@ -39,6 +39,7 @@ class InstalledAnimationTests(unittest.TestCase):
                 BLENDER_USER_EXTENSIONS=str(root / "extensions"),
                 OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1",
                 PYTHONDONTWRITEBYTECODE="1",
+                TMPDIR=str(root),
             )
             report = root / "report.json"
             command = [str(blender)]
@@ -66,7 +67,11 @@ class InstalledAnimationTests(unittest.TestCase):
                     self.fail("Continuous animation render timed out\n" + output[-20000:]
                               + "\n" + checkpoint)
                 data = json.loads(report.read_text()) if report.exists() else {}
-                details = output[-20000:] + "\n" + json.dumps(data, indent=2)
+                crash_reports = "\n".join(
+                    path.read_text(errors="replace")[-12000:]
+                    for path in root.glob("*.crash.txt")
+                ) if process.returncode else ""
+                details = output[-20000:] + "\n" + json.dumps(data, indent=2) + "\n" + crash_reports
                 self.assertEqual(process.returncode, 0, details)
                 self.assertEqual(data.get("animation"), "continuous-native-verified", details)
                 self.assertEqual(data.get("mode"), "gui" if gui else "background", details)

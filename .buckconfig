@@ -36,5 +36,5 @@
 
 [remote_execution]
   enabled = true
-  worker_image = sha256:86685863442b62b2acffbac76fa98bd217ad3fa3856bd423d72ad5f79b790969
+  worker_image = sha256:e426d0d423df072ee5cefd5acce4cf9451bf1c68524ebcf0c211f20435481b9a
 # END NativeLink settings

@@ -5,6 +5,9 @@ source_tree(
     srcs = {path[len("src/"):]: path for path in glob([
         "src/*.dctlh",
         "src/ui-spec.json",
+        "src/jc-lgg-locales.json",
+        "src/jc-surface-locales.json",
+        "src/cone-locales.json",
     ])},
     visibility = ["PUBLIC"],
 )
@@ -19,26 +22,63 @@ python_tool(
     name = "generator",
     srcs = {"pg_dctl_tools/" + name: "tools/" + name for name in [
         "generate_dctl.py",
-        "dctl_boundary.py",
+        "warp_geometry.py",
     ]},
     main_module = "pg_dctl_tools.generate_dctl",
-    deps = ["//libraries/perceptual-grade-core:runtime"],
+    deps = ["//libraries/perceptual-grade-reference:model_code"],
 )
+
+GENERATOR_ARGS = [
+    "--source-dir",
+    "$(location :sources)",
+    "--color-source",
+    "$(location //libraries/color-dctl:linear)",
+    "--metadata",
+    "$(location :metadata)",
+    "--catalog-dir",
+    "$(location //libraries/perceptual-grade-core:catalog_sources)",
+]
+
+DCTL_STAGES = [
+    ("linear", "1-Linear"),
+    ("input", "1B-XYZ-Input"),
+    ("tone", "2-Cone-Tone"),
+    ("jc", "3A-Cone-Color-JC"),
+    ("warp", "3B-Cone-Warp"),
+    ("output", "4-XYZ-Output"),
+]
 
 generate(
     name = "dctl",
-    args = [
-        "--source-dir",
-        "$(location :sources)",
-        "--color-source",
-        "$(location //libraries/color-dctl:linear)",
-        "--metadata",
-        "$(location :metadata)",
-    ],
-    outputs = {locale: "Perceptual-Grade" + ("" if locale == "en" else "-" + locale.replace("_", "-")) + ".dctl" for locale in [
-        "en",
-        "zh_HANS",
-    ]},
+    args = GENERATOR_ARGS,
+    outputs = {
+        stage + "_" + locale: "Perceptual-Grade-" + slug + suffix + ".dctl"
+        for stage, slug in DCTL_STAGES
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "jc_prototype",
+    args = GENERATOR_ARGS + ["--jc-prototype"],
+    outputs = {
+        variant + "_" + locale: "Perceptual-Grade-3A-Color-JC-LGG-" + slug + suffix + ".dctl"
+        for variant, slug in [("lgg", "Prototype"), ("lgg_nonlog", "NonLog-Prototype"), ("lgg_pivot", "Pivot-Prototype")]
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "jc_surface_prototype",
+    args = GENERATOR_ARGS + ["--jc-surface"],
+    outputs = {
+        locale: "Perceptual-Grade-3A-Color-JC-Surface-Prototype" + suffix + ".dctl"
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
     tool = ":generator",
     visibility = ["PUBLIC"],
 )
@@ -47,10 +87,13 @@ python_tool(
     name = "quality",
     srcs = {"pg_dctl_tools/dctl_quality.py": "tools/dctl_quality.py"},
     main_module = "pg_dctl_tools.dctl_quality",
-    deps = [
-        "//libraries/perceptual-grade-reference:boundary_oracle",
-        "//products/perceptual-grade-dctl/tests:support",
-    ],
+    deps = ["//products/perceptual-grade-dctl/tests:support"],
+)
+
+generate(
+    name = "quality_report",
+    outputs = {"json": "report.json", "markdown": "summary.md"},
+    tool = ":quality",
 )
 
 export_file(

@@ -1,0 +1,56 @@
+__DEVICE__ float pg_jc_surface_smoothstep(float value) {
+    value = _fminf(1.0f, _fmaxf(0.0f, value));
+    return value * value * (3.0f - 2.0f * value);
+}
+
+__DEVICE__ float pg_jc_surface_blend(float height, float left, float right,
+                                     float before, float after) {
+    float u = pg_jc_surface_smoothstep((height - left) / (right - left));
+    return before + (after - before) * u;
+}
+
+__DEVICE__ float pg_jc_surface_anchor(float height, PGFour anchors, PGFour amounts) {
+    if (height <= anchors.s) return amounts.s;
+    if (height < anchors.m)
+        return pg_jc_surface_blend(height, anchors.s, anchors.m, amounts.s, amounts.m);
+    if (height < anchors.w)
+        return pg_jc_surface_blend(height, anchors.m, anchors.w, amounts.m, amounts.w);
+    if (height < anchors.h)
+        return pg_jc_surface_blend(height, anchors.w, anchors.h, amounts.w, amounts.h);
+    return amounts.h;
+}
+
+__DEVICE__ float pg_jc_surface_log_ratio(float chroma, float base, float center) {
+    float pivot = base * (center / (1.0f - center));
+    float delta = chroma - pivot;
+    if (_fabs(delta) < 0.25f * pivot) return pg_log1p(delta / pivot);
+    return _logf(chroma) - _logf(pivot);
+}
+
+__DEVICE__ float pg_jc_surface_j_response(float chroma, float jaMagnitude,
+                                          float center, float width) {
+    if (chroma == 0.0f) return 0.0f;
+    if (jaMagnitude == 0.0f) return 1.0f;
+    float base = (35.0f / 75.0f) * jaMagnitude;
+    float saturation = chroma / (chroma + base);
+    float ratio = pg_jc_surface_log_ratio(chroma, base, center);
+    float span = 1.0f + 2.0f * width;
+    float curve = -pg_expm1(-_fabs(ratio) / span);
+    // Keep neutral colors owned by the Tone stage while allowing weak chroma
+    // to enter the contrast surface smoothly.
+    return (ratio < 0.0f ? -curve : curve) * pg_jc_surface_smoothstep(saturation / 0.10f);
+}
+
+__DEVICE__ float pg_jc_surface_c_response(float chroma, float jaMagnitude,
+                                          float center, float width, float amount) {
+    if (chroma == 0.0f || amount == 0.0f) return 0.0f;
+    if (jaMagnitude == 0.0f) return amount;
+    float base = (35.0f / 75.0f) * jaMagnitude;
+    float ratio = pg_jc_surface_log_ratio(chroma, base, center);
+    float span = 1.0f + 2.0f * width;
+    float ln2 = 0.6931471805599453f;
+    float reach = -pg_expm1(-_fabs(ratio) / span);
+    // Compute d' - d directly to avoid subtraction and overflow in the tails.
+    float stops = (span / ln2) * pg_log1p(pg_expm1(ln2 * amount / span) * reach);
+    return ratio < 0.0f ? -stops : stops;
+}

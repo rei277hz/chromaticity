@@ -1,0 +1,56 @@
+__DEVICE__ int pg_cone_valid(float3 wire) {
+    return color_finite3(wire) && pg_maximum(wire) < 400.0f;
+}
+
+__DEVICE__ float pg_cone_compress(float cone) {
+    float power = _powf(PG_FL * _fabs(cone), 0.42f);
+    float denominator = power + 27.13f;
+    float response = power <= 27.13f
+        ? 400.0f * power / denominator
+        : 400.0f - 10852.0f / denominator;
+    return cone < 0.0f ? -response : response;
+}
+
+__DEVICE__ PGValue pg_cone_input(float3 xyz) {
+    float3 cones = pg_xyz_to_cones(xyz);
+    if (!color_finite3(cones)) return pg_value(color_zero3(), 0);
+    float3 wire = make_float3(pg_cone_compress(cones.x),
+                              pg_cone_compress(cones.y),
+                              pg_cone_compress(cones.z));
+    return pg_value(wire, pg_cone_valid(wire));
+}
+
+__DEVICE__ float pg_cone_open_response(float response) {
+    float magnitude = _fabs(response);
+    if (magnitude <= 200.0f) return response;
+    // The tangent to the bounded response as a function of cone power.
+    float extended = 40000.0f / (400.0f - magnitude);
+    return response < 0.0f ? -extended : extended;
+}
+
+__DEVICE__ float pg_cone_close_response(float response) {
+    float magnitude = _fabs(response);
+    if (magnitude <= 200.0f) return response;
+    float bounded = 400.0f - 40000.0f / magnitude;
+    return response < 0.0f ? -bounded : bounded;
+}
+
+// The chart carries signed achromatic J directly with the two opponent axes.
+__DEVICE__ float3 pg_cone_chart(float3 wire) {
+    float3 response = make_float3(pg_cone_open_response(wire.x),
+                                  pg_cone_open_response(wire.y),
+                                  pg_cone_open_response(wire.z));
+    float3 v = pg_response_opponents(response);
+    float gain = pg_opponent_chroma_gain(v.y, v.z, pg_hypot(v.y, v.z));
+    return make_float3(pg_signed_achromatic_j(v.x), v.y * gain, v.z * gain);
+}
+
+__DEVICE__ PGValue pg_cone_wire(float3 chart) {
+    if (!color_finite3(chart)) return pg_value(color_zero3(), 0);
+    float3 response = pg_response_from_ja_ab(chart.x, chart.y, chart.z);
+    if (!color_finite3(response)) return pg_value(color_zero3(), 0);
+    float3 wire = make_float3(pg_cone_close_response(response.x),
+                              pg_cone_close_response(response.y),
+                              pg_cone_close_response(response.z));
+    return pg_value(wire, pg_cone_valid(wire));
+}

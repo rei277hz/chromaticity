@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 
 import bpy
 import numpy as np
@@ -86,6 +87,25 @@ compositor_node = nodes.create_per_node_node(compositor_tree)
 compositor_tree.links.new(compositor_source.outputs["Image"], compositor_node.inputs["Color"])
 compositor_tree.links.new(compositor_node.outputs["Color"], compositor_output.inputs["Image"])
 scene.compositing_node_group = compositor_tree
+PASSTHROUGH_EFFECT = "Animated Grade active passthrough"
+if hasattr(scene, "compositor_effects"):
+    passthrough = bpy.data.node_groups.new(PASSTHROUGH_EFFECT, nodes.COMPOSITOR_TREE)
+    for direction in ("INPUT", "OUTPUT"):
+        passthrough.interface.new_socket(name="Image", in_out=direction, socket_type="NodeSocketColor")
+    passthrough.links.new(
+        passthrough.nodes.new("NodeGroupInput").outputs["Image"],
+        passthrough.nodes.new("NodeGroupOutput").inputs["Image"],
+    )
+    graded_effect = scene.compositor_effects.active
+    active_effect = scene.compositor_effects.new(PASSTHROUGH_EFFECT)
+    active_effect.node_group = passthrough
+    active_effect.is_active = True
+    assert scene.compositing_node_group == passthrough
+    assert compositor_node in nodes._scene_grade_nodes(scene, compositor_mode="render")
+    graded_effect.enable_for_render = False
+    assert compositor_node not in nodes._scene_grade_nodes(scene, compositor_mode="render")
+    assert compositor_node in nodes._scene_grade_nodes(scene, compositor_mode="preview")
+    graded_effect.enable_for_render = True
 
 failures = nodes._refresh_nodes((shader_node, compositor_node))
 assert not failures, failures
@@ -182,7 +202,7 @@ for grade in (first_grade, second_grade):
     bpy.data.node_groups.remove(grade)
 
 # Repeated same-time callbacks retain provenance. Actual frame/subframe
-# changes expire every per-node claim, even while rendering blocks refresh.
+# changes expire every per-node claim, even while publication is deferred.
 shared_claim_grade = nodes._make_grade()
 shared_claim_grade.pg_color.web_hue_3_0 = 180.0
 shared_claims = nodes._hue_claims(shared_claim_grade.pg_color)
@@ -192,14 +212,35 @@ assert local_claims != nodes.color_authoring.EMPTY_CLAIMS
 nodes._frame_change_pre(scene)
 nodes._frame_change_post(scene)
 assert nodes._hue_claims(shader_node) == local_claims
-blocked = nodes._frame_reconcile_blocked
-try:
-    nodes._frame_reconcile_blocked = lambda _pointer: True
+gate = nodes._grade_resources.gate
+scene_identity = scene.as_pointer()
+with gate.callback():
     scene.frame_set(8, subframe=0.25)
     scene.frame_set(8)
+    assert scene_identity in nodes._frame_reconcile_scenes
+    assert nodes._hue_claims(shader_node, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
+original_host = gate._bpy
+try:
+    for job, locked, modal in (
+        ("OBJECT_BAKE", False, None),
+        ("SHADER_COMPILATION", False, None),
+        (None, True, None),
+        (None, False, "OBJECT_OT_bake_image"),
+    ):
+        operators = () if modal is None else (SimpleNamespace(bl_idname=modal),)
+        manager = SimpleNamespace(is_interface_locked=locked, windows=(
+            SimpleNamespace(modal_operators=operators),
+        ))
+        gate._bpy = SimpleNamespace(
+            app=SimpleNamespace(is_job_running=lambda name: name == job),
+            data=SimpleNamespace(window_managers=(manager,)),
+        )
+        nodes._frame_reconcile_tick()
+        assert scene_identity in nodes._frame_reconcile_scenes, (job, locked, modal)
 finally:
-    nodes._frame_reconcile_blocked = blocked
-assert nodes._hue_claims(shader_node, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
+    gate._bpy = original_host
+nodes._frame_reconcile_tick()
+assert scene_identity not in nodes._frame_reconcile_scenes
 assert nodes._hue_claims(shared_claim_grade.pg_color) == shared_claims
 bpy.data.node_groups.remove(shared_claim_grade)
 
@@ -344,6 +385,151 @@ reopened_nodes, reopened_signatures, _ = nodes._animation_snapshot(scene)
 assert shader_node in reopened_nodes and compositor_node in reopened_nodes
 assert nodes._animation_outputs_current(reopened_nodes, reopened_signatures) == (True, None)
 
+
+def check_playback_publication():
+    saved_time = scene.frame_current, float(scene.frame_subframe)
+    record = nodes._node_stores[shader_node.as_pointer()]
+    baseline = record["state"].applied_signature
+
+    def prepared_frame():
+        publications = nodes._preparation_runtime.wait()
+        receipt, = (item for item in publications if item.source is record["source"])
+        assert receipt.error is None and receipt.quality == "full", receipt.error
+        signature = nodes._settings_signature_for(shader_node)
+        assert nodes._publication_signature(record, receipt.prepared) == signature
+        return receipt, signature
+
+    def check_visible(applied, desired):
+        state = record["state"]
+        assert state.applied_signature == applied and state.desired_signature == desired, state
+        assert shader_node.node_tree[nodes._KERNEL_SIGNATURE] == applied
+        assert nodes.node_policy.output_mode(state) == "preview", state
+        assert shader_node.get(nodes._NODE_PENDING) == "status.showing_last_good"
+
+    nodes._playback_begin(scene)
+    try:
+        scene.frame_set(2, subframe=.375)
+        previous, previous_signature = prepared_frame()
+        assert previous.playback_session is not None
+        nodes._compositor_pre(scene)
+        try:
+            assert not nodes._handle_preparation_completions((previous,))
+            scene.frame_set(2, subframe=.625)
+            nodes._playback_end(scene)
+            nodes._playback_begin(scene)
+            assert record["state"].desired_signature == previous_signature
+        finally:
+            nodes._compositor_post(scene)
+
+        # The publication timer wins the race against the deferred frame timer.
+        # The previous run's receipt is still in its mailbox when this turn begins.
+        assert not nodes._handle_preparation_completions(())
+        check_visible(baseline, nodes._settings_signature_for(shader_node))
+        intermediate, intermediate_signature = prepared_frame()
+        assert intermediate.playback_session not in (None, previous.playback_session)
+
+        scene.frame_set(2, subframe=.75)
+        assert not nodes._handle_preparation_completions((intermediate,))
+        check_visible(intermediate_signature, nodes._settings_signature_for(shader_node))
+        delayed, _ = prepared_frame()
+        scene.frame_set(2, subframe=.875)
+        nodes._playback_end(scene)
+        assert not nodes._handle_preparation_completions((delayed,))
+        check_visible(intermediate_signature, nodes._settings_signature_for(shader_node))
+        failures = nodes._drain_preparations()
+        assert not failures, failures
+        targets, signatures, _ = nodes._animation_snapshot(scene)
+        assert nodes._animation_outputs_current(targets, signatures) == (True, None)
+    finally:
+        nodes._playback_end(scene)
+        scene.frame_set(saved_time[0], subframe=saved_time[1])
+        failures = nodes._drain_preparations()
+        assert not failures, failures
+
+
+def check_indirect_shader_grades():
+    render = scene.render
+    view_layer = scene.view_layers[0]
+    saved_time = (scene.frame_current, float(scene.frame_subframe))
+    saved_render = (render.engine, render.use_compositing, render.filepath,
+                    render.image_settings.file_format)
+    saved_cycles = (scene.cycles.device, scene.cycles.samples, scene.cycles.use_denoising)
+    saved_step = scene.frame_step
+    saved_override = view_layer.material_override
+    saved_material = obj.data.materials[0]
+    inner = bpy.data.collections.new("Animated Grade instance source")
+    outer = bpy.data.collections.new("Animated Grade nested collection")
+    inner_instance = bpy.data.objects.new("Animated Grade inner instance", None)
+    outer_instance = bpy.data.objects.new("Animated Grade outer instance", None)
+    plain = bpy.data.materials.new("Animated Grade override base material")
+
+    def render_frames(label):
+        discovered = nodes._scene_grade_nodes(scene)
+        assert discovered.count(shader_node) == 1, (label, discovered)
+        render.filepath = str(report_path.parent / f"grade_{label}_")
+        scene.frame_set(1)
+        assert bpy.ops.render.render("EXEC_DEFAULT", animation=True) == {"FINISHED"}, label
+        samples = []
+        for frame in (1, 3):
+            path = Path(render.frame_path(frame=frame))
+            assert path.is_file(), (label, frame, path)
+            image = bpy.data.images.load(str(path), check_existing=False)
+            try:
+                width, height = image.size
+                pixels = np.asarray(image.pixels[:], dtype=np.float32).reshape(height, width, 4)
+                samples.append(pixels[height // 2, width // 2, :3].copy())
+            finally:
+                bpy.data.images.remove(image)
+        return np.asarray(samples)
+
+    try:
+        render.engine = "CYCLES"
+        render.use_compositing = False
+        render.image_settings.file_format = "OPEN_EXR"
+        scene.cycles.device = "CPU"
+        scene.cycles.samples = 1
+        scene.cycles.use_denoising = False
+        scene.frame_step = 2
+        direct = render_frames("direct")
+        assert np.max(np.abs(direct[1] - direct[0])) > .02, direct
+
+        inner.objects.link(obj)
+        inner_instance.instance_type = "COLLECTION"
+        inner_instance.instance_collection = inner
+        outer.objects.link(inner_instance)
+        outer_instance.instance_type = "COLLECTION"
+        outer_instance.instance_collection = outer
+        scene.collection.objects.link(outer_instance)
+        scene.collection.objects.unlink(obj)
+        assert scene.objects.get(obj.name) is None
+        np.testing.assert_allclose(render_frames("instance"), direct, rtol=0, atol=.002)
+
+        scene.collection.objects.unlink(outer_instance)
+        scene.collection.objects.link(obj)
+        obj.data.materials[0] = plain
+        view_layer.material_override = material
+        np.testing.assert_allclose(render_frames("override"), direct, rtol=0, atol=.002)
+    finally:
+        view_layer.material_override = saved_override
+        obj.data.materials[0] = saved_material
+        if scene.collection.objects.get(obj.name) is None:
+            scene.collection.objects.link(obj)
+        bpy.data.objects.remove(outer_instance, do_unlink=True)
+        bpy.data.objects.remove(inner_instance, do_unlink=True)
+        bpy.data.collections.remove(outer)
+        bpy.data.collections.remove(inner)
+        bpy.data.materials.remove(plain)
+        (render.engine, render.use_compositing, render.filepath,
+         render.image_settings.file_format) = saved_render
+        (scene.cycles.device, scene.cycles.samples, scene.cycles.use_denoising) = saved_cycles
+        scene.frame_step = saved_step
+        scene.frame_set(saved_time[0], subframe=saved_time[1])
+
+
+if bpy.app.background:
+    check_playback_publication()
+    check_indirect_shader_grades()
+
 # A successful Grade reconciliation must not release a render ticket if the
 # scene subframe changes before publication rereads its live time.
 preflight_gate = nodes._grade_resources.gate
@@ -365,6 +551,7 @@ def change_time_after_validation(current_nodes, signatures, **kwargs):
     if result[0] and not time_changed_after_validation:
         time_changed_after_validation.append(True)
         scene.frame_set(preflight_time[0], subframe=0.75)
+        assert scene.as_pointer() in nodes._frame_reconcile_scenes
     return result
 
 
@@ -393,6 +580,84 @@ failures = nodes._drain_preparations()
 assert not failures, failures
 reopened_nodes, reopened_signatures, _ = nodes._animation_snapshot(scene)
 assert nodes._animation_outputs_current(reopened_nodes, reopened_signatures) == (True, None)
+
+def defer_undo_reconciliation():
+    nodes._undo_redo_pre()
+    nodes._undo_redo_post()
+    # Keep the race deterministic. The render starts before the queued whole-file
+    # repair can run, even if Blender services timers during render startup.
+    if bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick):
+        bpy.app.timers.unregister(nodes._undo_redo_reconcile_tick)
+    assert not nodes._node_stores
+
+
+def check_render_recovery_failure():
+    gate = nodes._grade_resources.gate
+    original_drain = nodes._drain_preparations_in_scope
+    original_deliver = gate.finish_render_preflight_failure
+    original_request = gate.request_render_preflight
+    delivered = []
+
+    def fail_recovery(*_args, **_kwargs):
+        raise RuntimeError("injected render recovery failure")
+
+    def check_failure_output(ticket):
+        assert not ticket._finished.is_set()
+        for node in (shader_node, compositor_node):
+            assert node.get(nodes._NODE_ERROR)
+            assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+        shader_error = shader_node.node_tree
+        assert any(link.from_socket.name == "Alpha" and link.to_socket.name == "Alpha"
+                   for link in shader_error.links)
+        compositor_error = compositor_node.node_tree
+        assert any(link.from_node.bl_idname == "CompositorNodeSeparateColor"
+                   and link.from_socket.name == "Alpha"
+                   and link.to_node.bl_idname == "CompositorNodeSetAlpha"
+                   for link in compositor_error.links)
+        delivered.append(ticket)
+        return original_deliver(ticket)
+
+    # A second lifecycle operation may occur before the first can release pins.
+    defer_undo_reconciliation()
+    defer_undo_reconciliation()
+    gate.finish_render_preflight_failure = check_failure_output
+    nodes._drain_preparations_in_scope = fail_recovery
+    nodes._render_init(scene)
+    try:
+        nodes._render_pre(scene)
+        ticket, = delivered
+        assert ticket._finished.is_set() and ticket.state.phase == "failed"
+        assert "injected render recovery failure" in ticket.state.error
+    finally:
+        nodes._render_finished(scene)
+        nodes._drain_preparations_in_scope = original_drain
+        gate.finish_render_preflight_failure = original_deliver
+
+    recovered = []
+
+    def record_recovery(*args):
+        ticket = original_request(*args)
+        recovered.append(ticket)
+        return ticket
+
+    gate.request_render_preflight = record_recovery
+    nodes._render_init(scene)
+    try:
+        nodes._render_pre(scene)
+        ticket, = recovered
+        assert ticket._finished.is_set() and ticket.state.phase == "released", ticket.state
+    finally:
+        nodes._render_finished(scene)
+        gate.request_render_preflight = original_request
+    frame_nodes, signatures, _ = nodes._animation_snapshot(scene)
+    assert nodes._animation_outputs_current(frame_nodes, signatures) == (True, None)
+    assert nodes._undo_redo_reconcile_tick() is None
+    assert nodes._animation_outputs_current(frame_nodes, signatures) == (True, None)
+
+
+if bpy.app.background:
+    check_render_recovery_failure()
+
 
 # Key insertion failures must be visible on the affected node, then clear after
 # a later successful Auto Key operation.
@@ -482,6 +747,16 @@ repeat_prefix = report_path.parent / "grade_repeat_"
 file_formats = scene.render.image_settings.bl_rna.properties["file_format"].enum_items
 movie_supported = any(item.identifier == "FFMPEG" for item in file_formats)
 state = {"phase": "sequence", "result": None, "error": None, "run": None}
+first_render_validation = []
+validate_animation_outputs = nodes._animation_outputs_current
+
+
+def capture_first_render_validation(current_nodes, signatures, **kwargs):
+    assert compositor_node in current_nodes, current_nodes
+    ready, error = validate_animation_outputs(current_nodes, signatures, **kwargs)
+    if not first_render_validation and ready:
+        first_render_validation.append((scene.frame_current, shader_node.exposure))
+    return ready, error
 
 
 def checkpoint(event):
@@ -502,6 +777,7 @@ def finish_test():
         assert len(render_completions) == 2, render_completions
         assert [item["frame"] for item in receipts] == [1, 2, 3, 1, 2, 3], receipts
         assert render_writes == [1, 2, 3, 1, 2, 3], render_writes
+        assert first_render_validation == [(1, 0.0)], first_render_validation
         assert (scene.frame_current, float(scene.frame_subframe)) == saved_time
         assert (scene.frame_start, scene.frame_end, scene.frame_step) == saved_range
         if bpy.app.background:
@@ -558,6 +834,7 @@ def finish_test():
         state["error"] = str(error)
         report_path.write_text(json.dumps({"error": state["error"], "receipts": receipts}))
     finally:
+        nodes._animation_outputs_current = validate_animation_outputs
         for callback, collection in (
             (on_render_pre, bpy.app.handlers.render_pre),
             (on_render_init, bpy.app.handlers.render_init),
@@ -570,6 +847,12 @@ def finish_test():
         scene.tool_settings.use_keyframe_insert_auto = old_auto_key
         scene.frame_start, scene.frame_end, scene.frame_step = old_range
         scene.frame_set(old_frame, subframe=old_subframe)
+        if hasattr(scene, "compositor_effects"):
+            for effect in scene.compositor_effects:
+                if effect.node_group == compositor_tree:
+                    effect.is_active = True
+                    break
+            scene.compositor_effects.remove(scene.compositor_effects[PASSTHROUGH_EFFECT])
         scene.compositing_node_group = old_compositing_group
         if not bpy.app.background:
             bpy.app.timers.register(_quit_when_idle, first_interval=0.1)
@@ -589,6 +872,8 @@ def begin_render():
     if state["phase"] == "sequence":
         scene.render.image_settings.file_format = "PNG"
         scene.render.filepath = str(sequence_prefix)
+        defer_undo_reconciliation()
+        nodes._animation_outputs_current = capture_first_render_validation
     elif state["phase"] == "movie":
         if movie_supported:
             try:
@@ -615,6 +900,7 @@ def begin_render():
         if bpy.app.background:
             state["result"] = bpy.ops.render.render("EXEC_DEFAULT", animation=True)
             if state["phase"] == "sequence":
+                nodes._undo_redo_post()
                 state["phase"], state["result"] = "movie", None
                 state["run"] = None
                 return begin_render()
@@ -662,6 +948,7 @@ def monitor_gui():
         return 0.05
     checkpoint("render_retired")
     if run["phase"] == "sequence":
+        nodes._undo_redo_post()
         state["phase"], state["result"] = "movie", None
         state["run"] = None
         begin_render()

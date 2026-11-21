@@ -353,6 +353,25 @@ class PublicationGateTests(unittest.TestCase):
             ticket.wait()
         gate.evaluation_finished("render", 17)
 
+    def test_lifecycle_invalidation_fences_old_tickets_without_clearing_render_lease(self):
+        gate, _running, _manager = self.gate(jobs=("RENDER",))
+        gate.evaluation_started("render", 17)
+        subframe = float(0.0).hex()
+        stale = gate.request_render_preflight(17, 1, subframe)
+        gate.invalidate_render_preflights()
+        self.assertTrue(stale.failure_authorized)
+        self.assertFalse(stale._finished.is_set())
+
+        recovered = gate.request_render_preflight(17, 1, subframe)
+        self.assertIs(gate.take_render_preflight(), stale)
+        self.assertTrue(gate.finish_render_preflight_failure(stale))
+        self.assertIs(gate.take_render_preflight(), recovered)
+        with gate.render_preflight(recovered):
+            self.publish(gate, recovered, 17, 1, subframe)
+        self.assertTrue(recovered._finished.is_set())
+        self.assertIsNone(recovered._error)
+        gate.evaluation_finished("render", 17)
+
     def test_terminal_failure_waits_for_host_fail_closed_before_worker_release(self):
         gate, _running, _manager = self.gate(jobs=("RENDER", "OBJECT_BAKE"))
         gate.evaluation_started("render", 17)

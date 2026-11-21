@@ -1,0 +1,47 @@
+__DEVICE__ PGValue pg_jc_surface_xyz(float3 xyz,
+                                      PGFour jAmounts, float jCenter, float jWidth,
+                                      PGFour cAmounts, float cCenter, float cWidth,
+                                      float gainStops, int peakIndex) {
+    if (!pg_four_finite(jAmounts) || !pg_four_finite(cAmounts) ||
+        !color_finite(jCenter) || !color_finite(jWidth) ||
+        !color_finite(cCenter) || !color_finite(cWidth) || !color_finite(gainStops) ||
+        jCenter < 0.05f || jCenter > 0.95f || cCenter < 0.05f || cCenter > 0.95f ||
+        jWidth < 0.05f || jWidth > 1.0f || cWidth < 0.05f || cWidth > 1.0f ||
+        peakIndex < 0 || peakIndex > 3)
+        return pg_value(color_zero3(), 0);
+
+    PGFour zero = pg_four(0.0f, 0.0f, 0.0f, 0.0f);
+    int adjustJ = !pg_four_equal(jAmounts, zero);
+    int adjustC = !pg_four_equal(cAmounts, zero) || gainStops != 0.0f;
+    if (!adjustJ && !adjustC) return pg_value(xyz, 1);
+
+    PGState base = pg_enter_xyz(xyz);
+    if (!color_finite3(base.q) || !color_finite(base.e)) return pg_value(color_zero3(), 0);
+    float chroma = pg_hypot(base.q.y, base.q.z);
+    if (chroma == 0.0f) return pg_value(xyz, 1);
+    float jaMagnitude = _sqrtf(_fabs(base.e));
+    float height = pg_hypot(jaMagnitude, _sqrtf(66.0f * chroma));
+
+    PGFour anchors = pg_tone_anchors(peakIndex);
+    anchors = pg_four(100.0f * anchors.s, 100.0f * anchors.m,
+                      100.0f * anchors.w, 100.0f * anchors.h);
+    float3 edited = base.q;
+    if (adjustJ) {
+        float amount = pg_jc_surface_anchor(height, anchors, jAmounts);
+        float response = pg_jc_surface_j_response(chroma, jaMagnitude, jCenter, jWidth);
+        float blackFade = pg_smoother(height / anchors.s);
+        edited.x += amount * response * blackFade;
+    }
+    if (adjustC) {
+        float amount = pg_jc_surface_anchor(height, anchors, cAmounts);
+        float stops = gainStops + pg_jc_surface_c_response(chroma, jaMagnitude, cCenter, cWidth, amount);
+        float scale = _exp2f(stops);
+        edited.y *= scale;
+        edited.z *= scale;
+    }
+    if (!color_finite3(edited)) return pg_value(color_zero3(), 0);
+    if (edited.x == base.q.x && edited.y == base.q.y && edited.z == base.q.z)
+        return pg_value(xyz, 1);
+    PGState graded = pg_guard(pg_state(edited, pg_energy_update(base, edited)), base.e);
+    return pg_decode_xyz(graded);
+}

@@ -1,0 +1,85 @@
+__DEVICE__ float pg_jc_lgg_axis(float chroma, float jaMagnitude, float cPivot, int useInverseRoot) {
+    if (chroma == 0.0f) return 0.0f;
+    if (jaMagnitude == 0.0f) return 1.0f;
+
+    float ratio = chroma / (cPivot * jaMagnitude);
+    if (useInverseRoot) {
+        float scaled = 3.0f * ratio;
+        float root = _sqrtf(1.0f + scaled);
+        // Rationalize 1 - 1/root near neutral to retain the small difference.
+        return scaled < 1.0f ? scaled / (root * (root + 1.0f)) : 1.0f - 1.0f / root;
+    }
+    float logRatio = pg_log1p(ratio) * 1.4426950408889634f;
+    return logRatio / (1.0f + logRatio);
+}
+
+__DEVICE__ float pg_jc_lgg_chroma_gain(float axis, PGFour lift, PGFour gamma,
+                                       PGFour gain, PGFour weights) {
+    float stops = (1.0f - axis) * pg_four_dot(lift, weights)
+                + (1.0f - 2.0f * axis) * pg_four_dot(gamma, weights) + pg_four_dot(gain, weights);
+    return _exp2f(stops);
+}
+
+__DEVICE__ float pg_jc_lgg_j_row(float lift, float gamma, float gain, float axis) {
+    float stops = gain + (1.0f - 2.0f * axis) * gamma;
+    // Factor the difference from the reset curve to retain small lightness edits.
+    return _exp2f(gain) * lift * (1.0f - axis)
+         + (20.0f * axis) * pg_expm1(0.6931471805599453f * stops);
+}
+
+__DEVICE__ PGValue pg_jc_lgg_xyz(float3 xyz,
+                                  PGFour jLift, PGFour jGamma, PGFour jGain, int jFit,
+                                  PGFour cLift, PGFour cGamma, PGFour cGain, int cFit,
+                                  int peakIndex, int useInverseRoot, float cPivot) {
+    if (!pg_four_finite(jLift) || !pg_four_finite(jGamma) || !pg_four_finite(jGain) ||
+        !pg_four_finite(cLift) || !pg_four_finite(cGamma) || !pg_four_finite(cGain) ||
+        jFit < -2 || jFit > 6 || cFit < -2 || cFit > 6 || peakIndex < 0 || peakIndex > 3 ||
+        !color_finite(cPivot) || cPivot < 0.05f || cPivot > 2.0f)
+        return pg_value(color_zero3(), 0);
+
+    PGFour zero = pg_four(0.0f, 0.0f, 0.0f, 0.0f);
+    int adjustJ = !(pg_four_equal(jLift, zero) && pg_four_equal(jGamma, zero) &&
+                    pg_four_equal(jGain, zero));
+    int adjustC = !(pg_four_equal(cLift, zero) && pg_four_equal(cGamma, zero) &&
+                    pg_four_equal(cGain, zero));
+    if (!adjustJ && !adjustC) return pg_value(xyz, 1);
+
+    PGState base = pg_enter_xyz(xyz);
+    if (!color_finite3(base.q) || !color_finite(base.e)) return pg_value(color_zero3(), 0);
+    float jaMagnitude = _sqrtf(_fabs(base.e));
+    float chroma = pg_hypot(base.q.y, base.q.z);
+    adjustC = adjustC && chroma > 0.0f;
+    if (!adjustJ && !adjustC) return pg_value(xyz, 1);
+    float height = pg_hypot(jaMagnitude, _sqrtf(66.0f * chroma));
+    if (height == 0.0f) return pg_value(xyz, 1);
+
+    PGFour anchor = pg_tone_anchors(peakIndex);
+    PGFour knots = pg_four(pg_smoother(anchor.s / anchor.h), pg_smoother(anchor.m / anchor.h),
+                           pg_smoother(anchor.w / anchor.h), 1.0f);
+    float t = pg_smoother(height / (100.0f * anchor.h));
+    float axis = pg_jc_lgg_axis(chroma, jaMagnitude, cPivot, useInverseRoot);
+    PGFour jWeights = adjustJ ? pg_jc_weights(t, pg_kernel(knots, jFit)) : zero;
+    float3 edited = base.q;
+    if (adjustJ) {
+        PGFour offsets = pg_four(pg_jc_lgg_j_row(jLift.s, jGamma.s, jGain.s, axis),
+                                 pg_jc_lgg_j_row(jLift.m, jGamma.m, jGain.m, axis),
+                                 pg_jc_lgg_j_row(jLift.w, jGamma.w, jGain.w, axis),
+                                 pg_jc_lgg_j_row(jLift.h, jGamma.h, jGain.h, axis));
+        // The incoming H-K height controls the low-end fade, so saturated
+        // colors retain J control even when their achromatic component is zero.
+        float reach = pg_smoother(height / (100.0f * anchor.s));
+        edited.x += reach * pg_four_dot(offsets, jWeights);
+    }
+    if (adjustC) {
+        PGFour cWeights = adjustJ && jFit == cFit ? jWeights : pg_jc_weights(t, pg_kernel(knots, cFit));
+        float scale = pg_jc_lgg_chroma_gain(axis, cLift, cGamma, cGain, cWeights);
+        edited.y *= scale;
+        edited.z *= scale;
+    }
+    if (!color_finite3(edited)) return pg_value(color_zero3(), 0);
+    PGState graded = pg_guard(pg_state(edited, pg_energy_update(base, edited)), base.e);
+    if (graded.e == base.e && graded.q.x == base.q.x &&
+        graded.q.y == base.q.y && graded.q.z == base.q.z)
+        return pg_value(xyz, 1);
+    return pg_decode_xyz(graded);
+}

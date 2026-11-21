@@ -1,0 +1,24 @@
+{
+  "en": {
+    "cone.direction": "Direction",
+    "cone.forward": "Forward",
+    "cone.inverse": "Inverse",
+    "cone.tooltip.direction": "Apply this grade or undo it using the same settings and peak.",
+    "surface.tooltip.JContrast": "Set the local stretch of signed lightness in stops at this tonal anchor. Positive amounts expand the lightness spacing of colors above the J saturation center and compress it below.",
+    "tooltip.warp.scale": "Set local radial stretch in stops at this tone and destination hue. It scales lightness and chroma together and fades near gray. Lower-tone edits carry into brighter colors.",
+    "tooltip.warp.center_a": "Set the a destination of this tone’s neutral. Adaptance preserves signed lightness and slows as chroma increases.",
+    "tooltip.warp.center_b": "Set the b destination of this tone’s neutral. Adaptance preserves signed lightness and slows as chroma increases.",
+    "tooltip.color.adaptance_half_saturation": "Set the saturation C/|J_A| where instantaneous tint speed falls to half its neutral value. The neutral still reaches the selected a/b target."
+  },
+  "zh_HANS": {
+    "cone.direction": "方向",
+    "cone.forward": "正向",
+    "cone.inverse": "逆向",
+    "cone.tooltip.direction": "应用此调色，或使用相同的设置和峰值逆转此调色。",
+    "surface.tooltip.JContrast": "以档为单位设置此调域锚点的有符号明度局部拉伸量。正值扩大饱和度高于 J 中心的颜色的明度间距，并压缩低于该中心的颜色的明度间距。",
+    "tooltip.warp.scale": "以档为单位设置此调域和目标色相的局部径向拉伸量。明度和彩度同比缩放，近灰色处逐渐减弱。较暗调域的调整也会影响较亮的颜色。",
+    "tooltip.warp.center_a": "设置此调域中性色的 a 目标值。白偏调整保持有符号明度，彩度越高，调整速度越慢。",
+    "tooltip.warp.center_b": "设置此调域中性色的 b 目标值。白偏调整保持有符号明度，彩度越高，调整速度越慢。",
+    "tooltip.color.adaptance_half_saturation": "设置瞬时白偏调整速度降至中性色一半时的饱和度 C/|J_A|。中性色仍会到达指定的 a/b 目标。"
+  }
+}

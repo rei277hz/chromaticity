@@ -1,0 +1,62 @@
+__DEVICE__ int pg_jc_contrast_valid(PGFour amounts, float center, float width) {
+    return _fabs(amounts.s) <= 2.0f && _fabs(amounts.m) <= 2.0f &&
+           _fabs(amounts.w) <= 2.0f && _fabs(amounts.h) <= 2.0f &&
+           center >= 0.05f && center <= 0.95f && width >= 0.05f && width <= 1.0f;
+}
+
+__DEVICE__ float pg_jc_slope(float chroma, float anchor, float amount, float center, float width) {
+    return _exp2f(amount * pg_jc_surface_j_response(chroma, anchor, center, width));
+}
+
+__DEVICE__ float3 pg_jc_lightness(float3 point, PGFour anchors, PGFour amounts,
+                                  float center, float width, int invert) {
+    float chroma = pg_hypot(point.y, point.z);
+    PGFour slopes = pg_four(pg_jc_slope(chroma, anchors.s, amounts.s, center, width),
+                            pg_jc_slope(chroma, anchors.m, amounts.m, center, width),
+                            pg_jc_slope(chroma, anchors.w, amounts.w, center, width),
+                            pg_jc_slope(chroma, anchors.h, amounts.h, center, width));
+    PGFour one = pg_four(1.0f, 1.0f, 1.0f, 1.0f);
+    if (pg_four_equal(slopes, one)) return point;
+    float magnitude = pg_stretch(_fabs(point.x), anchors, slopes, 1.0f, invert);
+    point.x = point.x < 0.0f ? -magnitude : magnitude;
+    return point;
+}
+
+__DEVICE__ float3 pg_jc_chroma(float3 point, PGFour anchors, PGFour amounts,
+                               float center, float width, float gainStops, int invert) {
+    float chroma = pg_hypot(point.y, point.z);
+    float height = _fabs(point.x);
+    float amount = pg_jc_surface_anchor(height, anchors, amounts);
+    // Remove overall gain before evaluating the inverse contrast at that radius.
+    float stops = invert
+        ? -gainStops + pg_jc_surface_c_response(chroma * _exp2f(-gainStops), height, center, width, -amount)
+        : gainStops + pg_jc_surface_c_response(chroma, height, center, width, amount);
+    float gain = _exp2f(stops);
+    return make_float3(point.x, point.y * gain, point.z * gain);
+}
+
+__DEVICE__ PGValue pg_cone_jc(float3 wire, PGFour jAmounts, float jCenter, float jWidth,
+                               PGFour cAmounts, float cCenter, float cWidth, float gainStops,
+                               int peakIndex, int invert) {
+    if (!pg_cone_valid(wire) || !pg_jc_contrast_valid(jAmounts, jCenter, jWidth) ||
+        !pg_jc_contrast_valid(cAmounts, cCenter, cWidth) || !(_fabs(gainStops) <= 3.0f) ||
+        peakIndex < 0 || peakIndex > 3 || (invert != 0 && invert != 1))
+        return pg_value(color_zero3(), 0);
+
+    PGFour zero = pg_four(0.0f, 0.0f, 0.0f, 0.0f);
+    int adjustJ = !pg_four_equal(jAmounts, zero);
+    int adjustC = !pg_four_equal(cAmounts, zero) || gainStops != 0.0f;
+    if (!adjustJ && !adjustC) return pg_value(wire, 1);
+
+    float3 input = pg_cone_chart(wire);
+    if (!color_finite3(input)) return pg_value(color_zero3(), 0);
+    if (input.y == 0.0f && input.z == 0.0f) return pg_value(wire, 1);
+    PGFour neutral = pg_tone_anchors(peakIndex);
+    PGFour anchors = pg_four(100.0f * neutral.s, 100.0f * neutral.m, 100.0f * neutral.w, 100.0f * neutral.h);
+    float3 point = input;
+    if (invert && adjustJ) point = pg_jc_lightness(point, anchors, jAmounts, jCenter, jWidth, invert);
+    if (adjustC) point = pg_jc_chroma(point, anchors, cAmounts, cCenter, cWidth, gainStops, invert);
+    if (!invert && adjustJ) point = pg_jc_lightness(point, anchors, jAmounts, jCenter, jWidth, invert);
+    if (point.x == input.x && point.y == input.y && point.z == input.z) return pg_value(wire, 1);
+    return pg_cone_wire(point);
+}

@@ -11,10 +11,12 @@ helper images and the 65^3 Stack LUT are evaluated by Blender's node graph.
 
 from pathlib import Path
 import tempfile
+from uuid import uuid4
 
 import numpy as np
 
 from .bake_images import image_format, resolve_datablocks, route_datablock
+from .compositor_effects import matching_compositor_occurrences
 
 
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
@@ -80,7 +82,8 @@ def _verify_sampler_bindings(host, occurrences, images):
     for occurrence in occurrences:
         kind, owner_key = occurrence["owner"]
         owner = roots[kind][tuple(owner_key)]
-        tree = owner.compositing_node_group if kind == "compositor" else owner.node_tree
+        tree = (_compositor_root(host, owner, occurrence)
+                if kind == "compositor" else owner.node_tree)
         reader_path = occurrence["reader_path"]
         if reader_path is None:
             raise ValueError("Bake source has no bound native Image reader")
@@ -567,24 +570,17 @@ def _compositor(inputs, context):
     if scene is None:
         raise ValueError("Compositor Bake scene is absent")
     _set_frame(scene, target)
-    tree = getattr(scene, "compositing_node_group", None)
-    if tree is None:
-        tree = getattr(scene, "node_tree", None)
-    if tree is None:
-        raise ValueError("Scene has no compositor graph")
-    tree = tree.copy()
+    tree = _compositor_root(bpy, scene, target).copy()
     path = tuple(target.get("group_path", ()))
     output, _alpha, tree = _target_outputs(tree, path, str(target.get("node_name", "")))
     with tempfile.TemporaryDirectory(prefix="pg-next-compositor-bake-") as directory:
         for node in tuple(tree.nodes):
             if node.bl_idname in {"CompositorNodeOutputFile", "CompositorNodeViewer", "NodeGroupOutput"}:
                 tree.nodes.remove(node)
-        field = next((item for item in tree.interface.items_tree
-                      if item.item_type == "SOCKET" and item.in_out == "OUTPUT"
-                      and item.socket_type == "NodeSocketColor"), None)
-        if field is None:
-            field = tree.interface.new_socket(name="Image", in_out="OUTPUT",
-                                               socket_type="NodeSocketColor")
+        field = tree.interface.new_socket(name="PG Next Bake Image", in_out="OUTPUT",
+                                          socket_type="NodeSocketColor")
+        # Native effects send only the first output to the Render Result.
+        tree.interface.move(field, 0)
         root_output = tree.nodes.new("NodeGroupOutput")
         root_output.is_active_output = True
         tree.links.new(output, _socket(root_output.inputs, field.identifier))
@@ -605,8 +601,17 @@ def _compositor(inputs, context):
         except (AttributeError, RuntimeError, ValueError):
             pass
         tree.links.new(output, endpoint.inputs[item.name])
-        previous = scene.compositing_node_group
-        scene.compositing_node_group = tree
+        effects = getattr(scene, "compositor_effects", None)
+        if effects is None:
+            previous = scene.compositing_node_group
+            scene.compositing_node_group = tree
+        else:
+            # The snapshot is disposable. A fresh effect has no enable flag
+            # curves or neighbors that can alter the Render Result fallback.
+            effects.clear()
+            effect = effects.new("PG Next Bake " + uuid4().hex)
+            effect.node_group = tree
+            effect.enable_for_render = True
         try:
             scene.render.use_compositing = True
             scene.render.use_sequencer = False
@@ -642,9 +647,17 @@ def _compositor(inputs, context):
             finally:
                 bpy.data.images.remove(image)
         finally:
-            scene.compositing_node_group = previous
+            if effects is None:
+                scene.compositing_node_group = previous
     _checkpoint(context)
     return _result(pixels, inputs, target, target, backend="COMPOSITOR")
+
+
+def _compositor_root(host, scene, route):
+    matches = tuple(matching_compositor_occurrences(host, scene, route))
+    if len(matches) != 1:
+        raise ValueError("Bake compositor effect is missing or ambiguous in the snapshot")
+    return matches[0][1]
 
 
 def _set_frame(scene, values):

@@ -328,6 +328,32 @@ class BankedResourceTests(unittest.TestCase):
         replacement = self.module.GradeResource()
         self.assertEqual(self.cache.next_generation(replacement), 3)
 
+    def test_load_fences_resources_and_pins_all_roles_across_repeated_restores(self):
+        original = self.cache.resource(self.node, "linear")
+        self.cache.pending[object()] = object()
+        self.cache.invalidate()
+        self.assertFalse(self.cache.pending)
+        self.assertTrue(all(self.cache.protected(image) for image in original.images))
+        restored = self.cache.resource(self.node, "linear")
+        self.assertIsNot(original, restored)
+        self.assertEqual(original.images, restored.images)
+        self.cache.invalidate()
+
+        # An exclusive preflight may retire ordinary banks, but shared image
+        # identities from the old lifecycle stay pinned until actual quiescence.
+        self.cache.gate.retirement_allowed = lambda: True
+        current = self.cache.resource(self.node, "linear")
+        current.trees.clear()
+        removed = []
+        self.assertEqual(self.cache.reclaim(current, removed.append), ())
+        self.assertFalse(removed)
+        with self.assertRaises(self.module.PublicationDeferred):
+            self.cache.release_lifecycle_images()
+        self.quiescent = True
+        self.cache.release_lifecycle_images()
+        self.assertIs(current, self.cache.resource(self.node, "linear"))
+        self.assertTrue(all(self.cache.protected(image) for image in current.images))
+
 
 if __name__ == "__main__":
     unittest.main()

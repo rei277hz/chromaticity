@@ -147,7 +147,7 @@ def foreground_render_settings(scene):
             scene.render.compositor_precision)
 
 
-def bake(node, context):
+def bake(node, context, *, on_queued=None):
     is_shader = node.id_data.bl_idname == nodes.SHADER_TREE
     original_cycles_settings = foreground_cycles_settings(context.scene) if is_shader else None
     original_render_settings = foreground_render_settings(context.scene)
@@ -155,6 +155,8 @@ def bake(node, context):
     assert nodes.PG_OT_bake.execute(operator, context) == {"FINISHED"}
     assert bpy.app.timers.is_registered(nodes._bake_tick), "Bake request did not wake its timer"
     request = nodes._bake_manager.jobs[nodes._bake_manager._node_key(node)]
+    if on_queued is not None:
+        on_queued()
     wait_bake(node)
     assert node.pg_bake_image is not None, node.get(nodes._BAKE_ERROR)
     assert node.pg_bake_image.packed_file is not None
@@ -175,6 +177,17 @@ def bake(node, context):
     else:
         assert result["backend"] == "COMPOSITOR", result
     return values
+
+
+def add_solid_effect(scene):
+    tree = bpy.data.node_groups.new("Bake downstream color", nodes.COMPOSITOR_TREE)
+    tree.interface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    output = tree.nodes.new("NodeGroupOutput")
+    output.inputs["Image"].default_value = (1., 0., 1., 1.)
+    effect = scene.compositor_effects.new("Downstream color")
+    effect.node_group = tree
+    scene.compositor_effects.active = effect
+    return effect
 
 
 def assert_wrapper_independent(first, second):
@@ -357,6 +370,85 @@ def check_bake_upstream_grade_identity(scene, directory):
         nodes._refresh_nodes = original_refresh
         del manager.request
         nodes._bake_sources.forget(("request", target.as_pointer()))
+
+
+def check_render_layers_indirect_sources(scene, target, context):
+    layer = scene.view_layers[0]
+    original_override = layer.material_override
+    camera = scene.camera
+    original_camera = (camera.location.copy(), camera.data.type, camera.data.ortho_scale)
+    material = bpy.data.materials.new("Bake indirect source material")
+    material.use_nodes = True
+    tree = material.node_tree
+    grade = nodes.create_node(tree)
+    grade.pg_grade = nodes._make_grade()
+    grade.inputs["Color"].default_value = (.22, .15, .09, 1.)
+    emission = tree.nodes.new("ShaderNodeEmission")
+    tree.links.new(grade.outputs["Color"], emission.inputs["Color"])
+    tree.links.new(emission.outputs["Emission"], tree.nodes["Material Output"].inputs["Surface"])
+    wait_ready(grade)
+    replacement = bpy.data.materials.new("Bake replacement layer override")
+    replacement.use_nodes = True
+    replacement_tree = replacement.node_tree
+    replacement_emission = replacement_tree.nodes.new("ShaderNodeEmission")
+    replacement_emission.inputs["Color"].default_value = (.02, .45, .20, 1.)
+    replacement_tree.links.new(replacement_emission.outputs["Emission"],
+                               replacement_tree.nodes["Material Output"].inputs["Surface"])
+    source = bpy.data.collections.new("Bake instance source")
+    mesh = bpy.data.meshes.new("Bake indirect mesh")
+    mesh.from_pydata(((-2, -2, 3), (2, -2, 3), (2, 2, 3), (-2, 2, 3)), (), ((0, 1, 2, 3),))
+    obj = bpy.data.objects.new("Bake indirect object", mesh)
+    source.objects.link(obj)
+    mesh.materials.append(material)
+    instance = bpy.data.objects.new("Bake collection instance", None)
+    scene.collection.objects.link(instance)
+    instance.instance_type = "COLLECTION"
+    instance.instance_collection = source
+    try:
+        for binding in ("instance", "override"):
+            if binding == "override":
+                instance.instance_type = "NONE"
+                layer.material_override = material
+            bpy.context.view_layer.update()
+            upstream = []
+            nodes.bake_routes.describe(target, context, upstream_grades=upstream)
+            assert upstream.count(grade) == 1, (binding, upstream)
+            nodes._bake_request(target, context)
+            key = target.as_pointer()
+            pending = nodes._bake_manager.jobs[key]
+            signature = pending["signature"]
+            grade.pg_grade.pg_linear.exposure += .25
+            assert nodes._bake_current_signature(target, pending["route"]) != signature, binding
+            nodes._bake_tick()
+            assert key not in nodes._bake_manager.jobs, binding
+            assert target.pg_use_bake and target.pg_bake_image is not None
+
+        # Give only the selected view layer's override control of these pixels.
+        scene.collection.objects.link(obj)
+        mesh.materials.clear()
+        camera.location = (0., 0., 5.)
+        camera.data.type = "ORTHO"
+        camera.data.ortho_scale = 2.
+        bpy.context.view_layer.update()
+        before = bake(target, context)
+        image = target.pg_bake_image
+        assert_bake_controls(target, context, can_bake=True)
+        layer.material_override = replacement
+        bpy.context.view_layer.update()
+        assert_bake_controls(target, context, "status.bake_stale_inputs", can_bake=True)
+        assert target.pg_use_bake and target.pg_bake_image == image
+        np.testing.assert_array_equal(np.asarray(image.pixels[:]), before)
+        after = bake(target, context)
+        assert_bake_controls(target, context, can_bake=True)
+        width, height = tuple(image.size)
+        old_rgb = before.reshape(height, width, 4)[height // 2, width // 2, :3]
+        new_rgb = after.reshape(height, width, 4)[height // 2, width // 2, :3]
+        assert np.max(np.abs(new_rgb - old_rgb)) > .03, (old_rgb, new_rgb)
+    finally:
+        camera.location, camera.data.type, camera.data.ortho_scale = original_camera
+        layer.material_override = original_override
+        scene.collection.objects.unlink(instance)
+        scene.collection.objects.unlink(obj)
 
 
 scene = bpy.context.scene
@@ -836,7 +928,18 @@ compositor.links.new(comp_source.outputs["Image"], comp_grade.inputs["Color"])
 compositor.links.new(comp_grade.outputs["Color"], comp_output.inputs["Image"])
 scene.compositing_node_group = compositor
 wait_ready(comp_grade)
-comp_values = bake(comp_grade, compositor_context(scene, compositor, comp_grade))
+effects = scene.compositor_effects
+source_effect = effects.active
+other_effect = add_solid_effect(scene)
+comp_context = compositor_context(scene, compositor, comp_grade)
+comp_values = bake(comp_grade, comp_context,
+                   on_queued=lambda: setattr(effects, "active", source_effect))
+effects.active = other_effect
+assert nodes._stored_bake_context(comp_grade)["effect_name"] == source_effect.name
+assert_bake_controls(comp_grade, comp_context, can_bake=True)
+assert effects.active == other_effect
+effects.active = source_effect
+effects.remove(other_effect)
 assert comp_grade.pg_bake_image.get(nodes._BAKE_DOMAIN) == "COMPOSITOR"
 assert comp_values.size
 comp_grade.pg_use_bake = False
@@ -862,6 +965,7 @@ scene.render.engine = "CYCLES"
 assert_bake_controls(comp_grade, comp_context, "status.bake_stale_engine", can_bake=True)
 scene.render.engine = "BLENDER_EEVEE"
 assert_bake_controls(comp_grade, comp_context, can_bake=True)
+check_render_layers_indirect_sources(scene, comp_grade, comp_context)
 
 # A compositor constant has no source-image dimensions, so native capture
 # should use the scene canvas while preserving its constant pixel value.
@@ -876,6 +980,8 @@ constant_tree.links.new(constant_grade.outputs["Color"], constant_output.inputs[
 scene.compositing_node_group = constant_tree
 constant_context = compositor_context(scene, constant_tree, constant_grade)
 wait_ready(constant_grade)
+constant_effect = effects.active
+other_effect = add_solid_effect(scene)
 constant_values = bake(constant_grade, constant_context)
 assert tuple(constant_grade.pg_bake_image.size) == (
     scene.render.resolution_x, scene.render.resolution_y,
@@ -888,6 +994,9 @@ constant_image = constant_grade.pg_bake_image
 constant_receipt = nodes._bake_receipt_signature(constant_grade)
 constant_operation = constant_image.get(nodes._BAKE_OPERATION)
 assert_bake_controls(constant_grade, constant_context, can_bake=True)
+assert effects.active == other_effect
+effects.active = constant_effect
+effects.remove(other_effect)
 scene.render.resolution_percentage = 50
 assert_bake_controls(
     constant_grade, constant_context, "status.bake_stale_canvas_size", can_bake=True,
@@ -1158,6 +1267,7 @@ stack_tree_name, stack_name = stack_tree.name, stack.name
 material_name, uv_name, source_image_name = material.name, uv_node.name, source_image.name
 mesh_object_name = obj.name
 packed_values = np.asarray(stack.pg_bake_image.pixels[:], dtype=np.float32)
+other_effect_name = add_solid_effect(scene).name
 assert uv_node.pg_use_bake and nodes._bake_toggle_available(uv_node)
 with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     blend_path = str(Path(directory) / "bake.blend")
@@ -1170,6 +1280,22 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     assert restored_tree is not None
     restored_stack = restored_tree.nodes.get(stack_name)
     assert restored_stack is not None
+    reopened_scene = bpy.context.scene
+    assert reopened_scene.compositor_effects.active.name == other_effect_name
+    stack_context = compositor_context(reopened_scene, restored_tree, restored_stack)
+    assert_bake_controls(restored_stack, stack_context, can_bake=True)
+    stored = nodes._stored_bake_context(restored_stack)
+    duplicate = reopened_scene.compositor_effects.new("Second use of the baked Stack")
+    duplicate.node_group = restored_tree
+    legacy = {k: v for k, v in stored.items() if k not in {"root_key", "effect_name"}}
+    restored_stack[nodes._BAKE_CONTEXT] = json.dumps(legacy)
+    assert_bake_controls(restored_stack, stack_context, "status.bake_stale_route")
+    assert restored_stack.pg_use_bake
+    reopened_scene.compositor_effects.remove(duplicate)
+    assert_bake_controls(restored_stack, stack_context)
+    restored_stack[nodes._BAKE_CONTEXT] = json.dumps(stored)
+    reopened_scene.compositor_effects.active = reopened_scene.compositor_effects[stored["effect_name"]]
+    reopened_scene.compositor_effects.remove(reopened_scene.compositor_effects[other_effect_name])
     wait_ready(restored_stack, stack=True)
     nodes._bake_tick()
     assert restored_stack.pg_use_bake, restored_stack.get(nodes._BAKE_ERROR)

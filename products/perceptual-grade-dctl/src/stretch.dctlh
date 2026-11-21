@@ -1,0 +1,43 @@
+// Integrate a smoothstep blend of positive endpoint slopes over a unit span.
+__DEVICE__ float pg_stretch_integral(float u, float leftSlope, float rightSlope) {
+    float blendArea = u * u * u * (1.0f - 0.5f * u);
+    return leftSlope * (u - blendArea) + rightSlope * blendArea;
+}
+
+__DEVICE__ float pg_stretch(float value, PGFour anchors, PGFour slopes, float blackSlope, int invert) {
+    if (value == 0.0f) return value;
+    float knots[5] = {0.0f, anchors.s, anchors.m, anchors.w, anchors.h};
+    float stretch[5] = {blackSlope, slopes.s, slopes.m, slopes.w, slopes.h};
+    float mapped = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        float width = knots[i + 1] - knots[i];
+        float leftSlope = stretch[i];
+        float rightSlope = stretch[i + 1];
+        float next = mapped + width * (0.5f * (leftSlope + rightSlope));
+        if (!invert && value <= knots[i + 1]) {
+            if (value == knots[i + 1]) return next;
+            if (leftSlope == rightSlope) return mapped + (value - knots[i]) * leftSlope;
+            float u = (value - knots[i]) / width;
+            return mapped + width * pg_stretch_integral(u, leftSlope, rightSlope);
+        }
+        if (invert && value <= next) {
+            if (value == next) return knots[i + 1];
+            if (leftSlope == rightSlope) return knots[i] + (value - mapped) / leftSlope;
+            float target = (value - mapped) / width;
+            float lower = _fminf(1.0f, target / _fmaxf(leftSlope, rightSlope));
+            float upper = _fminf(1.0f, target / _fminf(leftSlope, rightSlope));
+            for (int step = 0; step < 32; ++step) {
+                float middle = lower + 0.5f * (upper - lower);
+                float area = pg_stretch_integral(middle, leftSlope, rightSlope);
+                if (area == target || middle == lower || middle == upper)
+                    return knots[i] + width * middle;
+                if (area < target) lower = middle;
+                else upper = middle;
+            }
+            return knots[i] + width * (lower + 0.5f * (upper - lower));
+        }
+        mapped = next;
+    }
+    if (invert) return anchors.h + (value - mapped) / slopes.h;
+    return mapped + (value - anchors.h) * slopes.h;
+}

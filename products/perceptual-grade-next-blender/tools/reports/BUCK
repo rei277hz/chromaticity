@@ -263,6 +263,7 @@ python_library(
 python_library(
     name = "shader_display_timing_sources",
     srcs = {
+        "display_playback.py": TOOL_PREFIX + "display_playback.py",
         "shader_display_capture.py": TOOL_PREFIX + "shader_display_capture.py",
         "shader_display_timing.py": TOOL_PREFIX + "shader_display_timing.py",
     },
@@ -327,6 +328,30 @@ python_binary(
     visibility = ["PUBLIC"],
     deps = [":compositor_display_timing_sources"],
 )
+
+python_library(
+    name = "playback_timing_sources",
+    srcs = ["playback_timing.py"],
+    base_module = "tools.perceptual_grade.reports",
+    deps = [":compositor_display_timing_sources"],
+)
+
+python_binary(
+    name = "playback_timing",
+    main_module = "tools.perceptual_grade.reports.playback_timing",
+    deps = [":playback_timing_sources"],
+)
+
+[
+    generate(
+        name = surface + "_playback_timing",
+        args = ["--surface", surface],
+        tool = ":playback_timing",
+        outputs = {"json": "report.json"},
+        visibility = ["PUBLIC"],
+    )
+    for surface in ("shader", "compositor")
+]
 
 python_binary(
     name = "audit_fields",

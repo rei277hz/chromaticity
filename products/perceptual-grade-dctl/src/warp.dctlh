@@ -1,0 +1,132 @@
+#define PG_WARP_TURN 6.283185307179586f
+#define PG_WARP_RADIANS 0.0174532925199433f
+
+typedef struct {
+    float chromaStops[4][6];
+    float hueDegrees[4][6];
+    float scaleStops[4][6];
+    float3 adaptanceTargets[4];
+    float halfSaturation;
+} PGWarpSettings;
+
+typedef struct { float value[6]; } PGWarpRing;
+typedef struct { int index; float fraction; float angle; float width; } PGWarpSector;
+
+__DEVICE__ float pg_warp_lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+__DEVICE__ float pg_warp_fourth(float x) {
+    float square = x * x;
+    return square * square;
+}
+
+__DEVICE__ float pg_warp_eighth(float x) {
+    float fourth = pg_warp_fourth(x);
+    return fourth * fourth;
+}
+
+__DEVICE__ float pg_warp_gap(PGWarpRing angles, int handle) {
+    if (handle == 5) return angles.value[0] + PG_WARP_TURN - angles.value[5];
+    return angles.value[handle + 1] - angles.value[handle];
+}
+
+__DEVICE__ int pg_warp_ordered(PGWarpRing angles) {
+    for (int handle = 0; handle < 6; ++handle) {
+        if (!(pg_warp_gap(angles, handle) > 1.0e-8f)) return 0;
+    }
+    return 1;
+}
+
+__DEVICE__ PGWarpSector pg_warp_sector(float angle, PGWarpRing angles) {
+    float offset = angle - angles.value[0];
+    float wrapped = angles.value[0] + (offset - PG_WARP_TURN * _floorf(offset / PG_WARP_TURN));
+    int handle = 0;
+    for (int i = 1; i < 6; ++i) {
+        if (wrapped >= angles.value[i]) handle = i;
+    }
+    float width = pg_warp_gap(angles, handle);
+    PGWarpSector sector;
+    sector.index = handle;
+    sector.fraction = _fminf(1.0f, _fmaxf(0.0f, (wrapped - angles.value[handle]) / width));
+    sector.angle = wrapped;
+    sector.width = width;
+    return sector;
+}
+
+__DEVICE__ float pg_warp_angle_slope(float a, float b) {
+    float small = _fminf(a, b);
+    return small / _sqrtf(_sqrtf(0.5f * (pg_warp_fourth(small / a) + pg_warp_fourth(small / b))));
+}
+
+__DEVICE__ float pg_warp_angle_edit(float angle, PGWarpRing source, PGWarpRing target) {
+    PGWarpSector sector = pg_warp_sector(angle, source);
+    int handle = sector.index;
+    int prev = (handle + 5) % 6;
+    int next = (handle + 1) % 6;
+    float gap = pg_warp_gap(target, handle);
+    float slope = gap / sector.width;
+    float leftSlope = pg_warp_gap(target, prev) / pg_warp_gap(source, prev);
+    float rightSlope = pg_warp_gap(target, next) / pg_warp_gap(source, next);
+    float d0 = sector.width * pg_warp_angle_slope(leftSlope, slope) / 5.0f;
+    float d1 = sector.width * pg_warp_angle_slope(slope, rightSlope) / 5.0f;
+
+    // Evaluate the periodic quintic relative to its first control point.
+    float points[6] = {0.0f, d0, 2.0f * d0, gap - 2.0f * d1, gap - d1, gap};
+    for (int count = 5; count > 0; --count) {
+        for (int i = 0; i < count; ++i) {
+            points[i] = pg_warp_lerp(points[i], points[i + 1], sector.fraction);
+        }
+    }
+    return (target.value[handle] - sector.angle) + points[0];
+}
+
+__DEVICE__ float pg_warp_toe(PGWarpRing source, PGWarpRing target, int includeTarget) {
+    float smallest = 2.0f;
+    for (int i = 0; i < 6; ++i) {
+        smallest = _fminf(smallest, 0.1f * source.value[i]);
+        if (includeTarget) smallest = _fminf(smallest, 0.1f * target.value[i]);
+    }
+    float sum = pg_warp_eighth(smallest / 2.0f);
+    for (int i = 0; i < 6; ++i) {
+        sum += pg_warp_eighth(smallest / (0.1f * source.value[i]));
+        if (includeTarget) sum += pg_warp_eighth(smallest / (0.1f * target.value[i]));
+    }
+    return smallest / _sqrtf(_sqrtf(_sqrtf(sum)));
+}
+
+__DEVICE__ float pg_warp_attenuation(float chroma, float toe) {
+    float normalizer = _fmaxf(chroma, toe);
+    float c = chroma / normalizer;
+    float t = toe / normalizer;
+    return t / _sqrtf(pg_hypot(c * c, t * t));
+}
+
+__DEVICE__ float pg_warp_radius_coefficient(float source, float target, float toe) {
+    float attenuation = pg_warp_attenuation(source, toe);
+    float ratio = target / source;
+    if (ratio >= 1.0f) return 1.0f + (ratio - 1.0f) / (1.0f - attenuation);
+    return (ratio - attenuation) / (1.0f - attenuation);
+}
+
+__DEVICE__ float pg_warp_radius_gain(float chroma, float coefficient, float toe) {
+    float attenuation = pg_warp_attenuation(chroma, toe);
+    if (coefficient < 1.0f) return coefficient + (1.0f - coefficient) * attenuation;
+    float complement = 1.0f - attenuation;
+    if (chroma <= toe) {
+        // Evaluate the fourth-order toe without subtracting two nearly equal values.
+        float fourth = pg_warp_fourth(chroma / toe);
+        float root = _sqrtf(_sqrtf(1.0f + fourth));
+        complement = fourth / (root * (root + 1.0f) * (root * root + 1.0f));
+    }
+    return 1.0f + (coefficient - 1.0f) * complement;
+}
+
+__DEVICE__ float pg_warp_radial_coefficient(PGWarpSector sector, PGWarpRing source,
+                                               PGWarpRing target, float toe) {
+    int left = sector.index;
+    int right = (left + 1) % 6;
+    float a = pg_warp_radius_coefficient(source.value[left], target.value[left], toe);
+    float b = pg_warp_radius_coefficient(source.value[right], target.value[right], toe);
+    return _expf(pg_warp_lerp(_logf(a), _logf(b), pg_smoother(sector.fraction)));
+}

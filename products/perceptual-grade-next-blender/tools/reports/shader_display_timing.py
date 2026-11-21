@@ -130,6 +130,7 @@ def _run_session(args, binary, runner, fixture, repository, directory, ordinal):
         "import_paths": [str(Path(path).resolve()) for path in sys.path
                          if path and Path(path).is_dir()],
         "session": ordinal,
+        "playback": getattr(args, "playback", False),
         "controls": list(CONTROLS),
         "samples": args.samples,
         "drag_duration": args.drag_duration,

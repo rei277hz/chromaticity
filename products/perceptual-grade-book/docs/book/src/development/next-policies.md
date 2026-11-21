@@ -42,7 +42,8 @@ The common safety rules are:
 * Correlation checks govern receipts. Stale helper sessions, job IDs, and
   gesture tokens are ignored. Render publication requires the exact active
   ticket and matching scene and time inside its exclusive scope. During a
-  gesture, a superseded node result may still become a preview.
+  gesture, a superseded node result may still become a preview. A node-owned
+  Grade can also display a superseded full result from active timeline playback.
 * One-shot completion receipts cannot complete the same slot twice. Declarative
   node output effects deliberately repeat on idempotent events so the consumer
   can reconcile host state; preview receipts can also repeat.
@@ -195,6 +196,14 @@ still provides the retirement fence.
 The owning runtime also fences source lifetimes. `request`, `collect`, and
 `wait` in `runtime/preparation.py` do not let a caller's cancellation release a
 slot before the executor function returns.
+
+Each physical job records the playback session that requested it, or `None`
+for ordinary requests. The job's preview and final receipts carry the
+originating session to every subscriber. When a request reuses an already
+prepared value from the cache, its new receipt carries that request's session.
+Equal signatures share prepared values across sessions. The receipt's session
+determines whether playback can display that value after the playhead has
+moved on.
 
 ### Concurrent Grade preparation
 
@@ -355,10 +364,15 @@ half-precision image materialization.
 
 The preparation signature identifies shared prepared Grade data; the desired
 kernel signature can additionally identify the node's graph context. A current
-preparation receipt must match both correlations. A superseded successful
-receipt is eligible only while a gesture is active, and becomes a preview rather
-than current output. Once current full output exists, later receipts cannot
-replace it; a preview cannot downgrade a full installation of the same signature.
+preparation receipt must match both correlations. During a gesture, a superseded
+success can update the preview. During forward or reverse playback, a node-owned
+Grade can also preview a superseded full result when its originating session
+matches the node's active session at delivery and installation. Stopping playback
+closes that session and requests the selected frame. During playback, the frame
+handler reconciles evaluated demand and offers a queued completion to the
+publication gate before the next Viewer evaluation can start. Once current
+full output exists, later receipts cannot replace it. A preview cannot
+downgrade a full installation of the same signature.
 `presentation` reissues the derived output policy without starting new work.
 `gesture_begin` and `gesture_release` change only gesture participation; release
 does not discard a retained preview. `request(None)` clears demand and the
@@ -377,7 +391,7 @@ release a frame with this error or with merely pending/preview output.
 
 ![Preparation and node output workflow](../assets/illustrations/next-policy/01-preparation-node-sequence.svg)
 
-<p class="figure-caption">Preparation owns the worker slot, while the node owns presentation. A, B, and C name settings versions; preparation and kernel signatures still have their separate correlations. This trace runs outside a gesture, so an obsolete A cannot replace the retained Z preview. A preview receipt does not retire A. Current C is instantiated from the bundled native template and installed through existing publication effects. Preparation, template, binding, or installation failure selects visible magenta output with alpha preserved.</p>
+<p class="figure-caption">Preparation owns the worker slot, while the node owns presentation. A, B, and C name settings versions; preparation and kernel signatures still have their separate correlations. This trace runs outside a gesture and timeline playback, so an obsolete A cannot replace the retained Z preview. A preview receipt does not retire A. Current C is instantiated from the bundled native template and installed through existing publication effects. Preparation, template, binding, or installation failure selects visible magenta output with alpha preserved.</p>
 
 `stack_replace` and `grade_changed` are scalar observations. They may authorize
 reconciliation, but they do not themselves change the node's kernel state. The
@@ -983,8 +997,9 @@ preparation queue properties are `running_request_only_replaces_latest_demand`,
 `any_completion_order_joins_after_all_three` and
 `child_error_is_retained_until_last_retirement`. The node uses
 `full_quality_is_required_for_current_output`,
-`current_failure_clears_applied_output`, and
-`stale_full_result_updates_drag_preview`. The helper uses
+`current_failure_clears_applied_output`,
+`stale_full_result_updates_drag_preview`, and
+`lagging_full_playback_receipt_requires_authorization_at_delivery`. The helper uses
 `stale_job_receipt_is_ignored`, `stale_stage_timeout_has_no_effects`,
 `cancel_request_retains_active_slot`, and
 `cleanup_failure_retains_owner_and_error`. The production bank uses
@@ -1030,7 +1045,7 @@ which immutable snapshot occupies its worker.
 | Settled before edit | Demand `Z`; worker idle; `Z` full, current. |
 | Request `A` | Demand `A`; start worker `A`; retain `Z` as preview. |
 | Request `B`, then `C` | Demand becomes `C`; `A` stays in the worker slot; `Z` remains preview. |
-| Final success for `A` | Retire `A`, start `C`; outside a gesture, ignore `A` at the node; retain `Z` preview. |
+| Final success for `A` | Retire `A` and start `C`. Outside a gesture and playback, the node keeps `Z` as its preview. |
 | Final success for `C` | Worker idle; matching preparation authorizes build `C`; `Z` remains preview. |
 | Installation success for `C` | Demand and installation are `C` full; presentation becomes current. |
 

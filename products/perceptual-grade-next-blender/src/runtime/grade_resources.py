@@ -68,6 +68,7 @@ class GradeResources:
     def __init__(self, bpy):
         self.bpy = bpy
         self._resources = {}
+        self._lifecycle_images = {}
         self.pending = {}
         self.gate = PublicationGate(bpy)
         self._serial = 0
@@ -339,9 +340,13 @@ class GradeResources:
         resource.generation = generation
 
     def protected(self, image):
-        return any(self._same_image(bank, image)
+        return self._lifecycle_protected(image) or any(self._same_image(bank, image)
                    for resource in self._resources.values()
                    for bank in resource.images)
+
+    def _lifecycle_protected(self, image):
+        return any(self._same_image(previous, image)
+                   for previous in self._lifecycle_images.values())
 
     def generations(self):
         """Plain immutable evaluation receipt data for compositor workers."""
@@ -381,7 +386,8 @@ class GradeResources:
             if pointer == 0:
                 removed.add(id(image))
                 continue
-            if not self._removable(image, self.gate.retirement_allowed):
+            if (self._lifecycle_protected(image)
+                    or not self._removable(image, self.gate.retirement_allowed)):
                 continue
             try:
                 remove_image(image)
@@ -409,11 +415,23 @@ class GradeResources:
             failures.extend(self.reclaim(resource, remove_image))
         return tuple(failures)
 
-    def clear(self):
+    def invalidate(self):
+        """Fence pre-load/undo banks from adoption while keeping every role pinned."""
+        for resource in self._resources.values():
+            for image in resource.images:
+                self._lifecycle_images[id(image)] = image
+        self.pending.clear()
+        self._resources.clear()
+
+    def release_lifecycle_images(self):
         if not self.gate.quiescent():
             raise PublicationDeferred(
                 "Cannot release Grade parameter banks while native readers are active"
             )
+        self._lifecycle_images.clear()
+
+    def clear(self):
+        self.release_lifecycle_images()
         self.pending.clear()
         self._resources.clear()
 

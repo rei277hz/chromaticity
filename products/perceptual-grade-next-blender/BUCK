@@ -345,14 +345,17 @@ invariant_proof(
     required_mutations = [
         "stack_replacement_ignores_runtime_observation",
         "recovery_ignores_current_signature",
+        "lagging_playback_ignores_authorization",
+        "lagging_playback_accepts_partial_quality",
     ],
     required_properties = [
         "full_quality_is_required_for_current_output",
         "request_without_gesture_retains_last_good_output",
         "gesture_release_retains_last_good_output",
         "matching_preview_survives_release",
-        "stale_completion_requires_gesture",
+        "stale_partial_completion_requires_gesture",
         "stale_full_result_updates_drag_preview",
+        "lagging_full_playback_receipt_requires_authorization_at_delivery",
         "late_lower_quality_never_replaces_full_quality",
         "current_failure_clears_applied_output",
         "recovery_requires_current_full_installation",

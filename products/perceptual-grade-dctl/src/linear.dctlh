@@ -1,0 +1,71 @@
+__DEVICE__ float3 pg_white(int preset, float x, float y) {
+    if (preset == 0) return color_xyz(.3127f, .3290f, 1.0f);
+    if (preset == 1) return color_xyz(.32161671f, .33761992f, 1.0f);
+    if (preset == 2) return color_xyz(.32168f, .33767f, 1.0f);
+    if (preset == 3) return color_xyz(.34567f, .35850f, 1.0f);
+    if (preset == 4) return color_xyz(.33242f, .34743f, 1.0f);
+    if (preset == 5) return color_xyz(.29903f, .31488f, 1.0f);
+    if (preset == 6) return color_xyz(.314f, .351f, 1.0f);
+    if (preset == 7) return make_float3(1.0f, 1.0f, 1.0f);
+    float3 safe = pg_safe_source_xy(x, y);
+    return color_xyz(safe.x, safe.y, 1.0f);
+}
+
+__DEVICE__ float3 pg_directional_target(float3 reference, float3 whiteXY,
+                                        float heading, float spread, float balance) {
+    float3 offset = reference - whiteXY;
+    float angle = heading * .0174532925199433f;
+    float cs = _cosf(angle), sn = _sinf(angle);
+    float gain = 1.0f + spread * .01f;
+    float x = whiteXY.x + gain * (cs*offset.x - sn*offset.y);
+    float y = whiteXY.y + gain * (sn*offset.x + cs*offset.y);
+    return color_xyz(x, _fmaxf(y, .01f), _exp2f(-balance));
+}
+
+__DEVICE__ PGValue pg_linear_xyz(float3 xyz, int whitePreset, float x, float y,
+                                  float stops, float redHeading, float redSpread, float redBalance,
+                                  float blueHeading, float blueSpread, float blueBalance) {
+    if (whitePreset < 0 || whitePreset > 8 ||
+        (whitePreset == 8 && (!color_finite(x) || !color_finite(y))) ||
+        !color_finite(stops) ||
+        !color_finite3(make_float3(redHeading, redSpread, redBalance)) ||
+        !color_finite3(make_float3(blueHeading, blueSpread, blueBalance)))
+        return pg_value(color_zero3(), 0);
+
+    float3 white = pg_white(0, 0.0f, 0.0f);
+    float3 source = pg_white(whitePreset, x, y);
+    int adapt = source.x != white.x || source.z != white.z;
+    int directional = redHeading != 0.0f || redSpread != 0.0f || redBalance != 0.0f ||
+                      blueHeading != 0.0f || blueSpread != 0.0f || blueBalance != 0.0f;
+    float exposure = _exp2f(stops);
+    if (!color_finite(exposure) || exposure <= 0.0f) return pg_value(color_zero3(), 0);
+    if (!adapt && !directional) {
+        if (stops == 0.0f) return pg_value(xyz, 1);
+        float3 exposed = xyz * exposure;
+        return pg_value(exposed, color_finite3(exposed));
+    }
+
+    float amplitude = pg_maximum(xyz);
+    if (amplitude == 0.0f) return pg_value(xyz, 1);
+    float3 result = xyz / amplitude;
+    if (adapt) {
+        float3 cones = color_mv(color_cat(), source);
+        if (!color_finite3(cones) || cones.x <= 0.0f || cones.y <= 0.0f || cones.z <= 0.0f)
+            return pg_value(color_zero3(), 0);
+        result = color_mv(color_adaptation(source, white), result);
+    }
+    if (directional) {
+        float3 whiteXY = make_float3(.3127f, .3290f, 0.0f);
+        float3 redXY = whiteXY + (make_float3(.640f, .330f, 0.0f) - whiteXY) * .30f;
+        float3 blueXY = whiteXY + (make_float3(.150f, .060f, 0.0f) - whiteXY) * .30f;
+        float3 red = color_xyz(redXY.x, redXY.y, 1.0f);
+        float3 blue = color_xyz(blueXY.x, blueXY.y, 1.0f);
+        float3 redTarget = pg_directional_target(redXY, whiteXY, redHeading, redSpread, redBalance);
+        float3 blueTarget = pg_directional_target(blueXY, whiteXY, blueHeading, blueSpread, blueBalance);
+        ColorMat basis = color_cols(white, red, blue);
+        ColorMat change = color_cols(color_zero3(), redTarget - red, blueTarget - blue);
+        result = result + color_mv(color_mul(change, color_inv(basis)), result);
+    }
+    result = (result * exposure) * amplitude;
+    return pg_value(result, color_finite3(result));
+}

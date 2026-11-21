@@ -32,6 +32,11 @@ shared settings, choose **Convert to Datablock-Owned Grade**. Next creates a
 Grade datablock from the current frame's values and removes that node's Grade
 animation; undo restores the previous node-owned animation.
 
+During forward or reverse playback, a node-owned Grade can display the last
+completed Grade from the current playback session while the next frame prepares.
+**Updating** means the displayed Grade is still catching up with the playhead.
+Stopping playback or scrubbing requests the exact settings at the selected frame.
+
 Node-owned Grade nodes intentionally have no Bake control. Their time-varying
 values are evaluated as part of animation and render preflight. Shared Grade
 and Grade Stack nodes support Bake; see [Render and bake](render-methods.md).
