@@ -1,8 +1,8 @@
 # Linux build and test results
 
-- Commit: `a3ee887110cf85f770c353a7045c455d0611d8ab`
-- Recorded at: 2026-11-20T12:36:32+00:00
-- Run: https://github.com/rei277hz/chromaticity/actions/runs/44731482132
+- Commit: `1f0b3cef85323b8e04c09cab4d8ddc2f1f266b77`
+- Recorded at: 2026-11-21T09:34:43+00:00
+- Run: https://github.com/rei277hz/chromaticity/actions/runs/44887737464
 
 Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.
 
@@ -15,7 +15,7 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender:verify_policies` | passed |
 | `//products/perceptual-grade-next-blender:extension` | passed |
 
-## Linux smoke suites: 64/65 passed
+## Linux smoke suites: 62/65 passed
 
 Run outcome: **failed**. Command exit: `32`.
 
@@ -76,13 +76,13 @@ Run outcome: **failed**. Command exit: `32`.
 | `//products/perceptual-grade-next-blender/tests:technical_report_audit` | passed |
 | `//products/perceptual-grade-next-blender/tests:handbook_audit` | passed |
 | `//products/perceptual-grade-next-blender/tests:install_workspace` | passed |
-| `//products/perceptual-grade-next-blender/tests:installed` | passed |
+| `//products/perceptual-grade-next-blender/tests:installed` | failed |
 | `//products/perceptual-grade-next-blender/tests:installed_animation` | passed |
 | `//products/perceptual-grade-next-blender/tests:bake_installed` | passed |
 | `//products/perceptual-grade-next-blender/tests:bake_workspace_installed` | passed |
 | `//products/perceptual-grade-next-blender/tests:compositor_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:compositor_carriers` | failed |
-| `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | passed |
+| `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | failed |
 | `//products/perceptual-grade-next-blender/tests:gesture_drag_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:image_save_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:stack_helper` | passed |
