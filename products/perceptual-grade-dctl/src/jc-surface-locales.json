@@ -1,0 +1,40 @@
+{
+  "en": {
+    "labels": {
+      "JContrast": "J Contrast",
+      "CContrast": "C Contrast",
+      "jSaturationCenter": "J Center",
+      "jSaturationWidth": "J Width",
+      "cSaturationCenter": "C Center",
+      "cSaturationWidth": "C Width",
+      "globalChromaGain": "Overall Chroma Gain"
+    },
+    "tooltips": {
+      "JContrast": "Set the H-K contrast response at this tonal anchor. Positive values darken below J Center and brighten above it.",
+      "CContrast": "Set the ordered chroma contrast response at this tonal anchor. Positive values reduce chroma below C Center and increase it above.",
+      "jSaturationCenter": "Set the saturation center where the J contrast response crosses zero.",
+      "jSaturationWidth": "Set the width of the J contrast transition around its center.",
+      "cSaturationCenter": "Set the saturation center where the C contrast response crosses zero.",
+      "cSaturationWidth": "Set the width of the C contrast transition around its center."
+    }
+  },
+  "zh_HANS": {
+    "labels": {
+      "JContrast": "明度对比",
+      "CContrast": "彩度对比",
+      "jSaturationCenter": "明度中心",
+      "jSaturationWidth": "明度宽度",
+      "cSaturationCenter": "彩度中心",
+      "cSaturationWidth": "彩度宽度",
+      "globalChromaGain": "全局彩度增益"
+    },
+    "tooltips": {
+      "JContrast": "设置此色调锚点的 H-K 对比响应。正值降低明度中心以下的明度并提高其以上的明度。",
+      "CContrast": "设置此色调锚点的有序彩度对比响应。正值降低彩度中心以下的彩度并提高其以上的彩度。",
+      "jSaturationCenter": "设置 J 对比响应变为零的饱和度中心。",
+      "jSaturationWidth": "设置 J 对比中心周围的过渡宽度。",
+      "cSaturationCenter": "设置 C 对比响应变为零的饱和度中心。",
+      "cSaturationWidth": "设置 C 对比中心周围的过渡宽度。"
+    }
+  }
+}

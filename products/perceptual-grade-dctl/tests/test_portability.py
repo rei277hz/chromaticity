@@ -6,7 +6,7 @@ import subprocess
 import unittest
 
 from tests.support import oracle
-from tests.support.dctl import LOCALES, STAGES, body, controls, entry
+from tests.support.dctl import ALL_STAGES, LOCALES, body, controls, entry
 
 OPENCL = '''#define DEVICE_IS_OPENCL 1
 #define __DEVICE__ static inline
@@ -45,7 +45,7 @@ class PortabilityTests(unittest.TestCase):
         return subprocess.run(command, input=prefix + source, text=True, capture_output=True)
 
     def test_localized_entry_and_helpers_compile(self):
-        for stage in STAGES:
+        for stage in ALL_STAGES:
             for locale in LOCALES:
                 source = oracle.source(stage, locale)
                 # UI globals exist only inside Resolve's entry point. Using macros
@@ -65,7 +65,7 @@ class PortabilityTests(unittest.TestCase):
         reserved = {"kernel", "vertex", "fragment", "device", "constant", "thread",
                     "threadgroup", "threadgroup_imageblock", "ray_data", "object_data"}
         supported = set(re.findall(r"^#define (_\w+)", OPENCL, re.M))
-        for stage in STAGES:
+        for stage in ALL_STAGES:
             with self.subTest(stage=stage):
                 source = re.sub(r"//[^\n]*|/\*.*?\*/", "", body(oracle.source(stage)), flags=re.S)
                 self.assertFalse(set(re.findall(r"\b\w+\b", source)) & reserved)

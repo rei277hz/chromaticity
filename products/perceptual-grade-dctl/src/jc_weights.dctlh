@@ -1,0 +1,8 @@
+__DEVICE__ PGFour pg_jc_weights(float t, PGKernel k) {
+    PGFour u = pg_transitions(t, k);
+    u.s = _fminf(1.0f, _fmaxf(0.0f, u.s));
+    u.m = _fminf(u.s, _fmaxf(0.0f, u.m));
+    u.w = _fminf(u.m, _fmaxf(0.0f, u.w));
+    u.h = _fminf(u.w, _fmaxf(0.0f, u.h));
+    return pg_four(1.0f - u.m, u.m - u.w, u.w - u.h, u.h);
+}

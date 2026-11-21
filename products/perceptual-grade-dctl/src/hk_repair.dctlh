@@ -1,0 +1,25 @@
+__DEVICE__ PGState pg_guard(PGState state, float referenceEnergy) {
+    float h = state.q.x;
+    if (h < 0.0f) return state;
+
+    float chroma = pg_hypot(state.q.y, state.q.z);
+    float base = _sqrtf(66.0f * chroma);
+    float u = pg_div(state.e, pg_hypot(pg_ja(state.e), base) + base);
+    float deficit = state.e < 0.0f ? state.e + 2.0f * u * u : state.e;
+    float square = h * h;
+    float reference = _fmaxf(0.0f, referenceEnergy);
+    float lo = _fminf(square, reference);
+    float hi = _fmaxf(square, reference);
+    float knee = lo / (1.0f + pg_div(lo, hi));
+    if (deficit >= knee) return state;
+
+    float v = pg_div(knee, knee + (knee - deficit));
+    float w = 1.0f - v;
+    float repaired = knee * _sqrtf(v) / _sqrtf(_sqrtf(v * v + 4.0f * v * w + 10.0f * w * w));
+    float missing = _fmaxf(0.0f, repaired - deficit);
+    float allocation = 0.44f * square;
+    float lift = allocation * pg_div(missing, pg_hypot(2.0f * allocation, missing));
+    float repairedChroma = _fminf(chroma, _fmaxf(0.0f, (square + lift - repaired) / 66.0f));
+    float gain = chroma > 0.0f ? repairedChroma / chroma : 1.0f;
+    return pg_state(make_float3(_sqrtf(square + lift), state.q.y * gain, state.q.z * gain), repaired);
+}

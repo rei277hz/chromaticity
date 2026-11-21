@@ -5,15 +5,20 @@ import subprocess
 
 import numpy as np
 
-from .dctl import controls, filename
+from .dctl import PROTOTYPES, STAGES, SURFACE_PROTOTYPES, controls, filename
 
 RESOURCES = files("tests.support")
 STAGE_DIR = RESOURCES / "stages"
+PROTOTYPE_DIR = RESOURCES / "prototypes"
+SURFACE_DIR = RESOURCES / "surfaces"
+SOURCE_DIRS = ({stage: STAGE_DIR for stage in STAGES}
+               | {stage: PROTOTYPE_DIR for stage in PROTOTYPES}
+               | {stage: SURFACE_DIR for stage in SURFACE_PROTOTYPES})
 
 
 @cache
 def source(stage, locale="en"):
-    return (STAGE_DIR / filename(stage, locale)).read_text(encoding="utf-8")
+    return (SOURCE_DIRS[stage] / filename(stage, locale)).read_text(encoding="utf-8")
 
 
 @cache
@@ -41,10 +46,28 @@ def run(stage, values, settings=None, *, x=0, y=10):
     for pixel in values:
         coordinates = " ".join(format(channel, ".9g") for channel in pixel)
         lines.append(f"{coordinates} 1920 1080 {x} {y}")
-    result = subprocess.run([str(RESOURCES / "oracle"), stage],
+    return invoke(stage, lines, values.shape)
+
+
+def chroma_curve(stage, chroma, ja, pivot, lift, gamma, gain, weights):
+    controls = (*lift, *gamma, *gain, *weights, ja, pivot)
+    lines = [" ".join(format(value, ".17g") for value in controls)]
+    lines.extend(format(value, ".17g") for value in chroma)
+    return invoke(stage + "_chroma", lines, (len(chroma), 2)).T
+
+
+def surface_response(samples, amounts, center=.5, width=.5, peak=1):
+    values = (*amounts, center, width, peak)
+    lines = [" ".join(format(value, ".17g") for value in values)]
+    lines.extend(" ".join(format(value, ".17g") for value in sample) for sample in samples)
+    return invoke("surface_response", lines, (len(samples), 3)).T
+
+
+def invoke(operation, lines, shape):
+    result = subprocess.run([str(RESOURCES / "oracle"), operation],
                             input="\n".join(lines) + "\n", text=True,
                             capture_output=True, check=True)
-    actual = np.fromstring(result.stdout, dtype=np.float32, sep=" ").reshape(-1, 3)
-    if actual.shape != values.shape:
-        raise ValueError(f"Host produced {len(actual)} rows for {len(values)} inputs")
+    actual = np.fromstring(result.stdout, dtype=np.float32, sep=" ").reshape(-1, shape[1])
+    if actual.shape != shape:
+        raise ValueError(f"Host produced {len(actual)} rows for {shape[0]} inputs")
     return actual

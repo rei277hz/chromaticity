@@ -1,0 +1,237 @@
+__DEVICE__ float pg_warp_inverse_radius(float chroma, float coefficient, float toe) {
+    float lower = chroma / _fmaxf(1.0f, coefficient);
+    float upper = chroma / _fminf(1.0f, coefficient);
+    for (int i = 0; i < 44; ++i) {
+        float middle = pg_warp_lerp(lower, upper, 0.5f);
+        float mapped = middle * pg_warp_radius_gain(middle, coefficient, toe);
+        if (mapped == chroma || middle == lower || middle == upper) return middle;
+        if (mapped < chroma) lower = middle;
+        else upper = middle;
+    }
+    return pg_warp_lerp(lower, upper, 0.5f);
+}
+
+__DEVICE__ float pg_warp_inverse_angle(float angle, float weight, PGWarpRing source, PGWarpRing target) {
+    float first = source.value[0];
+    float firstEdit = target.value[0] - first;
+    float offset = angle - first - weight * firstEdit;
+    float wanted = offset - PG_WARP_TURN * _floorf(offset / PG_WARP_TURN);
+    float lower = 0.0f;
+    float upper = PG_WARP_TURN;
+    if (wanted == 0.0f) return first;
+    for (int i = 0; i < 26; ++i) {
+        float middle = pg_warp_lerp(lower, upper, 0.5f);
+        float edit = pg_warp_angle_edit(first + middle, source, target);
+        float mapped = middle + weight * (edit - firstEdit);
+        if (mapped == wanted || middle == lower || middle == upper) return first + middle;
+        if (mapped < wanted) lower = middle;
+        else upper = middle;
+    }
+    return first + pg_warp_lerp(lower, upper, 0.5f);
+}
+
+__DEVICE__ float3 pg_cone_warp_web(float3 point, PGWarpSettings settings, int peakIndex,
+                                  int row, float fraction, int invert) {
+    float chroma = pg_hypot(point.y, point.z);
+    if (chroma == 0.0f) return point;
+
+    PGWarpRing angles, targetAngles, radii, targetRadii;
+    int hueActive = 0;
+    int chromaActive = 0;
+    for (int handle = 0; handle < 6; ++handle) {
+        float3 left = pg_warp_reference_corner(peakIndex, row, handle);
+        float3 right = pg_warp_reference_corner(peakIndex, row + 1, handle);
+        float hue = pg_warp_lerp(settings.hueDegrees[row][handle], settings.hueDegrees[row + 1][handle], fraction);
+        float stops = pg_warp_lerp(settings.chromaStops[row][handle], settings.chromaStops[row + 1][handle], fraction);
+        angles.value[handle] = pg_warp_lerp(left.x, right.x, fraction);
+        targetAngles.value[handle] = angles.value[handle] + PG_WARP_RADIANS * hue;
+        radii.value[handle] = _expf(pg_warp_lerp(left.y, right.y, fraction));
+        targetRadii.value[handle] = radii.value[handle] * _exp2f(stops);
+        hueActive = hueActive || hue != 0.0f;
+        chromaActive = chromaActive || stops != 0.0f;
+    }
+    if (!hueActive && !chromaActive) return point;
+
+    float angle = _atan2f(point.z, point.y);
+    float resultAngle = angle;
+    float resultChroma = chroma;
+    float hueToe = hueActive ? pg_warp_toe(radii, radii, 0) : 1.0f;
+    if (!invert && hueActive) {
+        resultAngle += pg_smoother(chroma / hueToe) * pg_warp_angle_edit(angle, angles, targetAngles);
+    }
+    if (chromaActive) {
+        PGWarpSector sector = pg_warp_sector(resultAngle, targetAngles);
+        float toe = pg_warp_toe(radii, targetRadii, 1);
+        float coefficient = pg_warp_radial_coefficient(sector, radii, targetRadii, toe);
+        resultChroma = invert ? pg_warp_inverse_radius(chroma, coefficient, toe)
+                              : chroma * pg_warp_radius_gain(chroma, coefficient, toe);
+    }
+    if (invert && hueActive) {
+        float weight = pg_smoother(resultChroma / hueToe);
+        if (weight != 0.0f) resultAngle = pg_warp_inverse_angle(angle, weight, angles, targetAngles);
+    }
+    if (resultAngle == angle) {
+        if (resultChroma == chroma) return point;
+        float gain = resultChroma / chroma;
+        return make_float3(point.x, point.y * gain, point.z * gain);
+    }
+    return make_float3(point.x, resultChroma * _cosf(resultAngle), resultChroma * _sinf(resultAngle));
+}
+
+__DEVICE__ float3 pg_cone_warp_adaptance(float3 point, float3 target, float limit, int invert) {
+    float length = pg_hypot(target.x, target.y);
+    if (length == 0.0f) return point;
+    if (point.y == 0.0f && point.z == 0.0f) {
+        return make_float3(point.x, invert ? -target.x : target.x, invert ? -target.y : target.y);
+    }
+    if (point.y == (invert ? target.x : -target.x) && point.z == (invert ? target.y : -target.y)) {
+        return make_float3(point.x, 0.0f, 0.0f);
+    }
+    float directionA = target.x / length;
+    float directionB = target.y / length;
+
+    // Normalize before taking powers and compare the integrated travel over the
+    // proposed displacement. The midpoint expansion remains positive even if
+    // the displacement crosses zero.
+    float normalizer = _fmaxf(_fmaxf(_fabs(point.y), _fabs(point.z)), _fmaxf(length, limit));
+    float a = point.y / normalizer;
+    float b = point.z / normalizer;
+    float along = a * directionA + b * directionB;
+    float across = b * directionA - a * directionB;
+    float step = (invert ? -length : length) / normalizer;
+    float limitFourth = pg_warp_fourth(limit / normalizer);
+    float centerTravel = limitFourth + pg_warp_fourth(step) * 0.2f;
+    if (centerTravel == 0.0f) return point;
+    float acrossSquared = across * across;
+    float speedRadius = along * along + acrossSquared;
+    // The symmetric interval from -length to +length always exceeds the
+    // required travel; offsetting that interval can only increase the integral.
+    float lower = 0.0f;
+    float upper = 2.0f;
+    if (_fabs(step) <= 0.25f * _sqrtf(speedRadius)) {
+        // The root is at most two steps away. In that interval C stays above
+        // half its initial value, so the integrand is at least 1/16 as large.
+        float localBound = (16.0f * centerTravel) / (limitFourth + speedRadius * speedRadius);
+        upper = _fminf(upper, localBound);
+    }
+    float multiplier = 0.0f;
+    for (int i = 0; i < 30; ++i) {
+        multiplier = pg_warp_lerp(lower, upper, 0.5f);
+        float halfStep = 0.5f * step * multiplier;
+        float halfSquared = halfStep * halfStep;
+        float middle = along + halfStep;
+        float middleSquared = middle * middle;
+        float joint = middleSquared + acrossSquared;
+        float mean = limitFourth + joint * joint
+                     + 2.0f * halfSquared * (middleSquared + acrossSquared / 3.0f)
+                     + 0.2f * halfSquared * halfSquared;
+        float integral = multiplier * mean;
+        if (integral == centerTravel || multiplier == lower || multiplier == upper) break;
+        if (integral < centerTravel) lower = multiplier;
+        else upper = multiplier;
+    }
+    float shift = (invert ? -length : length) * multiplier;
+    return make_float3(point.x, point.y + shift * directionA, point.z + shift * directionB);
+}
+
+__DEVICE__ float pg_warp_ray_anchor(float height, float lightness, float chroma) {
+    float term = 66.0f * chroma;
+    return (2.0f * height * height) / (pg_hypot(term, 2.0f * lightness * height) + term);
+}
+
+__DEVICE__ float3 pg_cone_warp_scale(float3 point, PGWarpSettings settings, int peakIndex,
+                                    PGFour anchors, int invert) {
+    float chroma = pg_hypot(point.y, point.z);
+    if (chroma == 0.0f) return point;
+    float radius = pg_hypot(point.x, chroma);
+    float lightnessFraction = _fabs(point.x) / radius;
+    float chromaFraction = chroma / radius;
+    float fade = _fminf(10.0f * chromaFraction, 1.0f);
+    fade = fade * fade * (3.0f - 2.0f * fade);
+    float angle = _atan2f(point.z, point.y);
+    float slopes[4];
+    for (int row = 0; row < 4; ++row) {
+        PGWarpRing targets;
+        int edited = 0;
+        for (int handle = 0; handle < 6; ++handle) {
+            targets.value[handle] = pg_warp_reference_corner(peakIndex, row, handle).x
+                                    + PG_WARP_RADIANS * settings.hueDegrees[row][handle];
+            edited = edited || settings.scaleStops[row][handle] != 0.0f;
+        }
+        slopes[row] = 1.0f;
+        if (edited) {
+            PGWarpSector sector = pg_warp_sector(angle, targets);
+            int left = sector.index;
+            int right = (left + 1) % 6;
+            float stops = pg_warp_lerp(settings.scaleStops[row][left], settings.scaleStops[row][right],
+                                       pg_smoother(sector.fraction));
+            slopes[row] = _exp2f(fade * stops);
+        }
+    }
+    if (slopes[0] == 1.0f && slopes[1] == 1.0f && slopes[2] == 1.0f && slopes[3] == 1.0f) return point;
+
+    PGFour knots = pg_four(pg_warp_ray_anchor(anchors.s, lightnessFraction, chromaFraction),
+                          pg_warp_ray_anchor(anchors.m, lightnessFraction, chromaFraction),
+                          pg_warp_ray_anchor(anchors.w, lightnessFraction, chromaFraction),
+                          pg_warp_ray_anchor(anchors.h, lightnessFraction, chromaFraction));
+    PGFour raySlopes = pg_four(slopes[0], slopes[1], slopes[2], slopes[3]);
+    float result = pg_stretch(radius, knots, raySlopes, raySlopes.s, invert);
+    if (result == radius) return point;
+    return point * (result / radius);
+}
+
+__DEVICE__ PGValue pg_cone_warp(float3 wire, PGWarpSettings settings, int peakIndex, int invert) {
+    if (!pg_cone_valid(wire) || peakIndex < 0 || peakIndex >= 4 || (invert != 0 && invert != 1) ||
+        !(settings.halfSaturation >= 0.05f && settings.halfSaturation <= 1.0f)) {
+        return pg_value(color_zero3(), 0);
+    }
+
+    int webActive = 0;
+    int adaptanceActive = 0;
+    int scaleActive = 0;
+    float anchors[4];
+    for (int row = 0; row < 4; ++row) {
+        anchors[row] = pg_warp_anchor(peakIndex, row);
+        float3 target = settings.adaptanceTargets[row];
+        if (!(_fabs(target.x) <= 100.0f && _fabs(target.y) <= 100.0f)) return pg_value(color_zero3(), 0);
+        adaptanceActive = adaptanceActive || target.x != 0.0f || target.y != 0.0f;
+
+        PGWarpRing targets;
+        for (int handle = 0; handle < 6; ++handle) {
+            float hue = settings.hueDegrees[row][handle];
+            float chroma = settings.chromaStops[row][handle];
+            float scale = settings.scaleStops[row][handle];
+            if (!(_fabs(hue) <= 360.0f && _fabs(chroma) <= 16.0f && _fabs(scale) <= 8.0f)) {
+                return pg_value(color_zero3(), 0);
+            }
+            targets.value[handle] = pg_warp_reference_corner(peakIndex, row, handle).x + PG_WARP_RADIANS * hue;
+            webActive = webActive || hue != 0.0f || chroma != 0.0f;
+            scaleActive = scaleActive || scale != 0.0f;
+        }
+        if (!pg_warp_ordered(targets)) return pg_value(color_zero3(), 0);
+    }
+    if (!webActive && !adaptanceActive && !scaleActive) return pg_value(wire, 1);
+    if (wire.x == 0.0f && wire.y == 0.0f && wire.z == 0.0f) return pg_value(wire, 1);
+
+    PGFour rayAnchors = pg_four(anchors[0], anchors[1], anchors[2], anchors[3]);
+    float3 input = pg_cone_chart(wire);
+    if (!color_finite3(input)) return pg_value(color_zero3(), 0);
+    float3 point = input;
+    if (invert && scaleActive) point = pg_cone_warp_scale(point, settings, peakIndex, rayAnchors, invert);
+
+    float height = _fabs(point.x);
+    int row = height >= anchors[2] ? 2 : (height >= anchors[1] ? 1 : 0);
+    float fraction = pg_smoother((height - anchors[row]) / (anchors[row + 1] - anchors[row]));
+    if (!invert && webActive) point = pg_cone_warp_web(point, settings, peakIndex, row, fraction, invert);
+    if (adaptanceActive && height != 0.0f) {
+        float3 left = settings.adaptanceTargets[row];
+        float3 right = settings.adaptanceTargets[row + 1];
+        float3 target = (left + (right - left) * fraction) * pg_smoother(height / anchors[0]);
+        point = pg_cone_warp_adaptance(point, target, settings.halfSaturation * height, invert);
+    }
+    if (invert && webActive) point = pg_cone_warp_web(point, settings, peakIndex, row, fraction, invert);
+    if (!invert && scaleActive) point = pg_cone_warp_scale(point, settings, peakIndex, rayAnchors, invert);
+
+    if (point.x == input.x && point.y == input.y && point.z == input.z) return pg_value(wire, 1);
+    return pg_cone_wire(point);
+}

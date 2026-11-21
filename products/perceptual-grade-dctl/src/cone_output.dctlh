@@ -1,0 +1,9 @@
+__DEVICE__ PGValue pg_cone_output(float3 wire) {
+    if (!pg_cone_valid(wire)) return pg_value(color_zero3(), 0);
+    // Export repair uses physical appearance coordinates and final energy.
+    PGState state = pg_state_from_response(wire);
+    PGState repaired = pg_guard(state, state.e);
+    if (repaired.e == state.e && repaired.q.y == state.q.y && repaired.q.z == state.q.z)
+        return pg_xyz_from_response(wire);
+    return pg_decode_xyz(repaired);
+}

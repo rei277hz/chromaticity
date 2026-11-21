@@ -18,32 +18,49 @@ __DEVICE__ float pg_hk(float ja, float chroma) {
     return ja < 0.0f ? 2.0f * base - magnitude : magnitude;
 }
 
+__DEVICE__ float pg_opponent_chroma_gain(float a, float b, float radius) {
+    float eccentricity = pg_eccentricity(pg_div(a, radius), pg_div(b, radius));
+    return 1204.0f * eccentricity / PG_AW;
+}
+
+__DEVICE__ float pg_signed_achromatic_j(float achromatic) {
+    float ja = 100.0f * _powf(_fabs(achromatic) / PG_AW, PG_GAMMA);
+    return achromatic < 0.0f ? -ja : ja;
+}
+
 __DEVICE__ PGState pg_state_from_opponents(float achromatic, float a, float b) {
     float radius = pg_hypot(a, b);
-    float eccentricity = pg_eccentricity(pg_div(a, radius), pg_div(b, radius));
-    float chromaGain = 1204.0f * eccentricity / PG_AW;
-    float ja = 100.0f * _powf(_fabs(achromatic) / PG_AW, PG_GAMMA);
-    if (achromatic < 0.0f) ja = -ja;
+    float chromaGain = pg_opponent_chroma_gain(a, b, radius);
+    float ja = pg_signed_achromatic_j(achromatic);
     return pg_state(make_float3(pg_hk(ja, radius * chromaGain), a * chromaGain, b * chromaGain),
                     ja * _fabs(ja));
 }
 
-__DEVICE__ PGState pg_state_from_response(float3 response) {
+__DEVICE__ float3 pg_response_opponents(float3 response) {
     float achromatic = _fmaf(2.0f, response.x, _fmaf(0.05f, response.z, response.y));
     float a = (response.x - response.y) + (response.z - response.y) / 11.0f;
     float b = ((response.x - response.z) + (response.y - response.z)) / 9.0f;
-    return pg_state_from_opponents(achromatic, a, b);
+    return make_float3(achromatic, a, b);
+}
+
+__DEVICE__ PGState pg_state_from_response(float3 response) {
+    float3 v = pg_response_opponents(response);
+    return pg_state_from_opponents(v.x, v.y, v.z);
 }
 
 __DEVICE__ float3 pg_d65_white() {
     return color_xyz(0.3127f, 0.3290f, 1.0f);
 }
 
-__DEVICE__ PGState pg_enter_xyz(float3 xyz) {
+__DEVICE__ float3 pg_xyz_to_cones(float3 xyz) {
     float3 white = pg_d65_white();
     ColorMat cat = color_cat();
-    float3 cones = color_mv(cat, xyz - white * xyz.y) / color_mv(cat, white)
-                 + make_float3(xyz.y, xyz.y, xyz.y);
+    return color_mv(cat, xyz - white * xyz.y) / color_mv(cat, white)
+         + make_float3(xyz.y, xyz.y, xyz.y);
+}
+
+__DEVICE__ PGState pg_enter_xyz(float3 xyz) {
+    float3 cones = pg_xyz_to_cones(xyz);
     float3 power = make_float3(_powf(PG_FL * _fabs(cones.x), 0.42f),
                                _powf(PG_FL * _fabs(cones.y), 0.42f),
                                _powf(PG_FL * _fabs(cones.z), 0.42f));
@@ -64,16 +81,19 @@ __DEVICE__ PGState pg_enter_xyz(float3 xyz) {
     return pg_state_from_response(response);
 }
 
-__DEVICE__ float3 pg_response_from_state(PGState state) {
-    float ja = pg_ja(state.e);
-    float chroma = pg_hypot(state.q.y, state.q.z);
-    float eccentricity = pg_eccentricity(pg_div(state.q.y, chroma), pg_div(state.q.z, chroma));
+__DEVICE__ float3 pg_response_from_ja_ab(float ja, float a, float b) {
+    float chroma = pg_hypot(a, b);
+    float eccentricity = pg_eccentricity(pg_div(a, chroma), pg_div(b, chroma));
     float neutral = (PG_AW / 3.05f) * _powf(_fabs(ja) * 0.01f, 1.0f / PG_GAMMA);
     if (ja < 0.0f) neutral = -neutral;
-    float3 opponent = make_float3(451.0f, -891.0f, -220.0f) * state.q.y
-                    + make_float3(288.0f, -261.0f, -6300.0f) * state.q.z;
+    float3 opponent = make_float3(451.0f, -891.0f, -220.0f) * a
+                    + make_float3(288.0f, -261.0f, -6300.0f) * b;
     return opponent * (PG_AW / (1204.0f * 1403.0f * eccentricity))
          + make_float3(neutral, neutral, neutral);
+}
+
+__DEVICE__ float3 pg_response_from_state(PGState state) {
+    return pg_response_from_ja_ab(pg_ja(state.e), state.q.y, state.q.z);
 }
 
 __DEVICE__ float pg_expand_response(float response) {
@@ -82,9 +102,7 @@ __DEVICE__ float pg_expand_response(float response) {
     return response < 0.0f ? -cone : cone;
 }
 
-__DEVICE__ PGValue pg_decode_xyz(PGState state) {
-    if (!color_finite3(state.q) || !color_finite(state.e)) return pg_value(color_zero3(), 0);
-    float3 response = pg_response_from_state(state);
+__DEVICE__ PGValue pg_xyz_from_response(float3 response) {
     if (!color_finite3(response) || pg_maximum(response) >= 400.0f) return pg_value(color_zero3(), 0);
     float3 cones = make_float3(pg_expand_response(response.x),
                                pg_expand_response(response.y),
@@ -93,6 +111,11 @@ __DEVICE__ PGValue pg_decode_xyz(PGState state) {
     float3 deviation = cones - make_float3(cones.y, cones.y, cones.y);
     float3 xyz = white * cones.y + color_mv(color_icat(), deviation * color_mv(color_cat(), white));
     return pg_value(xyz, color_finite3(xyz));
+}
+
+__DEVICE__ PGValue pg_decode_xyz(PGState state) {
+    if (!color_finite3(state.q) || !color_finite(state.e)) return pg_value(color_zero3(), 0);
+    return pg_xyz_from_response(pg_response_from_state(state));
 }
 
 __DEVICE__ float pg_requested_energy(float energy, float sourceChroma, float destChroma, float heightDelta) {
@@ -113,30 +136,4 @@ __DEVICE__ float pg_requested_energy(float energy, float sourceChroma, float des
 __DEVICE__ float pg_energy_update(PGState state, float3 request) {
     return pg_requested_energy(state.e, pg_hypot(state.q.y, state.q.z),
                                pg_hypot(request.y, request.z), request.x - state.q.x);
-}
-
-__DEVICE__ PGState pg_guard(PGState state, float referenceEnergy) {
-    float h = state.q.x;
-    if (h < 0.0f) return state;
-
-    float chroma = pg_hypot(state.q.y, state.q.z);
-    float base = _sqrtf(66.0f * chroma);
-    float u = pg_div(state.e, pg_hypot(pg_ja(state.e), base) + base);
-    float deficit = state.e < 0.0f ? state.e + 2.0f * u * u : state.e;
-    float square = h * h;
-    float reference = _fmaxf(0.0f, referenceEnergy);
-    float lo = _fminf(square, reference);
-    float hi = _fmaxf(square, reference);
-    float knee = lo / (1.0f + pg_div(lo, hi));
-    if (deficit >= knee) return state;
-
-    float v = pg_div(knee, knee + (knee - deficit));
-    float w = 1.0f - v;
-    float repaired = knee * _sqrtf(v) / _sqrtf(_sqrtf(v * v + 4.0f * v * w + 10.0f * w * w));
-    float missing = _fmaxf(0.0f, repaired - deficit);
-    float allocation = 0.44f * square;
-    float lift = allocation * pg_div(missing, pg_hypot(2.0f * allocation, missing));
-    float repairedChroma = _fminf(chroma, _fmaxf(0.0f, (square + lift - repaired) / 66.0f));
-    float gain = chroma > 0.0f ? repairedChroma / chroma : 1.0f;
-    return pg_state(make_float3(_sqrtf(square + lift), state.q.y * gain, state.q.z * gain), repaired);
 }

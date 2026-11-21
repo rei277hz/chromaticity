@@ -1,4 +1,4 @@
-"""Generate four self-contained Resolve DCTLs for each product locale."""
+"""Generate the Resolve DCTL product or the experimental Color J/C editions."""
 import argparse
 import json
 from pathlib import Path
@@ -10,7 +10,31 @@ from color_tools.perceptual_grade_reference.responses import GAMMA
 from .warp_geometry import geometry_source
 
 
-STAGES = {"linear": "1-Linear", "tone": "2-Tone", "jc": "3A-Color-JC", "warp": "3B-Warp"}
+STAGES = {
+    "linear": "1-Linear",
+    "input": "1B-XYZ-Input",
+    "tone": "2-Cone-Tone",
+    "jc": "3A-Cone-Color-JC",
+    "warp": "3B-Cone-Warp",
+    "output": "4-XYZ-Output",
+}
+CONE_DOMAINS = {
+    "input": "Linear XYZ D65 to modCAM16 cone responses",
+    "tone": "modCAM16 cone responses",
+    "jc": "modCAM16 cone responses",
+    "warp": "modCAM16 cone responses",
+    "output": "modCAM16 cone responses to linear XYZ D65",
+}
+CONE_OUTPUTS = {"input", "tone", "jc", "warp"}
+JC_PROTOTYPES = {
+    "lgg": "3A-Color-JC-LGG-Prototype",
+    "lgg_nonlog": "3A-Color-JC-LGG-NonLog-Prototype",
+    "lgg_pivot": "3A-Color-JC-LGG-Pivot-Prototype",
+}
+JC_SURFACE_PROTOTYPE = {"surface": "3A-Color-JC-Surface-Prototype"}
+TONES = {"S": "shadows", "M": "midtones", "W": "white", "H": "highlights"}
+LGG_ADJUSTMENTS = ("Lift", "Gamma", "Gain")
+SATURATION_PIVOT = 35 / 75
 WEB_FIELDS = (
     ("chroma", "DCTLUI_SLIDER_FLOAT", 16, 0.001),
     ("hue", "DCTLUI_SLIDER_INT", 360, 1),
@@ -35,8 +59,60 @@ def web_controls():
                            tooltip_id=f"tooltip.warp.{field}")
 
 
-def ui_header(stage, version, controls, messages):
-    lines = [f"// Perceptual Grade {version} | {stage} | Linear XYZ D65, reference white 203 nits."]
+def lgg_controls(adjustable_pivot):
+    for row, tone_name in TONES.items():
+        for family in "JC":
+            for adjustment in LGG_ADJUSTMENTS:
+                choice = f"{family}{adjustment}"
+                limit, step = (20, 0.1) if choice == "JLift" else (2, 0.01)
+                yield dict(name=f"tone{row}{choice}", type="DCTLUI_SLIDER_FLOAT", default=0,
+                           min=-limit, max=limit, step=step,
+                           label_id=f"lgg.{tone_name}.{choice}", tooltip_id=f"lgg.tooltip.{choice}")
+    if adjustable_pivot:
+        yield dict(name="saturationPivot", type="DCTLUI_SLIDER_FLOAT", default=SATURATION_PIVOT,
+                   min=0.05, max=2, step=0.01,
+                   label_id="lgg.saturationPivot", tooltip_id="lgg.tooltip.saturationPivot")
+
+
+def lgg_messages(messages, lgg_locale):
+    labels = {f"lgg.{tone_name}.{choice}": f"{messages[f'tone.{tone_name}']} {label}"
+              for tone_name in TONES.values()
+              for choice, label in lgg_locale["labels"].items() if choice != "saturationPivot"}
+    return (messages | labels | {"lgg.saturationPivot": lgg_locale["labels"]["saturationPivot"]}
+            | {f"lgg.tooltip.{key}": value for key, value in lgg_locale["tooltips"].items()})
+
+
+def surface_controls(reversible):
+    for row, tone_name in TONES.items():
+        for family in "JC":
+            limit, step = (20, 0.1) if family == "J" and not reversible else (2, 0.01)
+            yield dict(name=f"tone{row}{family}Contrast", type="DCTLUI_SLIDER_FLOAT", default=0,
+                       min=-limit, max=limit, step=step,
+                       label_id=f"surface.{tone_name}.{family}Contrast",
+                       tooltip_id=f"surface.tooltip.{family}Contrast")
+    for family in "jc":
+        for shape, maximum in (("Center", 0.95), ("Width", 1.0)):
+            name = f"{family}Saturation{shape}"
+            yield dict(name=name, type="DCTLUI_SLIDER_FLOAT", default=0.5,
+                       min=0.05, max=maximum, step=0.01,
+                       label_id=f"surface.{name}", tooltip_id=f"surface.tooltip.{name}")
+
+
+def surface_messages(messages, surface_locale):
+    labels = {f"surface.{tone_name}.{family}Contrast":
+              f"{messages[f'tone.{tone_name}']} {surface_locale['labels'][family + 'Contrast']}"
+              for tone_name in TONES.values() for family in "JC"}
+    labels.update({f"surface.{key}": value for key, value in surface_locale["labels"].items()
+                   if key not in ("JContrast", "CContrast", "globalChromaGain")})
+    labels["control.global_gain.label"] = surface_locale["labels"]["globalChromaGain"]
+    tooltips = {f"surface.tooltip.{key}": value
+                for key, value in surface_locale["tooltips"].items()}
+    return messages | labels | tooltips
+
+
+def ui_header(stage, slug, version, controls, messages):
+    domain = CONE_DOMAINS.get(stage, "Linear XYZ D65")
+    lines = [f"// Perceptual Grade {version} | {slug} | {domain}, reference white 203 nits."]
     names = set()
     labels = set()
     tooltips = []
@@ -96,18 +172,36 @@ __DEVICE__ float3 pg_safe_source_xy(float x, float y) {{
 
 def stage_call(stage):
     if stage == "linear":
-        return "", "pg_linear_xyz(xyz, srcWhite, srcX, srcY, globalExposure, la, ls, le, ba, bs, be)"
+        return "", "pg_linear_xyz(pixel, srcWhite, srcX, srcY, globalExposure, la, ls, le, ba, bs, be)"
+    if stage == "input":
+        return "", "pg_cone_input(pixel)"
+    if stage == "output":
+        return "", "pg_cone_output(pixel)"
     if stage == "tone":
-        return "", ("pg_tone_xyz(xyz, inputBlack, pg_four(inputShadows, inputMidtones, inputWhite, "
+        return "", ("pg_cone_tone(pixel, inputBlack, pg_four(inputShadows, inputMidtones, inputWhite, "
                     "inputHighlights), remapFit, peakNits)")
-    if stage == "jc":
-        arguments = ["xyz"]
+    if stage in JC_PROTOTYPES:
+        arguments = ["pixel"]
         for family, fit in (("J", "lightnessFit"), ("C", "chromaFit")):
-            for driver in ("Low", "High", "a", "b"):
-                rows = [f"tone{tone_id}{driver}To{family}" for tone_id in "SMWH"]
-                arguments.append("pg_four(" + ", ".join(rows) + ")")
+            for adjustment in LGG_ADJUSTMENTS:
+                entries = [f"tone{row}{family}{adjustment}" for row in TONES]
+                arguments.append("pg_four(" + ", ".join(entries) + ")")
             arguments.append(fit)
-        return "", "pg_jc_xyz(" + ",\n            ".join(arguments + ["globalChromaGain", "peakNits"]) + ")"
+        axis = "1" if stage == "lgg_nonlog" else "0"
+        pivot = "saturationPivot" if stage == "lgg_pivot" else number(SATURATION_PIVOT)
+        return "", "pg_jc_lgg_xyz(" + ",\n            ".join(arguments + ["peakNits", axis, pivot]) + ")"
+    if stage == "jc" or stage in JC_SURFACE_PROTOTYPE:
+        arguments = ["pixel"]
+        for family in "JC":
+            amounts = ", ".join(f"tone{row}{family}Contrast" for row in TONES)
+            arguments.extend([f"pg_four({amounts})", f"{family.lower()}SaturationCenter",
+                              f"{family.lower()}SaturationWidth"])
+        arguments.extend(["globalChromaGain", "peakNits"])
+        function = "pg_jc_surface_xyz"
+        if stage == "jc":
+            arguments.append("direction")
+            function = "pg_cone_jc"
+        return "", function + "(" + ",\n            ".join(arguments) + ")"
 
     # The controls are uniform for this pixel. Aggregate initialization also
     # gives Metal, CUDA and OpenCL a concrete private storage type.
@@ -120,16 +214,18 @@ def stage_call(stage):
     centers = [f"make_float3(tone{row}AdaptanceA, tone{row}AdaptanceB, 0.0f)" for row in "SMWH"]
     arrays.extend(["{" + ", ".join(centers) + "}", "adaptanceHalfSaturation"])
     setup = "    PGWarpSettings settings = {\n        " + ",\n        ".join(arrays) + "\n    };\n"
-    return setup, "pg_warp_xyz(xyz, settings, peakNits)"
+    return setup, "pg_cone_warp(pixel, settings, peakNits, direction)"
 
 
 def entry_point(stage):
     setup, call = stage_call(stage)
+    diagnostic = ("make_float3(400.0f, 0.0f, 400.0f)" if stage in CONE_OUTPUTS else
+                  "pg_diagnostic(p_Width, p_Height, p_X, p_Y)")
     return """__DEVICE__ float3 transform(int p_Width,int p_Height,int p_X,int p_Y,float p_R,float p_G,float p_B) {
-    float3 xyz = make_float3(p_R, p_G, p_B);
+    float3 pixel = make_float3(p_R, p_G, p_B);
 """ + setup + f"""    PGValue result = pg_value(color_zero3(), 0);
-    if (color_finite3(xyz)) result = {call};
-    float3 output = result.valid ? result.v : pg_diagnostic(p_Width, p_Height, p_X, p_Y);
+    if (color_finite3(pixel)) result = {call};
+    float3 output = result.valid ? result.v : {diagnostic};
     return make_float3(output.x,output.y,output.z);
 }}
 """
@@ -139,11 +235,29 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for arg in ("output-dir", "source-dir", "color-source", "metadata", "catalog-dir"):
         parser.add_argument("--" + arg, type=Path, required=True)
+    prototypes = parser.add_mutually_exclusive_group()
+    prototypes.add_argument("--jc-prototype", action="store_true", help="Emit only the Color J/C LGG prototypes")
+    prototypes.add_argument("--jc-surface", action="store_true", help="Emit only the Color J/C saturation surface prototype")
     args = parser.parse_args()
     version = tomllib.loads(args.metadata.read_text())["version"]
     spec = json.loads((args.source_dir / "ui-spec.json").read_text())
     catalogs = {file.stem: json.loads(file.read_text(encoding="utf-8"))
                 for file in sorted(args.catalog_dir.glob("*.json"))}
+    stages = STAGES
+    if args.jc_prototype:
+        stages = JC_PROTOTYPES
+        lgg_locales = json.loads((args.source_dir / "jc-lgg-locales.json").read_text(encoding="utf-8"))
+        catalogs = {locale: lgg_messages(messages, lgg_locales[locale])
+                    for locale, messages in catalogs.items()}
+    else:
+        if args.jc_surface:
+            stages = JC_SURFACE_PROTOTYPE
+        surface_locales = json.loads((args.source_dir / "jc-surface-locales.json").read_text(encoding="utf-8"))
+        catalogs = {locale: surface_messages(messages, surface_locales[locale])
+                    for locale, messages in catalogs.items()}
+    if stages is STAGES:
+        cone_locales = json.loads((args.source_dir / "cone-locales.json").read_text(encoding="utf-8"))
+        catalogs = {locale: messages | cone_locales[locale] for locale, messages in catalogs.items()}
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     def header(name):
@@ -153,18 +267,43 @@ def main():
     fl, aw = response_constants(203.0)
     viewing = f"#define PG_FL {number(fl)}\n#define PG_AW {number(aw)}\n#define PG_GAMMA {number(GAMMA)}\n"
     appearance = viewing + header("foundation") + header("core")
-    for stage, slug in STAGES.items():
+    for stage, slug in stages.items():
         controls = [control for control in spec if stage in control["stages"]]
         helpers = white_guard_source() if stage == "linear" else appearance
+        headers = [stage]
+        if stage in CONE_DOMAINS:
+            headers = ["cone_chart"]
+            if stage == "output":
+                headers.extend(["hk_repair", "cone_output"])
+            elif stage != "input":
+                headers.append(stage)
+        if stage in {"jc", "warp"}:
+            helpers += header("stretch")
         if stage == "warp":
             controls.extend(web_controls())
             helpers += geometry_source(tone.PEAKS, number)
-        body = ("/* PG_NUMERICAL_BEGIN */\n" + common + helpers + header(stage)
+            headers.append("cone_warp")
+        if stage == "jc" or stage in JC_SURFACE_PROTOTYPE:
+            helpers += header("jc_surface_response")
+        if stage == "jc":
+            controls = [*surface_controls(reversible=True), *controls]
+        if stage in JC_PROTOTYPES:
+            helpers += header("jc_weights")
+            shared = {"lightnessFit", "chromaFit", "peakNits"}
+            controls = [*lgg_controls(stage == "lgg_pivot"),
+                        *(control for control in spec if control["name"] in shared)]
+            headers = ["hk_repair", "jc_lgg"]
+        if stage in JC_SURFACE_PROTOTYPE:
+            shared = {"globalChromaGain", "peakNits"}
+            controls = [*surface_controls(reversible=False),
+                        *(control for control in spec if control["name"] in shared)]
+            headers = ["hk_repair", "jc_surface"]
+        body = ("/* PG_NUMERICAL_BEGIN */\n" + common + helpers + "".join(header(name) for name in headers)
                 + "/* PG_NUMERICAL_END */\n" + entry_point(stage))
         for locale, messages in catalogs.items():
             suffix = "" if locale == "en" else "-" + locale.replace("_", "-")
             output = args.output_dir / f"Perceptual-Grade-{slug}{suffix}.dctl"
-            output.write_text(ui_header(slug, version, controls, messages) + body, encoding="utf-8")
+            output.write_text(ui_header(stage, slug, version, controls, messages) + body, encoding="utf-8")
 
 
 if __name__ == "__main__":

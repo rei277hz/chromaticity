@@ -1,11 +1,11 @@
-__DEVICE__ PGValue pg_tone_xyz(float3 xyz, float blackNits, PGFour levelNits, int fit, int peakIndex) {
-    if (!color_finite(blackNits) || !pg_four_finite(levelNits) ||
+__DEVICE__ PGValue pg_cone_tone(float3 wire, float blackNits, PGFour levelNits, int fit, int peakIndex) {
+    if (!pg_cone_valid(wire) || !color_finite(blackNits) || !pg_four_finite(levelNits) ||
         fit < -2 || fit > 6 || peakIndex < 0 || peakIndex > 3)
         return pg_value(color_zero3(), 0);
 
     float peak = pg_selected_peak(peakIndex);
     PGFour defaults = pg_four(3.148082606120999f, 36.54f, 203.0f, peak);
-    if (blackNits <= 0.0f && pg_four_equal(levelNits, defaults)) return pg_value(xyz, 1);
+    if (blackNits <= 0.0f && pg_four_equal(levelNits, defaults)) return pg_value(wire, 1);
 
     PGFour target = pg_tone_anchors(peakIndex);
     float black = pg_neutral_j(_fmaxf(0.0f, blackNits) / 203.0f) * .01f;
@@ -17,12 +17,12 @@ __DEVICE__ PGValue pg_tone_xyz(float3 xyz, float blackNits, PGFour levelNits, in
     source.m = _fmaxf(source.m, source.s + .001f);
     source.w = _fmaxf(source.w, source.m + .001f);
     source.h = _fmaxf(source.h, source.w + .001f);
-    if (black == 0.0f && pg_four_equal(source, target)) return pg_value(xyz, 1);
+    if (black == 0.0f && pg_four_equal(source, target)) return pg_value(wire, 1);
 
-    PGState state = pg_enter_xyz(xyz);
-    if (!color_finite3(state.q) || !color_finite(state.e)) return pg_value(color_zero3(), 0);
-    float ja = _sqrtf(_fabs(state.e));
-    float chroma = pg_hypot(state.q.y, state.q.z);
+    float3 chart = pg_cone_chart(wire);
+    if (!color_finite3(chart)) return pg_value(color_zero3(), 0);
+    float ja = chart.x;
+    float chroma = pg_hypot(chart.y, chart.z);
     float hkChroma = 66.0f * chroma;
     float height = pg_hypot(ja, _sqrtf(hkChroma));
     float span = source.h - black;
@@ -43,8 +43,5 @@ __DEVICE__ PGValue pg_tone_xyz(float3 xyz, float blackNits, PGFour levelNits, in
     }
     float out = 100.0f * remapped;
     float gain = pg_div(2.0f * out * out, pg_hypot(hkChroma, 2.0f * ja * out) + hkChroma);
-    float outJa = (state.e < 0.0f ? -ja : ja) * gain;
-    float a = state.q.y * gain, b = state.q.z * gain;
-    PGState toned = pg_state(make_float3(pg_hk(outJa, pg_hypot(a, b)), a, b), outJa * _fabs(outJa));
-    return pg_decode_xyz(toned);
+    return pg_cone_wire(chart * gain);
 }

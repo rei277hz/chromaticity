@@ -1,12 +1,14 @@
-"""Float64 reference stages at the standalone DCTL XYZ boundary."""
+"""Float64 reference stages at the DCTL XYZ and cone-response boundaries."""
 import numpy as np
 
 from color_tools.perceptual_grade_reference.appearance import encode, decode
-from color_tools.perceptual_grade_reference.grading import Color, ColorSettings, Tone, ToneSettings
-from color_tools.perceptual_grade_reference.model import LinearSettings, WHITES, linear_matrix, xyz_from_xy
-from color_tools.perceptual_grade_reference.responses import State
+from color_tools.perceptual_grade_reference.grading import Tone, ToneSettings
+from color_tools.perceptual_grade_reference.model import LinearSettings, WHITES, linear_matrix
 
-WHITE = xyz_from_xy(WHITES["D65"])
+from . import cone_color, cone_reference, jc_prototype, jc_surface
+from .dctl import PROTOTYPES, SURFACE_PROTOTYPES
+
+WHITE = cone_reference.WHITE
 WHITE_NAMES = ("D65", "D60", "ACES", "D50", "D55", "D75", "DCI", "E")
 PEAKS = (500, 1000, 2000, 4000)
 
@@ -29,47 +31,36 @@ def tone_settings(controls):
                         fit=controls.get("remapFit", 0))
 
 
-def color_settings(controls):
-    def coefficients(receiver):
-        return tuple(tuple(controls.get(f"tone{tone}{driver}To{receiver}", 0)
-                           for driver in ("Low", "High", "a", "b")) for tone in "SMWH")
-
-    def web_field(family):
-        return tuple(tuple(controls.get(f"web{family}{tone}{handle}", 0)
-                           for handle in range(6)) for tone in range(4))
-
-    return ColorSettings(
-        lightness=coefficients("J"), chroma=coefficients("C"),
-        global_gain=controls.get("globalChromaGain", 0),
-        lightness_fit=controls.get("lightnessFit", 0), chroma_fit=controls.get("chromaFit", 0),
-        adaptance=tuple(tuple(controls.get(f"tone{tone}Adaptance{axis}", 0)
-                              for axis in "AB") for tone in "SMWH"),
-        adaptance_half_saturation=controls.get("adaptanceHalfSaturation", .25),
-        web=dict(log_chroma=web_field("chroma"), hue_degrees=web_field("hue"),
-                 log_scale=web_field("scale")),
-    )
-
-
-def apply(stage, xyz, controls):
+def apply(stage, values, controls):
     """Evaluate one node using only its own input for all selectors and repair."""
-    xyz = np.asarray(xyz, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
     if stage == "linear":
-        return xyz @ linear_matrix(linear_settings(controls), WHITE).T
+        return values @ linear_matrix(linear_settings(controls), WHITE).T
+    if stage == "input":
+        return cone_reference.from_xyz(values)
+    if stage == "output":
+        return cone_reference.output(values)
     tone = Tone(tone_settings(controls))
-    appearance = encode(xyz, WHITE)
+    if stage in ("jc", "warp"):
+        if controls.get("direction", 0):
+            raise ValueError("The independent Stage 3 reference evaluates the forward direction")
+        return (cone_color.jc if stage == "jc" else cone_color.warp)(values, tone, controls)
     if stage == "tone":
         if not tone.active:
-            return xyz.copy()
-        result = tone.apply(appearance)
-        return decode(result.q, result.ja * abs(result.ja), WHITE)
-    if stage not in ("jc", "warp"):
+            return values.copy()
+        result = tone.apply(cone_reference.enter(values))
+        return cone_reference.pack(result.ja, result.q[..., 1], result.q[..., 2])
+    appearance = encode(values, WHITE)
+    if stage in PROTOTYPES:
+        result = jc_prototype.apply(stage, appearance, tone, controls)
+    elif stage in SURFACE_PROTOTYPES:
+        result = jc_surface.apply(appearance, tone, controls)
+    else:
         raise ValueError(f"Unknown stage {stage}")
-    color = Color(color_settings(controls), tone)
-    if not color.active:
-        return xyz.copy()
-    source = State(appearance.q, appearance.ja * abs(appearance.ja))
-    result = color.apply_state(source)
-    return decode(result.q, result.energy, WHITE)
+    graded = values.copy()
+    if np.any(result.changed):
+        graded[result.changed] = decode(result.q[result.changed], result.energy[result.changed], WHITE)
+    return graded
 
 
 def tolerance(expected):

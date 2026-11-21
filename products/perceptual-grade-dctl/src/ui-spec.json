@@ -168,7 +168,7 @@
     ],
     "name": "inputBlack",
     "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0.0,
+    "default": 0,
     "min": 0,
     "max": 2,
     "step": 0.001,
@@ -210,7 +210,7 @@
     ],
     "name": "inputWhite",
     "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 203.0,
+    "default": 203,
     "min": 10,
     "max": 1000,
     "step": 0.1,
@@ -224,7 +224,7 @@
     ],
     "name": "inputHighlights",
     "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 1000.0,
+    "default": 1000,
     "min": 100,
     "max": 10000,
     "step": 0.1,
@@ -245,454 +245,6 @@
     "options": null,
     "label_id": "control.global_gain.label",
     "tooltip_id": "tooltip.color.global_gain"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneSLowToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -30,
-    "max": 30,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_low_0.label",
-    "tooltip_id": "tooltip.color.j_low.shadows"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneSLowToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_low_0.label",
-    "tooltip_id": "tooltip.color.c_low.shadows"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneSHighToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -100,
-    "max": 100,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_high_0.label",
-    "tooltip_id": "tooltip.color.j_high.shadows"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneSHighToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -16,
-    "max": 16,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_high_0.label",
-    "tooltip_id": "tooltip.color.c_high.shadows"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneSaToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_a_0.label",
-    "tooltip_id": "tooltip.color.j_a.shadows"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneSbToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_b_0.label",
-    "tooltip_id": "tooltip.color.j_b.shadows"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneSaToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_a_0.label",
-    "tooltip_id": "tooltip.color.c_a.shadows"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneSbToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_b_0.label",
-    "tooltip_id": "tooltip.color.c_b.shadows"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneMLowToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_low_1.label",
-    "tooltip_id": "tooltip.color.j_low.midtones"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneMLowToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_low_1.label",
-    "tooltip_id": "tooltip.color.c_low.midtones"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneMHighToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -200,
-    "max": 200,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_high_1.label",
-    "tooltip_id": "tooltip.color.j_high.midtones"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneMHighToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -16,
-    "max": 16,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_high_1.label",
-    "tooltip_id": "tooltip.color.c_high.midtones"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneMaToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_a_1.label",
-    "tooltip_id": "tooltip.color.j_a.midtones"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneMbToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_b_1.label",
-    "tooltip_id": "tooltip.color.j_b.midtones"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneMaToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_a_1.label",
-    "tooltip_id": "tooltip.color.c_a.midtones"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneMbToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_b_1.label",
-    "tooltip_id": "tooltip.color.c_b.midtones"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneWLowToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -100,
-    "max": 100,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_low_2.label",
-    "tooltip_id": "tooltip.color.j_low.white"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneWLowToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_low_2.label",
-    "tooltip_id": "tooltip.color.c_low.white"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneWHighToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -400,
-    "max": 400,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_high_2.label",
-    "tooltip_id": "tooltip.color.j_high.white"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneWHighToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -16,
-    "max": 16,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_high_2.label",
-    "tooltip_id": "tooltip.color.c_high.white"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneWaToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_a_2.label",
-    "tooltip_id": "tooltip.color.j_a.white"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneWbToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_b_2.label",
-    "tooltip_id": "tooltip.color.j_b.white"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneWaToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_a_2.label",
-    "tooltip_id": "tooltip.color.c_a.white"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneWbToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_b_2.label",
-    "tooltip_id": "tooltip.color.c_b.white"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneHLowToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -200,
-    "max": 200,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_low_3.label",
-    "tooltip_id": "tooltip.color.j_low.highlights"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneHLowToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_low_3.label",
-    "tooltip_id": "tooltip.color.c_low.highlights"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneHHighToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -700,
-    "max": 700,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_high_3.label",
-    "tooltip_id": "tooltip.color.j_high.highlights"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneHHighToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -16,
-    "max": 16,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_high_3.label",
-    "tooltip_id": "tooltip.color.c_high.highlights"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneHaToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_a_3.label",
-    "tooltip_id": "tooltip.color.j_a.highlights"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneHbToJ",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -50,
-    "max": 50,
-    "step": 0.1,
-    "options": null,
-    "label_id": "control.j_b_3.label",
-    "tooltip_id": "tooltip.color.j_b.highlights"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneHaToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_a_3.label",
-    "tooltip_id": "tooltip.color.c_a.highlights"
-  },
-  {
-    "stages": [
-      "jc"
-    ],
-    "name": "toneHbToC",
-    "type": "DCTLUI_SLIDER_FLOAT",
-    "default": 0,
-    "min": -4,
-    "max": 4,
-    "step": 0.01,
-    "options": null,
-    "label_id": "control.c_b_3.label",
-    "tooltip_id": "tooltip.color.c_b.highlights"
   },
   {
     "stages": [
@@ -851,7 +403,9 @@
   },
   {
     "stages": [
-      "jc"
+      "lgg",
+      "lgg_nonlog",
+      "lgg_pivot"
     ],
     "name": "lightnessFit",
     "type": "DCTLUI_SLIDER_INT",
@@ -865,7 +419,9 @@
   },
   {
     "stages": [
-      "jc"
+      "lgg",
+      "lgg_nonlog",
+      "lgg_pivot"
     ],
     "name": "chromaFit",
     "type": "DCTLUI_SLIDER_INT",
@@ -890,5 +446,29 @@
     "options": null,
     "label_id": "control.adaptance_half_saturation.label",
     "tooltip_id": "tooltip.color.adaptance_half_saturation"
+  },
+  {
+    "stages": [
+      "jc",
+      "warp"
+    ],
+    "name": "direction",
+    "type": "DCTLUI_COMBO_BOX",
+    "default": 0,
+    "min": null,
+    "max": null,
+    "step": null,
+    "options": [
+      [
+        "PG_FORWARD",
+        "PG_INVERSE"
+      ],
+      [
+        "cone.forward",
+        "cone.inverse"
+      ]
+    ],
+    "label_id": "cone.direction",
+    "tooltip_id": "cone.tooltip.direction"
   }
 ]

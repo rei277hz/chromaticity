@@ -1,0 +1,42 @@
+{
+  "en": {
+    "labels": {
+      "JLift": "J Lift",
+      "JGamma": "J Gamma",
+      "JGain": "J Gain",
+      "CLift": "C Lift",
+      "CGamma": "C Gamma",
+      "CGain": "C Gain",
+      "saturationPivot": "Saturation Pivot"
+    },
+    "tooltips": {
+      "JLift": "H-K lightness offset in points at the gray end of this tonal row. The offset tapers with saturation.",
+      "JGamma": "Bend this tonal row's lightness response around the saturation pivot. Negative values lower the response below the pivot and raise it above.",
+      "JGain": "Scale this tonal row's lifted and bent lightness response in stops. With Lift and Gamma centered, positive Gain brightens saturated colors.",
+      "CLift": "Chroma gain in stops near gray. The effect tapers toward vivid colors. Exact gray stays neutral.",
+      "CGamma": "Bend this tonal row's chroma response around the saturation pivot. Negative values reduce muted chroma and increase vivid chroma.",
+      "CGain": "Multiply chroma in this tonal row by a gain in stops. One stop requests twice the chroma before H-K repair.",
+      "saturationPivot": "Set the C/|J_A| ratio at which both Gamma curves cross their neutral response. The same pivot applies to all four tonal rows."
+    }
+  },
+  "zh_HANS": {
+    "labels": {
+      "JLift": "明度提升",
+      "JGamma": "明度伽马",
+      "JGain": "明度增益",
+      "CLift": "彩度提升",
+      "CGamma": "彩度伽马",
+      "CGain": "彩度增益",
+      "saturationPivot": "饱和度枢轴"
+    },
+    "tooltips": {
+      "JLift": "此色调区在中性灰端的 H-K 明度偏移量，以明度点计。偏移随饱和度升高而减弱。",
+      "JGamma": "绕饱和度枢轴弯曲此色调区的明度响应。负值降低枢轴以下的响应，提高枢轴以上的响应。",
+      "JGain": "以档为单位缩放此色调区经提升和伽马调整后的明度响应。提升和伽马归零时，正增益提亮高饱和度颜色。",
+      "CLift": "接近中性灰处的彩度增益，以档计。效果随饱和度升高而减弱。纯中性灰保持中性。",
+      "CGamma": "绕饱和度枢轴弯曲此色调区的彩度响应。负值降低低饱和度颜色的彩度，提高高饱和度颜色的彩度。",
+      "CGain": "以档为单位缩放此色调区的彩度。增加一档时，H-K 修正前的目标彩度翻倍。",
+      "saturationPivot": "设定明度和彩度伽马曲线无偏移时的 C/|J_A| 比值。四个色调区共用此枢轴。"
+    }
+  }
+}

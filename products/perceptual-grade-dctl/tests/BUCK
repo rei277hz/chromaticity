@@ -21,6 +21,10 @@ generate(
     args = [
         "--dctl-dir",
         "$(location //products/perceptual-grade-dctl:dctl)",
+        "--prototype-dir",
+        "$(location //products/perceptual-grade-dctl:jc_prototype)",
+        "--surface-dir",
+        "$(location //products/perceptual-grade-dctl:jc_surface_prototype)",
     ],
     outputs = {"cpp": "host.cpp"},
     tool = ":host_generator",
@@ -41,10 +45,19 @@ cxx_binary(
 
 python_library(
     name = "dctl_reference",
-    srcs = {"dctl_reference.py": "support/dctl_reference.py"},
+    srcs = {
+        "cone_color.py": "support/cone_color.py",
+        "cone_reference.py": "support/cone_reference.py",
+        "dctl_reference.py": "support/dctl_reference.py",
+        "jc_prototype.py": "support/jc_prototype.py",
+        "jc_surface.py": "support/jc_surface.py",
+    },
     base_module = "tests.support",
     visibility = ["PUBLIC"],
-    deps = ["//libraries/perceptual-grade-reference:numerical_oracle_for_tests"],
+    deps = [
+        ":dctl_parser",
+        "//libraries/perceptual-grade-reference:numerical_oracle_for_tests",
+    ],
 )
 
 python_library(
@@ -54,6 +67,8 @@ python_library(
     resources = {
         "oracle": ":oracle",
         "stages": "//products/perceptual-grade-dctl:dctl",
+        "prototypes": "//products/perceptual-grade-dctl:jc_prototype",
+        "surfaces": "//products/perceptual-grade-dctl:jc_surface_prototype",
     },
     visibility = ["PUBLIC"],
     deps = [
