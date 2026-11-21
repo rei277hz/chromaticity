@@ -17,7 +17,7 @@ import numpy as np
 
 class Job:
     def __init__(self, inputs):
-        self.result = {"signature": inputs["signature"]}
+        self.result = {"request_signature": inputs["route"]["request_signature"]}
         self.cancel_calls = 0
         self.retired = False
 
@@ -114,7 +114,8 @@ class BakeManagerTests(unittest.TestCase):
             self.admitted = False
 
     def request(self, node, **callbacks):
-        route = {"signature": self.current(node, None), "scene": "Scene", "domain": "IMAGE"}
+        route = {"request_signature": self.current(node, None),
+                 "scene": "Scene", "domain": "IMAGE"}
         publish = callbacks.pop("publish_callback", lambda *_args: self.events.append("publish"))
         callbacks.setdefault("activate_callback", lambda *_args: self.events.append("activate"))
         callbacks.setdefault("rollback_callback", lambda *_args: self.events.append("rollback"))
@@ -279,11 +280,12 @@ class BakeManagerTests(unittest.TestCase):
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
             result = self.worker._result(
                 np.ones((1, 2, 4), dtype=np.float32),
-                {"artifact_dir": str(root), "signature": "sig"},
-                {"scene": "Scene", "signature": "sig"}, {"domain": "IMAGE"},
+                {"artifact_dir": str(root)},
+                {"scene": "Scene", "request_signature": "sig"}, {"domain": "IMAGE"},
                 backend="SHADER",
             )
         self.assertEqual(Path(result["path"]), root / "bake.exr")
+        self.assertEqual(result["request_signature"], "sig")
         self.assertTrue(Path(result["path"]).is_file())
         self.assertNotIn("generation", result)
         self.assertNotIn("sha256", result)
@@ -291,7 +293,7 @@ class BakeManagerTests(unittest.TestCase):
     def test_mismatched_helper_signature_never_publishes(self):
         entry = self.request(self.node(1))
         self.manager.poll()
-        self.complete(result={"signature": "other"})
+        self.complete(result={"request_signature": "other"})
         self.assertEqual(self.events, ["failure"])
         self.assertFalse(self.manager.jobs)
         self.assertFalse(entry["root"].exists())

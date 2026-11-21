@@ -416,7 +416,7 @@ def check_render_layers_indirect_sources(scene, target, context):
             nodes._bake_request(target, context)
             key = target.as_pointer()
             pending = nodes._bake_manager.jobs[key]
-            signature = pending["signature"]
+            signature = pending["route"]["request_signature"]
             grade.pg_grade.pg_linear.exposure += .25
             assert nodes._bake_current_signature(target, pending["route"]) != signature, binding
             nodes._bake_tick()
@@ -498,15 +498,15 @@ def reject_pending_pixel_read(*_args, **_kwargs):
 nodes.bake_routes.describe = reject_pending_pixel_read
 original_source_pixels = np.asarray(source_image.pixels[:], dtype=np.float32)
 try:
-    for exact in (False, True, False):
-        nodes._reconcile_bake_outputs((shader,), exact=exact)
+    for _ in range(3):
+        nodes._reconcile_bake_outputs((shader,))
         assert manager.active is request and manager.jobs[node_key] is request
         assert shader.get(nodes._BAKE_NODE_SIGNATURE) is None
     unrelated_image = image("Bake Unrelated Source", np.ones((1, 4), np.float32), 1, 1)
     nodes._depsgraph_update_post(scene, SimpleNamespace(
         updates=(SimpleNamespace(id=unrelated_image),)))
-    assert nodes._bake_current_signature(shader, request["route"]) == request["signature"]
-    nodes._reconcile_bake_outputs((shader,), exact=True)
+    assert nodes._bake_current_signature(shader, request["route"]) == request["route"]["request_signature"]
+    nodes._reconcile_bake_outputs((shader,))
     assert manager.active is request and manager.jobs[node_key] is request
 
     # Python pixel writes have no dependable native change notification. A
@@ -515,8 +515,8 @@ try:
     changed_source_pixels[0] += .05
     source_image.pixels.foreach_set(changed_source_pixels)
     nodes.invalidate_source(source_image)
-    assert nodes._bake_current_signature(shader, request["route"]) != request["signature"]
-    nodes._reconcile_bake_outputs((shader,), exact=True)
+    assert nodes._bake_current_signature(shader, request["route"]) is None
+    nodes._reconcile_bake_outputs((shader,))
     deadline = time.monotonic() + 300
     while node_key in manager.jobs and time.monotonic() < deadline:
         manager.poll()
@@ -556,13 +556,13 @@ assert eevee_receipt is not None
 assert_bake_controls(shader, image_context)
 scene.render.engine = "CYCLES"
 bpy.context.view_layer.update()
-nodes._reconcile_bake_outputs((shader,), exact=False)
+nodes._reconcile_bake_outputs((shader,))
 assert_shader_uses_image(shader, eevee_image)
 assert nodes._bake_receipt_signature(shader) == eevee_receipt
 assert_bake_controls(shader, image_context, can_bake=True)
 scene.render.engine = "BLENDER_EEVEE"
 bpy.context.view_layer.update()
-nodes._reconcile_bake_outputs((shader,), exact=False)
+nodes._reconcile_bake_outputs((shader,))
 assert_shader_uses_image(shader, eevee_image)
 assert nodes._bake_receipt_signature(shader) == eevee_receipt
 assert_bake_controls(shader, image_context)
@@ -714,12 +714,12 @@ nodes.bake_routes.describe = reject_full_idle_read
 try:
     nodes._depsgraph_update_post(scene, SimpleNamespace(
         updates=(SimpleNamespace(id=unrelated_image),)))
-    nodes._reconcile_bake_outputs((shader,), exact=False)
+    nodes._reconcile_bake_outputs((shader,))
     assert_shader_uses_image(shader, source_bake)
     assert_bake_controls(shader, image_context)
     nodes._depsgraph_update_post(scene, SimpleNamespace(
         updates=(SimpleNamespace(id=source_image),)))
-    nodes._reconcile_bake_outputs((shader,), exact=False)
+    nodes._reconcile_bake_outputs((shader,))
     assert_shader_uses_image(shader, source_bake)
     assert nodes._bake_receipt_signature(shader) == source_receipt
     assert_bake_controls(shader, image_context, "status.bake_stale_source")
@@ -878,7 +878,7 @@ uv_receipt = nodes._bake_receipt_signature(uv_node)
 # Engine and device switches preserve the published result and allow rebaking on the same mesh.
 scene.render.engine = "BLENDER_EEVEE"
 bpy.context.view_layer.update()
-nodes._reconcile_bake_outputs((uv_node,), exact=False)
+nodes._reconcile_bake_outputs((uv_node,))
 assert_shader_uses_image(uv_node, uv_image)
 assert nodes._bake_receipt_signature(uv_node) == uv_receipt
 assert_bake_controls(uv_node, uv_context, can_bake=True)
@@ -889,7 +889,7 @@ assert tuple(uv_node.pg_bake_image.size) == (16, 16)
 scene.cycles.device = "CPU"
 scene.render.engine = "CYCLES"
 bpy.context.view_layer.update()
-nodes._reconcile_bake_outputs((uv_node,), exact=False)
+nodes._reconcile_bake_outputs((uv_node,))
 assert_shader_uses_image(uv_node, uv_image)
 assert nodes._bake_receipt_signature(uv_node) == uv_receipt
 assert_bake_controls(uv_node, uv_context)
@@ -901,12 +901,55 @@ nodes._depsgraph_update_post(scene, SimpleNamespace(updates=(
     SimpleNamespace(id=obj.data, is_updated_geometry=False,
                     is_updated_transform=False, is_updated_shading=True),
 )))
-nodes._reconcile_bake_outputs((uv_node,), exact=False)
+nodes._reconcile_bake_outputs((uv_node,))
 assert uv_node.pg_use_bake and nodes._bake_toggle_available(uv_node), (
     "Shading-only object update invalidated UV bake",
     nodes._bake_receipt_signature(uv_node),
 )
 assert_bake_controls(uv_node, uv_context)
+
+# Blender evaluates named mesh data from the snapshot.
+attribute_color = (.18, .35, .62, 1.)
+attribute = mesh.color_attributes.new(name="Bake Tint", type="FLOAT_COLOR", domain="CORNER")
+attribute.data.foreach_set("color", attribute_color * len(mesh.loops))
+attribute_node = shader_tree.nodes.new("ShaderNodeAttribute")
+attribute_node.attribute_name = attribute.name
+attribute_grade = nodes.create_node(shader_tree)
+attribute_grade.pg_grade = uv_node.pg_grade
+shader_tree.links.new(attribute_node.outputs["Color"], attribute_grade.inputs["Color"])
+attribute_grade.pg_bake_width = attribute_grade.pg_bake_height = 16
+attribute_context = shader_context(material, scene, obj, attribute_grade)
+mesh.update()
+bpy.context.view_layer.update()
+wait_ready(attribute_grade)
+attribute_values = bake(attribute_grade, attribute_context)
+np.testing.assert_allclose(
+    attribute_values.reshape(-1, 4),
+    np.broadcast_to(attribute_color, (16 * 16, 4)), rtol=0, atol=.002,
+)
+attribute_image = attribute_grade.pg_bake_image
+assert attribute_image.get(nodes._BAKE_DOMAIN) == "UV"
+attribute_receipt = nodes._bake_receipt_signature(attribute_grade)
+attribute_operation = attribute_image.get(nodes._BAKE_OPERATION)
+assert_bake_controls(attribute_grade, attribute_context)
+
+nodes._bake_request(attribute_grade, attribute_context)
+attribute_key = manager._node_key(attribute_grade)
+assert manager.jobs[attribute_key]["state"].phase == "queued"
+attribute.data[0].color = (.4, .25, .15, 1.)
+mesh.update()
+# Deliver a Mesh geometry notification at the same boundary as Blender.
+nodes._depsgraph_update_post(scene, SimpleNamespace(updates=(
+    SimpleNamespace(id=mesh, is_updated_geometry=True,
+                    is_updated_transform=False, is_updated_shading=False),
+)))
+nodes._bake_tick()
+assert attribute_key not in manager.jobs
+assert_shader_uses_image(attribute_grade, attribute_image)
+assert attribute_image.get(nodes._BAKE_OPERATION) == attribute_operation
+assert nodes._bake_receipt_signature(attribute_grade) == attribute_receipt
+np.testing.assert_array_equal(attribute_image.pixels[:], attribute_values)
+assert_bake_controls(attribute_grade, attribute_context, "status.bake_stale_source")
 
 # Compositor route uses the native compositor capture path.
 scene.render.engine = "BLENDER_EEVEE"
@@ -1072,14 +1115,14 @@ pending_request = manager.jobs[pending_key]
 scene.render.engine = "BLENDER_EEVEE"
 scene.cycles.device = "GPU"
 bpy.context.view_layer.update()
-nodes._reconcile_bake_outputs((pending,), exact=True)
+nodes._reconcile_bake_outputs((pending,))
 assert manager.jobs[pending_key] is pending_request and pending_request["state"].phase == "queued"
 manager._start_next()
 assert manager.active is pending_request and pending_request["state"].phase == "running"
 scene.render.engine = "CYCLES"
 scene.cycles.device = "CPU"
 bpy.context.view_layer.update()
-nodes._reconcile_bake_outputs((pending,), exact=True)
+nodes._reconcile_bake_outputs((pending,))
 assert manager.active is pending_request and pending_request["state"].phase == "running"
 wait_bake(pending)
 assert pending.pg_use_bake and pending.pg_bake_image is not None, pending.get(nodes._BAKE_ERROR)
@@ -1158,7 +1201,7 @@ assert_bake_controls(image_stack, image_stack_context)
 for engine in ("CYCLES", "BLENDER_EEVEE"):
     scene.render.engine = engine
     bpy.context.view_layer.update()
-    nodes._reconcile_bake_outputs((image_stack,), exact=False)
+    nodes._reconcile_bake_outputs((image_stack,))
     assert_shader_uses_image(image_stack, stack_image)
     assert nodes._bake_receipt_signature(image_stack) == stack_receipt
     assert_bake_controls(image_stack, image_stack_context, can_bake=True)
@@ -1192,7 +1235,7 @@ np.testing.assert_allclose(stack_uv_values.reshape(8, 16, 4), expected_uv_rgba,
 assert_bake_controls(image_stack, uv_stack_context, can_bake=True)
 scene.render.engine = "BLENDER_EEVEE"
 bpy.context.view_layer.update()
-nodes._reconcile_bake_outputs((image_stack,), exact=False)
+nodes._reconcile_bake_outputs((image_stack,))
 assert_shader_uses_image(image_stack, stack_uv_image)
 assert nodes._bake_receipt_signature(image_stack) == stack_uv_receipt
 assert_bake_controls(image_stack, uv_stack_context, can_bake=True)
@@ -1203,7 +1246,7 @@ np.testing.assert_allclose(eevee_stack_uv.reshape(8, 16, 4), expected_uv_rgba,
 scene.cycles.device = "CPU"
 scene.render.engine = "CYCLES"
 bpy.context.view_layer.update()
-nodes._reconcile_bake_outputs((image_stack,), exact=False)
+nodes._reconcile_bake_outputs((image_stack,))
 assert_shader_uses_image(image_stack, stack_uv_image)
 assert nodes._bake_receipt_signature(image_stack) == stack_uv_receipt
 assert_bake_controls(image_stack, uv_stack_context, can_bake=True)
@@ -1314,6 +1357,7 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
         nodes._bake_receipt_signature(restored_uv),
         nodes._bake_observed_signature(restored_uv, nodes._stored_bake_context(restored_uv)),
     )
+    assert_bake_controls(restored_uv, nodes._stored_bake_context(restored_uv))
 
     # Undo must recover the previously valid selector and receipt together.
     bpy.context.preferences.edit.use_global_undo = True

@@ -696,10 +696,7 @@ def _result(pixels, inputs, target, descriptor, *, backend, device=None):
         "path": str(path),
         "width": int(pixels.shape[1]),
         "height": int(pixels.shape[0]),
-        "identity": inputs.get("identity", target.get("identity")),
-        "signature": inputs.get("signature", target.get("signature")),
-        "artifact_signature": target.get(
-            "artifact_signature", target.get("source_signature", target.get("signature"))),
+        "request_signature": target.get("request_signature"),
         "scene": target.get("scene"),
         "frame": int(target.get("frame", 0)),
         "frame_subframe": float(target.get("frame_subframe", target.get("subframe", 0.0))),

@@ -185,6 +185,14 @@ class BankedResourceTests(unittest.TestCase):
         self.assertEqual(resource.generation, 1)
         self.assertEqual(set(resource.trees), {"ShaderNodeTree", "CompositorNodeTree"})
 
+    def test_load_adopts_metadata_valid_banks_for_later_repair(self):
+        role = self.parameter_roles[-1]
+        self.first_images[role].is_dirty = True
+        self.second_images[role].packed_file = None
+        resource = self.cache.resource(self.node, "linear")
+        self.assertEqual(resource.banks, self.banks)
+        self.assertEqual(set(resource.trees), {"ShaderNodeTree", "CompositorNodeTree"})
+
     def test_mismatched_kernel_selector_or_bank_pair_is_not_adopted(self):
         other = self.alternate
         self.compositor[self.stage2.PARAMETER_BANK_BINDINGS[1]] = other
@@ -232,14 +240,26 @@ class BankedResourceTests(unittest.TestCase):
     def test_mixed_generation_bundle_receipt_is_not_adopted(self):
         role_image = self.first_images[self.parameter_roles[-1]]
         role_image[self.schema.PARAMETER_BUNDLE_SIGNATURE] = "0" * 64
-        self.assertFalse(self.module.GradeResources._valid_bundle(self.first))
+        self.assertFalse(self.schema.parameter_bundle_receipt_matches(self.first))
         self.assertIsNone(self.cache.resource(self.node, "linear").banks)
 
     def test_bank_pair_rejects_shared_role_image(self):
         role = self.parameter_roles[-1]
-        self.second[self.role_binding + role] = self.first_images[role]
+        second, second_images = self._make_bank(21, 0.)
+        second_images[role] = self.first_images[role]
+        second[self.role_binding + role] = second_images[role]
+        banks = (self.first, second)
+        self.assertTrue(all(self.schema.parameter_bundle_receipt_matches(bank)
+                            for bank in banks))
         with self.assertRaisesRegex(ValueError, "two valid banks"):
-            self.cache.set_banks(self.module.GradeResource(), self.banks, 0, 0)
+            self.cache.set_banks(self.module.GradeResource(), banks, 0, 0)
+
+        for tree in (self.shader, self.compositor):
+            tree[self.stage2.PARAMETER_BANK_BINDINGS[1]] = second
+            for reader in tree.nodes:
+                if reader.get(self.stage2.PARAMETER_READER_BANK) == 1:
+                    reader.image = second_images[reader[self.stage2.PARAMETER_READER_ROLE]]
+        self.assertIsNone(self.cache.resource(self.node, "linear").banks)
 
     def test_retirement_retries_preserve_role_identities_after_primary_removal(self):
         resource = self.cache.resource(self.node, "linear")

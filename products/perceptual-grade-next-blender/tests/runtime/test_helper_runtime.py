@@ -530,7 +530,7 @@ class HelperRuntimeTests(unittest.TestCase):
                     self.remaining_failures -= 1
                     raise RuntimeError("owner retained")
         owner = Owner()
-        runtime = preparation.PreparationRuntime(lambda value: value)
+        runtime = preparation.PreparationRuntime()
         runtime.register_polled_lane("host", owner)
         try:
             for _ in range(2):

@@ -9,8 +9,20 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 import zipfile
+
+
+class PolledJob:
+    def __init__(self, steps):
+        self.steps = iter(steps)
+
+    def advance(self):
+        return next(self.steps)
+
+    def close(self):
+        pass
 
 
 class PreparationRuntimeTests(unittest.TestCase):
@@ -34,10 +46,19 @@ class PreparationRuntimeTests(unittest.TestCase):
                 del sys.modules[name]
         cls.directory.cleanup()
 
-    def runtime(self, prepare, **kwargs):
-        runtime = self.runtime_module.PreparationRuntime(prepare, **kwargs)
+    def runtime(self, prepare=None, **kwargs):
+        runtime = self.runtime_module.PreparationRuntime(**kwargs)
         self.addCleanup(runtime.close)
+        if prepare is not None:
+            async def prepare_async(payload):
+                return await asyncio.to_thread(prepare, payload)
+
+            runtime.register_async_lane(runtime.default_lane, prepare_async)
         return runtime
+
+    def register_lut_lane(self, runtime, create_job):
+        owner = SimpleNamespace(create_job=create_job, close=lambda: None)
+        runtime.register_polled_lane("lut", owner, progressive=True)
 
     def wait_started(self, event):
         self.assertTrue(event.wait(10), "preparation did not start")
@@ -238,44 +259,55 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertTrue(all(thread != threading.get_ident() for thread in worker_threads))
         self.assertTrue(all(thread != runtime._thread.ident for thread in worker_threads))
 
-    def test_progress_preview_does_not_retire_worker_or_start_queued_successor(self):
-        started_a, preview_returned = threading.Event(), threading.Event()
-        started_b, release_a, continue_after_preview, release_b = (
-            threading.Event() for _ in range(4)
-        )
-        calls = []
+    def test_preview_and_cancellation_keep_host_slot_until_physical_retirement(self):
+        retire = threading.Event()
+        created = []
+        closed = []
 
-        def prepare(settings, on_preview):
-            calls.append(settings)
+        class HeldRefinement:
+            cancelled = False
+            preview_emitted = False
+
+            def advance(self):
+                if not self.preview_emitted:
+                    self.preview_emitted = True
+                    return "preview", "A"
+                if not retire.is_set():
+                    return None
+                raise RuntimeError("superseded refinement retired")
+
+            def cancel(self):
+                self.cancelled = True
+
+            def close(self):
+                assert retire.is_set()
+                closed.append("A")
+
+        first_job = HeldRefinement()
+
+        def create_job(settings, progressive):
+            self.assertTrue(progressive)
+            created.append(settings)
             if settings == "A":
-                started_a.set()
-                self.assertTrue(release_a.wait(10))
-                on_preview(("33-cube", settings))
-                preview_returned.set()
-                self.assertTrue(continue_after_preview.wait(10))
-            else:
-                started_b.set()
-                self.assertTrue(release_b.wait(10))
-            return ("65-cube", settings)
+                return first_job
+            return PolledJob((("full", settings),))
 
-        runtime = self.runtime(lambda _payload: None)
-        runtime.register_lane("lut", prepare, progressive=True)
-        self.addCleanup(release_a.set)
-        self.addCleanup(continue_after_preview.set)
-        self.addCleanup(release_b.set)
+        runtime = self.runtime()
+        self.register_lut_lane(runtime, create_job)
+        self.addCleanup(retire.set)
         source = object()
         runtime.request(source, "A", "A", lane="lut", playback_session=1)
-        self.wait_started(started_a)
-        runtime.request(source, "B", "B", lane="lut")
-        release_a.set()
-        self.wait_started(preview_returned)
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pump_main_thread())
+        preview, = runtime.collect()
+        self.assertEqual((preview.signature, preview.prepared, preview.quality,
+                          preview.playback_session), ("A", "A", "preview", 1))
 
-        previews = runtime.collect()
-        self.assertEqual(len(previews), 1)
-        self.assertEqual((previews[0].signature, previews[0].prepared,
-                          previews[0].quality, previews[0].lane),
-                         ("A", ("33-cube", "A"), "preview", "lut"))
-        self.assertEqual(previews[0].playback_session, 1)
+        runtime.request(source, "B", "B", lane="lut")
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertTrue(first_job.cancelled)
+        self.assertEqual(created, ["A"])
+        self.assertEqual(closed, [])
         state = self.loop_read(
             runtime, lambda: next(iter(runtime._records.values())).state
         )
@@ -283,73 +315,60 @@ class PreparationRuntimeTests(unittest.TestCase):
             self.runtime_module._request_signature("lut", "A", True),
             self.runtime_module._request_signature("lut", "B", True),
         ))
-        self.assertFalse(started_b.is_set())
-        self.assertEqual(calls, ["A"])
 
-        continue_after_preview.set()
-        self.wait_started(started_b)
-        first_final = runtime.collect()
-        self.assertEqual(self.outcomes(first_final),
-                         ((source, "A", ("65-cube", "A"), None),))
-        self.assertEqual(first_final[0].quality, "full")
-        self.assertEqual(first_final[0].playback_session, 1)
-        release_b.set()
+        retire.set()
         latest = runtime.wait()
-        self.assertEqual(self.outcomes(latest),
-                         ((source, "B", ("65-cube", "B"), None),))
+        self.assertEqual(closed, ["A"])
+        self.assertEqual(self.outcomes(latest), ((source, "B", "B", None),))
         self.assertIsNone(latest[0].playback_session)
-        self.assertEqual(calls, ["A", "B"])
+        self.assertEqual(created, ["A", "B"])
 
-    def test_default_and_registered_thread_lanes_run_on_separate_pools(self):
-        started_linear = threading.Event()
-        started_lut = threading.Event()
+    def test_polled_stack_advances_while_async_grade_is_pending(self):
+        started_grade = threading.Event()
         release = threading.Event()
         thread_ids = {}
 
-        def linear(settings):
-            thread_ids["linear"] = threading.get_ident()
-            started_linear.set()
+        def prepare_grade(settings):
+            thread_ids["grade"] = threading.get_ident()
+            started_grade.set()
             self.assertTrue(release.wait(10))
             return settings
 
-        def lut(settings):
-            thread_ids["lut"] = threading.get_ident()
-            started_lut.set()
-            self.assertTrue(release.wait(10))
-            return settings
+        def stack_steps(settings):
+            thread_ids["stack"] = threading.get_ident()
+            yield "full", settings
 
-        runtime = self.runtime(linear)
-        runtime.register_lane("lut", lut)
+        runtime = self.runtime(prepare_grade, default_lane="grade")
+        self.register_lut_lane(runtime, lambda settings, _: PolledJob(stack_steps(settings)))
         self.addCleanup(release.set)
-        runtime.request(object(), "linear", "linear")
-        runtime.request(object(), "lut", "lut", lane="lut")
-        self.wait_started(started_linear)
-        self.wait_started(started_lut)
-        self.assertNotEqual(thread_ids["linear"], thread_ids["lut"])
-        self.assertNotEqual(thread_ids["linear"], runtime._thread.ident)
-        self.assertNotEqual(thread_ids["lut"], runtime._thread.ident)
+        grade, stack = object(), object()
+        runtime.request(grade, "grade", "grade")
+        self.wait_started(started_grade)
+        runtime.request(stack, "stack", "stack", lane="lut")
+        result, = runtime.wait((stack,))
+        self.assertEqual((result.lane, result.prepared), ("lut", "stack"))
+        self.assertTrue(runtime.pending)
+        self.assertEqual(thread_ids["stack"], threading.get_ident())
+        self.assertNotEqual(thread_ids["grade"], threading.get_ident())
         release.set()
-        results = runtime.wait()
-        self.assertEqual({item.lane for item in results}, {"default", "lut"})
+        result, = runtime.wait()
+        self.assertEqual((result.lane, result.prepared), ("grade", "grade"))
 
-    def test_lut_final_only_request_skips_preview_callback(self):
+    def test_lut_final_only_request_starts_job_without_preview(self):
         calls = []
 
-        def prepare(settings, on_preview=None):
-            calls.append(on_preview)
-            if on_preview is not None:
-                on_preview("unexpected preview")
-            return ("65-cube", settings)
+        def create_job(settings, progressive):
+            calls.append(progressive)
+            return PolledJob((("full", ("65-cube", settings)),))
 
-        runtime = self.runtime(lambda _payload: None)
-        runtime.register_lane("lut", prepare, progressive=True)
+        runtime = self.runtime()
+        self.register_lut_lane(runtime, create_job)
         source = object()
         runtime.request(source, "A", "A", lane="lut", progressive=False)
         publications = runtime.wait()
         self.assertEqual(self.outcomes(publications),
                          ((source, "A", ("65-cube", "A"), None),))
-        self.assertEqual(len(calls), 1)
-        self.assertIsNone(calls[0])
+        self.assertEqual(calls, [False])
         self.assertEqual([item.quality for item in publications], ["full"])
         self.assertFalse(publications[0].progressive)
 
@@ -390,7 +409,7 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _payload: None)
+        runtime = self.runtime()
         runtime.register_polled_lane("lut", Owner(), progressive=True)
         source = object()
         runtime.request(source, "A", "A", lane="lut")
@@ -440,7 +459,7 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _payload: None)
+        runtime = self.runtime()
         runtime.register_polled_lane("lut", Owner())
         source = object()
         runtime.request(source, "A", "A", lane="lut")
@@ -468,7 +487,7 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _payload: None)
+        runtime = self.runtime()
         runtime.register_polled_lane("lut", Owner())
         source = object()
         runtime.request(source, "A", "A", lane="lut")
@@ -503,7 +522,7 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _payload: None)
+        runtime = self.runtime()
         runtime.register_polled_lane("lut", Owner())
         source = object()
         runtime.request(source, "A", "A", lane="lut")
@@ -538,7 +557,7 @@ class PreparationRuntimeTests(unittest.TestCase):
             def close(self):
                 pass
 
-        runtime = self.runtime(lambda _payload: None)
+        runtime = self.runtime()
         runtime.register_polled_lane("lut", Owner())
         old_source, new_source = object(), object()
         runtime.request(old_source, "same", "same", lane="lut")
@@ -566,16 +585,20 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertFalse(runtime.pending)
 
     def test_uncollected_results_keep_only_latest_success_per_source(self):
-        def prepare(settings, on_preview):
-            on_preview(("33-cube", settings))
-            return ("65-cube", settings)
+        def create_job(settings, progressive):
+            self.assertTrue(progressive)
+            return PolledJob((("preview", ("33-cube", settings)),
+                              ("full", ("65-cube", settings))))
 
-        runtime = self.runtime(lambda settings: settings)
-        runtime.register_lane("lut", prepare, progressive=True)
+        runtime = self.runtime()
+        self.register_lut_lane(runtime, create_job)
         source = object()
         for index in range(30):
             signature = str(index)
             runtime.request(source, signature, signature, lane="lut")
+            self.wait_host_work(runtime)
+            self.assertTrue(runtime.pump_main_thread())
+            self.assertTrue(runtime.pump_main_thread())
             self.wait_settled(runtime, source)
             self.assertEqual(self.loop_read(runtime, lambda: (
                 len(runtime._publications),
@@ -588,14 +611,17 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertEqual(result[0].quality, "full")
 
     def test_current_failure_supersedes_uncollected_preview(self):
-        def prepare(settings, on_preview):
-            on_preview(("33-cube", settings))
+        def steps(settings):
+            yield "preview", ("33-cube", settings)
             raise ValueError("refinement failed")
 
-        runtime = self.runtime(lambda settings: settings)
-        runtime.register_lane("lut", prepare, progressive=True)
+        runtime = self.runtime()
+        self.register_lut_lane(runtime, lambda settings, _: PolledJob(steps(settings)))
         source = object()
         runtime.request(source, "A", "A", lane="lut")
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertTrue(runtime.pump_main_thread())
         self.wait_settled(runtime, source)
         self.assertEqual(self.loop_read(runtime, lambda: (
             len(runtime._publications),
@@ -617,94 +643,53 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertEqual(self.outcomes(result), ((source, "B", "B", None),))
 
     def test_equal_settings_with_mode_change_queue_distinct_preparation(self):
-        started_progressive = threading.Event()
-        release_progressive = threading.Event()
-        started_final = threading.Event()
-        release_final = threading.Event()
         calls = []
 
-        def prepare(settings, on_preview=None):
-            calls.append(on_preview is not None)
-            if on_preview is not None:
-                on_preview(("33-cube", settings))
-                started_progressive.set()
-                self.assertTrue(release_progressive.wait(10))
-            else:
-                started_final.set()
-                self.assertTrue(release_final.wait(10))
-            return ("65-cube", settings)
+        def create_job(settings, progressive):
+            calls.append(progressive)
+            if progressive:
+                return PolledJob((("preview", ("33-cube", settings)),))
+            return PolledJob((("full", ("65-cube", settings)),))
 
-        runtime = self.runtime(lambda _payload: None)
-        runtime.register_lane("lut", prepare, progressive=True)
-        self.addCleanup(release_progressive.set)
-        self.addCleanup(release_final.set)
+        runtime = self.runtime()
+        self.register_lut_lane(runtime, create_job)
         source = object()
         runtime.request(source, "same", "same", lane="lut", progressive=True)
-        self.wait_started(started_progressive)
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pump_main_thread())
         self.assertEqual(runtime.collect()[0].quality, "preview")
         runtime.request(source, "same", "same", lane="lut", progressive=False)
         state = self.loop_read(
             runtime, lambda: next(iter(runtime._records.values())).state
         )
         self.assertNotEqual(state.running_signature, state.desired_signature)
-        self.assertEqual(runtime.collect(), ())
-        self.assertFalse(started_final.is_set())
-
-        release_progressive.set()
-        self.wait_started(started_final)
-        self.assertEqual(calls, [True, False])
-        result = runtime.collect()
-        self.assertEqual(self.outcomes(result),
-                         ((source, "same", ("65-cube", "same"), None),))
-        self.assertEqual(result[0].progressive, True)
-        release_final.set()
+        self.assertEqual(calls, [True])
         latest = runtime.wait()
         self.assertEqual(self.outcomes(latest),
                          ((source, "same", ("65-cube", "same"), None),))
         self.assertFalse(latest[0].progressive)
+        self.assertEqual(calls, [True, False])
 
     def test_final_only_demand_suppresses_inflight_preview_for_same_settings(self):
-        started_progressive = threading.Event()
-        allow_preview = threading.Event()
-        preview_returned = threading.Event()
-        continue_bake = threading.Event()
-        started_final = threading.Event()
-        release_final = threading.Event()
         calls = []
 
-        def prepare(settings, on_preview=None):
-            calls.append(on_preview is not None)
-            if on_preview is not None:
-                started_progressive.set()
-                self.assertTrue(allow_preview.wait(10))
-                on_preview(("33-cube", settings))
-                preview_returned.set()
-                self.assertTrue(continue_bake.wait(10))
-            else:
-                started_final.set()
-                self.assertTrue(release_final.wait(10))
-            return ("65-cube", settings)
+        def create_job(settings, progressive):
+            calls.append(progressive)
+            if progressive:
+                return PolledJob((None, ("preview", ("33-cube", settings))))
+            return PolledJob((("full", ("65-cube", settings)),))
 
-        runtime = self.runtime(lambda _payload: None)
-        runtime.register_lane("lut", prepare, progressive=True)
-        self.addCleanup(allow_preview.set)
-        self.addCleanup(continue_bake.set)
-        self.addCleanup(release_final.set)
+        runtime = self.runtime()
+        self.register_lut_lane(runtime, create_job)
         source = object()
         runtime.request(source, "same", "same", lane="lut", progressive=True)
-        self.wait_started(started_progressive)
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertEqual(calls, [True])
         runtime.request(source, "same", "same", lane="lut", progressive=False)
-        allow_preview.set()
-        self.wait_started(preview_returned)
+        self.assertTrue(runtime.pump_main_thread())
         self.assertEqual(runtime.collect(), ())
 
-        continue_bake.set()
-        self.wait_started(started_final)
-        result = runtime.collect()
-        self.assertEqual(self.outcomes(result),
-                         ((source, "same", ("65-cube", "same"), None),))
-        self.assertTrue(result[0].progressive)
-        release_final.set()
         result = runtime.wait()
         self.assertEqual(self.outcomes(result),
                          ((source, "same", ("65-cube", "same"), None),))

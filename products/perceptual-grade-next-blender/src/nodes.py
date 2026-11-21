@@ -51,7 +51,8 @@ from .kernel.stage2_bindings import (
 )
 from .kernel.stage2_parameters import (
     PARAMETER_SCHEMA, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
-    prepare_parameters, parameter_bank_images, bind_parameter_bank,
+    prepare_parameters, parameter_bank_images, parameter_bank_pair_images,
+    bind_parameter_bank,
 )
 from .kernel.stage2_parameters import (
     PARAMETER_CONTENT_SIGNATURE, parameter_content_signature,
@@ -366,8 +367,7 @@ def _bake_image_metadata(image, route, result):
         (image, _BAKE_IMAGE_SCHEMA, _BAKE_SCHEMA),
         (image, _BAKE_SOURCE_VERIFICATION, _BAKE_SOURCE_VERIFICATION_VERSION),
         (image, _BAKE_DOMAIN, str(route.get("domain", "COMPOSITOR"))),
-        (image, _BAKE_SIGNATURE, str(result.get(
-            "artifact_signature", route.get("source_signature", route.get("signature", ""))))),
+        (image, _BAKE_SIGNATURE, route["receipt_signature"]),
         (image, _BAKE_OPERATION, str(uuid4().hex)),
         (image, _BAKE_WIDTH, int(result["width"])),
         (image, _BAKE_HEIGHT, int(result["height"])),
@@ -384,9 +384,7 @@ def _publish_bake(entry, result, error):
     try:
         if error is not None:
             raise error
-        route = entry["inputs"]["route"]
-        if result.get("signature") != route.get("signature"):
-            raise RuntimeError("Bake helper returned pixels for different inputs")
+        route = entry["route"]
         path = Path(result["path"]).resolve()
         if not path.is_relative_to(entry["root"].resolve()):
             raise RuntimeError("Bake artifact is outside its request directory")
@@ -463,17 +461,14 @@ def _publish_bake(entry, result, error):
                     raise
 
 
-def _bake_activate(entry, result):
+def _bake_activate(entry, _result):
     node = entry["node"]
+    route = entry["route"]
     image = getattr(node, "pg_bake_image", None)
-    artifact_signature = result.get(
-        "artifact_signature", entry["inputs"]["route"].get("source_signature"),
-    )
-    if image is None or image.get(_BAKE_SIGNATURE) != artifact_signature:
+    if image is None or image.get(_BAKE_SIGNATURE) != route["receipt_signature"]:
         raise RuntimeError("Bake Image changed before activation")
     if _bake_wrapper(node) is None:
         _ensure_bake_wrapper(node)
-    route = entry["inputs"]["route"]
     node[_BAKE_CONTEXT] = json.dumps(_bake_context(route), separators=(",", ":"))
     _write_bake_receipt(node, route["receipt_signature"],
                         bake_routes.backend_signature(route))
@@ -562,7 +557,7 @@ def _bake_tick():
                                or (_bake_manager is not None
                                    and _bake_manager._node_key(node) in _bake_manager.jobs)))
     if tracked_nodes or _bake_pending_invalidations:
-        _reconcile_bake_outputs(tracked_nodes, exact=False)
+        _reconcile_bake_outputs(tracked_nodes)
     try:
         pending = _bake_manager.poll()
     except Exception as error:
@@ -631,9 +626,6 @@ def _bake_route(node, context, dependencies, upstream_grades):
     if route.get("width") is None or route.get("height") is None:
         route["width"] = int(node.pg_bake_width)
         route["height"] = int(node.pg_bake_height)
-    route["signature"] = route["request_signature"]
-    route["source_signature"] = route["receipt_signature"]
-    route["artifact_signature"] = route["source_signature"]
     route["source_revisions"] = _bake_sources.snapshot(dependencies)
     return route
 
@@ -815,7 +807,7 @@ def _invalidate_bake(node):
             and (_bake_manager is None
                  or _bake_manager._node_key(node) not in _bake_manager.jobs)):
         return
-    _reconcile_bake_outputs((node,), exact=False)
+    _reconcile_bake_outputs((node,))
 
 
 def _mark_bake_sources(dependencies):
@@ -858,7 +850,7 @@ def invalidate_source(image):
     if affected:
         _reconcile_bake_outputs(
             tuple(node for node in _all_grade_nodes()
-                  if node.as_pointer() in affected), exact=False,
+                  if node.as_pointer() in affected),
         )
     return len(affected)
 
@@ -911,17 +903,17 @@ def _draw_bake_controls(node, context, layout):
         box.label(text=str(node.get(_BAKE_ERROR)), icon="ERROR")
 
 
-def _reconcile_bake_outputs(nodes=None, *, exact=True):
+def _reconcile_bake_outputs(nodes=None):
     if _grade_resources is None:
         return
     try:
         with _grade_resources.gate.graph_commit():
-            _reconcile_bake_outputs_in_scope(nodes, exact=exact)
+            _reconcile_bake_outputs_in_scope(nodes)
     except PublicationDeferred:
         _ensure_bake_timer()
 
 
-def _reconcile_bake_outputs_in_scope(nodes=None, *, exact=True):
+def _reconcile_bake_outputs_in_scope(nodes=None):
     affected = _consume_bake_invalidations()
     nodes = tuple(_all_grade_nodes()) if nodes is None else tuple(nodes)
     if affected:
@@ -944,8 +936,8 @@ def _reconcile_bake_outputs_in_scope(nodes=None, *, exact=True):
                 _dispatch(node, node_policy.Event(
                     "installation_result", record["state"].desired_signature, str(error)))
             continue
-        # All revalidation uses cheap metadata and revisions. Exact geometry
-        # validation happens only while accepting an explicit Bake request.
+        # Revalidation uses cheap metadata and revisions. The UV overlap check
+        # happens only while accepting an explicit Bake request.
         if receipt_signature is not None:
             _bake_observed_signature(node, _stored_bake_context(node), track_sources=True)
         if job is not None:
@@ -3171,34 +3163,33 @@ def _compositor_parameter_samples_valid(kernel, selector, readers):
     return True
 
 
+def _packed_parameter_kernel_banks(kernel):
+    active = kernel.get(PARAMETER_ACTIVE_BANK)
+    generation = kernel.get(PARAMETER_GENERATION)
+    if (type(active) is not int or active not in (0, 1)
+            or type(generation) is not int or generation < 0):
+        return None
+    banks = tuple(kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
+    role_bundles = parameter_bank_pair_images(banks)
+    if (role_bundles is None
+            or any(image.is_dirty or image.packed_file is None
+                   for bundle in role_bundles for image in bundle.values())):
+        return None
+    return active, role_bundles
+
+
 def _parameter_kernel_receipt_current(kernel):
     """Check cached publication receipts without traversing a graph or image buffer."""
     try:
-        active = kernel.get(PARAMETER_ACTIVE_BANK)
-        generation = kernel.get(PARAMETER_GENERATION)
-        if (kernel.get("_perceptual_grade_stage2_complete") is not True
-                or type(active) is not int or active not in (0, 1)
-                or type(generation) is not int or generation < 0):
+        if kernel.get("_perceptual_grade_stage2_complete") is not True:
             return False
-        images = tuple(kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
-        if (len(images) != 2 or images[0] is None or images[1] is None
-                or images[0] == images[1]):
+        validated = _packed_parameter_kernel_banks(kernel)
+        if validated is None:
             return False
-        role_bundles = tuple(parameter_bank_images(image) for image in images)
-        all_role_images = tuple(
-            bundle[role] for bundle in role_bundles for role in PARAMETER_ROLES
-        )
-        pointers = tuple(image.as_pointer() for image in all_role_images)
-        if (len(set(pointers)) != len(pointers)
-                or not all(parameter_bundle_receipt_matches(image) for image in images)
-                or any(not _parameter_role_receipt_matches(
-                    bundle[role], role,
-                ) for bundle in role_bundles for role in PARAMETER_ROLES)):
-            return False
-        image = images[active]
-        return (kernel.get(PARAMETER_SIGNATURE) is not None
-                and kernel.get(PARAMETER_SIGNATURE) == image.get(PARAMETER_SIGNATURE)
-                and image.get(PARAMETER_CONTENT_SIGNATURE) is not None)
+        active, role_bundles = validated
+        signature = kernel.get(PARAMETER_SIGNATURE)
+        return (signature is not None
+                and signature == role_bundles[active]["parameter"].get(PARAMETER_SIGNATURE))
     except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
         return False
 
@@ -3208,26 +3199,10 @@ def _parameter_kernel_structure_valid(kernel):
         if (kernel is None or kernel.get(_KERNEL_KIND) != _KERNEL_SCHEMA
                 or not kernel.get("_perceptual_grade_stage2_complete")):
             return False
-        active = kernel.get(PARAMETER_ACTIVE_BANK)
-        generation = kernel.get(PARAMETER_GENERATION)
-        if (type(active) is not int or active not in (0, 1)
-                or type(generation) is not int or generation < 0):
+        validated = _packed_parameter_kernel_banks(kernel)
+        if validated is None:
             return False
-        images = tuple(kernel.get(key) for key in PARAMETER_BANK_BINDINGS)
-        if (len(images) != 2 or any(image is None for image in images)
-                or images[0] == images[1]):
-            return False
-        role_bundles = tuple(parameter_bank_images(image) for image in images)
-        all_role_images = tuple(
-            bundle[role] for bundle in role_bundles for role in PARAMETER_ROLES
-        )
-        pointers = tuple(image.as_pointer() for image in all_role_images)
-        if (len(set(pointers)) != len(pointers)
-                or not all(parameter_bundle_receipt_matches(image) for image in images)
-                or any(not _parameter_role_receipt_matches(
-                    bundle[role], role,
-                ) for bundle in role_bundles for role in PARAMETER_ROLES)):
-            return False
+        active, role_bundles = validated
         selectors = []
         readers = [{}, {}]
         for reader in kernel.nodes:
@@ -3290,7 +3265,7 @@ def _parameter_image_content_matches(image):
     return parameter_image_matches(image)
 
 
-def _parameter_role_receipt_matches(image, role, content_signature=None):
+def _parameter_role_receipt_matches(image, role, content_signature):
     try:
         height, width, _channels = PARAMETER_ROLE_SHAPES[role]
         receipt = image.get(PARAMETER_CONTENT_SIGNATURE)
@@ -3300,7 +3275,7 @@ def _parameter_role_receipt_matches(image, role, content_signature=None):
                 and tuple(image.size) == (width, height)
                 and not image.is_dirty and image.packed_file is not None
                 and receipt is not None
-                and (content_signature is None or receipt == content_signature))
+                and receipt == content_signature)
     except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
         return False
 
@@ -3459,7 +3434,6 @@ def _preparation_tick():
     if _node_reset_pending:
         return 0.02
     try:
-        _collect_compositor_receipts()
         _preparation_runtime.pump_main_thread()
         for _nodes, error in _handle_preparation_completions(_preparation_runtime.collect()):
             print("Perceptual Grade asynchronous publication failed:", error)
@@ -5079,10 +5053,13 @@ def _render_preflight_tick():
     if _grade_resources is None:
         return None
     try:
-        _collect_compositor_receipts()
         _service_render_preflight()
     except Exception as error:
         print("Perceptual Grade render preparation failed:", error)
+    try:
+        _collect_compositor_receipts()
+    except Exception as error:
+        print("Perceptual Grade compositor Viewer maintenance failed:", error)
     return 0.02 if _grade_resources.gate.has_render_preflight else 0.1
 
 

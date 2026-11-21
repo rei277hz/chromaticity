@@ -1225,6 +1225,38 @@ assert not nodes._parameter_kernel_valid(shader_kernel)
 shader_kernel.links.new(shader_factor_source, shader_factor_target)
 assert nodes._parameter_kernel_valid(shader_kernel)
 
+# Each bank's receipt remains valid when the pair shares an equal-content
+# role image. Reject the alias even when every reader follows its binding.
+bindings = importlib.import_module(
+    "bl_ext.pg_grade_smoke.perceptual_grade.kernel.stage2_bindings"
+)
+first_bank, second_bank = parameter_banks(independent_node)
+role = "color"
+binding = bindings.PARAMETER_ROLE_BINDING + role
+original_image = second_bank[binding]
+shared_image = first_bank[binding]
+second_readers = tuple(
+    reader for reader in shader_kernel.nodes
+    if (reader.get(nodes.PARAMETER_READER)
+        and reader.get(nodes.PARAMETER_READER_BANK) == 1
+        and reader.get(nodes.PARAMETER_READER_ROLE) == role)
+)
+assert second_readers
+assert nodes._parameter_kernel_receipt_current(shader_kernel)
+try:
+    second_bank[binding] = shared_image
+    for reader in second_readers:
+        reader.image = shared_image
+    assert all(nodes.parameter_bundle_receipt_matches(bank)
+               for bank in (first_bank, second_bank))
+    assert not nodes._parameter_kernel_receipt_current(shader_kernel)
+    assert not nodes._parameter_kernel_structure_valid(shader_kernel)
+finally:
+    second_bank[binding] = original_image
+    for reader in second_readers:
+        reader.image = original_image
+assert nodes._parameter_kernel_valid(shader_kernel)
+
 compositor_kernel = shared_compositor_node.node_tree
 sample_id = next(item[nodes.PARAMETER_SAMPLE_ID]
                  for item in compositor_kernel.nodes

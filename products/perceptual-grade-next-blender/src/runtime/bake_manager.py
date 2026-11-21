@@ -138,7 +138,7 @@ class BakeManager:
         if not bake_policy.can_enqueue(len(self.jobs), node_key in self.jobs):
             raise RuntimeError("Bake queue is full or this node already has a request")
         route = dict(route)
-        signature = route.get("signature")
+        signature = route.get("request_signature")
         if not isinstance(signature, str) or not signature:
             raise ValueError("Bake request requires a nonempty signature")
         if current_signature(node, route) != signature:
@@ -149,13 +149,11 @@ class BakeManager:
             inputs = {
                 "snapshot_path": str(snapshot),
                 "artifact_dir": str(root), "images": images,
-                "route": route, "target": dict(route),
-                "identity": signature, "signature": signature,
-                "kind": "compositor" if route.get("domain") == "COMPOSITOR" else "shader",
+                "route": route,
             }
             entry = {
                 "node": node, "node_key": node_key,
-                "signature": signature, "route": route, "inputs": inputs,
+                "route": route, "inputs": inputs,
                 "root": root, "publish_callback": publish_callback,
                 "activate_callback": activate_callback,
                 "rollback_callback": rollback_callback,
@@ -224,7 +222,7 @@ class BakeManager:
 
     def _publish(self, entry, result):
         signature = self._resolve_signature(entry)
-        if signature != entry["signature"]:
+        if signature != entry["route"]["request_signature"]:
             self.invalidate(entry["node"], signature)
             return False
         factory = entry.get("publication_context")
@@ -327,7 +325,7 @@ class BakeManager:
         while self.active is None and self.queue and not self.closed:
             entry = self.queue.popleft()
             signature = self._resolve_signature(entry)
-            if signature != entry["signature"]:
+            if signature != entry["route"]["request_signature"]:
                 effects = self._event(entry, bake_policy.Event(
                     "invalidate",
                     current_signature=signature,
@@ -348,7 +346,7 @@ class BakeManager:
                 self.active = None
                 effects = self._event(entry, bake_policy.Event(
                     "completed",
-                    current_signature=entry["signature"], successful=False,
+                    current_signature=entry["route"]["request_signature"], successful=False,
                     error=str(error),
                 ))
                 if effects.action == "retire":
@@ -380,7 +378,7 @@ class BakeManager:
 
         receipt_matches = (
             isinstance(result, dict)
-            and result.get("signature") == entry["signature"]
+            and result.get("request_signature") == entry["route"]["request_signature"]
         )
         signature = self._resolve_signature(entry)
         effects = self._event(entry, bake_policy.Event(

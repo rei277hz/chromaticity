@@ -4,9 +4,8 @@
 
 import asyncio
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
-from functools import partial
 import json
 import threading
 from typing import Optional
@@ -61,7 +60,6 @@ class _WorkResult:
 @dataclass
 class _Lane:
     prepare: object
-    executor: Optional[ThreadPoolExecutor]
     progressive: bool
     host_owner: Optional[object] = None
 
@@ -103,17 +101,12 @@ class PreparationRuntime:
     plain values on the calling thread and cannot affect preparation outcomes.
     """
 
-    def __init__(self, prepare=None, *, workers=1, default_lane="default", on_event=None):
+    def __init__(self, *, default_lane="default", on_event=None):
         if not isinstance(default_lane, str) or not default_lane:
             raise ValueError("Default lane name must be nonempty")
         self.default_lane = default_lane
         self.on_event = on_event
-        self.executor = None
         self._lanes = {}
-        if prepare is not None:
-            self.executor = ThreadPoolExecutor(max_workers=workers,
-                                               thread_name_prefix=f"async-runtime-{default_lane}")
-            self._lanes[default_lane] = _Lane(prepare, self.executor, False)
         self._host_lock = threading.Lock()
         self._host_queue = deque()
         self._host_active = None
@@ -184,21 +177,6 @@ class PreparationRuntime:
                 # Diagnostics must not turn successful work into a Grade error.
                 pass
 
-    def register_lane(self, name, prepare, *, workers=1, progressive=False):
-        """Add an independent worker pool under the existing asyncio coordinator."""
-        if not isinstance(name, str) or not name:
-            raise ValueError("Preparation lane name must be nonempty")
-        with self._lock:
-            self._raise_failure()
-            if self.closed:
-                raise RuntimeError("Preparation runtime is closed")
-            if name in self._lanes:
-                raise ValueError(f"Preparation lane already exists: {name}")
-            executor = ThreadPoolExecutor(
-                max_workers=workers, thread_name_prefix=f"async-runtime-{name}"
-            )
-            self._lanes[name] = _Lane(prepare, executor, bool(progressive))
-
     def register_async_lane(self, name, prepare_async):
         """Register an aggregate coroutine executed on the coordinator loop.
 
@@ -215,7 +193,7 @@ class PreparationRuntime:
                 raise RuntimeError("Preparation runtime is closed")
             if name in self._lanes:
                 raise ValueError(f"Preparation lane already exists: {name}")
-            self._lanes[name] = _Lane(prepare_async, None, False)
+            self._lanes[name] = _Lane(prepare_async, False)
 
     def register_polled_lane(self, name, owner, *, progressive=False):
         """Register a lane whose transport advances only on the host thread.
@@ -236,7 +214,7 @@ class PreparationRuntime:
                 raise RuntimeError("Preparation runtime is closed")
             if name in self._lanes:
                 raise ValueError(f"Preparation lane already exists: {name}")
-            self._lanes[name] = _Lane(None, None, bool(progressive), owner)
+            self._lanes[name] = _Lane(None, bool(progressive), owner)
 
     @property
     def pending(self):
@@ -478,26 +456,15 @@ class PreparationRuntime:
             self._observe(
                 "preparation_execute_start", signature=snapshot.signature,
                 lane=snapshot.lane, progressive=snapshot.progressive,
-                backend=("host" if lane.host_owner is not None else
-                         "async" if lane.executor is None else "thread"),
+                backend="host" if lane.host_owner is not None else "async",
             )
         try:
             if lane.host_owner is not None:
                 prepared = await self._execute_on_host(snapshot, lane)
-            elif lane.executor is None:
+            else:
                 if snapshot.progressive:
                     raise RuntimeError("Async preparation lanes are final-only")
                 prepared = await lane.prepare(snapshot.payload)
-            else:
-                call = partial(lane.prepare, snapshot.payload)
-                if snapshot.progressive:
-                    def call_with_preview():
-                        return lane.prepare(
-                            snapshot.payload,
-                            lambda preview: self._emit_preview(snapshot, preview),
-                        )
-                    call = call_with_preview
-                prepared = await self.loop.run_in_executor(lane.executor, call)
             result = _WorkResult(job_key, prepared, None, snapshot.playback_session)
             with self._lock:
                 self._prepared[job_key] = prepared
@@ -861,11 +828,6 @@ class PreparationRuntime:
                             failures.append(error)
                         else:
                             lane.host_owner = None
-                    if lane.executor is not None:
-                        try:
-                            lane.executor.shutdown(wait=True)
-                        except Exception as error:
-                            failures.append(error)
                 if failures:
                     raise ExceptionGroup("Preparation runtime cleanup failed", failures)
                 return
@@ -902,11 +864,5 @@ class PreparationRuntime:
                     self._thread.join()
                 except Exception as error:
                     failures.append(error)
-                for lane in self._lanes.values():
-                    if lane.executor is not None:
-                        try:
-                            lane.executor.shutdown(wait=True)
-                        except Exception as error:
-                            failures.append(error)
             if failures:
                 raise ExceptionGroup("Preparation runtime cleanup failed", failures)

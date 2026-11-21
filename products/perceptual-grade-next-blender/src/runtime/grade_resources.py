@@ -5,12 +5,10 @@ from typing import Optional
 
 from ..kernel.stage2_bindings import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_GENERATION,
-    PARAMETER_IMAGE, PARAMETER_READER, PARAMETER_READER_BANK,
-    PARAMETER_READER_ROLE, PARAMETER_ROLE, PARAMETER_SELECTOR,
+    PARAMETER_READER, PARAMETER_READER_BANK, PARAMETER_READER_ROLE, PARAMETER_SELECTOR,
 )
 from ..kernel.stage2_parameters import (
-    PARAMETER_SCHEMA, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
-    parameter_bank_images, parameter_bundle_receipt_matches,
+    PARAMETER_ROLES, parameter_bank_images, parameter_bank_pair_images,
 )
 from ..policy import resources as resource_policy
 from .publication import PublicationDeferred, PublicationGate
@@ -183,18 +181,16 @@ class GradeResources:
             banks = tuple(tree.get(key) for key in PARAMETER_BANK_BINDINGS)
             active = tree.get(PARAMETER_ACTIVE_BANK)
             generation = tree.get(PARAMETER_GENERATION)
-            valid_banks = (
-                len(banks) == 2 and banks[0] is not None and banks[1] is not None
-                and cls._valid_pair(banks)
-            )
+            role_bundles = parameter_bank_pair_images(banks)
             observation = resource_policy.Adoption(
                 owner_matches=tree.get(OWNER) == owner,
                 node_matches=tree.get(OWNER_NODE) == owner_node,
                 space_matches=tree.get("_perceptual_grade_working_space") == space,
                 complete=bool(tree.get("_perceptual_grade_stage2_complete")),
-                image_valid=(valid_banks and cls._valid_bank_index(active)
+                image_valid=(role_bundles is not None and cls._valid_bank_index(active)
                              and type(generation) is int and generation >= 0
-                             and cls._selector_matches(tree, banks, active)),
+                             and cls._selector_matches(
+                                 tree, active, role_bundles)),
                 image_agrees=(
                     (selected_banks is None or cls._same_banks(selected_banks, banks))
                     and (selected_active is None or selected_active == active)
@@ -209,45 +205,8 @@ class GradeResources:
             pass
         return None
 
-    @classmethod
-    def _valid_image(cls, image, role):
-        try:
-            shape = PARAMETER_ROLE_SHAPES[role]
-            return (image.as_pointer() != 0
-                    and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
-                    and image.get(PARAMETER_ROLE) == role
-                    and tuple(image.size) == (shape[1], shape[0]))
-        except (AttributeError, ReferenceError, RuntimeError, TypeError):
-            return False
-
-    @classmethod
-    def _valid_bundle(cls, primary):
-        try:
-            images = parameter_bank_images(primary)
-            if set(images) != set(PARAMETER_ROLES):
-                return False
-            values = tuple(images[role] for role in PARAMETER_ROLES)
-            pointers = tuple(image.as_pointer() for image in values)
-            return (all(pointers) and len(set(pointers)) == len(PARAMETER_ROLES)
-                    and all(cls._valid_image(image, role)
-                            for role, image in zip(PARAMETER_ROLES, values))
-                    and parameter_bundle_receipt_matches(primary))
-        except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
-            return False
-
-    @classmethod
-    def _valid_pair(cls, banks):
-        try:
-            if len(banks) != 2 or not all(cls._valid_bundle(image) for image in banks):
-                return False
-            pointers = tuple(image.as_pointer() for primary in banks
-                             for image in parameter_bank_images(primary).values())
-            return len(set(pointers)) == 2 * len(PARAMETER_ROLES)
-        except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
-            return False
-
     @staticmethod
-    def _selector_matches(tree, banks, active):
+    def _selector_matches(tree, active, role_bundles):
         try:
             selectors = tuple(node for node in tree.nodes
                               if node.get(PARAMETER_SELECTOR))
@@ -277,9 +236,9 @@ class GradeResources:
                 role = reader.get(PARAMETER_READER_ROLE)
                 if bank not in (0, 1) or role not in PARAMETER_ROLES:
                     return False
-                bundle = parameter_bank_images(banks[bank])
                 if not GradeResources._same_image(
-                        getattr(reader, "image", None), bundle.get(role)):
+                        getattr(reader, "image", None),
+                        role_bundles[bank].get(role)):
                     return False
                 observed.add((bank, role))
             return observed == {
@@ -308,7 +267,7 @@ class GradeResources:
 
     def set_banks(self, resource, banks, active_bank, generation):
         banks = tuple(banks)
-        if (not self._valid_pair(banks)
+        if (parameter_bank_pair_images(banks) is None
                 or not self._valid_bank_index(active_bank)
                 or type(generation) is not int or generation < 0):
             raise ValueError("Grade resources require two valid banks and a selector")
