@@ -26,9 +26,9 @@ from .stage2_bindings import (
     TEMPLATE_VARIANT as TEMPLATE_VARIANT_KEY,
 )
 from .stage2_parameters import (
-    PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
+    PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLES,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, bind_parameter_bank,
-    parameter_bank_images, parameter_content_signature,
+    parameter_bank_images, parameter_bank_pair_images, parameter_content_signature,
     parameter_image_matches, prepare_parameters,
 )
 
@@ -649,36 +649,27 @@ def _make_image(name, pixels, marker=None, *, retire=None):
 
 
 def _parameter_banks(prepared, supplied, *, retire=None):
-    parameters = prepared.parameters or prepare_parameters(prepared)
     if supplied is not None:
         # A publication transaction can bind the old active bank and a newly
         # staged candidate before its selector operation is authorized.  Both
         # supplied banks must be internally valid, but need not contain the
         # same settings as `prepared` or as each other.
         banks = tuple(supplied)
-        if len(banks) != 2 or banks[0] == banks[1]:
+        bundles = parameter_bank_pair_images(banks)
+        if bundles is None:
             raise TemplateAssetError("Grade templates require two distinct parameter banks")
         borrowed = []
-        for primary in banks:
+        for primary, bundle in zip(banks, bundles):
             try:
-                bundle = parameter_bank_images(primary)
-                valid = (set(bundle) == set(PARAMETER_ROLES)
-                         and len({image.as_pointer() for image in bundle.values()
-                                  if image is not None}) == len(PARAMETER_ROLES)
-                         and parameter_image_matches(primary))
-                for role, image in bundle.items():
+                valid = parameter_image_matches(primary)
+                for image in bundle.values():
                     valid = valid and (
                         image.library is None
                         and image.source in {"FILE", "GENERATED"}
                         and image.is_float
-                        and image.packed_file is not None
-                        and not image.is_dirty
                         and image.colorspace_settings.name == "Non-Color"
                         and image.alpha_mode == "CHANNEL_PACKED"
                         and not image.use_half_precision
-                        and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
-                        and image.get(PARAMETER_ROLE) == role
-                        and tuple(image.size) == tuple(PARAMETER_ROLE_SHAPES[role][1::-1])
                     )
                 borrowed.extend(bundle[role] for role in PARAMETER_ROLES)
             except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
@@ -689,6 +680,7 @@ def _parameter_banks(prepared, supplied, *, retire=None):
     banks = []
     created = []
     try:
+        parameters = prepared.parameters or prepare_parameters(prepared)
         for bank in (0, 1):
             role_images = {}
             for role in PARAMETER_ROLES:
@@ -723,7 +715,6 @@ def instantiate_grade(prepared, tree_type, parameter_images=None, active_bank=0,
             or getattr(prepared, "boundary", None) is None
             or prepared.tone.reference != 203.):
         raise TemplateAssetError("Grade templates require complete Tone and boundary preparation")
-    prepare_parameters(prepared)
     _check_context(store._contract()[0], prepared)
     _check_context(store._contract()[0], prepared.boundary)
     variant = TemplateVariant("grade", tree_type)

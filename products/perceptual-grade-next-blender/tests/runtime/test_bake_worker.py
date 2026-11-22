@@ -7,6 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import zipfile
 
 
@@ -35,6 +36,45 @@ class BakeWorkerBackendTests(unittest.TestCase):
         self.module._configure_cycles_cpu(scene)
         self.assertEqual(scene.render.engine, "CYCLES")
         self.assertEqual(scene.cycles.device, "CPU")
+
+    def test_bake_dispatch_uses_the_frozen_route_domain(self):
+        context = SimpleNamespace(checkpoint=lambda: None)
+        route = {"domain": "IMAGE", "scene": "Scene"}
+        inputs = {"snapshot_path": "/snapshot.blend", "artifact_dir": "/artifacts",
+                  "images": [], "route": route}
+        compositor_inputs = dict(inputs, route=dict(route, domain="COMPOSITOR"))
+        bpy = SimpleNamespace(
+            data=SimpleNamespace(node_groups=[], scenes=object()),
+            context=SimpleNamespace(window=None),
+        )
+        with patch.dict(sys.modules, {"bpy": bpy}), \
+                patch.object(self.module, "_open_snapshot") as open_snapshot, \
+                patch.object(self.module, "route_datablock", return_value=None), \
+                patch.object(self.module, "_shader", return_value="shader") as shader, \
+                patch.object(self.module, "_compositor", return_value="compositor") as compositor:
+            worker = self.module.BakeWorker()
+            self.assertEqual(worker.dispatch("bake", inputs, context), "shader")
+            self.assertEqual(
+                worker.dispatch("bake", compositor_inputs, context), "compositor")
+
+        self.assertEqual(open_snapshot.call_count, 2)
+        shader.assert_called_once_with(inputs, context)
+        compositor.assert_called_once_with(compositor_inputs, context)
+
+    def test_bake_dispatch_rejects_legacy_operations_and_inputs(self):
+        context = SimpleNamespace(checkpoint=lambda: None)
+        worker = self.module.BakeWorker()
+        for operation in ("native_bake", "shader_bake", "compositor_bake"):
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(ValueError, "Unknown Bake helper operation"):
+                    worker.dispatch(operation, {}, context)
+
+        inputs = {"artifact_dir": "/artifacts", "images": [], "route": {"domain": "IMAGE"}}
+        for aliases in ({"snapshot": "/snapshot.blend"},
+                        {"snapshot_path": "/snapshot.blend", "target": {}}):
+            with self.subTest(aliases=aliases):
+                with self.assertRaisesRegex(ValueError, "canonical request"):
+                    worker.dispatch("bake", dict(inputs, **aliases), context)
 
 
 if __name__ == "__main__":

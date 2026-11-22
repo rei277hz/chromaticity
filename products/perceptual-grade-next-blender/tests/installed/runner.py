@@ -869,21 +869,39 @@ for tree in (shared_shader_nodes[0].node_tree, shared_compositor_node.node_tree)
 # audit, so model the ordinary receipt-backed cache here.
 original_parameter_kernel_valid = nodes._parameter_kernel_valid
 original_compositor_known = nodes._compositor_receipts.known
+original_snapshot_values = nodes._snapshot_values
+snapshot_calls = []
+working_space = nodes._working_space()
+expected_values = original_snapshot_values(nodes._grade_settings(shared_grade, working_space))
+expected_preparation_signature = nodes._signature(
+    "grade-preparation", expected_values, working_space,
+)
 try:
     def reject_deep_request_audit(_kernel):
         raise AssertionError("cached Grade request performed a deep kernel audit")
 
+    def observe_snapshot_values(settings):
+        values = original_snapshot_values(settings)
+        snapshot_calls.append(values)
+        return values
+
     nodes._parameter_kernel_valid = reject_deep_request_audit
     nodes._compositor_receipts.known = lambda _pointer: True
+    nodes._snapshot_values = observe_snapshot_values
     for cached_node in (shared_shader_nodes[0], shared_compositor_node):
         cached_record = nodes._node_stores[cached_node.as_pointer()]
         applied_signature = cached_record["state"].applied_signature
         assert applied_signature is not None
-        assert not nodes._request_node(cached_node, nodes._working_space())
-        assert cached_record["state"].applied_signature == applied_signature
+        snapshot_calls.clear()
+        assert not nodes._request_node(cached_node, working_space)
+        assert snapshot_calls == [expected_values]
+        state = cached_record["state"]
+        assert state.desired_signature == state.applied_signature == applied_signature
+        assert state.desired_preparation_signature == expected_preparation_signature
 finally:
     nodes._parameter_kernel_valid = original_parameter_kernel_valid
     nodes._compositor_receipts.known = original_compositor_known
+    nodes._snapshot_values = original_snapshot_values
 
 # Removing one user must retain the kernel and image still used by its peers.
 shared_kernel = shader_node.node_tree
@@ -983,7 +1001,7 @@ assert all(parameter_image(node) == shared_parameter_image
            for node in (*shared_shader_nodes, compositor_node, shared_compositor_node))
 assert shared_parameter_image.get(nodes.PARAMETER_SIGNATURE) == (
     nodes._preparation_signature(
-        nodes._grade_settings(shared_grade, nodes._working_space()),
+        nodes._snapshot_values(nodes._grade_settings(shared_grade, nodes._working_space())),
         nodes._working_space(),
     )
 )

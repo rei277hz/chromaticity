@@ -426,6 +426,38 @@ class NodeTemplateTests(unittest.TestCase):
         finally:
             first.dispose()
 
+    def test_grade_parameters_are_packed_only_for_owned_banks(self):
+        prepared = complete_prepared(adjusted=True)
+        with patch.object(node_templates, "prepare_parameters",
+                          wraps=prepare_parameters) as pack_parameters:
+            first = node_templates.instantiate_grade(prepared, "ShaderNodeTree")
+        pack_parameters.assert_called_once_with(prepared)
+        banks = tuple(first.tree[key] for key in PARAMETER_BANK_BINDINGS)
+        try:
+            with patch.object(node_templates, "prepare_parameters",
+                              side_effect=AssertionError("borrowed banks need no packing")):
+                second = node_templates.instantiate_grade(
+                    prepared, "CompositorNodeTree", parameter_images=banks,
+                )
+            try:
+                self.assertEqual(
+                    tuple(second.tree[key] for key in PARAMETER_BANK_BINDINGS), banks,
+                )
+                self.assert_parameter_bindings(second, prepared, 0, 0)
+            finally:
+                second.dispose()
+        finally:
+            first.dispose()
+
+        cached = replace(prepared, parameters=prepare_parameters(prepared))
+        with patch.object(node_templates, "prepare_parameters",
+                          side_effect=AssertionError("cached parameters must be reused")):
+            instance = node_templates.instantiate_grade(cached, "ShaderNodeTree")
+        try:
+            self.assert_parameter_bindings(instance, cached, 0, 0)
+        finally:
+            instance.dispose()
+
     def test_shared_stack_templates_bind_size_specific_runtime_images(self):
         for space in SPACES:
             for size in (33, 65):

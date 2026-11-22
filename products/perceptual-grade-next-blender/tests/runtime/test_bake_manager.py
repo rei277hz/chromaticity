@@ -211,8 +211,9 @@ class BakeManagerTests(unittest.TestCase):
                 patch.object(self.worker, "_minimal_node_types"), \
                 patch.object(self.worker, "_restore_images") as restore, \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
-            self.worker._open_snapshot({"snapshot_path": str(snapshot), "images": []})
-        restore.assert_called_once_with([], ())
+            self.worker._open_snapshot({"snapshot_path": str(snapshot), "images": [],
+                                         "route": {"images": []}})
+        restore.assert_called_once_with([], [])
 
     def test_worker_restores_finite_sidecar_without_checksum_scan(self):
         root = Path(self.snapshots.name) / "worker-images"
@@ -280,15 +281,20 @@ class BakeManagerTests(unittest.TestCase):
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
             result = self.worker._result(
                 np.ones((1, 2, 4), dtype=np.float32),
-                {"artifact_dir": str(root)},
-                {"scene": "Scene", "request_signature": "sig"}, {"domain": "IMAGE"},
+                {"artifact_dir": str(root),
+                 "route": {"scene": "Scene", "request_signature": "sig"}},
                 backend="SHADER",
             )
         self.assertEqual(Path(result["path"]), root / "bake.exr")
-        self.assertEqual(result["request_signature"], "sig")
         self.assertTrue(Path(result["path"]).is_file())
-        self.assertNotIn("generation", result)
-        self.assertNotIn("sha256", result)
+        self.assertEqual(result, {
+            "path": str(root / "bake.exr"),
+            "width": 2,
+            "height": 1,
+            "request_signature": "sig",
+            "backend": "SHADER",
+            "device": None,
+        })
 
     def test_mismatched_helper_signature_never_publishes(self):
         entry = self.request(self.node(1))

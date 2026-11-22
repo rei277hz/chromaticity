@@ -120,7 +120,7 @@ assert all(nodes.node_policy.output_allowed(nodes._node_stores[node.as_pointer()
            for node in users)
 assert all(nodes._kernel_for_node(node).get(nodes.PARAMETER_SIGNATURE)
            == nodes._preparation_signature(
-               nodes._grade_settings(grade, nodes._working_space()),
+               nodes._snapshot_values(nodes._grade_settings(grade, nodes._working_space())),
                nodes._working_space(),
            ) for node in users)
 

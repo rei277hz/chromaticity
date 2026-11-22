@@ -131,7 +131,6 @@ _grade_consumers = {}
 _stack_entry_owners = {}
 _indexed_node_grades = {}
 _indexed_node_entries = {}
-_indexed_output_nodes = {}
 _output_registry_ready = False
 _node_reset_pending = False
 _lifecycle_changing = False
@@ -1415,8 +1414,8 @@ def _snapshot_values(settings):
     ))
 
 
-def _preparation_signature(settings, working_space):
-    return _signature("grade-preparation", _snapshot_values(settings), working_space)
+def _preparation_signature(values, working_space):
+    return _signature("grade-preparation", values, working_space)
 
 
 def _retire_template_resource(kind, resource):
@@ -2281,8 +2280,9 @@ def _request_node(node, working_space, snapshots=None, *, frame_scene=None):
         preparation_signature = signature
         lane = "lut"
     else:
-        signature = _signature(node.id_data.bl_idname, _snapshot_values(snapshot), working_space)
-        preparation_signature = _preparation_signature(snapshot, working_space)
+        values = _snapshot_values(snapshot)
+        signature = _signature(node.id_data.bl_idname, values, working_space)
+        preparation_signature = _preparation_signature(values, working_space)
         lane = "grade"
     record = _record_for(node, signature, source)
     if _is_per_node_grade_node(node):
@@ -2632,14 +2632,16 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
     resource = _grade_resources.resource(users[0]["node"], prepared.space)
     settings = Settings(linear=prepared.linear.settings, tone=prepared.tone.settings,
                         color=prepared.color.settings, space=prepared.space)
-    preparation_signature = _preparation_signature(settings, prepared.space)
+    values = _snapshot_values(settings)
+    preparation_signature = _preparation_signature(values, prepared.space)
     old_active = resource.active_bank if resource.active_bank in (0, 1) else 0
     old_generation = resource.generation if resource.generation is not None else 0
     generation = _grade_resources.next_generation(resource)
     active_valid = (resource.banks is None
                     or _parameter_image_content_matches(resource.banks[old_active]))
     if playback_session is not None and not active_valid and any(
-            _publication_signature(record, prepared) != record["state"].desired_signature
+            _signature(record["node"].id_data.bl_idname, values, prepared.space)
+            != record["state"].desired_signature
             for record in users):
         # A recovery must install the exact demand. An older playback result
         # cannot repair a corrupt active bank and certify its replacement.
@@ -2750,7 +2752,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
             if not structure_valid:
                 kernel = _kernel(
                     tree_type, prepared, prepared.space,
-                    _signature(tree_type, _snapshot_values(settings), prepared.space),
+                    _signature(tree_type, values, prepared.space),
                     banks, old_active, old_generation,
                 )
                 created.append(kernel)
@@ -2795,7 +2797,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
             kernel[PARAMETER_SIGNATURE] = preparation_signature
             tree_type = kernel.bl_idname
             kernel[_KERNEL_SIGNATURE] = _signature(
-                tree_type, _snapshot_values(settings), prepared.space,
+                tree_type, values, prepared.space,
             )
         for node, _previous in context["outer_before"]:
             kernel = kernels[node.id_data.bl_idname]
@@ -2809,7 +2811,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
                 or kernel.get(PARAMETER_SIGNATURE)
                 != kernel.get(PARAMETER_BANK_BINDINGS[bank]).get(PARAMETER_SIGNATURE)
                 or kernel.get(_KERNEL_SIGNATURE) != _signature(
-                    kernel.bl_idname, _snapshot_values(settings), prepared.space)
+                    kernel.bl_idname, values, prepared.space)
                 for kernel in kernels.values()):
             raise RuntimeError("Grade parameter selector readback did not match the staged bank")
         return {"selected_bank": selected.pop()}
@@ -2825,7 +2827,7 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
         for record in users:
             event_kind = "recovery_result" if context["repairing"] else "installation_result"
             delivery_errors.extend(_dispatch(record["node"], node_policy.Event(
-                event_kind, _publication_signature(record, prepared),
+                event_kind, _signature(record["node"].id_data.bl_idname, values, prepared.space),
                 playback_preview=_playback_preview(record, playback_session))))
         if delivery_errors:
             raise ExceptionGroup("Grade installation delivery failed", delivery_errors)
@@ -3771,7 +3773,6 @@ def _clear_output_registry():
     _stack_entry_owners.clear()
     _indexed_node_grades.clear()
     _indexed_node_entries.clear()
-    _indexed_output_nodes.clear()
     _output_registry_ready = False
 
 
@@ -3788,7 +3789,6 @@ def _unindex_output_node(pointer):
         owner = _stack_entry_owners.get(entry_pointer)
         if owner is not None and owner[0] == pointer:
             _stack_entry_owners.pop(entry_pointer, None)
-    _indexed_output_nodes.pop(pointer, None)
 
 
 def _index_output_node(node):
@@ -3801,7 +3801,6 @@ def _index_output_node(node):
         if not pointer:
             return True
         _unindex_output_node(pointer)
-        _indexed_output_nodes[pointer] = node
         grades = tuple(grade_pointer for grade_pointer in _consumer_grade_ids(node)
                        if grade_pointer)
         _indexed_node_grades[pointer] = grades
@@ -3891,23 +3890,14 @@ def _stack_owner(entry):
                 return candidate
     except (AttributeError, ReferenceError, RuntimeError, TypeError):
         pass
-    if not _output_registry_ready:
-        _rebuild_output_registry()
-        indexed = _stack_entry_owners.get(pointer)
-        if indexed is not None:
-            return indexed[1]
-    else:
-        _rebuild_output_registry()
-        indexed = _stack_entry_owners.get(pointer)
-        if indexed is not None:
-            return indexed[1]
-    return None
+    _rebuild_output_registry()
+    indexed = _stack_entry_owners.get(pointer)
+    return indexed[1] if indexed is not None else None
 
 
 def _stack_changed(entry, _context):
     node = _stack_owner(entry)
     if node is not None:
-        _cancel_stale_color_gestures(node)
         _refresh_stack_policy(node)
 
 
@@ -6979,6 +6969,14 @@ def _unregister_handlers():
 
 def register():
     global _preparation_runtime, _grade_preparer, _grade_resources, _bake_manager
+    retrying_preparation_runtime = (
+        _preparation_runtime is not None and _preparation_runtime.closed
+    )
+    if retrying_preparation_runtime:
+        # addon_utils can mark an add-on disabled even when unregister fails.
+        # Retry the retained host owner before replacing its coordinator.
+        _preparation_runtime.close()
+        _preparation_runtime = None
     classes = (
         PGLinearSettings,
         PGToneSettings,
@@ -7016,12 +7014,15 @@ def register():
     )
     try:
         localization.register()
-        if _preparation_runtime is None:
-            if _grade_resources is not None:
-                # A failed prior shutdown may still own native-reader pins.
-                _reset_node_stores()
+        if _grade_resources is None:
             _grade_resources = GradeResources(bpy)
+        elif _preparation_runtime is None and not retrying_preparation_runtime:
+            # Recover lifecycle caches if registration had failed after their
+            # coordinator was already released.
+            _reset_node_stores()
+        if _grade_preparer is None:
             _grade_preparer = GradePreparer(workers=3)
+        if _preparation_runtime is None:
             _preparation_runtime = PreparationRuntime(default_lane="grade")
             _preparation_runtime.register_async_lane("grade", _grade_preparer.prepare)
             _preparation_runtime.register_polled_lane(
@@ -7031,6 +7032,8 @@ def register():
             _bake_manager = BakeManager(bpy)
         elif _bake_manager.closed and not _bake_manager.backend_closed:
             raise RuntimeError("Previous Bake helper is still retiring")
+        elif _bake_manager.closed:
+            _bake_manager = BakeManager(bpy)
         for cls in classes:
             if cls not in _registered_classes:
                 if not cls.is_registered:
@@ -7080,6 +7083,9 @@ def unregister():
         # Retain node classes, callbacks and request ownership when physical
         # shutdown fails. A later unregister can retry the same helper.
         _bake_manager.close()
+    if _preparation_runtime is not None:
+        _preparation_runtime.close()
+        _preparation_runtime = None
     errors = []
     _clear_gestures()
     try:
@@ -7131,12 +7137,6 @@ def unregister():
             bpy.app.timers.unregister(_preparation_tick)
     except Exception as exc:
         errors.append(exc)
-    if _preparation_runtime is not None:
-        try:
-            _preparation_runtime.close()
-        except Exception as exc:
-            errors.append(exc)
-        _preparation_runtime = None
     if _grade_preparer is not None:
         try:
             _grade_preparer.close()
