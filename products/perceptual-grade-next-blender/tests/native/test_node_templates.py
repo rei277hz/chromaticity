@@ -426,6 +426,38 @@ class NodeTemplateTests(unittest.TestCase):
         finally:
             first.dispose()
 
+    def test_grade_parameters_are_packed_only_for_owned_banks(self):
+        prepared = complete_prepared(adjusted=True)
+        with patch.object(node_templates, "prepare_parameters",
+                          wraps=prepare_parameters) as pack_parameters:
+            first = node_templates.instantiate_grade(prepared, "ShaderNodeTree")
+        pack_parameters.assert_called_once_with(prepared)
+        banks = tuple(first.tree[key] for key in PARAMETER_BANK_BINDINGS)
+        try:
+            with patch.object(node_templates, "prepare_parameters",
+                              side_effect=AssertionError("borrowed banks need no packing")):
+                second = node_templates.instantiate_grade(
+                    prepared, "CompositorNodeTree", parameter_images=banks,
+                )
+            try:
+                self.assertEqual(
+                    tuple(second.tree[key] for key in PARAMETER_BANK_BINDINGS), banks,
+                )
+                self.assert_parameter_bindings(second, prepared, 0, 0)
+            finally:
+                second.dispose()
+        finally:
+            first.dispose()
+
+        cached = replace(prepared, parameters=prepare_parameters(prepared))
+        with patch.object(node_templates, "prepare_parameters",
+                          side_effect=AssertionError("cached parameters must be reused")):
+            instance = node_templates.instantiate_grade(cached, "ShaderNodeTree")
+        try:
+            self.assert_parameter_bindings(instance, cached, 0, 0)
+        finally:
+            instance.dispose()
+
     def test_shared_stack_templates_bind_size_specific_runtime_images(self):
         for space in SPACES:
             for size in (33, 65):
@@ -477,6 +509,55 @@ class NodeTemplateTests(unittest.TestCase):
             self.assertTrue(node_templates.validate_stack_instance(instance.tree))
             instance.tree[node_templates.KERNEL_QUALITY] = "full"
             self.assertFalse(node_templates.validate_stack_instance(instance.tree))
+        finally:
+            instance.dispose()
+
+    def test_grade_manifest_validation_rejects_changed_math_and_boundary_pixels(self):
+        for tree_type in TREE_TYPES:
+            with self.subTest(tree_type=tree_type):
+                instance = node_templates.instantiate_grade(
+                    complete_prepared(), tree_type,
+                )
+                try:
+                    tree = instance.tree
+                    self.assertTrue(node_templates.validate_grade_template(tree))
+                    math_node = next(
+                        node for node in tree.nodes
+                        if hasattr(node, "operation") and not node.get(PARAMETER_SELECTOR)
+                    )
+                    original_operation = math_node.operation
+                    math_node.operation = "MULTIPLY" if original_operation != "MULTIPLY" else "ADD"
+                    self.assertFalse(node_templates.validate_grade_template(tree))
+                    math_node.operation = original_operation
+                    self.assertTrue(node_templates.validate_grade_template(tree))
+
+                    record = node_templates._STORE.record(
+                        node_templates.TemplateVariant("grade", tree_type),
+                    )
+                    boundary = tree.nodes[record.slots[node_templates.SLOT_BOUNDARY][0]].image
+                    pixels = image_pixels(boundary)
+                    pixels[0, 0, 0] += np.float32(0.125)
+                    boundary.pixels.foreach_set(pixels.ravel())
+                    boundary.pack()
+                    self.assertFalse(node_templates.validate_grade_template(tree))
+                finally:
+                    instance.dispose()
+
+    def test_stack_validation_rejects_packed_lut_pixel_changes(self):
+        instance = node_templates.instantiate_stack(
+            stack_prepared(size=33), "ShaderNodeTree",
+        )
+        try:
+            self.assertTrue(node_templates.validate_stack_instance(instance.tree))
+            lut_image = instance.images[0]
+            pixels = image_pixels(lut_image)
+            pixels[0, 0, 0] += np.float32(0.125)
+            lut_image.pixels.foreach_set(pixels.ravel())
+            lut_image.pack()
+            self.assertFalse(node_templates.validate_stack_instance(instance.tree))
+            self.assertTrue(node_templates.validate_stack_instance(
+                instance.tree, deep=False,
+            ))
         finally:
             instance.dispose()
 
@@ -552,6 +633,7 @@ class NodeTemplateTests(unittest.TestCase):
             bpy.ops.wm.open_mainfile(filepath=str(filename))
             restored = bpy.data.node_groups[name]
             self.assertIsNone(restored.library)
+            self.assertTrue(node_templates.validate_grade_template(restored))
             restored_banks = tuple(restored[key] for key in PARAMETER_BANK_BINDINGS)
             self.assertEqual(restored[PARAMETER_ACTIVE_BANK], 1)
             self.assertEqual(restored[PARAMETER_GENERATION], 9)

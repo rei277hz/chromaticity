@@ -2,7 +2,12 @@
 import argparse
 from pathlib import Path
 
-from tests.support.dctl import ALL_STAGES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, body, controls, entry, filename
+from tests.support.dctl import (
+    ALL_STAGES, ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
+    body, controls, entry, filename,
+)
 
 
 def stage_source(stage, source):
@@ -95,11 +100,24 @@ def main():
     parser.add_argument("--dctl-dir", type=Path, required=True)
     parser.add_argument("--prototype-dir", type=Path, required=True)
     parser.add_argument("--surface-dir", type=Path, required=True)
+    parser.add_argument("--overlap-dir", type=Path, required=True)
+    parser.add_argument("--anchor-centers-dir", type=Path, required=True)
+    parser.add_argument("--gain-dir", type=Path, required=True)
+    parser.add_argument("--global-shape-dir", type=Path, required=True)
+    parser.add_argument("--tone-fit-dir", type=Path, required=True)
+    parser.add_argument("--tone-fit-linear-gain-dir", type=Path, required=True)
+    parser.add_argument("--tone-fit-unified-chroma-dir", type=Path, required=True)
+    parser.add_argument("--warp-quadratic-scale-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     sections = ['#include "float3.h"', '#include <stdio.h>', '#include <string.h>']
     for stages, root in ((STAGES, args.dctl_dir), (PROTOTYPES, args.prototype_dir),
-                         (SURFACE_PROTOTYPES, args.surface_dir)):
+                         (SURFACE_PROTOTYPES, args.surface_dir), (OVERLAP_PROTOTYPES, args.overlap_dir),
+                         (ANCHOR_CENTER_PROTOTYPES, args.anchor_centers_dir), (GAIN_PROTOTYPES, args.gain_dir),
+                         (GLOBAL_SHAPE_PROTOTYPES, args.global_shape_dir), (TONE_FIT_PROTOTYPES, args.tone_fit_dir),
+                         (TONE_FIT_LINEAR_GAIN_PROTOTYPES, args.tone_fit_linear_gain_dir),
+                         (TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, args.tone_fit_unified_chroma_dir),
+                         (WARP_QUADRATIC_SCALE_PROTOTYPES, args.warp_quadratic_scale_dir)):
         for stage in stages:
             source = (root / filename(stage)).read_text(encoding="utf-8")
             sections.append(stage_source(stage, source))

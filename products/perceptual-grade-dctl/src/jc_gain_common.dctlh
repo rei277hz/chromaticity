@@ -1,0 +1,65 @@
+__DEVICE__ float pg_jc_gain_saturation(float chroma, float height) {
+    if (chroma == 0.0f) return 0.0f;
+    if (height == 0.0f) return 1.0f;
+    float base = (35.0f / 75.0f) * height;
+    if (chroma < base) {
+        float ratio = chroma / base;
+        return ratio / (1.0f + ratio);
+    }
+    float ratio = base / chroma;
+    return 1.0f / (1.0f + ratio);
+}
+
+__DEVICE__ float pg_jc_log_gain_inverse(float chroma, float knee, float amount, float gain) {
+    // Solve for the input/output ratio, bounded by no gain and full gain.
+    float lower = _fminf(1.0f, 1.0f / gain);
+    float upper = _fmaxf(1.0f, 1.0f / gain);
+    for (int step = 0; step < 32; ++step) {
+        float middle = lower + 0.5f * (upper - lower);
+        float radius = chroma * middle;
+        float weight = radius / (radius + knee);
+        float mapped = middle * _exp2f(amount * weight);
+        if (mapped == 1.0f || middle == lower || middle == upper) return middle;
+        if (mapped < 1.0f) lower = middle;
+        else upper = middle;
+    }
+    return lower + 0.5f * (upper - lower);
+}
+
+__DEVICE__ float pg_jc_log_gain_multiplier(float chroma, float height, float amount, int invert) {
+    if (chroma == 0.0f || amount == 0.0f) return 1.0f;
+    float knee = (35.0f / (75.0f * 9.0f)) * height;
+    if (knee == 0.0f || invert) {
+        float gain = _exp2f(amount);
+        if (knee == 0.0f) return invert ? 1.0f / gain : gain;
+        return pg_jc_log_gain_inverse(chroma, knee, amount, gain);
+    }
+    float weight = chroma / (chroma + knee);
+    return _exp2f(amount * weight);
+}
+
+__DEVICE__ float pg_jc_linear_gain_inverse(float chroma, float knee, float gain) {
+    // Solve gain*x^2 + (knee-chroma)*x - knee*chroma = 0 for x/chroma.
+    // Normalize first, then choose the equivalent root free of cancellation.
+    float scale = _fmaxf(chroma, knee);
+    float y = chroma / scale;
+    float k = knee / scale;
+    float difference = k - y;
+    float root = _sqrtf(difference * difference + 4.0f * gain * k * y);
+    if (difference > 0.0f) return (2.0f * k) / (root + difference);
+    return (root - difference) / (2.0f * gain * y);
+}
+
+__DEVICE__ float pg_jc_linear_gain_multiplier(float chroma, float height, float amount, int invert) {
+    float knee = (35.0f / (75.0f * 9.0f)) * height;
+    float gain = _exp2f(amount);
+    if (knee == 0.0f) return invert ? 1.0f / gain : gain;
+    if (invert) return pg_jc_linear_gain_inverse(chroma, knee, gain);
+    float weight = chroma / (chroma + knee);
+    return 1.0f + (gain - 1.0f) * weight;
+}
+
+__DEVICE__ float pg_jc_gain_multiplier(float chroma, float height, float amount, int invert, int logGain) {
+    return logGain ? pg_jc_log_gain_multiplier(chroma, height, amount, invert)
+                   : pg_jc_linear_gain_multiplier(chroma, height, amount, invert);
+}

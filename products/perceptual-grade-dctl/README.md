@@ -52,6 +52,158 @@ for Blender and ACES 2.0 compatibility. Invalid cone data propagates through
 the cone nodes to the magenta diagnostic at XYZ Output. Invalid ordering of
 the Warp hues triggers the diagnostic across the image.
 
+## Tone and Color J/C variant catalog
+
+Each design below is available in English and Simplified Chinese. The variant
+links lead to the corresponding build instructions.
+
+### Integrated 2-3A variants
+
+Each variant replaces Cone Tone and Color J/C in the cone chain. Forward
+applies global chroma shaping, then Shadow and Highlight Chroma, then
+saturation-preserving Tone with adjustable H–K Influence. **C Tone Crossover**
+sets the input lightness where both tonal chroma adjustments reach zero.
+The pivots and crossovers in the table use normalized saturation
+`s = C / (C + (35/75) * abs(J_A))`.
+
+| Variant | Global chroma controls | Saturation pivot or crossover | Global gain near gray | Shadow and Highlight Chroma fade | Chroma inverse |
+| --- | --- | --- | --- | --- | --- |
+| [Baseline](#integrated-tone-and-color-jc-prototype) (`:jc_tone_fit_prototype`) | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates in stops and approaches unity near gray | Global curve is closed form. Tonal gain uses a scalar solve. |
+| [Linear Gain](#linear-gain-audition) (`:jc_tone_fit_linear_gain_prototype`) | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates the gain multiplier and approaches unity near gray | Closed form throughout chroma |
+| [Unified Chroma](#unified-chroma-audition) (`:jc_tone_fit_unified_chroma_prototype`) | C Muted Gain and C Vivid Gain shape one curve | One adjustable input crossover. Gain there is halfway between the endpoint gains in stops. | Approaches `2^(C Muted Gain)` | Interpolates the gain multiplier and approaches unity near gray | Closed form throughout chroma |
+
+Near-gray gain describes faintly colored pixels at nonzero lightness. Exact
+gray stays neutral. All three use a scalar inverse when Tone is active.
+[Equations and Resolve audition](JC-OVERLAP-PROTOTYPES.md#integrated-tone-and-jc)
+
+### Standalone 3A variants
+
+Cone variants occupy the Color J/C position after Cone Tone. XYZ variants
+operate directly on scene-linear XYZ D65, outside the cone chain. LGG means
+Lift, Gamma, and Gain.
+
+| Variant | Domain | Tonal weighting | J adjustment | C adjustment and pivot | Near-gray behavior | Inverse in the DCTL |
+| --- | --- | --- | --- | --- | --- | --- |
+| [Shipping Color J/C](#install-and-use) (`:dctl`) | Cone | Four anchors with interpolation between neighbors | Local lightness contrast at fixed chroma, shared J center and width | Per-tone contrast, shared C center and width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
+| [Adjacent Overlap](#color-jc-tonal-overlap-prototypes) (`:jc_overlap_prototypes`) | Cone | Each anchor also receives its immediate neighbors | Local lightness contrast at fixed chroma, shared J center and width | Per-tone contrast, shared C center and width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
+| [Broad Overlap](#color-jc-tonal-overlap-prototypes) (`:jc_overlap_prototypes`) | Cone | Each anchor receives all four rows with distance falloff | Local lightness contrast at fixed chroma, shared J center and width | Per-tone contrast, shared C center and width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
+| [Broad Overlap with Anchor Centers](#color-jc-tonal-overlap-prototypes) (`:jc_anchor_centers_prototype`) | Cone | Broad overlap for contrast amounts | Local lightness contrast at fixed chroma, J center per anchor, shared J width | Per-tone contrast, C center per anchor, shared C width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
+| [Linear Gain](#color-jc-tonal-overlap-prototypes) (`:jc_gain_prototypes`) | Cone | Four anchors with broad overlap | Saturation-preserving local contrast | Gain per tone, linear multiplier blend, half weight at `s = 0.10` | J and C gains fade to unity | J scalar solve, C quadratic |
+| [Log Gain](#color-jc-tonal-overlap-prototypes) (`:jc_gain_prototypes`) | Cone | Four anchors with broad overlap | Saturation-preserving local contrast | Gain per tone, blend in stops, half weight at `s = 0.10` | J and C gains fade to unity | J and C scalar solves |
+| [Global Shape](#global-color-jc-shaping-prototype) (`:jc_global_shape_prototype`) | Cone | Global curves with a shadow/highlight crossover | Saturation-preserving contrast, pivot, toe, shoulder, and saturation bias | C Contrast and C Pivot, fixed-midpoint Muted and Vivid, tonal gain in stops | J can move gray. C Contrast retains relative gain. Muted/Vivid and tonal gains approach unity. | J and global C closed form, tonal C scalar solve |
+| [Surface](#color-jc-saturation-surface-prototype) (`:jc_surface_prototype`) | XYZ | Adjacent H–K anchors with cubic interpolation | Additive lightness offset, shared J center and width | Per-tone contrast, shared C center and width, overall gain | J fades. C retains relative gain. | Forward only |
+| [LGG Baseline](#color-jc-lgg-prototype) (`:jc_prototype`) | XYZ | Four H–K anchors with separate J and C Fit | LGG per tone | LGG on a log-like axis, fixed `35/75` ratio pivot | J Lift can move gray. C retains relative gain. | Forward only |
+| [LGG NonLog](#color-jc-lgg-prototype) (`:jc_prototype`) | XYZ | Four H–K anchors with separate J and C Fit | LGG per tone | LGG on an inverse-square-root axis, fixed `35/75` ratio pivot | J Lift can move gray. C retains relative gain. | Forward only |
+| [LGG Pivot](#color-jc-lgg-prototype) (`:jc_prototype`) | XYZ | Four H–K anchors with separate J and C Fit | LGG per tone | LGG on a log-like axis, adjustable ratio pivot from `0.05` to `2.00` | J Lift can move gray. C retains relative gain. | Forward only |
+
+The LGG pivot is the chroma-to-lightness ratio `C / abs(J_A)`. A ratio of
+`35/75` corresponds to `0.50` on the normalized saturation scale `s`.
+Cone variants defer H–K repair to XYZ Output. The standalone XYZ variants
+apply H–K repair inside the DCTL.
+[Shipping Color J/C](REVERSIBLE-STAGE-3.md#how-color-jc-preserves-order) ·
+[Cone auditions](JC-OVERLAP-PROTOTYPES.md) ·
+[Surface audition](JC-SURFACE-PROTOTYPE.md) ·
+[LGG auditions](JC-LGG-PROTOTYPE.md)
+
+## Color J/C tonal overlap prototypes
+
+Adjacent Overlap and Broad Overlap spread the influence of each J and C
+Contrast slider across the existing tonal anchors. Use either prototype in
+the Color J/C position of the cone chain. The target builds four files across
+English and Simplified Chinese.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_overlap_prototypes --show-output
+```
+
+Broad Overlap with Anchor Centers gives each tonal row its own J Center and
+C Center. Use the separate target to build the English and Simplified Chinese
+editions.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_anchor_centers_prototype --show-output
+```
+
+The Linear Gain and Log Gain prototypes preserve saturation during J
+adjustments. Each tonal row pairs J Contrast with a C Gain control that fades
+near gray.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_gain_prototypes --show-output
+```
+
+[Overlap weights, anchor centers, gain variants, and Resolve audition](JC-OVERLAP-PROTOTYPES.md)
+
+## Integrated Tone and Color J/C prototype
+
+This prototype combines Cone Tone and Global Shape's chroma controls in one
+DCTL. Use it in place of the separate Cone Tone and Color J/C nodes. Keep XYZ
+Input before it and retain Warp and XYZ Output after it.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_prototype --show-output
+```
+
+Build details and Resolve audition steps are in the
+[integrated Tone and J/C guide](JC-OVERLAP-PROTOTYPES.md#integrated-tone-and-jc).
+
+### Linear Gain audition
+
+This integrated variant gives Shadow and Highlight Chroma a Linear Gain fade
+with a quadratic inverse. C Contrast, C Pivot, C Muted and C Vivid use the same
+curve as the baseline. The target builds English and Simplified Chinese files.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_linear_gain_prototype --show-output
+```
+
+Tone's inverse still uses a scalar solve. [Linear Gain behavior and Resolve audition](JC-OVERLAP-PROTOTYPES.md#linear-gain-audition)
+
+### Unified Chroma audition
+
+C Muted Gain and C Vivid Gain shape incoming saturation together. At C
+Saturation Crossover, the applied gain in stops is the average of the two
+settings. This variant pairs the new curve with the integrated Linear Gain
+prototype's Tone and tonal chroma controls. The target builds English and
+Simplified Chinese DCTLs.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_chroma_prototype --show-output
+```
+
+[Unified curve, inverse, and Resolve audition](JC-OVERLAP-PROTOTYPES.md#unified-chroma-audition)
+
+## Global Color J/C shaping prototype
+
+Global Shape gives lightness and saturation separate contrast pivots and
+controls for each end of their curves. J Contrast grades neutral colors and
+preserves cone-chart saturation. Shadow Chroma and Highlight Chroma adjust
+saturation by lightness. C Pivot controls only the C Contrast crossover.
+Muted and Vivid shape opposite ends around a fixed midpoint. Raising C Pivot
+raises saturation at negative contrast and lowers it at positive contrast
+for chromatic samples at nonzero lightness.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_global_shape_prototype --show-output
+```
+
+Use the English or Simplified Chinese DCTL in the Color J/C position of the
+cone chain. [Controls and Resolve audition](JC-OVERLAP-PROTOTYPES.md#global-jc-shaping)
+
+## Warp quadratic Scale audition
+
+This Warp variant linearly interpolates positive scale slopes between radial
+anchors, giving the scale operation a closed-form quadratic inverse. The target
+builds English and Simplified Chinese files for the Warp position in the cone
+chain.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:warp_quadratic_scale_prototype --show-output
+```
+
+Hue, chroma radius and Adaptance retain their iterative inverses.
+[Scale behavior and Resolve audition](REVERSIBLE-STAGE-3.md#warp-quadratic-scale-audition)
+
 ## Color-JC saturation surface prototype
 
 The standalone XYZ surface prototype gives J and C one contrast amount per

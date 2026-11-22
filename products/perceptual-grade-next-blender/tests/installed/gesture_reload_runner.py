@@ -17,6 +17,7 @@ import threading
 import time
 import traceback
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import bpy
 from bpy.app.handlers import persistent
@@ -29,6 +30,7 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_gesture_reload.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
+stage2_bindings = importlib.import_module(extension.__name__ + ".kernel.stage2_bindings")
 errors = []
 assert addon_utils.enable(extension.__name__, default_set=True,
                          handle_error=errors.append) is extension
@@ -243,13 +245,14 @@ def drag():
                             else selector.inputs[0].default_value)
                 assert int(round(float(selected))) == active
                 parameter = banks[active]
-                readers = [node for node in kernel.nodes if node.get(nodes.PARAMETER_READER)]
+                readers = [node for node in kernel.nodes
+                           if node.get(stage2_bindings.PARAMETER_READER)]
                 expected = {(bank, role): image for bank, primary in enumerate(banks)
                             for role, image in nodes.parameter_bank_images(primary).items()}
                 reader_roles = set()
                 for reader in readers:
-                    key = (reader[nodes.PARAMETER_READER_BANK],
-                           reader[nodes.PARAMETER_READER_ROLE])
+                    key = (reader[stage2_bindings.PARAMETER_READER_BANK],
+                           reader[stage2_bindings.PARAMETER_READER_ROLE])
                     assert key in expected and reader.image == expected[key], key
                     reader_roles.add(key)
                 assert reader_roles == expected.keys()
@@ -317,11 +320,34 @@ def request_reopen():
                     raise nodes.PublicationDeferred("Injected one-load pin release deferral")
 
                 resources.release_lifecycle_images = defer_once
-            bpy.ops.wm.open_mainfile(filepath=str(path))
+            if mode_index == 0:
+                reopen_with_failed_gesture_restore(path)
+            else:
+                bpy.ops.wm.open_mainfile(filepath=str(path))
         except BaseException:
             finish(traceback.format_exc())
         return None
     bpy.app.timers.register(reopen, first_interval=.1)
+
+
+def reopen_with_failed_gesture_restore(path):
+    node = current_node()
+    window_key = current_window().as_pointer()
+    token = nodes._begin_color_gesture(window_key, node, ("j_a_1", "j_b_1"))
+    assert token is not None
+    assert nodes._edit_color_gesture(window_key, token, node, (4.0, -2.0))
+    del node
+
+    def fail_restore(_gesture, values):
+        if values is None:
+            report["failed_gesture_restore"] = True
+        raise RuntimeError("Injected Color gesture restore failure")
+
+    with (patch.object(nodes, "_write_color_gesture", side_effect=fail_restore),
+          patch.object(nodes._bake, "withdraw_all", wraps=nodes._bake.withdraw_all) as withdraw):
+        bpy.ops.wm.open_mainfile(filepath=str(path))
+        withdraw.assert_called_once_with()
+    assert report.get("failed_gesture_restore")
 
 
 @persistent
@@ -332,6 +358,13 @@ def before_load_repair(_filepath):
         # The normal timer must survive loading itself. The separate missing
         # timer case verifies repair without masking loss of persistence.
         assert registered == (mode_index != 1), (MODES[mode_index], registered)
+        if mode_index == 0:
+            assert report.get("failed_gesture_restore")
+            assert nodes._lifecycle.changing and nodes._lifecycle.reset_pending
+            assert not nodes._gesture_state.gestures and not nodes._gesture_state.observers
+            assert not nodes._preparation_sources
+            assert nodes._grade_resources._lifecycle_images
+            report["failed_gesture_restore_fenced"] = True
     except BaseException:
         finish(traceback.format_exc())
 
@@ -341,7 +374,7 @@ def loaded(_filepath):
     try:
         snapshot = {"mode": MODES[mode_index], "previous_token": previous_token,
                     "router_timer": bpy.app.timers.is_registered(nodes._gesture_router_tick),
-                    "pending_reset": nodes._node_reset_pending,
+                    "pending_reset": nodes._lifecycle.reset_pending,
                     "observer_count": len(nodes._gesture_state.observers)}
         report["loads"].append(snapshot)
         assert snapshot["router_timer"], snapshot
@@ -366,7 +399,7 @@ def loaded(_filepath):
 
 def after_load():
     global mode_index
-    yield from wait_for(lambda: not nodes._node_reset_pending and observers_ready(),
+    yield from wait_for(lambda: not nodes._lifecycle.reset_pending and observers_ready(),
                         "Loading did not restore exactly one observer per window")
     token = check_observers()
     assert token > previous_token, (token, previous_token)

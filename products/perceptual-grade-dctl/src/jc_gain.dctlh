@@ -1,0 +1,55 @@
+__DEVICE__ int pg_jc_gain_amounts_valid(PGFour amounts) {
+    return _fabs(amounts.s) <= 2.0f && _fabs(amounts.m) <= 2.0f &&
+           _fabs(amounts.w) <= 2.0f && _fabs(amounts.h) <= 2.0f;
+}
+
+__DEVICE__ float3 pg_jc_gain_lightness(float3 point, PGFour anchors, PGFour amounts, int invert) {
+    float height = _fabs(point.x);
+    if (height == 0.0f) return point;
+    float chroma = pg_hypot(point.y, point.z);
+    float saturation = pg_jc_gain_saturation(chroma, height);
+    float fade = pg_jc_surface_smoothstep(saturation / 0.10f);
+    PGFour slopes = pg_four(_exp2f(amounts.s * fade), _exp2f(amounts.m * fade),
+                            _exp2f(amounts.w * fade), _exp2f(amounts.h * fade));
+    if (pg_four_equal(slopes, pg_four(1.0f, 1.0f, 1.0f, 1.0f))) return point;
+    // The same saturation selects the slopes when undoing the stretch.
+    return point * (pg_stretch(height, anchors, slopes, 1.0f, invert) / height);
+}
+
+__DEVICE__ float3 pg_jc_gain_chroma(float3 point, PGFour anchors, PGFour amounts, int logGain, int invert) {
+    float height = _fabs(point.x);
+    float amount = pg_jc_surface_anchor(height, anchors, amounts);
+    if (amount == 0.0f) return point;
+    float chroma = pg_hypot(point.y, point.z);
+    if (chroma == 0.0f) return point;
+
+    float multiplier = pg_jc_gain_multiplier(chroma, height, amount, invert, logGain);
+    return make_float3(point.x, point.y * multiplier, point.z * multiplier);
+}
+
+__DEVICE__ PGValue pg_cone_jc_gain(float3 wire, PGFour jAmounts, PGFour cAmounts,
+                                    int peakIndex, int invert, int logGain) {
+    if (!pg_cone_valid(wire) || !pg_jc_gain_amounts_valid(jAmounts) || !pg_jc_gain_amounts_valid(cAmounts) ||
+        peakIndex < 0 || peakIndex > 3 || (invert != 0 && invert != 1))
+        return pg_value(color_zero3(), 0);
+
+    PGFour zero = pg_four(0.0f, 0.0f, 0.0f, 0.0f);
+    int adjustJ = !pg_four_equal(jAmounts, zero);
+    int adjustC = !pg_four_equal(cAmounts, zero);
+    if (!adjustJ && !adjustC) return pg_value(wire, 1);
+
+    float3 input = pg_cone_chart(wire);
+    if (!color_finite3(input)) return pg_value(color_zero3(), 0);
+    if (input.y == 0.0f && input.z == 0.0f) return pg_value(wire, 1);
+
+    PGFour neutral = pg_tone_anchors(peakIndex);
+    PGFour anchors = pg_four(100.0f * neutral.s, 100.0f * neutral.m, 100.0f * neutral.w, 100.0f * neutral.h);
+    jAmounts = pg_jc_overlap(jAmounts);
+    cAmounts = pg_jc_overlap(cAmounts);
+    float3 point = input;
+    if (invert && adjustJ) point = pg_jc_gain_lightness(point, anchors, jAmounts, invert);
+    if (adjustC) point = pg_jc_gain_chroma(point, anchors, cAmounts, logGain, invert);
+    if (!invert && adjustJ) point = pg_jc_gain_lightness(point, anchors, jAmounts, invert);
+    if (point.x == input.x && point.y == input.y && point.z == input.z) return pg_value(wire, 1);
+    return pg_cone_wire(point);
+}

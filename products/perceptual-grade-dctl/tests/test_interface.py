@@ -3,7 +3,12 @@ import re
 import unittest
 
 from tests.support import oracle
-from tests.support.dctl import ALL_STAGES, LOCALES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, body, controls, entry, filename
+from tests.support.dctl import (
+    ALL_STAGES, ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES, LOCALES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
+    body, controls, entry, filename,
+)
 
 J_C = {f"tone{tone}{receiver}Contrast" for tone in "SMWH" for receiver in "JC"}
 SHAPE = {f"{family}Saturation{parameter}" for family in "jc" for parameter in ("Center", "Width")}
@@ -24,6 +29,52 @@ class InterfaceTests(unittest.TestCase):
         expected = {filename(stage, locale) for stage in PROTOTYPES for locale in LOCALES}
         self.assertEqual({path.name for path in oracle.PROTOTYPE_DIR.iterdir()}, expected)
 
+    def test_overlap_artifacts_have_the_shipping_jc_controls(self):
+        expected = {filename(stage, locale) for stage in OVERLAP_PROTOTYPES for locale in LOCALES}
+        self.assertEqual({path.name for path in oracle.OVERLAP_DIR.iterdir()}, expected)
+        for stage in OVERLAP_PROTOTYPES:
+            for locale in LOCALES:
+                with self.subTest(stage=stage, locale=locale):
+                    self.assertEqual(controls(oracle.source(stage, locale)), controls(oracle.source("jc", locale)))
+
+    def test_anchor_centers_artifact_groups_controls_by_tone(self):
+        stage = "jc_anchor_centers"
+        self.assertEqual({path.name for path in oracle.ANCHOR_CENTER_DIR.iterdir()},
+                         {filename(stage, locale) for locale in LOCALES})
+        per_tone = [f"tone{row}{family}{field}" for row in "SMWH" for family in "JC"
+                    for field in ("Contrast", "Center")]
+        shared = {"jSaturationWidth", "cSaturationWidth", "globalChromaGain", "peakNits", "direction"}
+        fields = ("type", "default", "min", "max", "step")
+        for locale in LOCALES:
+            records = {item["name"]: item for item in controls(oracle.source(stage, locale))}
+            broad = {item["name"]: item for item in controls(oracle.source("jc_broad_overlap", locale))}
+            self.assertEqual(list(records)[:16], per_tone)
+            self.assertEqual(set(records) - set(per_tone), shared)
+            self.assertEqual(sum(item["type"] == "DCTLUI_SLIDER_FLOAT" for item in records.values()), 19)
+            for name in per_tone:
+                expected = broad["cSaturationCenter"] if name.endswith("Center") else broad[name]
+                self.assertEqual(tuple(records[name][key] for key in fields), tuple(expected[key] for key in fields))
+            for name in shared:
+                self.assertEqual(records[name], broad[name])
+
+    def test_gain_prototypes_expose_eight_tonal_sliders(self):
+        expected = {filename(stage, locale) for stage in GAIN_PROTOTYPES for locale in LOCALES}
+        self.assertEqual({path.name for path in oracle.GAIN_DIR.iterdir()}, expected)
+        per_tone = [f"tone{row}{field}" for row in "SMWH" for field in ("JContrast", "CGain")]
+        shared = ("peakNits", "direction")
+        for stage in GAIN_PROTOTYPES:
+            for locale in LOCALES:
+                with self.subTest(stage=stage, locale=locale):
+                    records = {item["name"]: item for item in controls(oracle.source(stage, locale))}
+                    baseline = {item["name"]: item for item in controls(oracle.source("jc", locale))}
+                    self.assertEqual(list(records), [*per_tone, *shared])
+                    for name in per_tone:
+                        fields = ("type", "default", "min", "max", "step")
+                        self.assertEqual(tuple(records[name][field] for field in fields),
+                                         ("DCTLUI_SLIDER_FLOAT", 0., -2., 2., .01))
+                    for name in shared:
+                        self.assertEqual(records[name], baseline[name])
+
     def test_surface_artifact_and_controls(self):
         expected = {filename(stage, locale) for stage in SURFACE_PROTOTYPES for locale in LOCALES}
         self.assertEqual({path.name for path in oracle.SURFACE_DIR.iterdir()}, expected)
@@ -43,6 +94,74 @@ class InterfaceTests(unittest.TestCase):
         for name, item in records.items():
             self.assertEqual(item["type"], "DCTLUI_SLIDER_FLOAT")
             self.assertEqual(tuple(item[key] for key in ("default", "min", "max", "step")), ranges[name])
+
+    def test_global_shape_controls(self):
+        stage = "jc_global_shape"
+        self.assertEqual({path.name for path in oracle.GLOBAL_SHAPE_DIR.iterdir()},
+                         {filename(stage, locale) for locale in LOCALES})
+        shape = (0., -1., 1., .01)
+        stops = (0., -2., 2., .01)
+        lightness = (45., 10., 160., .1)
+        ranges = dict(jContrast=stops, jPivot=lightness, jToe=shape, jShoulder=shape, jSaturationBias=shape,
+                      cContrast=stops, cPivot=(.5, .05, .95, .01), cMuted=shape, cVivid=shape,
+                      shadowChroma=stops, highlightChroma=stops, cToneCrossover=lightness)
+        for locale in LOCALES:
+            records = {item["name"]: item for item in controls(oracle.source(stage, locale))}
+            self.assertEqual(list(records), [*ranges, "direction"])
+            for name, limits in ranges.items():
+                self.assertEqual(records[name]["type"], "DCTLUI_SLIDER_FLOAT")
+                self.assertEqual(tuple(records[name][key] for key in ("default", "min", "max", "step")), limits)
+            direction = next(item for item in controls(oracle.source("jc", locale)) if item["name"] == "direction")
+            self.assertEqual(records["direction"], direction)
+
+    def test_integrated_tone_and_chroma_controls(self):
+        stage = "jc_tone_fit"
+        self.assertEqual({path.name for path in oracle.TONE_FIT_DIR.iterdir()},
+                         {filename(stage, locale) for locale in LOCALES})
+        c_names = ("cContrast", "cPivot", "cMuted", "cVivid", "shadowChroma", "highlightChroma",
+                   "cToneCrossover", "direction")
+        for locale in LOCALES:
+            tone = {item["name"]: item for item in controls(oracle.source("tone", locale))}
+            tone.pop("inputBlack")
+            global_jc = {item["name"]: item for item in controls(oracle.source("jc_global_shape", locale))}
+            records = {item["name"]: item for item in controls(oracle.source(stage, locale))}
+            self.assertEqual(records.keys(), tone.keys() | set(c_names) | {"blackCompression", "hkInfluence"})
+            for name, baseline in (*tone.items(), *((name, global_jc[name]) for name in c_names)):
+                # In the integrated node the displayed labels may describe both operations.
+                for field in baseline.keys() - {"label"}:
+                    self.assertEqual(records[name][field], baseline[field])
+            for name, limits in (("blackCompression", (0., 0., 2.)), ("hkInfluence", (1., 0., 1.))):
+                self.assertEqual(records[name]["type"], "DCTLUI_SLIDER_FLOAT")
+                self.assertEqual(tuple(records[name][key] for key in ("default", "min", "max")), limits)
+
+    def test_analytic_variants_have_their_baseline_controls(self):
+        for stage, baseline, directory in (("jc_tone_fit_linear_gain", "jc_tone_fit", oracle.TONE_FIT_LINEAR_GAIN_DIR),
+                                            ("warp_quadratic_scale", "warp", oracle.WARP_QUADRATIC_SCALE_DIR)):
+            self.assertEqual({path.name for path in directory.iterdir()},
+                             {filename(stage, locale) for locale in LOCALES})
+            for locale in LOCALES:
+                with self.subTest(stage=stage, locale=locale):
+                    ui = controls(oracle.source(stage, locale))
+                    self.assertEqual(ui, controls(oracle.source(baseline, locale)))
+                    self.assertLessEqual(sum(item["type"] == "DCTLUI_SLIDER_FLOAT" for item in ui), 64)
+
+    def test_unified_chroma_replaces_both_saturation_adjustments(self):
+        stage = "jc_tone_fit_unified_chroma"
+        self.assertEqual({path.name for path in oracle.TONE_FIT_UNIFIED_CHROMA_DIR.iterdir()},
+                         {filename(stage, locale) for locale in LOCALES})
+        limits = {"cMutedGain": (0., -2., 2.), "cVividGain": (0., -2., 2.),
+                  "cSaturationCrossover": (.5, .05, .95)}
+        for locale in LOCALES:
+            with self.subTest(locale=locale):
+                baseline = controls(oracle.source("jc_tone_fit_linear_gain", locale))
+                shared = [item for item in baseline if item["name"] not in {"cContrast", "cPivot", "cMuted", "cVivid"}]
+                records = controls(oracle.source(stage, locale))
+                self.assertEqual([item for item in records if item["name"] not in limits], shared)
+                adjustment = {item["name"]: item for item in records if item["name"] in limits}
+                self.assertEqual(list(adjustment), list(limits))
+                for name, item in adjustment.items():
+                    self.assertEqual(tuple(item[key] for key in ("type", "default", "min", "max", "step")),
+                                     ("DCTLUI_SLIDER_FLOAT", *limits[name], .01))
 
     def test_locales_match_numerically_and_declare_unique_translated_controls(self):
         for stage in ALL_STAGES:
@@ -77,7 +196,9 @@ class InterfaceTests(unittest.TestCase):
                     self.assertRegex(entry(source), r"\breturn\s+make_float3\(")
 
     def test_hk_repair_is_only_bundled_into_xyz_output(self):
-        for stage in STAGES:
+        for stage in (*STAGES, *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
+                      *GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+                      *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, *WARP_QUADRATIC_SCALE_PROTOTYPES):
             with self.subTest(stage=stage):
                 self.assertEqual("pg_guard(" in body(oracle.source(stage)), stage == "output")
 

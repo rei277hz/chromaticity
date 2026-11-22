@@ -1,9 +1,9 @@
 """Discover a bake's native domain and freeze its effective input identity.
 
 This module retains no Blender objects between calls. Image freshness uses
-inexpensive RNA values and file metadata throughout; ``describe`` additionally
-validates exact UV and geometry data for a request. Pixel edits are tracked by
-the caller's dependency invalidation, never by scanning Image contents here.
+inexpensive RNA values and file metadata. ``describe`` also validates UV
+triangles before accepting a request. The caller tracks pixel and mesh edits
+through dependency invalidation.
 Generated Grade kernels are deliberately absent from input fingerprints.
 """
 
@@ -24,6 +24,8 @@ from .shader_scene import shader_scene_inventory
 
 
 SCHEMA = 1
+# Version the persisted digest independently of the worker route payload.
+FINGERPRINT_SCHEMA = 2
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
@@ -539,165 +541,8 @@ def _baked_sampler(node, image):
     return node, None
 
 
-def _geometry_digest(label, values):
-    """Hash a bounded semantic stream without retaining mesh-sized tuples."""
-    digest = hashlib.sha256()
-    digest.update(str(label).encode("utf8"))
-    for value in values:
-        try:
-            encoded = json.dumps(_plain(value), separators=(",", ":"),
-                                 sort_keys=True).encode("utf8")
-        except (TypeError, ValueError, UnicodeError) as error:
-            raise RouteBlocked(
-                "geometry_attributes",
-                "Bake cannot fingerprint mesh attribute data: " + str(error),
-            ) from error
-        digest.update(len(encoded).to_bytes(8, "little"))
-        digest.update(encoded)
-    return digest.hexdigest()
-
-
-def _attribute_value(item, data_type):
-    """Read one Blender Attribute/ColorAttribute element by declared type."""
-    scalar_types = {"BOOLEAN", "BYTE", "INT", "INT8", "INT32", "INT64",
-                    "FLOAT", "FLOAT2", "STRING"}
-    vector_types = {"FLOAT_VECTOR", "FLOAT2", "FLOAT3", "FLOAT4",
-                    "FLOAT_COLOR", "BYTE_COLOR", "QUATERNION", "FLOAT4X4",
-                    "INT16_2D", "INT32_2D"}
-    if data_type in scalar_types and hasattr(item, "value"):
-        return getattr(item, "value")
-    if data_type in vector_types:
-        for name in ("vector", "color", "value", "normal"):
-            if hasattr(item, name):
-                value = getattr(item, name)
-                try:
-                    return tuple(value)
-                except TypeError:
-                    if isinstance(value, (bool, int, float, str)):
-                        return value
-                    raise RouteBlocked(
-                        "geometry_attributes",
-                        "Bake cannot fingerprint mesh attribute type " + str(data_type),
-                    )
-    raise RouteBlocked(
-        "geometry_attributes",
-        "Bake cannot fingerprint unsupported mesh attribute type " + str(data_type),
-    )
-
-
-def _mesh_attributes(mesh):
-    """Return digests for generic and color mesh attributes."""
-    attributes = []
-    seen = set()
-    for collection_name in ("attributes", "color_attributes"):
-        collection = getattr(mesh, collection_name, ())
-        for attribute in collection:
-            identity = (str(getattr(attribute, "name", "")),
-                        str(getattr(attribute, "domain", "")),
-                        str(getattr(attribute, "data_type", "")))
-            # Color attributes are also exposed through attributes in some
-            # Blender versions; avoid hashing the same channel twice.
-            if identity in seen:
-                continue
-            seen.add(identity)
-            data_type = identity[2]
-            data = getattr(attribute, "data", None)
-            if data is None:
-                raise RouteBlocked("geometry_attributes",
-                                   "Bake mesh attribute has no readable data")
-            values = (_attribute_value(item, data_type) for item in data)
-            attributes.append((*identity, len(data), _geometry_digest(identity, values)))
-    attributes.sort(key=lambda value: value[:3])
-    colors = getattr(mesh, "color_attributes", None)
-    selection = tuple((name, _plain(getattr(colors, name, None))) for name in (
-        "active_color_name", "default_color_name", "render_color_index",
-    ))
-    return tuple(attributes), selection
-
-
-def _vertex_group_state(obj, mesh):
-    groups = tuple((int(getattr(group, "index", index)), str(getattr(group, "name", "")))
-                   for index, group in enumerate(getattr(obj, "vertex_groups", ())))
-    if not groups:
-        return groups
-    vertices = getattr(mesh, "vertices", None)
-    if vertices is None:
-        raise RouteBlocked("geometry_attributes", "Bake mesh has unreadable vertex groups")
-    def values():
-        for index, vertex in enumerate(vertices):
-            assignments = getattr(vertex, "groups", None)
-            if assignments is None:
-                raise RouteBlocked("geometry_attributes", "Bake mesh has unreadable vertex weights")
-            yield index, tuple((int(item.group), float(item.weight)) for item in assignments)
-    return groups, _geometry_digest("vertex_groups", values())
-
-
-def _corner_normal_state(mesh):
-    has_custom = bool(getattr(mesh, "has_custom_normals", False))
-    normals = getattr(mesh, "corner_normals", None)
-    if normals is None:
-        if has_custom:
-            raise RouteBlocked("geometry_attributes", "Bake mesh custom normals are unreadable")
-        return has_custom, None
-    # RNA collections expose their owning datablock as .data. Iterate the
-    # collection itself; wrappers may instead expose an element array there.
-    try:
-        iter(normals)
-        data = normals
-    except TypeError:
-        data = getattr(normals, "data", None)
-        if data is None or data is mesh:
-            raise RouteBlocked("geometry_attributes", "Bake mesh corner normals are unreadable")
-    if has_custom and len(data) != len(mesh.loops):
-        raise RouteBlocked("geometry_attributes", "Bake mesh custom normals are incomplete")
-    def values():
-        for item in data:
-            value = getattr(item, "vector", getattr(item, "normal", None))
-            if value is None:
-                raise RouteBlocked("geometry_attributes", "Bake mesh corner normal is unreadable")
-            yield tuple(float(component) for component in value)
-    return has_custom, _geometry_digest("corner_normals", values())
-
-
-def _geometry_state(obj):
-    _cache_geometry(obj)
-    mesh = getattr(obj, "data", None)
-    geometry = None
-    if getattr(obj, "type", None) == "MESH" and mesh is not None:
-        polygon_state = (
-            (int(item.loop_start), int(item.loop_total), int(item.material_index),
-             bool(getattr(item, "use_smooth", False)))
-            for item in mesh.polygons
-        )
-        geometry = (
-            _geometry_digest("vertices", (tuple(float(v) for v in item.co)
-                                           for item in mesh.vertices)),
-            _geometry_digest("polygons", polygon_state),
-            _geometry_digest("loops", (int(item.vertex_index) for item in mesh.loops)),
-            tuple((str(layer.name), bool(getattr(layer, "active_render", False)),
-                   _geometry_digest("uv", (tuple(float(v) for v in item.uv)
-                                            for item in layer.data)))
-                  for layer in mesh.uv_layers),
-            _geometry_digest("edges", (
-                (tuple(int(index) for index in item.vertices),
-                 bool(getattr(item, "use_edge_sharp", False)))
-                for item in getattr(mesh, "edges", ()))),
-            bool(getattr(mesh, "use_auto_smooth", False)),
-            float(getattr(mesh, "auto_smooth_angle", 0.0)),
-            _rna_state(getattr(mesh, "shape_keys", None)),
-            _mesh_attributes(mesh),
-            _vertex_group_state(obj, mesh),
-            _corner_normal_state(mesh),
-        )
-    return (_semantic_identity(obj), _semantic_identity(mesh), geometry,
-            _plain(getattr(obj, "matrix_world", ())), bool(getattr(obj, "hide_render", False)),
-            tuple(_rna_state(item) for item in getattr(obj, "modifiers", ())),
-            tuple(_rna_state(item) for item in getattr(obj, "constraints", ())),
-            tuple(_semantic_identity(item.material) for item in getattr(obj, "material_slots", ())))
-
-
 def _geometry_observation(obj):
-    """Shallow invalidation facts; exact topology and UVs are checked by describe."""
+    """Stable mesh metadata for saved receipts. Mesh edits also emit dependency updates."""
     _cache_geometry(obj)
     mesh = getattr(obj, "data", None)
     is_mesh = getattr(obj, "type", None) == "MESH" and mesh is not None
@@ -735,7 +580,6 @@ class _Walker:
         self.dependencies = dependencies
         self.graph = []
         self.images = {}
-        self.image_observations = {}
         self.image_pointers = set()
         self.image_states = {}
         self.dependency_pointers = set()
@@ -745,36 +589,30 @@ class _Walker:
         self.visited = set()
         self.rendered = {}
         self.render_layers = set()
-        self.render_states = []
         self.render_observations = []
         self.coordinate_depth = 0
         self.unknown_compositor_extent = False
 
-    def input(self, socket, parents):
-        links = _links(socket)
+    def input(self, socket, parents, *, links=None):
+        if links is None:
+            links = _links(socket)
         if len(links) > 1 and not getattr(socket, "is_multi_input", False):
             raise RouteBlocked("input_links", "Bake input has multiple effective sources")
         self.graph.append(("input", tuple(_semantic_identity(item) for item in parents),
                            _semantic_identity(socket.node), _socket_name(socket),
                            None if links else _plain(getattr(socket, "default_value", None)),
-                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket)) for link in links)))
-        if links:
-            for link in links:
-                self.output(link.from_node, link.from_socket, parents)
+                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
+                                 for link in links)))
+        for link in links:
+            self.output(link.from_node, link.from_socket, parents)
 
     def _observe(self, node, output, parents, semantic=None):
         state = (_rna_state(node, dependencies=self.dependencies,
                             dependency_seen=self.dependency_pointers)
                  if semantic is None else semantic)
-        inputs = tuple(item for item in node.inputs
-                       if semantic is None or item.name in {"Color", "Alpha"})
-        sockets = tuple((_socket_name(item), _plain(getattr(item, "default_value", None)),
-                         tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
-                               for link in _links(item))) for item in inputs)
-        defaults = tuple((_socket_name(item), _plain(getattr(item, "default_value", None)))
-                         for item in node.outputs if hasattr(item, "default_value"))
         self.graph.append((tuple(_semantic_identity(item) for item in parents), _semantic_identity(node),
-                           node.bl_idname, _socket_name(output), state, sockets, defaults))
+                           node.bl_idname, _socket_name(output), state,
+                           _plain(getattr(output, "default_value", None))))
 
     def _image(self, node, image, output, parents, *, baked=False):
         if image is None:
@@ -805,20 +643,21 @@ class _Walker:
         if (baked and not self.compositor
                 and image.get(BAKE_DOMAIN) == "UV"):
             self.reasons.add("upstream_uv_bake")
-        self.image_observations[key] = (
-            state, bool(getattr(image, "is_dirty", False)),
-        )
-        vector = next((item for item in node.inputs if item.name == "Vector"), None)
         if baked:
-            self.graph.append((key, "baked_sampling", item["interpolation"], item["extension"],
-                               None if vector is None else _plain(getattr(vector, "default_value", None)),
-                               () if vector is None else tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
-                                                               for link in _links(vector))))
-        if vector is not None and _links(vector):
+            self.graph.append((key, "baked_sampling", item["interpolation"], item["extension"]))
+        for socket in node.inputs:
+            if socket.name != "Vector":
+                if not baked:
+                    self.input(socket, parents)
+                continue
+            links = _links(socket)
+            if not links:
+                self.input(socket, parents, links=links)
+                continue
             self.reasons.add("linked_coordinates")
             self.coordinate_depth += 1
             try:
-                self.input(vector, parents)
+                self.input(socket, parents, links=links)
             finally:
                 self.coordinate_depth -= 1
 
@@ -853,10 +692,7 @@ class _Walker:
                 if output.name == "Alpha":
                     alpha = next((item for item in node.inputs if item.name == "Alpha"), None)
                     if alpha is not None:
-                        self.graph.append((_semantic_identity(node), "Alpha", "alpha",
-                                           _plain(getattr(alpha, "default_value", None)),
-                                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
-                                                 for link in _links(alpha))))
+                        self.graph.append((_semantic_identity(node), "Alpha", "alpha"))
                         self.input(alpha, parents)
                     return
                 self._observe(node, output, parents, _grade_settings(node))
@@ -956,12 +792,6 @@ class _Walker:
             (_geometry_observation(obj),
              _rna_state(getattr(obj, "data", None)) if getattr(obj, "type", None) in {"LIGHT", "CAMERA"} else None)
             for obj in objects)))
-        geometry = (tuple((_geometry_state(obj),
-                           _rna_state(getattr(obj, "data", None))
-                           if getattr(obj, "type", None) in {"LIGHT", "CAMERA"} else None)
-                         for obj in objects) if self.full
-                    else tuple(_geometry_observation(obj) for obj in objects))
-        self.render_states.append((*summary, geometry))
         for obj in objects:
             self._add_dependency(obj)
             self._add_dependency(getattr(obj, "data", None))
@@ -975,7 +805,6 @@ class _Walker:
             dependency_seen=self.dependency_pointers,
         ))
                                for _kind, owner in owners)
-        self.render_states.append(("owner_settings", owner_settings))
         self.render_observations.append(("owner_settings", owner_settings))
         previous_owner = self.owner
         try:
@@ -1183,20 +1012,20 @@ def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
                   material_slot=material_slot, uv_map=uv_map,
                   reasons=tuple(sorted(walker.reasons)),
                   images=tuple(item[1] for item in walker.images.values()),
-                  canvas_size=canvas_size, signature=None,
+                  canvas_size=canvas_size,
                   **evaluator, **locator)
     colorspace = getattr(bpy.data, "colorspace", None)
     working_space = (getattr(colorspace, "working_space_interop_id", None),
                      getattr(colorspace, "working_space", None))
     receipt_observation = (
-        SCHEMA, domain, width if domain == "UV" else None,
+        FINGERPRINT_SCHEMA, domain, width if domain == "UV" else None,
         height if domain == "UV" else None, _semantic_identity(scene),
         _semantic_identity(owner), _semantic_identity(node),
         tuple(_semantic_identity(item) for item in parents),
         result["frame"], result["subframe"], render_engine, working_space,
         evaluator.get("cycles_device"),
         _grade_settings(node), tuple(walker.graph),
-        tuple((key, state) for key, (state, _dirty) in walker.image_observations.items()),
+        tuple((key, state) for key, (state, _sampler) in walker.images.items()),
         _geometry_observation(obj) if obj is not None else None,
         tuple(walker.render_observations),
         material_slot, uv_map,
@@ -1208,32 +1037,6 @@ def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
         _digest((result["receipt_signature"], "scene_canvas", canvas_size))
         if canvas_size is not None else result["receipt_signature"]
     )
-    observation_facts = (
-        receipt_observation,
-        tuple((key, dirty) for key, (_state, dirty)
-              in walker.image_observations.items()),
-    )
-    if canvas_size is not None:
-        observation_facts += (canvas_size,)
-    result["observation_signature"] = _digest(observation_facts)
-    if full:
-        terminal = tuple((_socket_name(socket), _plain(getattr(socket, "default_value", None)),
-                          tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
-                                for link in _links(socket)))
-                         for socket in node.inputs if socket.name in {"Color", "Alpha"})
-        signature = (SCHEMA, domain, width, height, _semantic_identity(scene),
-                     _semantic_identity(owner), _semantic_identity(node),
-                     tuple(_semantic_identity(item) for item in parents),
-                     result["frame"], result["subframe"], render_engine, working_space,
-                     evaluator.get("cycles_device"),
-                     _grade_settings(node), terminal, tuple(walker.graph),
-                     tuple((key, item[0]) for key, item in walker.images.items()),
-                     tuple(walker.render_states),
-                     (_rna_state(scene.render, exclude=_COMPOSITOR_OVERRIDES | {"engine"})
-                      if compositor else None),
-                     _geometry_state(obj) if obj is not None else None,
-                     material_slot, uv_map)
-        result["signature"] = _digest(signature)
     if dependencies is not None:
         existing = {_identity(item) for item in dependencies}
         for item in collected_dependencies:
@@ -1249,7 +1052,7 @@ def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
 
 
 def describe(node, context=None, *, dependencies=None, upstream_grades=None):
-    """Return a value-only request with exact UV/geometry and cheap Image facts.
+    """Return a value-only request after validating UVs and source Images.
 
     When provided, ``dependencies`` receives each effective source Image and
     referenced Object/Mesh once. It is a caller-owned transient list; the
@@ -1260,8 +1063,8 @@ def describe(node, context=None, *, dependencies=None, upstream_grades=None):
 
     ``request_signature`` augments the durable receipt with the expected size
     for canvas-sized outputs. Both are available from ``preview`` and omit
-    transient dirty state. ``signature`` additionally covers validated exact
-    geometry; only an explicit request needs that full geometry work.
+    transient dirty state. Only an explicit Bake request checks that UV
+    triangles are nondegenerate, inside the 0-1 tile, and nonoverlapping.
     """
     return _describe(node, context, full=True, dependencies=dependencies,
                      upstream_grades=upstream_grades)
@@ -1276,8 +1079,8 @@ def observe(node, context=None, *, dependencies=None):
     """Return a passive eligibility observation suitable for node UI drawing."""
     try:
         route = preview(node, context, dependencies=dependencies)
-        return dict(state="ready", code=None, detail=None, signature=route["observation_signature"], route=route)
+        return dict(state="ready", code=None, detail=None, route=route)
     except RouteBlocked as error:
-        return dict(state="blocked", code=error.code, detail=str(error), signature=None, route=None)
+        return dict(state="blocked", code=error.code, detail=str(error), route=None)
     except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
-        return dict(state="blocked", code="unavailable", detail=str(error), signature=None, route=None)
+        return dict(state="blocked", code="unavailable", detail=str(error), route=None)

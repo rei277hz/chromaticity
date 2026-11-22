@@ -10,6 +10,7 @@ import zipfile
 from concurrent.futures import CancelledError
 from unittest.mock import patch
 
+
 class Probe:
     def __init__(self, ready=False):
         self.ready = ready
@@ -25,18 +26,14 @@ class Probe:
         return ({"conformance": True},)
 
 
-class Group:
+class Handle:
     def __init__(self, preview=None, result=None, ready=False):
-        self._preview = preview
+        self.preview = preview
         self._result = result
         self.ready = ready
         self.poll_calls = 0
         self.result_calls = 0
         self.cancel_calls = 0
-
-    @property
-    def preview(self):
-        return None if self.cancel_calls else self._preview
 
     def poll(self):
         self.poll_calls += 1
@@ -44,32 +41,24 @@ class Group:
 
     def result(self):
         if not self.ready:
-            raise AssertionError("group result must not block while pending")
+            raise AssertionError("handle result must not block while pending")
         self.result_calls += 1
         if self.cancel_calls:
-            raise CancelledError("joined work cancelled")
+            raise CancelledError("helper work cancelled")
         return self._result
 
     def cancel(self):
         self.cancel_calls += 1
 
-    def retired(self):
-        return self.ready
-
 
 class Runtime:
-    def __init__(self, group):
-        self.group = group
+    def __init__(self, handle):
+        self.handle = handle
         self.submissions = []
-        self.joined = []
 
     def submit(self, operation, inputs):
         self.submissions.append((operation, inputs))
-        return object()
-
-    def join(self, handles):
-        self.joined.append(tuple(handles))
-        return self.group
+        return self.handle
 
 
 class LUTHelperTests(unittest.TestCase):
@@ -97,15 +86,15 @@ class LUTHelperTests(unittest.TestCase):
                 del sys.modules[name]
         cls.directory.cleanup()
 
-    def backend(self, group, probe_ready):
+    def backend(self, handle, probe_ready):
         backend = self.module.StackHelperBackend()
-        backend.runtime = Runtime(group)
+        backend.runtime = Runtime(handle)
         backend.probe = Probe(probe_ready)
         return backend
 
     def test_progressive_submission_waits_for_probe_and_polls_until_preview_then_full(self):
-        group = Group(result=({"quality": "full"},))
-        backend = self.backend(group, probe_ready=False)
+        handle = Handle(result={"quality": "full"})
+        backend = self.backend(handle, probe_ready=False)
         job = self.module.HelperStackJob(
             backend, ((self.settings(linear=self.linear_settings(exposure=.25)),), "ACEScg"), True,
         )
@@ -118,22 +107,20 @@ class LUTHelperTests(unittest.TestCase):
             operation, inputs = backend.runtime.submissions[0]
             self.assertEqual(operation, "stack_lut")
             self.assertEqual(inputs["working_space"], "ACEScg")
-            self.assertEqual(len(backend.runtime.joined), 1)
-            self.assertEqual(len(backend.runtime.joined[0]), 1)
-            self.assertEqual(group.result_calls, 0)
-            group._preview = ({"quality": "preview"},)
+            self.assertEqual(handle.result_calls, 0)
+            handle.preview = {"quality": "preview"}
             self.assertEqual(job.advance(), ("preview", {"quality": "preview"}))
-            self.assertEqual(group.result_calls, 0)
-            group._preview = None
-            group.ready = True
+            self.assertEqual(handle.result_calls, 0)
+            handle.preview = None
+            handle.ready = True
             self.assertEqual(job.advance(), ("full", {"quality": "full"}))
-        self.assertEqual(group.poll_calls, 3)
-        self.assertEqual(group.result_calls, 1)
+        self.assertEqual(handle.poll_calls, 3)
+        self.assertEqual(handle.result_calls, 1)
 
     def test_direct_request_does_not_publish_preview(self):
-        group = Group(preview=({"quality": "preview"},),
-                      result=({"quality": "full"},), ready=True)
-        backend = self.backend(group, probe_ready=True)
+        handle = Handle(preview={"quality": "preview"},
+                        result={"quality": "full"}, ready=True)
+        backend = self.backend(handle, probe_ready=True)
         job = self.module.HelperStackJob(
             backend, ((self.settings(),), "ACEScg"), False,
         )
@@ -143,8 +130,8 @@ class LUTHelperTests(unittest.TestCase):
         self.assertFalse(backend.runtime.submissions[0][1]["progressive"])
 
     def test_entry_directions_cross_the_helper_boundary_in_order(self):
-        group = Group(result=({"quality": "full"},), ready=True)
-        backend = self.backend(group, probe_ready=True)
+        handle = Handle(result={"quality": "full"}, ready=True)
+        backend = self.backend(handle, probe_ready=True)
         job = self.module.HelperStackJob(
             backend,
             ((
@@ -159,24 +146,24 @@ class LUTHelperTests(unittest.TestCase):
                          ("INVERSE", "FORWARD"))
 
     def test_superseding_preview_requests_cancellation_and_waits_for_retirement(self):
-        group = Group(preview=({"quality": "preview"},),
-                      result=({"quality": "full"},), ready=False)
-        backend = self.backend(group, probe_ready=True)
+        handle = Handle(preview={"quality": "preview"},
+                        result={"quality": "full"}, ready=False)
+        backend = self.backend(handle, probe_ready=True)
         job = self.module.HelperStackJob(
             backend, ((self.settings(),), "ACEScg"), True,
         )
         with patch.object(self.module, "thaw_prepared", side_effect=lambda item: item):
             self.assertEqual(job.advance(), ("preview", {"quality": "preview"}))
             job.cancel()
-            self.assertEqual(group.cancel_calls, 1)
+            job.cancel()
+            self.assertEqual(handle.cancel_calls, 1)
             self.assertIsNone(job.advance())
             with self.assertRaises(RuntimeError):
                 job.close()
-            group.ready = True
+            handle.ready = True
             with self.assertRaises(CancelledError):
                 job.advance()
         job.close()
-
 
 if __name__ == "__main__":
     unittest.main()

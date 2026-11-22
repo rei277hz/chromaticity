@@ -5,7 +5,11 @@ import numpy as np
 from color_tools.perceptual_grade_reference.grading import Color, ColorSettings, Tone, ToneSettings
 from color_tools.perceptual_grade_reference.model import rgb_matrix
 from tests.support import cone_reference as cone, dctl_reference as reference, jc_prototype, jc_surface, oracle
-from tests.support.dctl import PROTOTYPES, STAGES, SURFACE_PROTOTYPES
+from tests.support.dctl import (
+    ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES, OVERLAP_PROTOTYPES,
+    PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES, TONE_FIT_PROTOTYPES,
+    TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
+)
 
 SAMPLES = np.array([[.25, .18, .04], [.15, .07, .42], [.5, .8, .2], [3., 1., .8],
                     [-.09, -.07, -.04], [1.e-6, 2.e-6, 5.e-6]], dtype=np.float32)
@@ -22,7 +26,6 @@ WARP_CONTROLS = {f"web{family}{row}{handle}": value
                                        ("scale", .10 * (row - 1) + handle * .02))}
 WARP_CONTROLS |= {f"tone{row}Adaptance{axis}": value for i, row in enumerate("SMWH")
                   for axis, value in (("A", i + 1.), ("B", -2.))}
-
 
 class NumericalTests(unittest.TestCase):
     def assert_stage_close(self, actual, expected):
@@ -46,7 +49,9 @@ class NumericalTests(unittest.TestCase):
                 np.testing.assert_array_equal(actual.view("u4"), pixels.view("u4"))
         wire = np.array([[0., -0., 0.], [399., -399., 71.], [-1., -2., -3.],
                          [1.e-25, -1.e-25, 1.e-12]], dtype="f4")
-        for stage in ("tone", "jc", "warp"):
+        for stage in ("tone", "jc", "warp", *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
+                      *GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+                      *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, *WARP_QUADRATIC_SCALE_PROTOTYPES):
             with self.subTest(stage=stage):
                 actual = oracle.run(stage, wire)
                 np.testing.assert_array_equal(actual.view("u4"), wire.view("u4"))
@@ -74,6 +79,198 @@ class NumericalTests(unittest.TestCase):
                 self.compare("tone", wire, dict(peakNits=index, inputShadows=4,
                                                  inputMidtones=42, remapFit=2))
         self.compare("tone", wire, dict(inputBlack=1., inputShadows=4.))
+
+    def test_integrated_tone_matches_standalone_at_full_hk_with_c_reset(self):
+        wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 2048. * SAMPLES])),
+                          [210., 238., 263.], [-341., -293., -314.]]).astype("f4")
+        for peak in range(4):
+            for calibration in ({}, dict(inputShadows=1.2, inputMidtones=57., inputWhite=180.,
+                                         inputHighlights=1680., remapFit=2)):
+                with self.subTest(peak=peak, calibration=calibration):
+                    settings = dict(calibration, peakNits=peak)
+                    actual = self.compare("jc_tone_fit", wire, settings)
+                    self.assert_stage_close(actual, oracle.run("tone", wire, settings))
+
+    def test_integrated_tone_applies_global_chroma_first(self):
+        wire = cone.from_xyz(np.vstack([SAMPLES, 20. * SAMPLES])).astype("f4")
+        chroma = dict(cContrast=1.3, cPivot=.37, cMuted=.7, cVivid=-.5,
+                      shadowChroma=-1.2, highlightChroma=1.5, cToneCrossover=33.)
+        tone = dict(inputMidtones=72., inputWhite=203., inputHighlights=1600., remapFit=3)
+        c_only = oracle.run("jc_global_shape", wire, chroma)
+        self.assert_stage_close(self.compare("jc_tone_fit", wire, chroma), c_only)
+        adjusted = self.compare("jc_tone_fit", wire, chroma | tone)
+        self.assert_stage_close(adjusted, oracle.run("tone", c_only, tone))
+
+    def test_integrated_tone_hk_influence_blends_ray_preserving_gains(self):
+        wire = cone.pack([-50., -50., 44., 44.], [0., -32., 0., 44.], [0., 24., 0., -33.]).astype("f4")
+        inputs = cone.enter(wire)
+        settings = dict(inputShadows=1., inputMidtones=90., inputWhite=155.,
+                        inputHighlights=1800., remapFit=2)
+        outputs = []
+        for influence in (0., .35, 1.):
+            with self.subTest(influence=influence):
+                after = cone.enter(self.compare("jc_tone_fit", wire, dict(settings, hkInfluence=influence)))
+                np.testing.assert_array_equal(np.sign(after.ja), np.sign(inputs.ja))
+                input_ray = np.column_stack([inputs.ja, inputs.q[:, 1:]])
+                output_ray = np.column_stack([after.ja, after.q[:, 1:]])
+                scale = np.linalg.norm(output_ray, axis=-1) / np.linalg.norm(input_ray, axis=-1)
+                np.testing.assert_allclose(output_ray, input_ray * scale[:, None], atol=3.e-6, rtol=3.e-5)
+                outputs.append(after.ja)
+        j_only, mixed, full_hk = outputs
+        np.testing.assert_allclose(j_only[::2], j_only[1::2], atol=3.e-4, rtol=0.)
+        self.assertGreater(np.min(abs(full_hk[::2] - full_hk[1::2])), .05)
+        np.testing.assert_allclose(mixed, .65 * j_only + .35 * full_hk, atol=3.e-4, rtol=0.)
+
+        zero_j = cone.pack(0., 24., -32.).astype("f4").reshape(1, 3)
+        zero_input = cone.enter(zero_j)
+        for influence in (0., .35, 1.):
+            zero_output = cone.enter(self.compare("jc_tone_fit", zero_j, dict(settings, hkInfluence=influence)))
+            self.assertAlmostEqual(zero_output.ja[0], 0., delta=2.e-5)
+            self.assertGreater(np.dot(zero_output.q[0, 1:], zero_input.q[0, 1:]), 0.)
+
+    def test_integrated_black_compression_orders_dark_ramp_and_keeps_highlight_target(self):
+        settings = dict(inputShadows=2., inputMidtones=28., inputWhite=195.,
+                        inputHighlights=1500., peakNits=2, blackCompression=1.8)
+        calibration = Tone(reference.tone_settings(settings))
+        dark = np.geomspace(1.e-5, 12., 80)
+        heights = np.r_[-100. * calibration.source[-1], -dark[::-1], 0., dark, 100. * calibration.source[-1]]
+        wire = cone.pack(heights, 0., 0.).astype("f4")
+        forward = self.compare("jc_tone_fit", wire, settings)
+        result = cone.enter(forward).ja
+        self.assertTrue(np.all(np.diff(result) > 0.))
+        self.assertEqual(result[len(dark) + 1], 0.)
+        np.testing.assert_allclose(result[[0, -1]], [-calibration.high, calibration.high], atol=3.e-4, rtol=0.)
+        baseline = cone.enter(oracle.run("jc_tone_fit", wire, dict(settings, blackCompression=0.))).ja
+        self.assertGreater(np.max(abs(result[1:-1] - baseline[1:-1])), .05)
+        self.assert_stage_close(oracle.run("jc_tone_fit", forward, dict(settings, direction=1)), wire)
+
+    def test_integrated_tone_round_trips_signed_hdr_and_zero_lightness(self):
+        wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 2048. * SAMPLES])),
+                          cone.pack([-75., 55., 350.], [19., -65., 40.], [-4., 11., -90.]),
+                          [11., -22., 0.], [389., 390., 388.]]).astype("f4")
+        black = np.array([[0., -0., 0.]], dtype="f4")
+        settings = dict(blackCompression=1.1, inputShadows=2.4, inputMidtones=42., inputWhite=225.,
+                        inputHighlights=1600., remapFit=1, peakNits=2,
+                        shadowChroma=1.5, highlightChroma=-1.3, cToneCrossover=35.)
+        for stage in (*TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES, *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES):
+            if stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES:
+                shape = dict(cMutedGain=-1.3, cVividGain=1.7, cSaturationCrossover=.22)
+            else:
+                shape = dict(cContrast=-1.3, cPivot=.22, cMuted=-.65, cVivid=.85)
+            for influence in (0., .37, 1.):
+                with self.subTest(stage=stage, influence=influence):
+                    forward_settings = dict(settings, **shape, hkInfluence=influence)
+                    inverse_settings = dict(forward_settings, direction=1)
+                    result = self.compare(stage, wire, forward_settings)
+                    self.assert_stage_close(self.compare(stage, result, inverse_settings), wire)
+                    restored = self.compare(stage, wire, inverse_settings)
+                    self.assert_stage_close(self.compare(stage, restored, forward_settings), wire)
+                    for active in (forward_settings, inverse_settings):
+                        np.testing.assert_array_equal(oracle.run(stage, black, active).view("u4"), black.view("u4"))
+
+    def test_integrated_linear_gain_changes_only_tonal_chroma_fade(self):
+        stage = "jc_tone_fit_linear_gain"
+        crossover = 30.
+        for height in (0., -10., crossover, 2. * crossover):
+            with self.subTest(height=height):
+                knee = (35. / (75. * 9.)) * abs(height)
+                chroma = np.array([0., .01, .1, 1., 3., 10., 30., 100.]) if knee == 0. else (
+                    knee * np.array([0., .01, .1, 1., 10., 100.]))
+                wire = cone.pack(height, chroma, 0.).astype("f4")
+                shape = dict(cContrast=1.3, cPivot=.37, cMuted=.7, cVivid=-.5)
+                np.testing.assert_array_equal(oracle.run(stage, wire, shape), oracle.run("jc_tone_fit", wire, shape))
+                settings = dict(shadowChroma=-2., highlightChroma=2., cToneCrossover=crossover)
+                adjusted = self.compare(stage, wire, settings)
+                self.assert_stage_close(self.compare(stage, adjusted, dict(settings, direction=1)), wire)
+                baseline = self.compare("jc_tone_fit", wire, settings)
+                before = cone.enter(wire)
+                result = cone.enter(adjusted)
+                np.testing.assert_allclose(result.ja, height, atol=1.e-4, rtol=0.)
+                input_chroma = np.linalg.norm(before.q[:, 1:], axis=-1)
+                output_chroma = np.linalg.norm(result.q[:, 1:], axis=-1)
+                offset = abs(height) / crossover - 1.
+                amount = (-2. if offset < 0. else 2.) * jc_surface.smoothstep(abs(offset))
+                fade = np.divide(input_chroma, input_chroma + knee,
+                                 out=np.ones_like(input_chroma), where=input_chroma + knee > 0.)
+                linear_expected = input_chroma * (1. + (np.exp2(amount) - 1.) * fade)
+                log_expected = input_chroma * np.exp2(amount * fade)
+                np.testing.assert_allclose(output_chroma, linear_expected, rtol=8.e-4, atol=2.e-5)
+                baseline_chroma = np.linalg.norm(cone.enter(baseline).q[:, 1:], axis=-1)
+                np.testing.assert_allclose(baseline_chroma, log_expected, rtol=8.e-4, atol=2.e-5)
+                self.assertTrue(np.all(np.diff(output_chroma) > 0.))
+
+    def test_integrated_linear_gain_matches_standalone_at_selected_highlight(self):
+        height = 120.
+        amount = 1.25
+        crossover = 45.
+        knee = (35. / (75. * 9.)) * height
+        chroma = knee * np.array([0., .05, .25, 1., 4., 20.])
+        wire = cone.pack(height, .8 * chroma, .6 * chroma).astype("f4")
+        integrated = dict(highlightChroma=amount, cToneCrossover=crossover)
+        standalone = {f"tone{row}CGain": amount for row in "SMWH"}
+        combined = self.compare("jc_tone_fit_linear_gain", wire, integrated)
+        separate = self.compare("jc_linear_gain", wire, standalone)
+        self.assert_stage_close(combined, separate)
+        np.testing.assert_allclose(cone.enter(combined).q, cone.enter(separate).q, rtol=3.e-4, atol=3.e-5)
+
+    def test_unified_chroma_gain_at_crossover_and_tails(self):
+        stage = "jc_tone_fit_unified_chroma"
+        height = 75.
+        knee = 35.
+        radius = knee * np.array([.001, .1, 1., 2., 10., 1000.])
+        wire = cone.pack(height, .8 * radius, -.6 * radius).astype("f4")
+        for muted, vivid in ((-1., 1.), (2., -2.), (.5, 1.5)):
+            settings = dict(cMutedGain=muted, cVividGain=vivid)
+            forward = self.compare(stage, wire, settings)
+            ab = cone.enter(forward).q[:, 1:]
+            mapped = np.linalg.norm(ab, axis=-1)
+            self.assertTrue(np.all(np.diff(mapped) > 0.))
+            np.testing.assert_allclose(ab, mapped[:, None] * [.8, -.6], rtol=3.e-4, atol=.0003)
+            np.testing.assert_allclose(mapped[[0, -1]] / radius[[0, -1]], np.exp2([muted, vivid]), rtol=.01)
+            self.assertAlmostEqual(mapped[2], knee * np.exp2((muted + vivid) / 2.), delta=.0003)
+            if (muted, vivid) == (-1., 1.):
+                self.assertAlmostEqual(mapped[3], 87.5, delta=.0003)
+            self.assert_stage_close(self.compare(stage, forward, dict(settings, direction=1)), wire)
+
+    def test_unified_chroma_crossover_sweep(self):
+        stage = "jc_tone_fit_unified_chroma"
+        height = np.array([75., -42., 130., -600.])
+        radius = (35. / 75.) * abs(height) * [.4, 1., 2., 4.]
+        wire = cone.pack(height, -.6 * radius, .8 * radius).astype("f4")
+        for muted, vivid in ((-2., 2.), (2., -2.), (.75, .75)):
+            settings = dict(cMutedGain=muted, cVividGain=vivid)
+            sweep = np.stack([self.compare(stage, wire, dict(settings, cSaturationCrossover=p))
+                              for p in np.linspace(.05, .95, 19)])
+            mapped = np.linalg.norm(cone.enter(sweep).q[..., 1:], axis=-1)
+            if muted == vivid:
+                np.testing.assert_allclose(mapped, np.broadcast_to(np.exp2(muted) * radius, mapped.shape),
+                                           rtol=5.e-5)
+                np.testing.assert_array_equal(sweep, np.broadcast_to(sweep[0], sweep.shape))
+            else:
+                self.assertTrue(np.all((muted - vivid) * np.diff(mapped, axis=0) > 0.))
+
+    def test_unified_chroma_gray_zero_lightness_and_reset(self):
+        stage = "jc_tone_fit_unified_chroma"
+        gray = np.array([[0., -0., 0.], [22., 22., 22.], [-37., -37., -37.]], dtype="f4")
+        axis = np.array([[11., -22., 0.], [-13., 26., 0.]], dtype="f4")
+        wire = np.vstack([gray, axis, cone.from_xyz(SAMPLES)]).astype("f4")
+        tone = dict(blackCompression=1.1, inputMidtones=55., hkInfluence=.37,
+                    shadowChroma=-1., highlightChroma=1.5)
+        for pivot in (.05, .95):
+            settings = dict(cMutedGain=2., cVividGain=-1., cSaturationCrossover=pivot)
+            for direction in (0, 1):
+                active = dict(settings, direction=direction)
+                input_chart = cone.enter(axis)
+                gain = 2. if direction else .5
+                expected_axis = cone.pack(input_chart.ja, input_chart.q[:, 1] * gain,
+                                          input_chart.q[:, 2] * gain).astype("f4")
+                self.assert_stage_close(self.compare(stage, axis, active), expected_axis)
+                np.testing.assert_array_equal(oracle.run(stage, gray, active).view("u4"), gray.view("u4"))
+                shared = dict(tone, direction=direction)
+                np.testing.assert_array_equal(oracle.run(stage, wire, dict(shared, cSaturationCrossover=pivot)),
+                                              oracle.run("jc_tone_fit_linear_gain", wire, shared))
+        for name, value in (("cMutedGain", 2.01), ("cVividGain", -2.01), ("cSaturationCrossover", .04)):
+            np.testing.assert_array_equal(oracle.run(stage, axis[:1], {name: value}), [[400., 0., 400.]])
 
     def test_input_output_keep_signed_hdr_and_use_the_physical_chart(self):
         neutral = np.array([[-2048.], [2048.]]) * reference.WHITE
@@ -277,12 +474,372 @@ class NumericalTests(unittest.TestCase):
                 self.assertTrue(np.all(np.diff(np.linalg.norm(chart.q[:, 1:], axis=-1)) > 0.))
                 self.assert_stage_close(oracle.run("jc", adjusted, dict(controls, direction=1)), wire)
 
+    def test_overlap_midtones_match_effective_j_and_c_at_each_anchor(self):
+        anchors = 100. * Tone(ToneSettings()).target[1:]
+        wire = cone.pack(np.r_[anchors, 1.5 * anchors, -anchors], 75., 15.).astype("f4")
+        expected_midtones = {
+            "jc_adjacent_overlap": (1 / 5, 2 / 3, 1 / 6, 0.),
+            "jc_broad_overlap": (256 / 801, 16 / 33, 8 / 33, 32 / 801),
+        }
+        for stage, amounts in expected_midtones.items():
+            for family in "JC":
+                with self.subTest(stage=stage, family=family):
+                    settings = {f"tone{row}{family}Contrast": amount for row, amount in zip("SMWH", amounts)}
+                    expected = oracle.run("jc", wire, settings)
+                    actual = oracle.run(stage, wire, {f"toneM{family}Contrast": 1.})
+                    np.testing.assert_allclose(actual, expected, rtol=2.e-6, atol=2.e-5)
+
+    def test_overlap_variants_preserve_uniform_contrast_and_validate_raw_sliders(self):
+        ja = np.linspace(-145., 145., 161)
+        wire = cone.pack(ja, .8 * np.abs(ja) + 3., -.25 * np.abs(ja)).astype("f4")
+        for stage in OVERLAP_PROTOTYPES:
+            with self.subTest(stage=stage):
+                for amount in (-2., 2.):
+                    uniform = {f"tone{row}{family}Contrast": amount
+                               for row in "SMWH" for family in "JC"}
+                    self.assert_stage_close(oracle.run(stage, wire, uniform),
+                                           oracle.run("jc", wire, uniform))
+                for name in ("toneMJContrast", "toneWCContrast"):
+                    np.testing.assert_array_equal(oracle.run(stage, wire[:1], {name: 2.01}), [[400., 0., 400.]])
+
+    def test_anchor_centers_match_broad_overlap_when_centers_are_equal(self):
+        wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 20. * SAMPLES])),
+                          cone.pack([-35., 24., 57., 83., 125.], [15., 22., 46., 71., 89.],
+                                    [4., -8., 9., -19., 24.])]).astype("f4")
+        for j_center, c_center, width in ((.05, .95, .05), (.3, .3, .5), (.72, .41, .8), (.95, .05, 1.)):
+            common = dict(peakNits=3, globalChromaGain=-.2, jSaturationWidth=width, cSaturationWidth=width,
+                          toneSJContrast=-1.2, toneMJContrast=1.4, toneWJContrast=-.8, toneHJContrast=.6,
+                          toneSCContrast=.7, toneMCContrast=-1.3, toneWCContrast=1.1, toneHCContrast=-.4)
+            controls = common | {f"tone{row}{family}Center": value for row in "SMWH"
+                                 for family, value in (("J", j_center), ("C", c_center))}
+            broad = dict(common, jSaturationCenter=j_center, cSaturationCenter=c_center)
+            with self.subTest(j_center=j_center, c_center=c_center, width=width):
+                for direction in (0, 1):
+                    actual = oracle.run("jc_anchor_centers", wire, dict(controls, direction=direction))
+                    expected = oracle.run("jc_broad_overlap", wire, dict(broad, direction=direction))
+                    np.testing.assert_array_equal(actual.view("u4"), expected.view("u4"))
+
+    def test_anchor_c_centers_give_tone_specific_crossover_and_blend(self):
+        anchors = 100. * Tone(ToneSettings(peak_nits=2000)).target[1:]
+        ja = np.r_[anchors[1], anchors[2], .5 * (anchors[1] + anchors[2]), .5 * anchors[0],
+                   1.5 * anchors[-1], anchors[:-1] + .25 * np.diff(anchors)]
+        input_chroma = (35. / 75.) * ja
+        wire = cone.pack(ja, input_chroma, 0.).astype("f4")
+        controls = {f"tone{row}CContrast": 1. for row in "SMWH"}
+        controls.update(peakNits=2, toneSCCenter=.08, toneMCCenter=.35,
+                        toneWCCenter=.65, toneHCCenter=.94, cSaturationWidth=.5)
+        actual = self.compare("jc_anchor_centers", wire, controls)
+        chart = cone.enter(actual)
+        output_chroma = np.linalg.norm(chart.q[:, 1:], axis=-1)
+        self.assertGreater(output_chroma[0], input_chroma[0])
+        self.assertLess(output_chroma[1], input_chroma[1])
+        np.testing.assert_allclose(output_chroma[2], input_chroma[2], rtol=0., atol=2.e-4)
+
+    def test_anchor_j_centers_drive_each_positive_local_slope(self):
+        ja = np.r_[np.linspace(35., 120., 51), np.linspace(-120., -35., 51)]
+        wire = cone.pack(ja, 62., 29.).astype("f4")
+        controls = dict(jSaturationWidth=.35,
+                        toneSJContrast=.4, toneMJContrast=-.7,
+                        toneWJContrast=1.1, toneHJContrast=-.2,
+                        toneSJCenter=.1, toneMJCenter=.35,
+                        toneWJCenter=.65, toneHJCenter=.9)
+        adjusted = self.compare("jc_anchor_centers", wire, controls)
+        chart = cone.enter(adjusted)
+        self.assertTrue(np.all(np.diff(chart.ja[:51]) > 0.))
+        self.assertTrue(np.all(np.diff(chart.ja[51:]) > 0.))
+        self.assertGreater(np.max(abs(chart.ja - ja)), .01)
+
+    def test_anchor_centers_validate_raw_controls_and_round_trip(self):
+        black = np.array([[0., -0., 0.]], dtype="f4")
+        wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 20. * SAMPLES])),
+                          cone.pack([-55., 0., 47., 96.], [19., 26., -38., 77.],
+                                    [-7., 14., 9., -21.])]).astype("f4")
+        controls = dict(peakNits=1, globalChromaGain=.25,
+                        jSaturationWidth=.9, cSaturationWidth=.1,
+                        toneSJCenter=.12, toneMJCenter=.84,
+                        toneWJCenter=.35, toneHJCenter=.72,
+                        toneSCCenter=.88, toneMCCenter=.2,
+                        toneWCCenter=.68, toneHCCenter=.31,
+                        toneSJContrast=-1.7, toneMJContrast=1.8,
+                        toneWJContrast=-1.2, toneHJContrast=1.5,
+                        toneSCContrast=1.6, toneMCContrast=-1.8,
+                        toneWCContrast=1.4, toneHCContrast=-1.3)
+        for peak in range(4):
+            forward_controls = dict(controls, peakNits=peak)
+            inverse_controls = dict(forward_controls, direction=1)
+            with self.subTest(peak=peak):
+                forward = self.compare("jc_anchor_centers", wire, forward_controls)
+                np.testing.assert_array_equal(
+                    oracle.run("jc_anchor_centers", black, forward_controls).view("u4"), black.view("u4"))
+                gray = cone.pack(np.array([-80., 0., 42., 106.]), 0., 0.).astype("f4")
+                np.testing.assert_array_equal(
+                    oracle.run("jc_anchor_centers", gray, forward_controls).view("u4"), gray.view("u4"))
+                self.assert_stage_close(
+                    oracle.run("jc_anchor_centers", forward, inverse_controls), wire)
+                self.assert_stage_close(
+                    oracle.run("jc_anchor_centers", oracle.run("jc_anchor_centers", wire, inverse_controls),
+                               forward_controls), wire)
+
+        for name in ("toneMJCenter", "toneWCCenter"):
+            with self.subTest(invalid=name):
+                np.testing.assert_array_equal(
+                    oracle.run("jc_anchor_centers", wire[:1], {name: .96}), [[400., 0., 400.]])
+
+    def test_gain_j_contrast_preserves_ray_and_lightness_order(self):
+        ja = np.r_[-np.linspace(140., 8., 121), np.linspace(8., 140., 121)]
+        controls = {f"tone{row}JContrast": amount for row, amount in zip("SMWH", (2., -2., 1.5, -.75))}
+        fixed = np.array([[0., -0., 0.], [-42., -42., -42.], [90., 90., 90.],
+                          [11., -22., 0.], [-13., 26., 0.]], dtype="f4")
+        outputs = {}
+        for stage in GAIN_PROTOTYPES:
+            for saturation in (.04, .62):
+                with self.subTest(stage=stage, saturation=saturation):
+                    c = (35. / 75.) * abs(ja) * saturation / (1. - saturation)
+                    wire = cone.pack(ja, .8 * c, -.6 * c).astype("f4")
+                    before = cone.enter(wire)
+                    actual = self.compare(stage, wire, controls)
+                    after = cone.enter(actual)
+                    self.assertTrue(np.all(np.diff(after.ja) > 0.))
+                    self.assertGreater(np.max(abs(after.ja - before.ja)), .1)
+                    np.testing.assert_allclose(after.q[:, 1:] / abs(after.ja[:, None]),
+                                               before.q[:, 1:] / abs(before.ja[:, None]),
+                                               rtol=2.e-4, atol=2.e-6)
+                    if saturation in outputs:
+                        np.testing.assert_array_equal(actual, outputs[saturation])
+                    outputs[saturation] = actual
+            for direction in (0, 1):
+                actual = oracle.run(stage, fixed, dict(controls, direction=direction))
+                np.testing.assert_array_equal(actual.view("u4"), fixed.view("u4"))
+
+    def test_gain_c_curves_are_ordered_and_protect_near_gray(self):
+        ja = 62.
+        neutral = cone.pack([-ja, 0., ja], 0., 0.).astype("f4")
+        saturation = np.r_[.002, np.linspace(.005, .095, 19), .10, np.linspace(.11, .99, 89)]
+        c = (35. / 75.) * ja * saturation / (1. - saturation)
+        wire = cone.pack(ja, .8 * c, .6 * c).astype("f4")
+        before = cone.enter(wire)
+        for stage in GAIN_PROTOTYPES:
+            for amount in (-2., 2.):
+                with self.subTest(stage=stage, amount=amount):
+                    controls = {f"tone{row}CGain": amount for row in "SMWH"}
+                    actual = self.compare(stage, wire, controls)
+                    after = cone.enter(actual)
+                    before_c = np.linalg.norm(before.q[:, 1:], axis=-1)
+                    after_c = np.linalg.norm(after.q[:, 1:], axis=-1)
+                    gain = after_c / before_c
+                    half_gain = np.exp2(.5 * amount) if stage == "jc_log_gain" else .5 * (1. + np.exp2(amount))
+                    self.assertAlmostEqual(gain[saturation == .10].item(), half_gain, places=3)
+                    self.assertLess(abs(gain[0] - 1.), .06)
+                    self.assertTrue(np.all(np.diff(after_c) > 0.))
+                    np.testing.assert_allclose(after.ja, before.ja, rtol=2.e-4)
+                    # Near gray, subtracting nearly equal float32 cones to recover
+                    # opponent coordinates gives finite absolute error in a and b.
+                    np.testing.assert_allclose(after.q[:, 1:], gain[:, None] * before.q[:, 1:],
+                                               rtol=2.e-5, atol=3.e-5)
+                    inverse = dict(controls, direction=1)
+                    self.assert_stage_close(oracle.run(stage, actual, inverse), wire)
+                    for settings in (controls, inverse):
+                        gray = oracle.run(stage, neutral, settings)
+                        np.testing.assert_array_equal(gray.view("u4"), neutral.view("u4"))
+                    # These wire samples have exactly 2R + G + 0.05B = 0.
+                    zero_ja = np.array([[11., -22., 0.], [-13., 26., 0.]], dtype="f4")
+                    np.testing.assert_array_equal(cone.enter(zero_ja).ja, 0.)
+                    vivid = cone.enter(self.compare(stage, zero_ja, controls))
+                    np.testing.assert_allclose(vivid.q[:, 1:], cone.enter(zero_ja).q[:, 1:] * np.exp2(amount),
+                                               rtol=2.e-5)
+
+    def test_gain_combined_edits_preserve_post_c_saturation_and_round_trip(self):
+        wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 20. * SAMPLES])),
+                          cone.pack([-55., 0., 47., 96.], [19., 26., -38., 77.], [-7., 14., 9., -21.]),
+                          [210., 238., 263.], [-341., -293., -314.], [390., 389., 388.]]).astype("f4")
+        j_controls = {f"tone{row}JContrast": amount for row, amount in zip("SMWH", (-1.7, 1.8, -1.2, 1.5))}
+        c_controls = {f"tone{row}CGain": amount for row, amount in zip("SMWH", (1.6, -1.8, 1.4, -1.3))}
+        for stage in GAIN_PROTOTYPES:
+            for peak in range(4):
+                with self.subTest(stage=stage, peak=peak):
+                    forward = dict(j_controls | c_controls, peakNits=peak)
+                    inverse = dict(forward, direction=1)
+                    adjusted = self.compare(stage, wire, forward)
+                    c_only = oracle.run(stage, wire, dict(c_controls, peakNits=peak))
+                    self.assert_stage_close(adjusted, oracle.run(stage, c_only, dict(j_controls, peakNits=peak)))
+                    self.assertGreater(np.max(abs(adjusted - c_only)), .01)
+                    # Use the well-conditioned samples to compare saturation after C and after both edits.
+                    c_chart = cone.enter(c_only[:len(SAMPLES)])
+                    both_chart = cone.enter(adjusted[:len(SAMPLES)])
+                    np.testing.assert_allclose(both_chart.q[:, 1:] / abs(both_chart.ja[:, None]),
+                                               c_chart.q[:, 1:] / abs(c_chart.ja[:, None]),
+                                               rtol=2.e-4, atol=2.e-6)
+                    self.assert_stage_close(self.compare(stage, adjusted, inverse), wire)
+                    self.assert_stage_close(oracle.run(stage, self.compare(stage, wire, inverse), forward), wire)
+
+    def test_global_j_contrast_pivots_gray_and_color(self):
+        stage = "jc_global_shape"
+        for pivot, tones in ((45., [25., 45., 75.]), (80., [45., 80., 130.])):
+            height = np.array(tones)
+            for c_ratio in (0., .05, 1.):
+                wire = cone.pack(height, .8 * c_ratio * height, -.6 * c_ratio * height).astype("f4")
+                initial = cone.enter(wire)
+                for contrast in (-2., 2.):
+                    with self.subTest(pivot=pivot, c_ratio=c_ratio, contrast=contrast):
+                        after = cone.enter(self.compare(stage, wire, dict(jContrast=contrast, jPivot=pivot)))
+                        self.assertLess((after.ja[0] - height[0]) * contrast, 0.)
+                        self.assertAlmostEqual(after.ja[1], pivot, delta=.0003)
+                        self.assertGreater((after.ja[2] - height[2]) * contrast, 0.)
+                        np.testing.assert_allclose(after.q[:, 1:] / after.ja[:, None],
+                                                   initial.q[:, 1:] / initial.ja[:, None],
+                                                   rtol=1.e-4, atol=2.e-6)
+
+    def test_global_shape_independent_toe_shoulder_and_saturation_bias(self):
+        stage = "jc_global_shape"
+        wire = cone.pack([20., 45., 240.], 0., 0.).astype("f4")
+        for settings, active in ((dict(jToe=1.), 0), (dict(jShoulder=1.), 2)):
+            after = cone.enter(self.compare(stage, wire, settings)).ja
+            self.assertGreater(after[active], [20., 45., 240.][active] + 1.)
+            np.testing.assert_allclose(np.delete(after, active), np.delete([20., 45., 240.], active),
+                                       rtol=2.e-5)
+        wire = cone.pack(25., [0., 4., 120.], 0.).astype("f4")
+        for bias in (-1., 0., 1.):
+            after = cone.enter(self.compare(stage, wire, dict(jContrast=1.5, jSaturationBias=bias)))
+            move = 25. - after.ja
+            if bias == 0.:
+                np.testing.assert_allclose(move, move[0], atol=3.e-4)
+            else:
+                self.assertTrue(np.all(bias * np.diff(move) > 0.))
+                if bias == 1.:
+                    self.assertAlmostEqual(move[0], 0., delta=2.e-4)
+
+    def test_global_c_contrast_crossover_and_tail(self):
+        stage = "jc_global_shape"
+        height = 55.
+        for pivot in (.25, .5, .75):
+            s = np.array([pivot / 2., pivot, pivot + .25 * (1. - pivot)])
+            c = (35. / 75.) * height * s / (1. - s)
+            wire = cone.pack(height, .8 * c, -.6 * c).astype("f4")
+            after = cone.enter(self.compare(stage, wire, dict(cContrast=2., cPivot=pivot)))
+            radius = np.linalg.norm(after.q[:, 1:], axis=-1)
+            self.assertLess(radius[0], c[0])
+            self.assertAlmostEqual(radius[1], c[1], delta=.001)
+            self.assertGreater(radius[2], c[2])
+            np.testing.assert_allclose(after.ja, height, rtol=2.e-5)
+            np.testing.assert_allclose(after.q[:, 1:], radius[:, None] * [.8, -.6], atol=.0003)
+
+        c = (35. / 75.) * height * np.array([.25, 1., 10.])
+        wire = cone.pack(height, .8 * c, -.6 * c).astype("f4")
+        for settings, active in ((dict(cMuted=1.), 0), (dict(cVivid=1.), 2)):
+            after = cone.enter(self.compare(stage, wire, dict(settings, cPivot=.25)))
+            radius = np.linalg.norm(after.q[:, 1:], axis=-1)
+            self.assertGreater(radius[active], 1.1 * c[active])
+            np.testing.assert_allclose(np.delete(radius, active), np.delete(c, active), rtol=3.e-5)
+
+        wire = cone.pack([10., 45., 90., 130.], 16., -12.).astype("f4")
+        after = cone.enter(self.compare(stage, wire, dict(shadowChroma=1., highlightChroma=-1.)))
+        radius = np.linalg.norm(after.q[:, 1:], axis=-1)
+        self.assertGreater(radius[0], 20.)
+        self.assertAlmostEqual(radius[1], 20., delta=.0003)
+        self.assertTrue(np.all(radius[2:] < 20.))
+
+        zero_ja = np.array([[11., -22., 0.], [-13., 26., 0.]], dtype="f4")
+        initial = cone.enter(zero_ja)
+        np.testing.assert_array_equal(initial.ja, 0.)
+        settings = dict(cContrast=1., cMuted=-.5, cVivid=.8, shadowChroma=-1.2,
+                        jToe=-.9, jContrast=2., jShoulder=.9)
+        forward = self.compare(stage, zero_ja, settings)
+        expected_gain = np.exp2(settings["cContrast"] + settings["cVivid"] + settings["shadowChroma"])
+        np.testing.assert_allclose(cone.enter(forward).q[:, 1:], initial.q[:, 1:] * expected_gain, rtol=2.e-5)
+        self.assert_stage_close(oracle.run(stage, forward, dict(settings, direction=1)), zero_ja)
+
+    def test_global_c_pivot_sweep_is_ordered_with_muted_and_vivid_active(self):
+        ja = np.array([55., -25., 42., -90., 120., 640., -480.])
+        saturation = np.array([.5, .25, .65, .4, .83, .72, .61])
+        chroma = (35. / 75.) * abs(ja) * saturation / (1. - saturation)
+        wire = cone.pack(ja, .8 * chroma, -.6 * chroma).astype("f4")
+        pivots = np.arange(5, 96) / 100.
+        tone = dict(blackCompression=1.1, inputShadows=2.4, inputMidtones=42., inputWhite=225.,
+                    inputHighlights=1600., peakNits=2, hkInfluence=.37, shadowChroma=1.5,
+                    highlightChroma=-1.3, cToneCrossover=35.)
+        for stage in (*GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES):
+            for contrast in (-2., 0., 2.):
+                with self.subTest(stage=stage, contrast=contrast):
+                    settings = dict(cContrast=contrast, cMuted=-1., cVivid=1.)
+                    if stage != "jc_global_shape":
+                        settings.update(tone)
+                    sweep = np.stack([self.compare(stage, wire, dict(settings, cPivot=pivot)) for pivot in pivots])
+                    if contrast == 0.:
+                        np.testing.assert_array_equal(sweep, np.broadcast_to(sweep[0], sweep.shape))
+                    else:
+                        chart = cone.enter(sweep)
+                        radius = np.linalg.norm(chart.q[..., 1:], axis=-1)
+                        mapped = radius / (radius + (35. / 75.) * abs(chart.ja))
+                        sweep_change = contrast * np.diff(mapped, axis=0)
+                        self.assertTrue(np.all(sweep_change < 1.e-6))
+                        self.assertTrue(np.all(contrast * (mapped[-1] - mapped[0]) < -1.e-4))
+                    for pivot, adjusted in zip(pivots[::45], sweep[::45]):
+                        forward = dict(settings, cPivot=pivot)
+                        restored = oracle.run(stage, adjusted, dict(forward, direction=1))
+                        self.assert_stage_close(restored, wire)
+
+    def test_global_c_sweep_keeps_exact_gray(self):
+        gray = np.array([[0., -0., 0.], [22., 22., 22.], [-37., -37., -37.]], dtype="f4")
+        for stage in (*GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES):
+            with self.subTest(stage=stage):
+                for pivot in (.05, .95):
+                    settings = dict(cContrast=-2., cPivot=pivot, cMuted=-1., cVivid=1.,
+                                    shadowChroma=2., highlightChroma=-2.)
+                    for direction in (0, 1):
+                        result = oracle.run(stage, gray, dict(settings, direction=direction))
+                        np.testing.assert_array_equal(result.view("u4"), gray.view("u4"))
+
+    def test_global_shape_extremes_keep_ramps_ordered(self):
+        stage = "jc_global_shape"
+        height = np.r_[-np.geomspace(600., .1, 121), 0., np.geomspace(.1, 600., 121)]
+        j_wire = cone.pack(height, .3 * abs(height), -.4 * abs(height)).astype("f4")
+        radius = np.geomspace(.01, 2200., 151)
+        c_wire = cone.pack(55., -.6 * radius, .8 * radius).astype("f4")
+        for pivot, contrast, lower, upper in ((10., -2., -1., 1.), (160., 2., 1., -1.)):
+            with self.subTest(pivot=pivot):
+                j_settings = dict(jPivot=pivot, jContrast=contrast, jToe=lower, jShoulder=upper)
+                c_settings = dict(cPivot=.05 if pivot == 10. else .95, cContrast=contrast, cMuted=lower,
+                                  cVivid=upper, shadowChroma=contrast, highlightChroma=-contrast,
+                                  cToneCrossover=pivot)
+                j_result = self.compare(stage, j_wire, j_settings)
+                lightness = cone.enter(j_result).ja
+                self.assertTrue(np.all(np.diff(lightness) > 0.))
+                self.assert_stage_close(oracle.run(stage, j_result, dict(j_settings, direction=1)), j_wire)
+                c_result = self.compare(stage, c_wire, c_settings)
+                chroma = cone.enter(c_result).q[:, 1:]
+                self.assertTrue(np.all(np.diff(np.linalg.norm(chroma, axis=-1)) > 0.))
+                self.assert_stage_close(oracle.run(stage, c_result, dict(c_settings, direction=1)), c_wire)
+
+    def test_global_shape_combined_round_trip(self):
+        stage = "jc_global_shape"
+        wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 20. * SAMPLES])),
+                          cone.pack([-55., 44., 130., 640.], [-.01, -38., 77., 25.], [0., 9., -21., -67.]),
+                          [210., 238., 263.], [-341., -293., -314.], [390., 389., 388.]]).astype("f4")
+        j_only = dict(jContrast=1.7, jSaturationBias=-.64, jToe=.83, jShoulder=-.75, jPivot=60.)
+        c_only = dict(cContrast=-1.3, cMuted=-.68, cVivid=.94, cPivot=.22,
+                      shadowChroma=1.5, highlightChroma=-1.8, cToneCrossover=35.)
+        controls = j_only | c_only
+        forward = self.compare(stage, wire, controls)
+        c_result = oracle.run(stage, wire, c_only)
+        self.assert_stage_close(forward, oracle.run(stage, c_result, j_only))
+        inverse = dict(controls, direction=1)
+        self.assert_stage_close(oracle.run(stage, forward, inverse), wire)
+        self.assert_stage_close(oracle.run(stage, oracle.run(stage, wire, inverse), controls), wire)
+        black = np.array([[0., -0., 0.]], dtype="f4")
+        for settings in (controls, inverse):
+            np.testing.assert_array_equal(oracle.run(stage, black, settings).view("u4"), black.view("u4"))
+        for direction in (0, 1):
+            selectors = dict(jPivot=160., cPivot=.05, cToneCrossover=10., jSaturationBias=1., direction=direction)
+            np.testing.assert_array_equal(oracle.run(stage, wire, selectors).view("u4"), wire.view("u4"))
+
     def test_reversible_nodes_round_trip_including_extended_responses(self):
         black = np.array([[0., -0., 0.]], dtype="f4")
         wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 20. * SAMPLES])),
                           cone.pack([-35., 0., 65.], [15., 20., -30.], [5., -6., 20.]),
                           [210., 238., 263.], [-341., -293., -314.], [390., 389., 388.]]).astype("f4")
-        for stage, controls in (("jc", JC_CONTROLS), ("warp", WARP_CONTROLS)):
+        settings = {stage: JC_CONTROLS for stage in ("jc", *OVERLAP_PROTOTYPES)}
+        settings.update({stage: WARP_CONTROLS for stage in ("warp", *WARP_QUADRATIC_SCALE_PROTOTYPES)})
+        for stage, controls in settings.items():
             for peak in range(4):
                 with self.subTest(stage=stage, peak=peak):
                     forward = dict(controls, peakNits=peak)
@@ -345,6 +902,53 @@ class NumericalTests(unittest.TestCase):
         np.testing.assert_allclose(chart.q[:, 1], .6795 * chart.ja, rtol=1.e-5)
         np.testing.assert_allclose(chart.q[:, 2], 0., atol=2.e-4)
         self.assert_stage_close(oracle.run("warp", adjusted, dict(controls, direction=1)), wire)
+
+    def test_warp_quadratic_scale_keeps_anchors_and_ray_order(self):
+        stage = "warp_quadratic_scale"
+        chroma_ratio = .6795
+        j_fraction = 1. / np.hypot(1., chroma_ratio)
+        c_fraction = chroma_ratio * j_fraction
+        controls = {f"webscale{row}{handle}": stops
+                    for row, stops in enumerate((2., -2., 2., -2.)) for handle in range(6)}
+        for peak_index, peak in enumerate(reference.PEAKS):
+            with self.subTest(peak=peak):
+                anchors = Color(ColorSettings(), Tone(ToneSettings(peak_nits=peak))).web.geometry.anchors
+                radii = 2. * anchors ** 2 / (np.hypot(66. * c_fraction, 2. * anchors * j_fraction) + 66. * c_fraction)
+                knots = radii * j_fraction
+                at_knots = cone.pack(knots, chroma_ratio * knots, 0.)
+                settings = dict(controls, peakNits=peak_index)
+                self.assert_stage_close(oracle.run(stage, at_knots, settings), oracle.run("warp", at_knots, settings))
+
+                heights = np.linspace(0., 1.2 * knots[-1], 501)
+                wire = cone.pack(heights, chroma_ratio * heights, 0.).astype("f4")
+                adjusted = self.compare(stage, wire, settings)
+                chart = cone.enter(adjusted)
+                self.assertTrue(np.all(np.diff(chart.ja) > 0.))
+                np.testing.assert_allclose(chart.q[:, 1], chroma_ratio * chart.ja, rtol=1.e-5)
+                baseline = self.compare("warp", wire, settings)
+                self.assertGreater(np.max(abs(adjusted - baseline)), .01)
+                self.assert_stage_close(oracle.run(stage, adjusted, dict(settings, direction=1)), wire)
+
+                for index, (radius, stops) in enumerate(zip(radii, (2., -2., 2., -2.))):
+                    delta = max(.1, radius * 1.e-3)
+                    nearby = np.array([radius - delta, radius + delta])
+                    samples = cone.pack(nearby * j_fraction, nearby * c_fraction, 0.).astype("f4")
+                    output = cone.enter(oracle.run(stage, samples, settings))
+                    mapped_radius = np.hypot(output.ja, np.linalg.norm(output.q[:, 1:], axis=-1))
+                    derivative = (mapped_radius[1] - mapped_radius[0]) / (2. * delta)
+                    expected_slope = np.exp2(stops * jc_surface.smoothstep(10. * c_fraction))
+                    self.assertAlmostEqual(derivative, expected_slope, delta=2.e-2,
+                                           msg=f"anchor {index}, peak {peak}")
+
+    def test_warp_quadratic_scale_reset_matches_baseline_with_other_edits(self):
+        settings = {name: value for name, value in WARP_CONTROLS.items() if not name.startswith("webscale")}
+        wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 32. * SAMPLES])),
+                          cone.pack([-55., 0., 47., 96.], [19., 26., -38., 77.], [-7., 14., 9., -21.])]).astype("f4")
+        for peak in range(4):
+            with self.subTest(peak=peak):
+                baseline = self.compare("warp", wire, dict(settings, peakNits=peak))
+                quadratic = self.compare("warp_quadratic_scale", wire, dict(settings, peakNits=peak))
+                self.assert_stage_close(quadratic, baseline)
 
     def test_six_node_chain_can_undo_color_before_export(self):
         settings = {"linear": {"globalExposure": .25}, "tone": {"inputMidtones": 40.},

@@ -190,9 +190,16 @@ class BakeRouteTests(unittest.TestCase):
         self.assertEqual((route["domain"], route["width"], route["height"]), ("IMAGE", 1, 1))
         self.assertEqual(route["shader_backend"], "CYCLES_CPU")
         self.assertEqual((route["frame"], route["subframe"]), (7, .25))
-        self.assertEqual(len(route["signature"]), 64)
+        self.assertEqual(len(route["request_signature"]), 64)
         self.assertIsNone(route["object_name"])
-        self.assertEqual(self.module.describe(self.grade, route)["signature"], route["signature"])
+        self.assertEqual(self.module.describe(self.grade, route)["request_signature"], route["request_signature"])
+
+    def test_fingerprint_version_does_not_change_route_payload_schema(self):
+        current = self.module.describe(self.grade, self.context)
+        with patch.object(self.module, "FINGERPRINT_SCHEMA", 1):
+            previous_version = self.module.describe(self.grade, self.context)
+        self.assertEqual(current["schema"], previous_version["schema"])
+        self.assertNotEqual(current["receipt_signature"], previous_version["receipt_signature"])
 
     def test_shader_backend_always_uses_private_cycles_cpu(self):
         cases = (
@@ -218,11 +225,11 @@ class BakeRouteTests(unittest.TestCase):
         first = self.module.describe(self.grade, self.context)
         self.scene.cycles.device = "GPU"
         changed = self.module.describe(self.grade, self.context)
-        self.assertEqual(first["signature"], changed["signature"])
+        self.assertEqual(first["request_signature"], changed["request_signature"])
         self.assertEqual(first["receipt_signature"], changed["receipt_signature"])
         self.scene.render.engine = "BLENDER_EEVEE"
         eevee = self.module.describe(self.grade, self.context)
-        self.assertEqual(first["signature"], eevee["signature"])
+        self.assertEqual(first["request_signature"], eevee["request_signature"])
         self.assertEqual(first["receipt_signature"], eevee["receipt_signature"])
 
     def test_uv_backend_uses_cycles_cpu_in_any_scene_engine(self):
@@ -238,12 +245,12 @@ class BakeRouteTests(unittest.TestCase):
         first = self.module.describe(self.grade, self.context)
         self.scene.render.engine = "BLENDER_EEVEE"
         eevee = self.module.describe(self.grade, self.context)
-        for key in ("signature", "receipt_signature", "observation_signature"):
+        for key in ("request_signature", "receipt_signature"):
             self.assertEqual(first[key], eevee[key])
         self.scene.render.engine = "CYCLES"
         self.scene.cycles.device = "GPU"
         changed = self.module.describe(self.grade, self.context)
-        for key in ("signature", "receipt_signature", "observation_signature"):
+        for key in ("request_signature", "receipt_signature"):
             self.assertEqual(first[key], changed[key])
 
     def test_per_node_grade_is_not_a_bake_target(self):
@@ -254,9 +261,9 @@ class BakeRouteTests(unittest.TestCase):
     def test_stack_uses_semantic_entries(self):
         self.grade.bl_idname = "PGShaderGradeStack"
         self.grade.pg_stack_entries = [SimpleNamespace(grade=self.grade.pg_grade, enabled=True)]
-        first = self.module.describe(self.grade, self.context)["signature"]
+        first = self.module.describe(self.grade, self.context)["request_signature"]
         self.grade.pg_stack_entries[0].grade.pg_tone.fit = .5
-        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_stack_composition_revision_applies_to_multiple_enabled_entries(self):
         self.grade.bl_idname = "PGShaderGradeStack"
@@ -270,7 +277,7 @@ class BakeRouteTests(unittest.TestCase):
                 with patch.object(self.module, "STACK_COMPOSITION_SCHEMA",
                                   self.module.STACK_COMPOSITION_SCHEMA + 1):
                     revised = self.module.describe(self.grade, self.context)
-                for key in ("signature", "receipt_signature", "observation_signature"):
+                for key in ("request_signature", "receipt_signature"):
                     self.assertEqual(first[key] != revised[key], enabled, key)
 
     def test_upstream_stack_composition_revision_changes_bake_identity(self):
@@ -283,7 +290,7 @@ class BakeRouteTests(unittest.TestCase):
         with patch.object(self.module, "STACK_COMPOSITION_SCHEMA",
                           self.module.STACK_COMPOSITION_SCHEMA + 1):
             revised = self.module.describe(self.grade, self.context)
-        for key in ("signature", "receipt_signature", "observation_signature"):
+        for key in ("request_signature", "receipt_signature"):
             self.assertNotEqual(first[key], revised[key], key)
 
     def test_stack_bake_identity_tracks_directions_of_enabled_entries_in_order(self):
@@ -303,7 +310,7 @@ class BakeRouteTests(unittest.TestCase):
             first.direction = "FORWARD"
             self.assertEqual(single_forward, self.module.describe(self.grade, self.context))
         first.direction = "INVERSE"
-        for key in ("signature", "receipt_signature", "observation_signature"):
+        for key in ("request_signature", "receipt_signature"):
             self.assertNotEqual(single_inverse[key], revised[key], key)
         second.enabled = True
         two_inverse = self.module.describe(self.grade, self.context)
@@ -311,7 +318,7 @@ class BakeRouteTests(unittest.TestCase):
         forward_inverse = self.module.describe(self.grade, self.context)
         self.grade.pg_stack_entries = [second, first, empty]
         inverse_forward = self.module.describe(self.grade, self.context)
-        for key in ("signature", "receipt_signature", "observation_signature"):
+        for key in ("request_signature", "receipt_signature"):
             self.assertEqual(len({item[key] for item in (
                 single_forward, single_inverse, two_inverse, forward_inverse, inverse_forward,
             )}), 5, key)
@@ -325,7 +332,7 @@ class BakeRouteTests(unittest.TestCase):
         forward = self.module.describe(self.grade, self.context)
         entry.direction = "INVERSE"
         inverse = self.module.describe(self.grade, self.context)
-        for key in ("signature", "receipt_signature", "observation_signature"):
+        for key in ("request_signature", "receipt_signature"):
             self.assertNotEqual(forward[key], inverse[key], key)
 
         upstream.pg_use_bake = True
@@ -343,12 +350,10 @@ class BakeRouteTests(unittest.TestCase):
                 setattr(controls, name, previous + .125)
                 try:
                     changed = self.module.describe(self.grade, self.context)
-                    for key in ("signature", "receipt_signature", "observation_signature"):
+                    for key in ("request_signature", "receipt_signature"):
                         self.assertNotEqual(baseline[key], changed[key], key)
                     preview = self.module.preview(self.grade, self.context)
                     self.assertEqual(preview["receipt_signature"], changed["receipt_signature"])
-                    self.assertEqual(self.module.observe(self.grade, self.context)["signature"],
-                                     changed["observation_signature"])
                 finally:
                     setattr(controls, name, previous)
         self.assertEqual(self.module.describe(self.grade, self.context)["receipt_signature"],
@@ -412,6 +417,38 @@ class BakeRouteTests(unittest.TestCase):
         self.assertEqual(route["images"][0]["image_key"], (texture.image.name, None))
         self.assertEqual(texture.image.pixels.reads, 0)
 
+    def test_linked_native_fallback_does_not_change_identity(self):
+        source = Node(self.tree, "ShaderNodeRGB", outputs=(("Color", None),))
+        math = Node(self.tree, "ShaderNodeMath",
+                    inputs=(("Value", .2), ("Value_001", .7)),
+                    outputs=(("Value", None),))
+        link(source, "Color", math, "Value")
+        link(math, "Value", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)["request_signature"]
+
+        math.inputs.get("Value").default_value = .9
+        linked_default_changed = self.module.describe(self.grade, self.context)["request_signature"]
+        self.assertEqual(first, linked_default_changed)
+
+        math.inputs.get("Value_001").default_value = .8
+        unlinked_default_changed = self.module.describe(self.grade, self.context)["request_signature"]
+        self.assertNotEqual(linked_default_changed, unlinked_default_changed)
+
+    def test_linked_upstream_grade_alpha_ignores_its_unused_default(self):
+        upstream = self.make_grade(self.tree, name="Alpha source")
+        value = Node(self.tree, "ShaderNodeValue", outputs=(("Value", None),))
+        source_link = link(value, "Value", upstream, "Alpha")
+        link(upstream, "Alpha", self.grade, "Alpha")
+        first = self.module.describe(self.grade, self.context)["request_signature"]
+
+        upstream.inputs.get("Alpha").default_value = .2
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
+
+        source_link.is_muted = True
+        unlinked = self.module.describe(self.grade, self.context)["request_signature"]
+        upstream.inputs.get("Alpha").default_value = .5
+        self.assertNotEqual(unlinked, self.module.describe(self.grade, self.context)["request_signature"])
+
     def test_keeps_library_image_identity_in_the_sampler_descriptor(self):
         texture = self.texture()
         texture.image.library = SimpleNamespace(filepath="/tmp/bake-assets/library.blend")
@@ -431,7 +468,7 @@ class BakeRouteTests(unittest.TestCase):
         self.assertEqual(route["uv_map"], "BakeUV")
         self.assertIn("linked_coordinates", route["reasons"])
         self.context.object = None
-        self.assertEqual(self.module.describe(self.grade, route)["signature"], route["signature"])
+        self.assertEqual(self.module.describe(self.grade, route)["request_signature"], route["request_signature"])
 
     def test_multiple_images_select_uv_even_with_the_same_image_data(self):
         first = self.texture(name="First")
@@ -479,14 +516,12 @@ class BakeRouteTests(unittest.TestCase):
         texture = self.mapped_texture()
         self.mesh()
         request = self.module.describe(self.grade, self.context)
-        with patch.object(self.module, "_geometry_state",
-                          side_effect=AssertionError("Full geometry work")):
-            passive = self.module.preview(self.grade, self.context)
-            texture.image.is_dirty = False
-            restored = self.module.observe(self.grade, self.context)["route"]
+        passive = self.module.preview(self.grade, self.context)
+        texture.image.is_dirty = False
+        restored = self.module.observe(self.grade, self.context)["route"]
         self.assertEqual(request["receipt_signature"], passive["receipt_signature"])
         self.assertEqual(request["receipt_signature"], restored["receipt_signature"])
-        self.assertNotEqual(request["observation_signature"], restored["observation_signature"])
+        self.assertEqual(request["request_signature"], restored["request_signature"])
 
     def test_image_metadata_changes_both_request_and_passive_identity(self):
         texture = self.texture()
@@ -505,11 +540,10 @@ class BakeRouteTests(unittest.TestCase):
                 previous = getattr(owner, field)
                 setattr(owner, field, value)
                 second = self.module.describe(self.grade, self.context)
-                self.assertNotEqual(first["signature"], second["signature"])
+                self.assertNotEqual(first["request_signature"], second["request_signature"])
                 self.assertNotEqual(first["receipt_signature"], second["receipt_signature"])
-                self.assertNotEqual(first["observation_signature"], second["observation_signature"])
-                self.assertEqual(second["observation_signature"],
-                                 self.module.observe(self.grade, self.context)["signature"])
+                passive = self.module.observe(self.grade, self.context)["route"]
+                self.assertEqual(second["request_signature"], passive["request_signature"])
                 setattr(owner, field, previous)
 
     def test_packed_payload_is_never_accessed_and_dirty_state_is_not_durable(self):
@@ -530,9 +564,8 @@ class BakeRouteTests(unittest.TestCase):
             texture.image.is_dirty = False
             second = self.module.describe(self.grade, self.context)
             self.module.preview(self.grade, self.context)
-        self.assertEqual(first["signature"], second["signature"])
+        self.assertEqual(first["request_signature"], second["request_signature"])
         self.assertEqual(first["receipt_signature"], second["receipt_signature"])
-        self.assertNotEqual(first["observation_signature"], second["observation_signature"])
 
     def test_save_as_path_remapping_keeps_canonical_image_identity(self):
         texture = self.texture()
@@ -548,9 +581,8 @@ class BakeRouteTests(unittest.TestCase):
         texture.image.filepath = "/tmp/bake-project/assets/source.exr"
         texture.image.library.filepath = "/tmp/bake-project/assets/library.blend"
         second = self.module.describe(self.grade, self.context)
-        self.assertEqual(first["signature"], second["signature"])
+        self.assertEqual(first["request_signature"], second["request_signature"])
         self.assertEqual(first["receipt_signature"], second["receipt_signature"])
-        self.assertEqual(first["observation_signature"], second["observation_signature"])
 
     def test_uv_binding_is_sticky_and_image_binding_rejects_uv_transition(self):
         self.mesh()
@@ -570,7 +602,6 @@ class BakeRouteTests(unittest.TestCase):
         with patch.object(self.module, "_validate_nonoverlap", side_effect=AssertionError("UV work")):
             route = self.module.preview(self.grade, self.context)
             self.assertEqual(route["domain"], "UV")
-            self.assertIsNone(route["signature"])
             self.assertEqual(self.module.observe(self.grade, self.context)["state"], "ready")
         self.assertEqual(texture.image.pixels.reads, 0)
 
@@ -593,16 +624,10 @@ class BakeRouteTests(unittest.TestCase):
         self.mesh()
         self.blocked("source_udim")
 
-    def test_cache_geometry_overlap_and_multitile_uvs_are_rejected(self):
+    def test_cache_geometry_is_rejected(self):
         self.mapped_texture()
-        obj = self.mesh(modifiers=(SimpleNamespace(type="MESH_SEQUENCE_CACHE", cache_file=None),))
+        self.mesh(modifiers=(SimpleNamespace(type="MESH_SEQUENCE_CACHE", cache_file=None),))
         self.blocked("mesh_cache")
-        obj.modifiers.clear()
-        obj.data.uv_layers[0].data[0].uv = (-1., 0.)
-        self.blocked("uv_tile")
-        obj.data.uv_layers[0].data[0].uv = (0., 0.)
-        obj.data.loop_triangles = [SimpleNamespace(loops=(0, 1, 2)), SimpleNamespace(loops=(0, 1, 2))]
-        self.blocked("uv_overlap")
 
     def test_shader_to_rgb_is_rejected_and_eevee_uv_bakes_are_allowed(self):
         source = Node(self.tree, "ShaderNodeShaderToRGB", outputs=(("Color", None),))
@@ -643,43 +668,43 @@ class BakeRouteTests(unittest.TestCase):
         link(coordinate, "Object", texture, "Vector")
         link(texture, "Color", self.grade, "Color")
         dependencies = []
-        first = self.module.describe(self.grade, self.context, dependencies=dependencies)["signature"]
+        first = self.module.describe(self.grade, self.context, dependencies=dependencies)["request_signature"]
         self.assertIn(reference.session_uid, [item.session_uid for item in dependencies])
         reference.matrix_world = ((1., 0., 0., 2.), (0., 1., 0., 0.),
                                   (0., 0., 1., 0.), (0., 0., 0., 1.))
-        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_semantic_signature_ignores_ui_and_derived_kernels(self):
         texture = self.texture()
         upstream = self.make_grade(self.tree, name="Upstream")
         link(texture, "Color", upstream, "Color")
         link(upstream, "Color", self.grade, "Color")
-        first = self.module.describe(self.grade, self.context)["signature"]
+        first = self.module.describe(self.grade, self.context)["request_signature"]
         upstream.location = (500., 300.)
         upstream.select = True
         upstream.node_tree = Tree("Different generated kernel")
-        self.assertEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
         upstream.pg_grade.pg_linear.exposure = 1.
-        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_native_node_rename_changes_the_persisted_locator(self):
         texture = self.texture()
         link(texture, "Color", self.grade, "Color")
-        first = self.module.describe(self.grade, self.context)["signature"]
+        first = self.module.describe(self.grade, self.context)["request_signature"]
         texture.name = "Renamed texture"
-        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_signature_is_stable_when_runtime_session_ids_change(self):
         texture = self.texture()
         link(texture, "Color", self.grade, "Color")
-        first = self.module.describe(self.grade, self.context)["signature"]
+        first = self.module.describe(self.grade, self.context)["request_signature"]
         texture.session_uid += 10000
         self.grade.session_uid += 10000
         self.scene.session_uid += 10000
         self.material.session_uid += 10000
         self.tree.session_uid += 10000
         texture.image.session_uid += 10000
-        self.assertEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_packed_metadata_changes_identity_without_reading_contents(self):
         texture = self.texture()
@@ -688,11 +713,11 @@ class BakeRouteTests(unittest.TestCase):
         texture.image.filepath = "/tmp/packed-source.exr"
         texture.image.packed_file = SimpleNamespace(size=12, data=b"first pixels")
         link(texture, "Color", self.grade, "Color")
-        first = self.module.describe(self.grade, self.context)["signature"]
+        first = self.module.describe(self.grade, self.context)["request_signature"]
         texture.image.packed_file.data = b"other pixels"
-        self.assertEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
         texture.image.packed_file.size = 13
-        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertNotEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
         self.assertEqual(texture.image.pixels.reads, 0)
 
     def test_destination_image_cannot_be_an_effective_source(self):
@@ -708,7 +733,7 @@ class BakeRouteTests(unittest.TestCase):
         route = self.module.describe(self.grade, self.context)
         with patch.object(Path, "open", side_effect=AssertionError("File content read")):
             passive = self.module.observe(self.grade, self.context)
-        self.assertEqual(route["observation_signature"], passive["signature"])
+        self.assertEqual(route["receipt_signature"], passive["route"]["receipt_signature"])
         self.assertEqual(texture.image.pixels.reads, 0)
 
     def test_silent_pixel_edits_require_caller_invalidation(self):
@@ -718,9 +743,9 @@ class BakeRouteTests(unittest.TestCase):
         texture.image.filepath = "/tmp/still-source.exr"
         link(texture, "Color", self.grade, "Color")
         with patch.object(Path, "open", side_effect=AssertionError("File content read")):
-            first = self.module.describe(self.grade, self.context)["signature"]
+            first = self.module.describe(self.grade, self.context)["request_signature"]
             texture.image.pixels.values[0] = .7
-            self.assertEqual(first, self.module.describe(self.grade, self.context)["signature"])
+            self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
         self.assertEqual(texture.image.pixels.reads, 0)
 
     def test_file_and_sidecar_contents_are_not_opened_by_any_route_scan(self):
@@ -737,8 +762,8 @@ class BakeRouteTests(unittest.TestCase):
                 request = self.module.describe(self.grade, self.context)
                 preview = self.module.preview(self.grade, self.context)
                 observed = self.module.observe(self.grade, self.context)
-            self.assertEqual(request["observation_signature"], preview["observation_signature"])
-            self.assertEqual(request["observation_signature"], observed["signature"])
+            self.assertEqual(request["receipt_signature"], preview["receipt_signature"])
+            self.assertEqual(request["receipt_signature"], observed["route"]["receipt_signature"])
         self.assertEqual(texture.image.pixels.reads, 0)
 
     def test_passive_file_observation_detects_source_and_sidecar_changes_without_content_reads(self):
@@ -751,25 +776,25 @@ class BakeRouteTests(unittest.TestCase):
             path.write_bytes(b"pixels")
             texture.image.filepath = str(path)
             sidecar = Path(str(path) + ".sidecar")
-            first = self.module.observe(self.grade, self.context)["signature"]
+            first = self.module.preview(self.grade, self.context)["receipt_signature"]
             path.write_bytes(b"changed pixels")
-            changed = self.module.observe(self.grade, self.context)["signature"]
+            changed = self.module.preview(self.grade, self.context)["receipt_signature"]
             self.assertNotEqual(first, changed)
             sidecar.write_bytes(b"color profile")
-            created = self.module.observe(self.grade, self.context)["signature"]
+            created = self.module.preview(self.grade, self.context)["receipt_signature"]
             self.assertNotEqual(changed, created)
             sidecar.write_bytes(b"updated color profile")
-            updated = self.module.observe(self.grade, self.context)["signature"]
+            updated = self.module.preview(self.grade, self.context)["receipt_signature"]
             self.assertNotEqual(created, updated)
             sidecar.unlink()
-            removed = self.module.observe(self.grade, self.context)["signature"]
+            removed = self.module.preview(self.grade, self.context)["receipt_signature"]
             self.assertNotEqual(updated, removed)
             path.unlink()
-            missing = self.module.observe(self.grade, self.context)["signature"]
+            missing = self.module.preview(self.grade, self.context)["receipt_signature"]
             self.assertNotEqual(removed, missing)
             self.assertEqual(texture.image.pixels.reads, 0)
 
-    def test_file_timestamps_conservatively_change_request_and_observation(self):
+    def test_file_timestamps_change_request_and_receipt(self):
         texture = self.texture()
         texture.image.source = "FILE"
         texture.image.is_dirty = False
@@ -783,10 +808,9 @@ class BakeRouteTests(unittest.TestCase):
             os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1000000000))
             second = self.module.describe(self.grade, self.context)
             passive = self.module.observe(self.grade, self.context)
-            self.assertNotEqual(first["signature"], second["signature"])
+            self.assertNotEqual(first["request_signature"], second["request_signature"])
             self.assertNotEqual(first["receipt_signature"], second["receipt_signature"])
-            self.assertNotEqual(first["observation_signature"], second["observation_signature"])
-            self.assertEqual(second["observation_signature"], passive["signature"])
+            self.assertEqual(second["receipt_signature"], passive["route"]["receipt_signature"])
 
     def test_file_identity_and_change_timestamps_are_conservative_evidence(self):
         texture = self.texture()
@@ -803,20 +827,20 @@ class BakeRouteTests(unittest.TestCase):
                 with patch.object(Path, "stat", return_value=SimpleNamespace(**changed)):
                     second = self.module.describe(self.grade, self.context)
                     passive = self.module.preview(self.grade, self.context)
-                self.assertNotEqual(first["signature"], second["signature"])
+                self.assertNotEqual(first["request_signature"], second["request_signature"])
                 self.assertNotEqual(first["receipt_signature"], second["receipt_signature"])
                 self.assertEqual(second["receipt_signature"], passive["receipt_signature"])
 
     def test_dirty_state_is_transient_but_native_defaults_change_identity(self):
         texture = self.texture()
         link(texture, "Color", self.grade, "Color")
-        first = self.module.describe(self.grade, self.context)["signature"]
+        first = self.module.describe(self.grade, self.context)["request_signature"]
         texture.image.pixels.values[0] = .8
         texture.image.is_dirty = False
-        second = self.module.describe(self.grade, self.context)["signature"]
+        second = self.module.describe(self.grade, self.context)["request_signature"]
         self.assertEqual(first, second)
         self.grade.inputs.get("Alpha").default_value = .4
-        self.assertNotEqual(second, self.module.describe(self.grade, self.context)["signature"])
+        self.assertNotEqual(second, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_upstream_baked_reader_ignores_live_grade_and_observes_image(self):
         upstream = self.make_grade(self.tree, name="Baked upstream")
@@ -834,10 +858,10 @@ class BakeRouteTests(unittest.TestCase):
         self.assertEqual(first["images"][0]["reader_path"], ("Baked Image",))
         upstream.pg_grade.pg_linear.exposure = 1.
         upstream.pg_grade.pg_color.web_hue_1_2 = 12.
-        self.assertEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
+        self.assertEqual(first["request_signature"], self.module.describe(self.grade, self.context)["request_signature"])
         self.assertFalse(upstream_grades)
         upstream.pg_bake_image["_pg_next_bake_operation"] = "rebake"
-        self.assertNotEqual(first["signature"], self.module.describe(self.grade, self.context)["signature"])
+        self.assertNotEqual(first["request_signature"], self.module.describe(self.grade, self.context)["request_signature"])
         reader.image = Image("Different Image")
         self.blocked("baked_sampler")
 
@@ -887,13 +911,59 @@ class BakeRouteTests(unittest.TestCase):
         self.assertEqual(route["shader_backend"], "CYCLES_CPU")
 
     def test_target_baked_vector_does_not_change_live_bake_identity(self):
-        first = self.module.describe(self.grade, self.context)["signature"]
+        first = self.module.describe(self.grade, self.context)["request_signature"]
         uv = Node(self.tree, "ShaderNodeUVMap", outputs=(("UV", None),))
         link(uv, "UV", self.grade, "Vector")
         self.grade.pg_use_bake = True
         self.grade.pg_bake_image = Image("Own bake destination")
         self.grade.pg_bake_image[self.module.BAKE_DOMAIN] = "IMAGE"
-        self.assertEqual(first, self.module.describe(self.grade, self.context)["signature"])
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
+
+    def test_linked_upstream_baked_vector_ignores_its_unused_default(self):
+        self.mesh()
+        upstream = self.make_grade(self.tree, name="Baked vector source")
+        upstream.pg_use_bake = True
+        upstream.pg_bake_image = Image("Stored bake")
+        upstream.pg_bake_image[self.module.BAKE_DOMAIN] = "IMAGE"
+        upstream.node_tree = Tree("Managed bake wrapper")
+        upstream.node_tree[self.module.bake_graph.WRAPPER] = 1
+        reader = Node(upstream.node_tree, "ShaderNodeTexImage", "Baked Image",
+                      image=upstream.pg_bake_image)
+        reader[self.module.bake_graph.READER] = 1
+        uv = Node(self.tree, "ShaderNodeUVMap", outputs=(("UV", None),))
+        link(uv, "UV", upstream, "Vector")
+        link(upstream, "Color", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)["request_signature"]
+
+        upstream.inputs.get("Vector").default_value = (.3, .4, .5)
+
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
+
+    def test_group_fingerprints_only_inputs_feeding_the_selected_output(self):
+        child = Tree("Nested")
+        group_input = Node(child, "NodeGroupInput", outputs=(("Used", None), ("Unused", None)))
+        group_output = Node(child, "NodeGroupOutput", inputs=(("Color", None), ("Other", None)))
+        link(group_input, "Used", group_output, "Color")
+        link(group_input, "Unused", group_output, "Other")
+        group = Node(self.tree, "ShaderNodeGroup", node_tree=child,
+                     inputs=(("Used", .2), ("Unused", .3)),
+                     outputs=(("Color", None), ("Other", None)))
+        link(group, "Color", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)["request_signature"]
+
+        group.inputs.get("Unused").default_value = .4
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
+
+        group.inputs.get("Used").default_value = .5
+        second = self.module.describe(self.grade, self.context)["request_signature"]
+        self.assertNotEqual(first, second)
+
+        source = Node(self.tree, "ShaderNodeValue", outputs=(("Value", None),))
+        link(source, "Value", group, "Used")
+        linked = self.module.describe(self.grade, self.context)["request_signature"]
+        self.assertNotEqual(second, linked)
+        group.inputs.get("Used").default_value = .7
+        self.assertEqual(linked, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_reused_group_requires_exact_occurrence_and_resolves_parent_input(self):
         child = Tree("Nested")
@@ -910,9 +980,9 @@ class BakeRouteTests(unittest.TestCase):
         route = self.module.describe(target, self.context)
         self.assertEqual(route["group_path"], ("Second",))
         self.tree.nodes.active = first
-        self.assertEqual(self.module.describe(target, route)["signature"], route["signature"])
+        self.assertEqual(self.module.describe(target, route)["request_signature"], route["request_signature"])
         second.inputs.get("Color").default_value = (.8, .2, .2, 1.)
-        self.assertNotEqual(self.module.describe(target, route)["signature"], route["signature"])
+        self.assertNotEqual(self.module.describe(target, route)["request_signature"], route["request_signature"])
 
     def test_compositor_constant_uses_canvas_and_image_uses_native_domain(self):
         tree = Tree("Compositor", "CompositorNodeTree")
@@ -1048,7 +1118,6 @@ class BakeRouteTests(unittest.TestCase):
                 self.assertEqual(previous["receipt_signature"], changed["receipt_signature"])
                 self.assertEqual(changed["request_signature"], passive["request_signature"])
                 self.assertNotEqual(previous["request_signature"], changed["request_signature"])
-                self.assertNotEqual(previous["observation_signature"], changed["observation_signature"])
                 previous = changed
         self.scene.render.resolution_x = 119
         self.assertEqual(previous["request_signature"],
@@ -1078,7 +1147,7 @@ class BakeRouteTests(unittest.TestCase):
         self.scene.render.compositor_device = "GPU"
         self.scene.render.compositor_precision = "AUTO"
         changed = self.module.describe(target, context)
-        for key in ("signature", "receipt_signature", "observation_signature"):
+        for key in ("request_signature", "receipt_signature"):
             self.assertEqual(first[key], changed[key])
 
     def test_render_layers_engine_and_effective_cycles_device_change_identity(self):
@@ -1101,13 +1170,13 @@ class BakeRouteTests(unittest.TestCase):
         self.assertIs(upstream_grades[0], world_grade)
         self.scene.render.engine = "BLENDER_EEVEE"
         eevee = self.module.describe(target, context)
-        self.assertNotEqual(cycles["signature"], eevee["signature"])
+        self.assertNotEqual(cycles["request_signature"], eevee["request_signature"])
         self.scene.cycles.device = "GPU"
         eevee_gpu_setting = self.module.describe(target, context)
-        self.assertEqual(eevee["signature"], eevee_gpu_setting["signature"])
+        self.assertEqual(eevee["request_signature"], eevee_gpu_setting["request_signature"])
         self.scene.render.engine = "CYCLES"
         gpu = self.module.describe(target, context)
-        self.assertNotEqual(cycles["signature"], gpu["signature"])
+        self.assertNotEqual(cycles["request_signature"], gpu["request_signature"])
 
     def test_render_layers_eevee_settings_change_bake_identity(self):
         tree = Tree("EEVEE Render Layers Compositor", "CompositorNodeTree")
@@ -1122,7 +1191,7 @@ class BakeRouteTests(unittest.TestCase):
         first = self.module.describe(target, context)
         self.scene.eevee.taa_render_samples = 128
         changed = self.module.describe(target, context)
-        self.assertNotEqual(first["signature"], changed["signature"])
+        self.assertNotEqual(first["request_signature"], changed["request_signature"])
 
     def test_render_layers_capture_indirect_owners_and_layer_specific_overrides(self):
         tree = Tree("Scene Compositor", "CompositorNodeTree")
@@ -1200,9 +1269,9 @@ class BakeRouteTests(unittest.TestCase):
         layers = Node(tree, "CompositorNodeRLayers", outputs=(("Image", None),),
                       scene=self.scene)
         link(layers, "Image", target, "Color")
-        first = self.module.describe(target, context)["signature"]
+        first = self.module.describe(target, context)["request_signature"]
         camera_data.lens = 85.0
-        self.assertNotEqual(first, self.module.describe(target, context)["signature"])
+        self.assertNotEqual(first, self.module.describe(target, context)["request_signature"])
 
     def test_compositor_light_and_world_settings_change_bake_identity(self):
         light_data = ID("Bake Light Data", energy=10.0, color=(1., .5, .25), node_tree=None)
@@ -1221,15 +1290,15 @@ class BakeRouteTests(unittest.TestCase):
         layers = Node(tree, "CompositorNodeRLayers", outputs=(("Image", None),),
                       scene=self.scene)
         link(layers, "Image", target, "Color")
-        first = self.module.describe(target, context)["signature"]
+        first = self.module.describe(target, context)["request_signature"]
         light_data.energy = 30.0
-        second = self.module.describe(target, context)["signature"]
+        second = self.module.describe(target, context)["request_signature"]
         self.assertNotEqual(first, second)
         light_data.color = (.2, 1., .4)
-        third = self.module.describe(target, context)["signature"]
+        third = self.module.describe(target, context)["request_signature"]
         self.assertNotEqual(second, third)
         self.scene.world.color = (.5, .5, .5)
-        self.assertNotEqual(third, self.module.describe(target, context)["signature"])
+        self.assertNotEqual(third, self.module.describe(target, context)["request_signature"])
 
 
 if __name__ == "__main__":

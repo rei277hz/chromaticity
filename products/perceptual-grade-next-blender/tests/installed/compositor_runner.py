@@ -28,6 +28,7 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_compositor.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
+stage2_bindings = importlib.import_module(extension.__name__ + ".kernel.stage2_bindings")
 parameter_layout = importlib.import_module(extension.__name__ + ".kernel.stage2_parameters")
 errors = []
 assert addon_utils.enable(
@@ -118,9 +119,10 @@ def parameter_image(node):
     else:
         selected = int(round(float(selector.inputs[0].default_value)))
     assert selected == active
-    readers = [item for item in tree.nodes if item.get(nodes.PARAMETER_READER)]
-    observed = {(item.get(nodes.PARAMETER_READER_BANK),
-                 item.get(nodes.PARAMETER_READER_ROLE)): item.image for item in readers}
+    readers = [item for item in tree.nodes if item.get(stage2_bindings.PARAMETER_READER)]
+    observed = {(item.get(stage2_bindings.PARAMETER_READER_BANK),
+                 item.get(stage2_bindings.PARAMETER_READER_ROLE)): item.image
+                for item in readers}
     assert {(bank, role) for bank in (0, 1) for role in nodes.PARAMETER_ROLES} <= set(observed)
     assert all(observed[bank, role] == nodes.parameter_bank_images(banks[bank])[role]
                for bank, role in observed)

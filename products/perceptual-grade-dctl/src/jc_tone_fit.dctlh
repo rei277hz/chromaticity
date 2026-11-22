@@ -1,0 +1,122 @@
+typedef struct {
+    PGToneFit fit;
+    float black;
+    float span;
+} PGJCToneCurve;
+
+__DEVICE__ float pg_jc_tone_compress(float value, float black) {
+    if (black == 0.0f) return value;
+    return value * ((value + black) / (value + 2.0f * black));
+}
+
+__DEVICE__ PGJCToneCurve pg_jc_tone_curve(PGFour source, PGFour target, float black, int fit) {
+    PGJCToneCurve curve;
+    curve.black = black;
+    curve.span = pg_jc_tone_compress(source.h, black);
+    PGFour knots = pg_four(pg_jc_tone_compress(source.s, black) / curve.span,
+                           pg_jc_tone_compress(source.m, black) / curve.span,
+                           pg_jc_tone_compress(source.w, black) / curve.span, 1.0f);
+    curve.fit = pg_tone_fit(knots, target, fit);
+    return curve;
+}
+
+__DEVICE__ float pg_jc_tone_height(float height, PGJCToneCurve curve) {
+    float t = pg_jc_tone_compress(height * .01f, curve.black) / curve.span;
+    return 100.0f * pg_tone_remap(t, curve.fit);
+}
+
+__DEVICE__ float pg_jc_tone_kernel_slope_at_zero(float left, float right, float width) {
+    float a = _expf(-left / width);
+    float b = _expf(-right / width);
+    return a * -pg_expm1((left - right) / width) / ((1.0f + a) * (1.0f + b));
+}
+
+__DEVICE__ float pg_jc_tone_neutral_slope_at_zero(PGJCToneCurve curve) {
+    PGKernel shape = curve.fit.shape;
+    PGFour derivative = pg_four(
+        pg_jc_tone_kernel_slope_at_zero(0.0f, shape.knots.s, shape.width) / shape.norm.s,
+        pg_jc_tone_kernel_slope_at_zero(shape.knots.s, shape.knots.m, shape.width) / shape.norm.m,
+        pg_jc_tone_kernel_slope_at_zero(shape.knots.m, shape.knots.w, shape.width) / shape.norm.w,
+        pg_jc_tone_kernel_slope_at_zero(shape.knots.w, 1.0f, shape.width) / shape.norm.h);
+    float compressionSlope = curve.black == 0.0f ? 1.0f : 0.5f;
+    return (curve.fit.slope + pg_four_dot(curve.fit.residual, derivative)) * compressionSlope / curve.span;
+}
+
+__DEVICE__ float pg_jc_tone_ray(float scale, float ja, float hkChroma, float influence,
+                                 float zeroSlope, PGJCToneCurve curve) {
+    float scaledJ = ja * scale;
+    float neutral = 0.0f;
+    if (influence < 1.0f || hkChroma == 0.0f)
+        neutral = ja > 0.0f ? pg_jc_tone_height(scaledJ, curve) / ja : scale * zeroSlope;
+    if (influence == 0.0f || hkChroma == 0.0f) return neutral;
+
+    float scaledChroma = hkChroma * scale;
+    float height = pg_hypot(scaledJ, _sqrtf(scaledChroma));
+    float mapped = pg_jc_tone_height(height, curve);
+    float hk = scale * pg_tone_hk_gain(mapped, scaledJ, scaledChroma);
+    return (1.0f - influence) * neutral + influence * hk;
+}
+
+__DEVICE__ float pg_jc_tone_inverse(float ja, float hkChroma, float influence,
+                                     float zeroSlope, PGJCToneCurve curve) {
+    // The compression ratio is in [0.5, 1] when active. The derivative
+    // of each unnormalized transition is in [0, 1].
+    PGFour norm = curve.fit.shape.norm;
+    PGFour r = curve.fit.residual;
+    float compressionMin = curve.black == 0.0f ? 1.0f : 0.5f;
+    float minGain = compressionMin * curve.fit.slope / curve.span;
+    float maxGain = (curve.fit.slope + r.s / norm.s + r.m / norm.m
+                      + r.w / norm.w + r.h / norm.h) / curve.span;
+    // Mapping H-K height by a gain g scales a chart ray between g and
+    // g^2, depending on how much of the height comes from chroma.
+    float lower = 1.0f / _fmaxf(maxGain, maxGain * maxGain);
+    float upper = 1.0f / _fminf(minGain, minGain * minGain);
+    for (int step = 0; step < 32; ++step) {
+        float middle = _sqrtf(lower * upper);
+        float mapped = pg_jc_tone_ray(middle, ja, hkChroma, influence, zeroSlope, curve);
+        if (mapped == 1.0f || middle == lower || middle == upper) return middle;
+        if (mapped < 1.0f) lower = middle;
+        else upper = middle;
+    }
+    return _sqrtf(lower * upper);
+}
+
+__DEVICE__ float3 pg_jc_tone_map(float3 point, PGJCToneCurve curve, float influence, int invert) {
+    float ja = _fabs(point.x);
+    float hkChroma = 66.0f * pg_hypot(point.y, point.z);
+    if (ja == 0.0f && hkChroma == 0.0f) return point;
+    float zeroSlope = ja == 0.0f && influence < 1.0f ? pg_jc_tone_neutral_slope_at_zero(curve) : 0.0f;
+    float scale = invert ? pg_jc_tone_inverse(ja, hkChroma, influence, zeroSlope, curve)
+                         : pg_jc_tone_ray(1.0f, ja, hkChroma, influence, zeroSlope, curve);
+    return point * scale;
+}
+
+__DEVICE__ PGValue pg_cone_tone_fit(float3 wire, float blackNits, PGFour levels, int fit,
+                                    int peakIndex, float influence, PGFour saturation,
+                                    float shadow, float highlight, float crossover, int invert, int chromaMode) {
+    if (!pg_cone_valid(wire) || !(blackNits >= 0.0f && blackNits <= 2.0f) ||
+        !pg_tone_input_valid(levels, fit, peakIndex) || !(influence >= 0.0f && influence <= 1.0f) ||
+        !pg_jc_global_chroma_valid(saturation, shadow, highlight, crossover, chromaMode) || (invert != 0 && invert != 1))
+        return pg_value(color_zero3(), 0);
+
+    PGFour source = pg_tone_input_anchors(levels, 0.0f);
+    PGFour target = pg_tone_anchors(peakIndex);
+    int adjustJ = blackNits > 0.0f ||
+        !(pg_tone_default_levels(levels, peakIndex) || pg_four_equal(source, target));
+    int adjustC = pg_jc_global_curve_active(saturation) || shadow != 0.0f || highlight != 0.0f;
+    if (!adjustJ && !adjustC) return pg_value(wire, 1);
+    float3 input = pg_cone_chart(wire);
+    if (!color_finite3(input)) return pg_value(color_zero3(), 0);
+
+    float3 point = input;
+    if (!invert && adjustC)
+        point = pg_jc_global_chroma_at_tone(point, saturation, shadow, highlight, crossover, 0, chromaMode);
+    if (adjustJ) {
+        PGJCToneCurve curve = pg_jc_tone_curve(source, target, pg_tone_nits_to_j(blackNits), fit);
+        point = pg_jc_tone_map(point, curve, influence, invert);
+    }
+    if (invert && adjustC)
+        point = pg_jc_global_chroma_at_tone(point, saturation, shadow, highlight, crossover, 1, chromaMode);
+    if (point.x == input.x && point.y == input.y && point.z == input.z) return pg_value(wire, 1);
+    return pg_cone_wire(point);
+}

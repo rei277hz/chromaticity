@@ -2,23 +2,44 @@
 
 from dataclasses import dataclass, field
 from typing import Optional
+from uuid import UUID, uuid4
 
 from ..kernel.stage2_bindings import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_GENERATION,
-    PARAMETER_IMAGE, PARAMETER_READER, PARAMETER_READER_BANK,
-    PARAMETER_READER_ROLE, PARAMETER_ROLE, PARAMETER_SELECTOR,
 )
 from ..kernel.stage2_parameters import (
-    PARAMETER_SCHEMA, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
-    parameter_bank_images, parameter_bundle_receipt_matches,
+    PARAMETER_ROLES, parameter_bank_images, parameter_bank_pair_images,
 )
+from ..kernel.node_templates import grade_parameter_bindings_valid, validate_grade_template
 from ..policy import resources as resource_policy
 from .publication import PublicationDeferred, PublicationGate
 
 
 OWNER = "_perceptual_grade_parameter_owner"
-OWNER_NODE = "_perceptual_grade_parameter_owner_node"
+OWNER_NODE = "_perceptual_grade_parameter_owner_node_uuid"
+NODE_UUID = "_perceptual_grade_node_uuid"
 SIGNATURE = "_perceptual_grade_parameter_signature"
+
+
+def _node_uuid(node):
+    value = node.get(NODE_UUID)
+    if isinstance(value, str):
+        try:
+            if UUID(hex=value).hex == value:
+                return value
+        except ValueError:
+            pass
+    return None
+
+
+def ensure_node_uuid(node, *, fresh=False):
+    """Give a locally owned Grade a persistent identity independent of its name."""
+    value = None if fresh else _node_uuid(node)
+    if value is not None:
+        return value
+    value = uuid4().hex
+    node[NODE_UUID] = value
+    return value
 
 
 @dataclass(eq=False)
@@ -99,14 +120,15 @@ class GradeResources:
         grade = getattr(node, "pg_grade", None)
         if grade is not None:
             return grade, None
+        owner_node = ensure_node_uuid(node)
         tree = node.id_data
         if not tree.is_embedded_data:
-            return tree, node.name
+            return tree, owner_node
         # Embedded trees cannot store their owner as an ID-valued property.
         for collection in ("materials", "worlds", "lights", "scenes", "linestyles"):
             for owner in getattr(self.bpy.data, collection, ()):
                 if getattr(owner, "node_tree", None) == tree:
-                    return owner, node.name
+                    return owner, owner_node
         raise RuntimeError(
             f"Cannot resolve the containing datablock for Grade node {node.name!r} "
             f"in embedded node tree {tree.name!r}"
@@ -116,7 +138,8 @@ class GradeResources:
         owner, owner_node = self.owner(node)
         key = (owner.as_pointer(), owner_node, space)
         resource = self._resources.get(key)
-        if resource is None:
+        cached = resource is not None
+        if not cached:
             resource = GradeResource()
             # Scan persisted node groups only at an ownership/lifecycle boundary.
             trees = self.bpy.data.node_groups
@@ -130,25 +153,21 @@ class GradeResources:
         invalid_cached_tree = False
         for tree in trees:
             observed = self._owned_banks(
-                tree, owner, owner_node, space, selected_banks,
-                selected_active, selected_generation,
+                tree, owner, owner_node, space,
+                deep=not cached,
             )
             if observed is None:
-                if resource is not None and any(
-                        tree == tracked for tracked in resource.trees.values()):
-                    invalid_cached_tree = True
-                independent = self._owned_banks(tree, owner, owner_node, space)
-                if independent is not None and selected_banks is not None:
-                    banks, active, generation = independent
-                    if (not self._same_banks(selected_banks, banks)
-                            or selected_active != active
-                            or selected_generation != generation):
-                        raise RuntimeError(
-                            "Grade parameter banks, selectors, or generations disagree "
-                            "across kernels"
-                        )
+                invalid_cached_tree |= cached
                 continue
             banks, active, generation = observed
+            if (selected_banks is not None
+                    and (not self._same_banks(selected_banks, banks)
+                         or selected_active != active
+                         or selected_generation != generation)):
+                raise RuntimeError(
+                    "Grade parameter banks, selectors, or generations disagree "
+                    "across kernels"
+                )
             selected_banks = banks
             selected_active = active
             selected_generation = generation
@@ -176,31 +195,27 @@ class GradeResources:
         return resource
 
     @classmethod
-    def _owned_banks(cls, tree, owner, owner_node, space,
-                     selected_banks=None, selected_active=None,
-                     selected_generation=None):
+    def _owned_banks(cls, tree, owner, owner_node, space, *, deep=False):
         try:
+            if (tree.get(OWNER) != owner
+                    or tree.get(OWNER_NODE) != owner_node
+                    or tree.get("_perceptual_grade_working_space") != space
+                    or not bool(tree.get("_perceptual_grade_stage2_complete"))):
+                return None
             banks = tuple(tree.get(key) for key in PARAMETER_BANK_BINDINGS)
             active = tree.get(PARAMETER_ACTIVE_BANK)
             generation = tree.get(PARAMETER_GENERATION)
-            valid_banks = (
-                len(banks) == 2 and banks[0] is not None and banks[1] is not None
-                and cls._valid_pair(banks)
-            )
+            valid_banks = parameter_bank_pair_images(banks)
             observation = resource_policy.Adoption(
-                owner_matches=tree.get(OWNER) == owner,
-                node_matches=tree.get(OWNER_NODE) == owner_node,
-                space_matches=tree.get("_perceptual_grade_working_space") == space,
-                complete=bool(tree.get("_perceptual_grade_stage2_complete")),
-                image_valid=(valid_banks and cls._valid_bank_index(active)
+                owner_matches=True,
+                node_matches=True,
+                space_matches=True,
+                complete=True,
+                image_valid=(valid_banks is not None and cls._valid_bank_index(active)
                              and type(generation) is int and generation >= 0
-                             and cls._selector_matches(tree, banks, active)),
-                image_agrees=(
-                    (selected_banks is None or cls._same_banks(selected_banks, banks))
-                    and (selected_active is None or selected_active == active)
-                    and (selected_generation is None
-                         or selected_generation == generation)
-                ),
+                             and grade_parameter_bindings_valid(tree, active, valid_banks)
+                             and (not deep or validate_grade_template(tree))),
+                image_agrees=True,
             )
             if resource_policy.may_adopt(observation):
                 return banks, active, generation
@@ -209,106 +224,16 @@ class GradeResources:
             pass
         return None
 
-    @classmethod
-    def _valid_image(cls, image, role):
+    def belongs_to(self, node, tree):
         try:
-            shape = PARAMETER_ROLE_SHAPES[role]
-            return (image.as_pointer() != 0
-                    and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
-                    and image.get(PARAMETER_ROLE) == role
-                    and tuple(image.size) == (shape[1], shape[0]))
-        except (AttributeError, ReferenceError, RuntimeError, TypeError):
+            owner, owner_node = self.owner(node)
+            return tree.get(OWNER) == owner and tree.get(OWNER_NODE) == owner_node
+        except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             return False
-
-    @classmethod
-    def _valid_bundle(cls, primary):
-        try:
-            images = parameter_bank_images(primary)
-            if set(images) != set(PARAMETER_ROLES):
-                return False
-            values = tuple(images[role] for role in PARAMETER_ROLES)
-            pointers = tuple(image.as_pointer() for image in values)
-            return (all(pointers) and len(set(pointers)) == len(PARAMETER_ROLES)
-                    and all(cls._valid_image(image, role)
-                            for role, image in zip(PARAMETER_ROLES, values))
-                    and parameter_bundle_receipt_matches(primary))
-        except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
-            return False
-
-    @classmethod
-    def _valid_pair(cls, banks):
-        try:
-            if len(banks) != 2 or not all(cls._valid_bundle(image) for image in banks):
-                return False
-            pointers = tuple(image.as_pointer() for primary in banks
-                             for image in parameter_bank_images(primary).values())
-            return len(set(pointers)) == 2 * len(PARAMETER_ROLES)
-        except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
-            return False
-
-    @staticmethod
-    def _selector_matches(tree, banks, active):
-        try:
-            selectors = tuple(node for node in tree.nodes
-                              if node.get(PARAMETER_SELECTOR))
-            if len(selectors) != 1:
-                return False
-            selector = selectors[0]
-            if tree.bl_idname == "ShaderNodeTree":
-                value = float(selector.outputs["Value"].default_value)
-                if value not in (0., 1.) or int(value) != active:
-                    return False
-            elif tree.bl_idname == "CompositorNodeTree":
-                value = float(selector.inputs[0].default_value)
-                if (selector.bl_idname != "ShaderNodeMath"
-                        or selector.operation != "ADD"
-                        or selector.inputs[0].is_linked
-                        or selector.inputs[1].is_linked
-                        or float(selector.inputs[1].default_value) != 0.0
-                        or value not in (0., 1.) or int(value) != active):
-                    return False
-            else:
-                return False
-            readers = tuple(node for node in tree.nodes
-                            if node.get(PARAMETER_READER))
-            observed = set()
-            for reader in readers:
-                bank = reader.get(PARAMETER_READER_BANK)
-                role = reader.get(PARAMETER_READER_ROLE)
-                if bank not in (0, 1) or role not in PARAMETER_ROLES:
-                    return False
-                bundle = parameter_bank_images(banks[bank])
-                if not GradeResources._same_image(
-                        getattr(reader, "image", None), bundle.get(role)):
-                    return False
-                observed.add((bank, role))
-            return observed == {
-                (bank, role) for bank in (0, 1) for role in PARAMETER_ROLES
-            }
-        except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
-            return False
-
-    def remember(self, node, space, tree):
-        resource = self.resource(node, space)
-        owner, owner_node = self.owner(node)
-        tree[OWNER] = owner
-        if owner_node is not None:
-            tree[OWNER_NODE] = owner_node
-        observed = self._owned_banks(
-            tree, owner, owner_node, space, resource.banks,
-            resource.active_bank, resource.generation,
-        )
-        if observed is None:
-            raise RuntimeError("Cannot adopt invalid Grade parameter banks")
-        banks, active, generation = observed
-        if resource.banks is None:
-            self.set_banks(resource, banks, active, generation)
-        resource.trees[tree.bl_idname] = tree
-        return resource
 
     def set_banks(self, resource, banks, active_bank, generation):
         banks = tuple(banks)
-        if (not self._valid_pair(banks)
+        if (parameter_bank_pair_images(banks) is None
                 or not self._valid_bank_index(active_bank)
                 or type(generation) is not int or generation < 0):
             raise ValueError("Grade resources require two valid banks and a selector")
@@ -347,11 +272,6 @@ class GradeResources:
     def _lifecycle_protected(self, image):
         return any(self._same_image(previous, image)
                    for previous in self._lifecycle_images.values())
-
-    def generations(self):
-        """Plain immutable evaluation receipt data for compositor workers."""
-        return tuple(sorted({resource.generation for resource in self._resources.values()
-                             if resource.generation is not None}))
 
     @staticmethod
     def _removable(image, retirement_allowed):

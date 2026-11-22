@@ -1,0 +1,51 @@
+typedef struct {
+    PGKernel shape;
+    PGFour residual;
+    float slope;
+    float peak;
+} PGToneFit;
+
+__DEVICE__ int pg_tone_input_valid(PGFour levelNits, int fit, int peakIndex) {
+    return pg_four_finite(levelNits) && fit >= -2 && fit <= 6 && peakIndex >= 0 && peakIndex <= 3;
+}
+
+__DEVICE__ int pg_tone_default_levels(PGFour levelNits, int peakIndex) {
+    return pg_four_equal(levelNits, pg_four(3.148082606120999f, 36.54f, 203.0f, pg_selected_peak(peakIndex)));
+}
+
+__DEVICE__ float pg_tone_nits_to_j(float nits) {
+    return pg_neutral_j(_fmaxf(0.0f, nits) / 203.0f) * .01f;
+}
+
+__DEVICE__ PGFour pg_tone_input_anchors(PGFour levelNits, float black) {
+    PGFour source = pg_four(pg_tone_nits_to_j(levelNits.s), pg_tone_nits_to_j(levelNits.m),
+                            pg_tone_nits_to_j(levelNits.w), pg_tone_nits_to_j(levelNits.h));
+    source.s = _fmaxf(source.s, black + .001f);
+    source.m = _fmaxf(source.m, source.s + .001f);
+    source.w = _fmaxf(source.w, source.m + .001f);
+    source.h = _fmaxf(source.h, source.w + .001f);
+    return source;
+}
+
+__DEVICE__ PGToneFit pg_tone_fit(PGFour knots, PGFour target, int fit) {
+    PGFour dx = pg_four(knots.s, knots.m - knots.s, knots.w - knots.m, 1.0f - knots.w);
+    PGFour dy = pg_four(target.s, target.m - target.s, target.w - target.m, target.h - target.w);
+    PGToneFit curve;
+    curve.shape = pg_kernel(knots, fit);
+    curve.slope = _fminf(_fminf(dy.s / dx.s, dy.m / dx.m), _fminf(dy.w / dx.w, dy.h / dx.h));
+    curve.residual = pg_four(_fmaxf(0.0f, dy.s - curve.slope * dx.s),
+                             _fmaxf(0.0f, dy.m - curve.slope * dx.m),
+                             _fmaxf(0.0f, dy.w - curve.slope * dx.w),
+                             _fmaxf(0.0f, dy.h - curve.slope * dx.h));
+    curve.peak = target.h;
+    return curve;
+}
+
+__DEVICE__ float pg_tone_remap(float t, PGToneFit curve) {
+    if (t == 1.0f) return curve.peak;
+    return curve.slope * t + pg_four_dot(curve.residual, pg_transitions(t, curve.shape));
+}
+
+__DEVICE__ float pg_tone_hk_gain(float height, float ja, float hkChroma) {
+    return pg_div(2.0f * height * height, pg_hypot(hkChroma, 2.0f * ja * height) + hkChroma);
+}

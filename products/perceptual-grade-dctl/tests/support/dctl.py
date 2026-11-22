@@ -15,7 +15,31 @@ PROTOTYPES = {
     "lgg_pivot": "3A-Color-JC-LGG-Pivot-Prototype",
 }
 SURFACE_PROTOTYPES = {"surface": "3A-Color-JC-Surface-Prototype"}
-ALL_STAGES = STAGES | PROTOTYPES | SURFACE_PROTOTYPES
+OVERLAP_PROTOTYPES = {
+    "jc_adjacent_overlap": "3A-Cone-Color-JC-Adjacent-Overlap-Prototype",
+    "jc_broad_overlap": "3A-Cone-Color-JC-Broad-Overlap-Prototype",
+}
+ANCHOR_CENTER_PROTOTYPES = {
+    "jc_anchor_centers": "3A-Cone-Color-JC-Broad-Overlap-Anchor-Centers-Prototype",
+}
+GAIN_PROTOTYPES = {
+    "jc_linear_gain": "3A-Cone-Color-JC-Linear-Gain-Prototype",
+    "jc_log_gain": "3A-Cone-Color-JC-Log-Gain-Prototype",
+}
+GLOBAL_SHAPE_PROTOTYPES = {"jc_global_shape": "3A-Cone-Color-JC-Global-Shape-Prototype"}
+TONE_FIT_PROTOTYPES = {"jc_tone_fit": "2-3A-Cone-Tone-JC-Prototype"}
+TONE_FIT_LINEAR_GAIN_PROTOTYPES = {
+    "jc_tone_fit_linear_gain": "2-3A-Cone-Tone-JC-Linear-Gain-Prototype",
+}
+TONE_FIT_UNIFIED_CHROMA_PROTOTYPES = {
+    "jc_tone_fit_unified_chroma": "2-3A-Cone-Tone-JC-Unified-Chroma-Prototype",
+}
+WARP_QUADRATIC_SCALE_PROTOTYPES = {
+    "warp_quadratic_scale": "3B-Cone-Warp-Quadratic-Scale-Prototype",
+}
+ALL_STAGES = (STAGES | PROTOTYPES | SURFACE_PROTOTYPES | OVERLAP_PROTOTYPES
+              | ANCHOR_CENTER_PROTOTYPES | GAIN_PROTOTYPES | GLOBAL_SHAPE_PROTOTYPES | TONE_FIT_PROTOTYPES
+              | TONE_FIT_LINEAR_GAIN_PROTOTYPES | TONE_FIT_UNIFIED_CHROMA_PROTOTYPES | WARP_QUADRATIC_SCALE_PROTOTYPES)
 LOCALES = ("en", "zh_HANS")
 BEGIN = "/* PG_NUMERICAL_BEGIN */"
 END = "/* PG_NUMERICAL_END */"

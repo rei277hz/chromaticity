@@ -7,6 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import zipfile
 
 import numpy as np
@@ -63,7 +64,7 @@ class Tree(dict):
         super().__init__()
         self.bl_idname = tree_type
         self["_perceptual_grade_parameter_owner"] = owner
-        self["_perceptual_grade_parameter_owner_node"] = None
+        self["_perceptual_grade_parameter_owner_node_uuid"] = None
         self["_perceptual_grade_working_space"] = "linear"
         self["_perceptual_grade_stage2_complete"] = True
         self["_perceptual_grade_parameter_bank_0"] = banks[0]
@@ -74,7 +75,9 @@ class Tree(dict):
         selector.bl_idname = ("ShaderNodeValue" if tree_type == "ShaderNodeTree"
                               else "ShaderNodeMath")
         selector.operation = "ADD"
-        selector.outputs = {"Value": SimpleNamespace(default_value=float(active))}
+        selector.outputs = {"Value": SimpleNamespace(
+            default_value=float(active), links=(object(),),
+        )}
         selector.inputs = {
             0: SimpleNamespace(default_value=float(active), is_linked=False),
             1: SimpleNamespace(default_value=0.0, is_linked=False),
@@ -154,6 +157,9 @@ class BankedResourceTests(unittest.TestCase):
             node_groups = [self.shader, self.compositor]
 
         self.cache = self.module.GradeResources(SimpleNamespace(data=Data()))
+        validator = patch.object(self.module, "validate_grade_template", return_value=True)
+        validator.start()
+        self.addCleanup(validator.stop)
         self.quiescent = False
         self.cache.gate = SimpleNamespace(
             quiescent=lambda: self.quiescent,
@@ -183,6 +189,50 @@ class BankedResourceTests(unittest.TestCase):
         self.assertIs(resource.image, self.first)
         self.assertEqual(resource.candidate_bank, 1)
         self.assertEqual(resource.generation, 1)
+        self.assertEqual(set(resource.trees), {"ShaderNodeTree", "CompositorNodeTree"})
+
+    def test_local_owner_identity_survives_rename_and_is_regenerated_on_copy(self):
+        class LocalNode(dict):
+            def __init__(self, name, owner_tree, values=None):
+                super().__init__(values or {})
+                self.name = name
+                self.pg_grade = None
+                self.id_data = owner_tree
+
+        owner_tree = SimpleNamespace(is_embedded_data=False, as_pointer=lambda: 81)
+        first = LocalNode("Original", owner_tree)
+        first_owner = self.cache.owner(first)
+        first.name = "Renamed"
+        self.assertEqual(self.cache.owner(first), first_owner)
+
+        previous_kernel = {
+            self.module.OWNER: owner_tree,
+            self.module.OWNER_NODE: first_owner[1],
+        }
+        duplicate = LocalNode("Original", owner_tree, first)
+        self.module.ensure_node_uuid(duplicate, fresh=True)
+        self.assertNotEqual(self.cache.owner(duplicate)[1], first_owner[1])
+        self.assertFalse(self.cache.belongs_to(duplicate, previous_kernel))
+        self.assertTrue(self.cache.belongs_to(first, previous_kernel))
+
+    def test_cold_adoption_validates_only_matching_owner_graphs_once(self):
+        foreign, _foreign_images = self._make_bank(101, 3.)
+        foreign_tree = Tree("ShaderNodeTree", SimpleNamespace(as_pointer=lambda: 90),
+                            (foreign, self.second), roles=self.parameter_roles,
+                            bank_images=(self._make_bank(111, 3.)[1], self.second_images))
+        self.cache.bpy.data.node_groups.append(foreign_tree)
+        with patch.object(self.module, "parameter_bank_pair_images",
+                          wraps=self.schema.parameter_bank_pair_images) as validate:
+            resource = self.cache.resource(self.node, "linear")
+        self.assertEqual(resource.banks, self.banks)
+        self.assertEqual(validate.call_count, 2)
+
+    def test_load_adopts_metadata_valid_banks_for_later_repair(self):
+        role = self.parameter_roles[-1]
+        self.first_images[role].is_dirty = True
+        self.second_images[role].packed_file = None
+        resource = self.cache.resource(self.node, "linear")
+        self.assertEqual(resource.banks, self.banks)
         self.assertEqual(set(resource.trees), {"ShaderNodeTree", "CompositorNodeTree"})
 
     def test_mismatched_kernel_selector_or_bank_pair_is_not_adopted(self):
@@ -232,14 +282,26 @@ class BankedResourceTests(unittest.TestCase):
     def test_mixed_generation_bundle_receipt_is_not_adopted(self):
         role_image = self.first_images[self.parameter_roles[-1]]
         role_image[self.schema.PARAMETER_BUNDLE_SIGNATURE] = "0" * 64
-        self.assertFalse(self.module.GradeResources._valid_bundle(self.first))
+        self.assertFalse(self.schema.parameter_bundle_receipt_matches(self.first))
         self.assertIsNone(self.cache.resource(self.node, "linear").banks)
 
     def test_bank_pair_rejects_shared_role_image(self):
         role = self.parameter_roles[-1]
-        self.second[self.role_binding + role] = self.first_images[role]
+        second, second_images = self._make_bank(21, 0.)
+        second_images[role] = self.first_images[role]
+        second[self.role_binding + role] = second_images[role]
+        banks = (self.first, second)
+        self.assertTrue(all(self.schema.parameter_bundle_receipt_matches(bank)
+                            for bank in banks))
         with self.assertRaisesRegex(ValueError, "two valid banks"):
-            self.cache.set_banks(self.module.GradeResource(), self.banks, 0, 0)
+            self.cache.set_banks(self.module.GradeResource(), banks, 0, 0)
+
+        for tree in (self.shader, self.compositor):
+            tree[self.stage2.PARAMETER_BANK_BINDINGS[1]] = second
+            for reader in tree.nodes:
+                if reader.get(self.stage2.PARAMETER_READER_BANK) == 1:
+                    reader.image = second_images[reader[self.stage2.PARAMETER_READER_ROLE]]
+        self.assertIsNone(self.cache.resource(self.node, "linear").banks)
 
     def test_retirement_retries_preserve_role_identities_after_primary_removal(self):
         resource = self.cache.resource(self.node, "linear")

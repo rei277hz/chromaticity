@@ -17,7 +17,7 @@ import numpy as np
 
 class Job:
     def __init__(self, inputs):
-        self.result = {"signature": inputs["signature"]}
+        self.result = {"request_signature": inputs["route"]["request_signature"]}
         self.cancel_calls = 0
         self.retired = False
 
@@ -114,7 +114,8 @@ class BakeManagerTests(unittest.TestCase):
             self.admitted = False
 
     def request(self, node, **callbacks):
-        route = {"signature": self.current(node, None), "scene": "Scene", "domain": "IMAGE"}
+        route = {"request_signature": self.current(node, None),
+                 "scene": "Scene", "domain": "IMAGE"}
         publish = callbacks.pop("publish_callback", lambda *_args: self.events.append("publish"))
         callbacks.setdefault("activate_callback", lambda *_args: self.events.append("activate"))
         callbacks.setdefault("rollback_callback", lambda *_args: self.events.append("rollback"))
@@ -210,8 +211,9 @@ class BakeManagerTests(unittest.TestCase):
                 patch.object(self.worker, "_minimal_node_types"), \
                 patch.object(self.worker, "_restore_images") as restore, \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
-            self.worker._open_snapshot({"snapshot_path": str(snapshot), "images": []})
-        restore.assert_called_once_with([], ())
+            self.worker._open_snapshot({"snapshot_path": str(snapshot), "images": [],
+                                         "route": {"images": []}})
+        restore.assert_called_once_with([], [])
 
     def test_worker_restores_finite_sidecar_without_checksum_scan(self):
         root = Path(self.snapshots.name) / "worker-images"
@@ -279,19 +281,25 @@ class BakeManagerTests(unittest.TestCase):
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
             result = self.worker._result(
                 np.ones((1, 2, 4), dtype=np.float32),
-                {"artifact_dir": str(root), "signature": "sig"},
-                {"scene": "Scene", "signature": "sig"}, {"domain": "IMAGE"},
+                {"artifact_dir": str(root),
+                 "route": {"scene": "Scene", "request_signature": "sig"}},
                 backend="SHADER",
             )
         self.assertEqual(Path(result["path"]), root / "bake.exr")
         self.assertTrue(Path(result["path"]).is_file())
-        self.assertNotIn("generation", result)
-        self.assertNotIn("sha256", result)
+        self.assertEqual(result, {
+            "path": str(root / "bake.exr"),
+            "width": 2,
+            "height": 1,
+            "request_signature": "sig",
+            "backend": "SHADER",
+            "device": None,
+        })
 
     def test_mismatched_helper_signature_never_publishes(self):
         entry = self.request(self.node(1))
         self.manager.poll()
-        self.complete(result={"signature": "other"})
+        self.complete(result={"request_signature": "other"})
         self.assertEqual(self.events, ["failure"])
         self.assertFalse(self.manager.jobs)
         self.assertFalse(entry["root"].exists())
@@ -354,6 +362,55 @@ class BakeManagerTests(unittest.TestCase):
         self.assertEqual(self.events, ["publish", "activate"])
         self.assertFalse(entry["root"].exists())
         self.assertFalse(self.manager.jobs)
+
+    def test_withdraw_ready_entry_by_key_retires_artifact_without_rna(self):
+        entry = self.request(self.node(1))
+        self.manager.poll()
+        self.busy = True
+        self.complete()
+        self.assertEqual(entry["state"].phase, "ready")
+        self.assertTrue(entry["root"].exists())
+
+        self.assertTrue(self.manager.withdraw(entry["node_key"]))
+
+        self.assertFalse(entry["root"].exists())
+        self.assertFalse(self.manager.jobs)
+        self.assertFalse(self.manager.publication_queue)
+        self.assertFalse(self.manager.poll())
+
+    def test_withdraw_active_entry_by_key_cancels_until_helper_retires(self):
+        entry = self.request(self.node(1))
+        self.manager.poll()
+        self.assertIs(self.manager.active, entry)
+
+        self.assertTrue(self.manager.withdraw(entry["node_key"]))
+
+        self.assertEqual(self.backend.jobs[0].cancel_calls, 1)
+        self.assertIs(self.manager.active, entry)
+        self.assertTrue(entry["root"].exists())
+
+        self.complete(result=CancelledError("disposed"))
+
+        self.assertFalse(entry["root"].exists())
+        self.assertFalse(self.manager.jobs)
+
+    def test_deferred_result_retires_when_node_pointer_is_invalid(self):
+        node = self.node(1)
+        entry = self.request(node)
+        self.manager.poll()
+        self.busy = True
+        self.complete()
+        self.assertEqual(entry["state"].phase, "ready")
+
+        def invalid_pointer():
+            raise ReferenceError("Node was removed")
+
+        node.as_pointer = invalid_pointer
+
+        self.assertFalse(self.manager.poll())
+        self.assertFalse(entry["root"].exists())
+        self.assertFalse(self.manager.jobs)
+        self.assertFalse(self.events)
 
     def test_edit_discards_deferred_result_before_retrying_host_admission(self):
         entry = self.request(self.node(1))

@@ -65,6 +65,7 @@ class GestureReloadGuiTests(unittest.TestCase):
                     self.assertGreaterEqual(result["native_slider_changes"], 30, details)
                 self.assertEqual(len(data["loads"]), 3, details)
                 self.assertEqual(data["router_before_repair"], [True, False, True], details)
+                self.assertTrue(data["failed_gesture_restore_fenced"], details)
                 for loaded in data["loads"]:
                     self.assertTrue(loaded["router_timer"], details)
                     self.assertEqual(loaded["observer_count"], 0, details)

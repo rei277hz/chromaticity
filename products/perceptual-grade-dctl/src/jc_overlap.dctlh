@@ -1,0 +1,15 @@
+__DEVICE__ PGFour pg_jc_overlap(PGFour amounts) {
+    // Equal settings have exactly the same meaning as in the shipping J/C node.
+    if (amounts.s == amounts.m && amounts.s == amounts.w && amounts.s == amounts.h)
+        return amounts;
+
+    // k contains the weights at distances 0, 1, 2 and 3 in tonal-anchor order.
+    PGFour k = PG_JC_OVERLAP_WEIGHTS;
+    float edge = k.s + k.m + k.w + k.h;
+    float interior = k.s + 2.0f * k.m + k.w;
+    return pg_four(
+        pg_four_dot(amounts, k) / edge,
+        pg_four_dot(amounts, pg_four(k.m, k.s, k.m, k.w)) / interior,
+        pg_four_dot(amounts, pg_four(k.w, k.m, k.s, k.m)) / interior,
+        pg_four_dot(amounts, pg_four(k.h, k.w, k.m, k.s)) / edge);
+}

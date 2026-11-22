@@ -581,6 +581,48 @@ assert not failures, failures
 reopened_nodes, reopened_signatures, _ = nodes._animation_snapshot(scene)
 assert nodes._animation_outputs_current(reopened_nodes, reopened_signatures) == (True, None)
 
+
+def check_viewer_failure_during_render_preflight():
+    gate = nodes._grade_resources.gate
+    original_collect = nodes._collect_compositor_receipts
+    maintenance_phases = []
+    render_time = (scene.as_pointer(), scene.frame_current, float(scene.frame_subframe).hex())
+
+    def collect_with_one_failure():
+        maintenance_phases.append(ticket.state.phase)
+        if len(maintenance_phases) == 1:
+            raise RuntimeError("injected Viewer maintenance failure")
+        return original_collect()
+
+    nodes._render_init(scene)
+    try:
+        ticket = gate.request_render_preflight(*render_time)
+        nodes._collect_compositor_receipts = collect_with_one_failure
+        nodes._preparation_tick()
+        assert not maintenance_phases
+        assert not ticket._finished.is_set()
+        assert nodes._render_preflight_tick() == 0.1
+        assert ticket.state.phase == "released" and ticket._finished.is_set(), ticket.state
+        assert (ticket.state.scene_identity, ticket.state.frame, ticket.state.subframe) == render_time
+        assert maintenance_phases == ["released"]
+        frame_nodes, signatures, _ = nodes._animation_snapshot(scene)
+        assert nodes._animation_outputs_current(frame_nodes, signatures) == (True, None)
+    finally:
+        nodes._render_finished(scene)
+        nodes._collect_compositor_receipts = original_collect
+
+    try:
+        nodes._collect_compositor_receipts = collect_with_one_failure
+        assert nodes._render_preflight_tick() == 0.1
+        assert maintenance_phases == ["released", "released"]
+    finally:
+        nodes._collect_compositor_receipts = original_collect
+
+
+if bpy.app.background:
+    check_viewer_failure_during_render_preflight()
+
+
 def defer_undo_reconciliation():
     nodes._undo_redo_pre()
     nodes._undo_redo_post()

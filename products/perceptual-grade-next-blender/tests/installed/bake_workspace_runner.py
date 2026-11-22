@@ -44,7 +44,7 @@ def wait_bake(node):
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         nodes._bake_tick()
-        manager = nodes._bake_manager
+        manager = nodes._bake.manager
         if manager is None or manager._node_key(node) not in manager.jobs:
             return
         time.sleep(.01)
@@ -90,14 +90,14 @@ def bake_in_space(scene, space, index):
     assert nodes.PG_OT_bake.execute(operator, context) == {"FINISHED"}
     wait_bake(grade)
     image = grade.pg_bake_image
-    assert image is not None, grade.get(nodes._BAKE_ERROR)
+    assert image is not None, grade.get(nodes.bake_controller.BAKE_ERROR)
     assert image.is_float and image.packed_file is not None and not image.is_dirty
     pixels = np.asarray(image.pixels[:], dtype=np.float32)
     assert pixels.size and np.isfinite(pixels).all()
     np.testing.assert_allclose(pixels.reshape(-1, 4), expected,
                                rtol=0, atol=0.002)
     assert grade.pg_use_bake
-    assert not grade.get(nodes._BAKE_ERROR)
+    assert not grade.get(nodes.bake_controller.BAKE_ERROR)
     return {"space": space, "pixels": int(pixels.size)}
 
 

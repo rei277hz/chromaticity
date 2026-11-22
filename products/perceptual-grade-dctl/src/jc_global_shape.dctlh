@@ -1,0 +1,214 @@
+#define PG_JC_CHROMA_LINEAR_GAIN 0
+#define PG_JC_CHROMA_LOG_GAIN 1
+#define PG_JC_CHROMA_UNIFIED 2
+
+__DEVICE__ float pg_jc_spline_fraction(float value, float leftSlope, float rightSlope, int invert) {
+    if (value <= 0.0f || value >= 1.0f) return value;
+    float remaining = 1.0f - value;
+    if (!invert) {
+        float blend = value * remaining;
+        float square = value * value;
+        return (square + leftSlope * blend)
+             / (square + (leftSlope + rightSlope) * blend + remaining * remaining);
+    }
+
+    // Solve for the input odds t/(1-t), then return t without forming the odds.
+    float balance = leftSlope * remaining - rightSlope * value;
+    float root = _sqrtf(balance * balance + 4.0f * value * remaining);
+    if (balance >= 0.0f) {
+        float numerator = 2.0f * value;
+        return numerator / (root + balance + numerator);
+    }
+    float numerator = root - balance;
+    return numerator / (numerator + 2.0f * remaining);
+}
+
+__DEVICE__ float pg_jc_spline_segment(float value, float start, float width, float rise,
+                                       float leftSlope, float rightSlope, int invert) {
+    float secantScale = width / rise;
+    float fraction = value / (invert ? rise : width);
+    float result = pg_jc_spline_fraction(fraction, leftSlope * secantScale, rightSlope * secantScale, invert);
+    return start + result * (invert ? width : rise);
+}
+
+__DEVICE__ float pg_jc_pivot_contrast(float value, float pivot, float stops, int invert) {
+    if (stops == 0.0f || value == pivot || value >= pivot + 2.0f) return value;
+    float slope = _exp2f(stops);
+    if (value < pivot)
+        return pg_jc_spline_segment(value, 0.0f, pivot, pivot, 1.0f, slope, invert);
+    return pg_jc_spline_segment(value - pivot, pivot, 2.0f, 2.0f, slope, 1.0f, invert);
+}
+
+__DEVICE__ float pg_jc_end_shape(float value, float pivot, float lower, float upper, int invert) {
+    if (value <= pivot) {
+        if (lower == 0.0f || value == pivot) return value;
+        float halfPivot = 0.5f * pivot;
+        float middle = halfPivot * (1.0f + 0.5f * lower);
+        float inputKnot = invert ? middle : halfPivot;
+        if (value <= inputKnot)
+            return pg_jc_spline_segment(value, 0.0f, halfPivot, middle, 1.0f, 1.0f, invert);
+        return pg_jc_spline_segment(value - inputKnot, invert ? halfPivot : middle,
+                                     halfPivot, pivot - middle, 1.0f, 1.0f, invert);
+    }
+    if (upper == 0.0f) return value;
+    if (value >= pivot + 2.0f + (invert ? upper : 0.0f)) return value + (invert ? -upper : upper);
+    return pg_jc_spline_segment(value - pivot, pivot, 2.0f, 2.0f + upper, 1.0f, 1.0f, invert);
+}
+
+// curve holds contrast in stops, the pivot in curve coordinates, and the two end adjustments.
+__DEVICE__ float pg_jc_global_curve(float value, PGFour curve, int invert) {
+    if (invert) {
+        value = pg_jc_end_shape(value, curve.m, curve.w, curve.h, invert);
+        return pg_jc_pivot_contrast(value, curve.m, curve.s, invert);
+    }
+    value = pg_jc_pivot_contrast(value, curve.m, curve.s, invert);
+    return pg_jc_end_shape(value, curve.m, curve.w, curve.h, invert);
+}
+
+__DEVICE__ int pg_jc_global_curve_active(PGFour curve) {
+    return curve.s != 0.0f || curve.w != 0.0f || curve.h != 0.0f;
+}
+
+__DEVICE__ float3 pg_jc_global_lightness(float3 point, PGFour curve, float bias, int invert) {
+    float height = _fabs(point.x);
+    if (height == 0.0f) return point;
+    if (bias != 0.0f) {
+        float chroma = pg_hypot(point.y, point.z);
+        float saturation = pg_jc_gain_saturation(chroma, height);
+        float influence = bias > 0.0f ? 1.0f - bias * (1.0f - saturation) : 1.0f + bias * saturation;
+        curve.s *= influence;
+        curve.w *= influence;
+        curve.h *= influence;
+        if (influence == 0.0f) return point;
+    }
+
+    float units = height / 16.0f;
+    float value = pg_log1p(units) * 1.4426950408889634f;
+    float mapped = pg_jc_global_curve(value, curve, invert);
+    if (mapped == value) return point;
+    // Scaling all three coordinates keeps hue and the saturation used by the inverse.
+    return point * (pg_expm1(0.6931471805599453f * mapped) / units);
+}
+
+__DEVICE__ float pg_jc_chroma_contrast_gain(float chroma, float base, float pivot,
+                                           float stops, int invert) {
+    float gain = _exp2f(invert ? -stops : stops);
+    float pivotChroma = base * pivot / (1.0f - pivot);
+    if (pivotChroma == 0.0f) return gain;
+    // Both branches fix pivotChroma, so replacing gain with its reciprocal
+    // inverts the map without changing which branch applies.
+    if (chroma < pivotChroma) {
+        float ratio = chroma / pivotChroma;
+        return 1.0f / (gain * (1.0f - ratio) + ratio);
+    }
+    float ratio = pivotChroma / chroma;
+    return gain * (1.0f - ratio) + ratio;
+}
+
+__DEVICE__ float pg_jc_chroma_end_gain(float chroma, float base, float muted, float vivid, int invert) {
+    if (base == 0.0f) return _exp2f(invert ? -vivid : vivid);
+    // In log2(1 + C/base), normalized saturation 0.50 is at 1. This
+    // end shape has a constant log offset above its vivid tail knot.
+    float midpoint = 1.0f;
+    float limit = midpoint + 2.0f + (invert ? vivid : 0.0f);
+    if (chroma >= base * pg_expm1(0.6931471805599453f * limit)) {
+        float tailGain = _exp2f(invert ? -vivid : vivid);
+        return tailGain + (tailGain - 1.0f) * (base / chroma);
+    }
+    float units = chroma / base;
+    float value = pg_log1p(units) * 1.4426950408889634f;
+    float mapped = pg_jc_end_shape(value, midpoint, muted, vivid, invert);
+    if (mapped == value) return 1.0f;
+    return pg_expm1(0.6931471805599453f * mapped) / units;
+}
+
+__DEVICE__ float pg_jc_unified_chroma_gain(float chroma, float base, PGFour curve, int invert) {
+    float mutedGain = _exp2f(curve.w);
+    if (curve.w == curve.h) return invert ? 1.0f / mutedGain : mutedGain;
+
+    float vividGain = _exp2f(curve.h);
+    float relativeGain = vividGain / mutedGain;
+    // Scale the knee so the crossover has the geometric mean of the endpoint gains.
+    float knee = base * (curve.m / (1.0f - curve.m)) * _sqrtf(relativeGain);
+    if (knee == 0.0f) return invert ? 1.0f / vividGain : vividGain;
+    if (invert) {
+        // The helper returns input / normalized output. Convert to input / observed output.
+        float normalizedOutput = chroma / mutedGain;
+        return pg_jc_linear_gain_inverse(normalizedOutput, knee, relativeGain) / mutedGain;
+    }
+
+    float weight = chroma / (chroma + knee);
+    return mutedGain + (vividGain - mutedGain) * weight;
+}
+
+__DEVICE__ float3 pg_jc_global_chroma(float3 point, PGFour curve, float toneAmount, int invert, int mode) {
+    float chroma = pg_hypot(point.y, point.z);
+    if (chroma == 0.0f) return point;
+    float height = _fabs(point.x);
+    float base = (35.0f / 75.0f) * height;
+    int logGain = mode == PG_JC_CHROMA_LOG_GAIN;
+    float gain = 1.0f;
+    if (invert && toneAmount != 0.0f)
+        gain = pg_jc_gain_multiplier(chroma, height, toneAmount, invert, logGain);
+    int adjustEnds = curve.w != 0.0f || curve.h != 0.0f;
+    if (mode == PG_JC_CHROMA_UNIFIED) {
+        if (adjustEnds) gain *= pg_jc_unified_chroma_gain(chroma * gain, base, curve, invert);
+    } else {
+        if (invert && adjustEnds)
+            gain *= pg_jc_chroma_end_gain(chroma * gain, base, curve.w, curve.h, invert);
+        if (curve.s != 0.0f)
+            gain *= pg_jc_chroma_contrast_gain(chroma * gain, base, curve.m, curve.s, invert);
+        if (!invert && adjustEnds)
+            gain *= pg_jc_chroma_end_gain(chroma * gain, base, curve.w, curve.h, invert);
+    }
+    if (!invert && toneAmount != 0.0f)
+        gain *= pg_jc_gain_multiplier(chroma * gain, height, toneAmount, invert, logGain);
+    return make_float3(point.x, point.y * gain, point.z * gain);
+}
+
+__DEVICE__ int pg_jc_global_curve_valid(PGFour curve, float minPivot, float maxPivot) {
+    return _fabs(curve.s) <= 2.0f && curve.m >= minPivot && curve.m <= maxPivot &&
+           _fabs(curve.w) <= 1.0f && _fabs(curve.h) <= 1.0f;
+}
+
+__DEVICE__ int pg_jc_global_chroma_valid(PGFour saturation, float shadow, float highlight, float crossover,
+                                        int mode) {
+    if (mode != PG_JC_CHROMA_LINEAR_GAIN && mode != PG_JC_CHROMA_LOG_GAIN && mode != PG_JC_CHROMA_UNIFIED)
+        return 0;
+    int validCurve = mode == PG_JC_CHROMA_UNIFIED
+        ? saturation.s == 0.0f && saturation.m >= 0.05f && saturation.m <= 0.95f &&
+          _fabs(saturation.w) <= 2.0f && _fabs(saturation.h) <= 2.0f
+        : pg_jc_global_curve_valid(saturation, 0.05f, 0.95f);
+    return validCurve && _fabs(shadow) <= 2.0f && _fabs(highlight) <= 2.0f &&
+           crossover >= 10.0f && crossover <= 160.0f;
+}
+
+__DEVICE__ float3 pg_jc_global_chroma_at_tone(float3 point, PGFour saturation, float shadow,
+                                              float highlight, float crossover, int invert, int mode) {
+    float offset = _fabs(point.x) / crossover - 1.0f;
+    float toneAmount = (offset < 0.0f ? shadow : highlight) * pg_jc_surface_smoothstep(_fabs(offset));
+    return pg_jc_global_chroma(point, saturation, toneAmount, invert, mode);
+}
+
+__DEVICE__ PGValue pg_cone_global_shape(float3 wire, PGFour lightness, float bias,
+                                       PGFour saturation, float shadow, float highlight, float crossover, int invert) {
+    if (!pg_cone_valid(wire) || !pg_jc_global_curve_valid(lightness, 10.0f, 160.0f) ||
+        !pg_jc_global_chroma_valid(saturation, shadow, highlight, crossover, PG_JC_CHROMA_LOG_GAIN) ||
+        !(_fabs(bias) <= 1.0f) || (invert != 0 && invert != 1))
+        return pg_value(color_zero3(), 0);
+
+    int adjustJ = pg_jc_global_curve_active(lightness);
+    int adjustC = pg_jc_global_curve_active(saturation) || shadow != 0.0f || highlight != 0.0f;
+    if (!adjustJ && !adjustC) return pg_value(wire, 1);
+    float3 input = pg_cone_chart(wire);
+    if (!color_finite3(input)) return pg_value(color_zero3(), 0);
+
+    lightness.m = pg_log1p(lightness.m / 16.0f) * 1.4426950408889634f;
+    float3 point = input;
+    if (invert && adjustJ) point = pg_jc_global_lightness(point, lightness, bias, invert);
+    if (adjustC)
+        point = pg_jc_global_chroma_at_tone(point, saturation, shadow, highlight, crossover, invert, PG_JC_CHROMA_LOG_GAIN);
+    if (!invert && adjustJ) point = pg_jc_global_lightness(point, lightness, bias, invert);
+    if (point.x == input.x && point.y == input.y && point.z == input.z) return pg_value(wire, 1);
+    return pg_cone_wire(point);
+}

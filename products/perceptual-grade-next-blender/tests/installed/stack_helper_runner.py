@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import addon_utils
 import bpy
@@ -98,10 +99,36 @@ try:
     assert runtime._process.pid != os.getpid()
     assert runtime._process.poll() is None
     assert backend.probe.result()["conformance"] is True
+
+    preparation_runtime = nodes._preparation_runtime
+    error = RuntimeError("Injected Stack helper shutdown failure")
+    failed_disable = []
+    with patch.object(backend, "close", side_effect=error) as close:
+        addon_utils.disable(extension.__name__, default_set=False,
+                            handle_error=failed_disable.append)
+        close.assert_called_once_with()
+    assert len(failed_disable) == 1
+    assert failed_disable[0].exceptions == (error,)
+    assert nodes._preparation_runtime is preparation_runtime
+    assert preparation_runtime._lanes["lut"].host_owner is backend
+    assert not runtime.physical_terminal()
+    assert nodes.PGShaderGrade.is_registered
+    assert nodes._load_post in bpy.app.handlers.load_post
+    assert nodes._preparation_tick() is None
+
+    assert addon_utils.enable(
+        extension.__name__, default_set=False, handle_error=errors.append,
+    ) is extension
+    assert not errors, errors
+    assert runtime.physical_terminal()
+    assert nodes._preparation_runtime is not preparation_runtime
+    assert nodes._preparation_runtime._lanes["lut"].host_owner is not backend
+    assert nodes.PGShaderGrade.is_registered
 finally:
     addon_utils.disable(extension.__name__, default_set=False, handle_error=errors.append)
 assert not errors, errors
 assert runtime is not None and runtime.physical_terminal()
+assert nodes._preparation_runtime is None
 report.write_text(json.dumps({
     "passed": True,
     "contexts": contexts,

@@ -46,7 +46,8 @@ def j_response(chroma, ja, center, width):
 
 def c_response(chroma, ja, center, width, amount):
     regular = (chroma > 0.) & (ja != 0.)
-    ratio = log_ratio(chroma[regular], ja[regular], center)
+    centers = np.broadcast_to(center, chroma.shape)
+    ratio = log_ratio(chroma[regular], ja[regular], centers[regular])
     span = 1. + 2. * width
     magnitude = abs(ratio)
     mapped = span * np.log2(1. + np.exp2(amount[regular] / span) * np.expm1(np.log(2.) * magnitude / span))

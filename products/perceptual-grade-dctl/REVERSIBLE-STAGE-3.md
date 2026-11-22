@@ -7,6 +7,9 @@ controls set the **local lightness stretch** for colored samples at those
 tones. Positive Midtones J Contrast increases the spacing of vivid midtone
 lightnesses and compresses the spacing of muted ones. Exact gray follows Tone.
 
+Adjacent Overlap and Broad Overlap are audition variants that give each
+contrast slider influence at neighboring tonal anchors. [Tonal overlap prototypes](JC-OVERLAP-PROTOTYPES.md)
+
 ## Node connections and inverse scope
 
 XYZ Input encodes the three signed modCAM16 cone responses, each strictly
@@ -89,6 +92,32 @@ repair. Resolve uses open-range XYZ export.
    radii at full influence. The inverse recovers radius on the same ray before
    undoing Adaptance and the web.
 
+## Warp quadratic Scale audition
+
+The quadratic Scale variant uses the same radial knots, scale controls and
+positive endpoint slopes as the baseline. For position `t` in an interval of
+width `w`, with `0 <= t <= 1` and endpoint slopes `m0` and `m1`, the mapped
+radius above the interval start is `w * (m0*t + (m1-m0)*t^2/2)`. Both the
+linear slope blend and the baseline smoothstep slope blend cover the same
+interval area `w * (m0+m1)/2`, so anchor radii and slopes agree. The quadratic
+mapping has a continuous first derivative. Its second derivative can jump at
+the anchors.
+
+Inverse selects the interval by mapped radius. If `a` is the mapped distance
+from its start divided by `w`, let `f = 2*a/(m0+m1)`. The local slope is
+`m = sqrt((1-f)*m0^2 + f*m1^2)`, giving `t = 2*a/(m0+m)`.
+Positive slopes make the solution unique along each ray. Hue, chroma radius
+and Adaptance retain their iterative inverses.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:warp_quadratic_scale_prototype --show-output
+```
+
+Compare the baseline and quadratic Scale variant on constant-direction rays
+with opposite and extreme adjacent scale settings. Check that each anchor
+radius and local slope agrees, the radius remains ordered, and each version
+round-trips with its own matching Inverse on signed and HDR samples.
+
 ## Decisions for Resolve audition
 
 | Design choice | Current behavior | Flexibility before promotion |
@@ -96,6 +125,7 @@ repair. Resolve uses open-range XYZ export.
 | Saturation centers and widths | J and C have independent centers and widths. Each family shares its shape across four tones. The curve uses log distance on either side of the center. | High. Shape, log-like response and calibration can change if the C curve stays ordered and its inverse follows it. |
 | Near-gray response | J fades at normalized saturation 0.10. C keeps its full relative low-chroma response and preserves exact gray. Warp scale fades at `C / hypot(J_A,C) < 0.10`. | High. Thresholds and fade shapes can be auditioned separately. A new C fade requires checking monotonicity. |
 | J and scale slider meaning | Stops set a local slope. Integrating it gives the lightness or radius at and beyond the selected tone. | Medium. Knot placement, blending and slider calibration can change while keeping positive slopes. |
+| Warp scale interpolation | The audition variant changes smoothstep slope blending to linear slope interpolation, preserving knot radii and slopes with a closed-form inverse. | Medium. Smoothness between anchors changes while the anchor behavior remains fixed. |
 | Hue displacement | Six integer degree offsets per row preserve the reference hues at reset. Crossing or coincident handles produce a diagnostic. | Medium. A different UI can encode positive gaps directly. Every valid ring must stay ordered. |
 | Adaptance and half saturation | Neutral lands on the requested target. Half saturation selects the scale where instantaneous motion at fixed `J_A` is half its neutral speed. | Medium. The decay law can change if travel remains one-to-one and its inverse uses the same calibration. |
 | Selectors and operation order | C uses fixed `J_A`. J uses resulting C. The web and Adaptance use fixed `J_A`. Scale uses a fixed ray direction. | Low. Changing an operation's own selector during its forward and reverse passes requires a new invertibility argument. |

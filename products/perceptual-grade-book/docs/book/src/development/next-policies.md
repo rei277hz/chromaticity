@@ -193,9 +193,16 @@ retirement would allow a second job to overlap the physical slot. Conversely,
 withdrawing demand does not claim that the worker has stopped; its final receipt
 still provides the retirement fence.
 
-The owning runtime also fences source lifetimes. `request`, `collect`, and
-`wait` in `runtime/preparation.py` do not let a caller's cancellation release a
-slot before the executor function returns.
+The owning runtime also fences source lifetimes. `runtime/preparation.py`
+coordinates the asynchronous Grade preparer and the main-thread-polled Stack
+helper. The Grade preparer owns its worker pool. Withdrawing demand leaves the
+physical slot occupied until the Grade work or Stack helper retires.
+
+If the coordinator itself fails, it keeps the original exception and discards
+undelivered preparations. Later requests and render waits report that cause.
+The main-thread timer waits for publication admission, clears pending
+installations, and delivers the error output once. Active helper work remains
+owned and polled until retirement.
 
 Each physical job records the playback session that requested it, or `None`
 for ordinary requests. The job's preview and final receipts carry the
@@ -300,6 +307,11 @@ float32 factors rather than a subnormal socket literal, which native Blender
 can flush to zero. Receipt validation remains exact. Detailed expected structure
 payloads are recorded only in the generator's diagnostic report, outside the
 shipped manifest and ZIP.
+
+Adoption, playback, and full validation share a metadata check for the two
+parameter banks. Each bank must have valid role receipts, and the two banks
+must own distinct images. Playback checks that the images are packed and clean.
+Full validation also checks sampler wiring and reads the active bank's pixels.
 
 Runtime parameter-sampler validation builds a fresh socket-to-link index from
 the kernel's links for each validation call. Blender's RNA `socket.links`
@@ -556,6 +568,10 @@ would discard the workflow they represent. Shader and Compositor Grade/Stack
 nodes use the same policy and manager, while each node owns a private wrapper
 around its live kernel and its own baked-output selector.
 
+`src/runtime/bake_controller.py` coordinates the Blender Image transaction,
+source observations, and output selection. It retries deferred selector
+changes under the graph gate, including changes on nodes without a receipt.
+
 `src/policy/bake.py` stores the request phase and optional request signature.
 The signature is present from acceptance through the active request and absent
 in `idle` and `terminal`. Terminal effects carry errors for the manager to
@@ -570,8 +586,10 @@ scene at click time, then dispatches requests through one serialized helper
 lane. Each request has a unique artifact directory and uses the fixed filename
 `bake.exr` within it.
 
-The manager associates later policy events with their accepted request. The
-execution runtime correlates helper receipts by session and job ID, and the
+The manager associates later policy events with their accepted request. Node
+deletion withdraws the accepted request by its saved identity, so retirement
+can proceed after Blender invalidates the node wrapper. The execution runtime
+correlates helper receipts by session and job ID, and the
 manager checks the returned signature before reporting completion. The policy
 compares the current source signature at completion, publication, and
 activation. Dependency generations still contribute to freshness checks. A
@@ -594,8 +612,8 @@ success.
 `output_policy()` derives output from the node's Use Bake setting, managed
 Image validity, and live-kernel error. Turning Use Bake off selects live output
 and retains the Image binding. When Use Bake is on, a valid Image remains
-selected across input or render-engine changes and the node displays a freshness
-warning with the reason. An invalid selected Image or an unrecoverable live
+selected when its inputs change and the node displays a freshness warning with
+the reason. An invalid selected Image or an unrecoverable live
 kernel selects the visible error path. Toggle availability depends on Image
 validity and live-kernel health. When several Grade nodes select a shared
 Image, a successful rebake updates the Image once and synchronizes every
@@ -629,7 +647,7 @@ the legacy distinction between Image and UV bakes:
   texel directly. UV-route sources retain their captured sampling settings.
 * A UV bake is selected for a material graph with multiple image inputs, linked
   source coordinates, surface-dependent inputs, or an existing UV-domain
-  destination. It requires Cycles, an active render UV
+  destination. It requires an active render UV
   map in the 0-1 tile, finite non-degenerate faces, bounded non-overlap, the
   selected material slot, and a render-visible mesh in the selected scene.
   Alembic and mesh-cache geometry, topology-changing modifiers, unsupported
@@ -650,12 +668,25 @@ modes, packed or external status, packed size when available, and external-file
 stat facts (device, inode, size, mtime, and ctime when available) for the image
 and relevant sidecars. `src/runtime/bake_freshness.py` keeps runtime per-ID
 generations for referenced Images, Meshes, and Objects, together with the durable
-receipt codec. Observing these facts reads no source Image pixels or
+receipt codec. Blender evaluates mesh attributes, vertex weights, and custom
+normals from the saved mesh. Their values are not scanned for a digest.
+Observing these facts reads no source Image pixels or
 packed/external Image bytes. Source and bake payloads are never hashed; small
 graph/settings and metadata digests are allowed. At request acceptance, each
 unique source Image is copied once into
 the click-time snapshot so the helper evaluates a stable request; the `.blend`,
 `.npy`, and `.exr` payloads are not hashed.
+
+The helper returns the request signature with its pixels. For an output that
+uses the scene canvas, this signature includes the expected pixel dimensions
+so resizing the canvas cancels pending work. A published bake keeps the
+original receipt signature and the Image's actual dimensions. Restoring the
+canvas size therefore clears a size warning without a rebake.
+
+The graph digest records effective socket values and links. Linked sockets
+ignore unused defaults, and unavailable sockets do not enter the digest. The
+fingerprint version makes older receipts stale while keeping their valid baked
+Images selectable.
 
 The settings digest includes every Linear, Tone, and Stage 3 numeric field,
 including J/C response, fit, Global C Gain, Adaptance, and all Warp handles.
@@ -709,24 +740,17 @@ facts.
 ### Native evaluation and wrapper graph
 
 `src/runtime/bake_worker.py` opens an isolated `.blend` snapshot, restores float
-Image sidecars, and evaluates the native Blender graph. Image-domain Shader
-bakes select EEVEE or Cycles CPU/GPU from the captured Scene settings; an
-unsupported Scene engine falls back to Cycles CPU. UV Shader bakes require
-Cycles and honor its CPU/GPU selection. A GPU request also carries the exact
-Cycles compute backend and enabled device identities from click time. The
-helper configures and verifies that selection, and reports an error when it is
-unavailable rather than silently changing devices. The user's Scene and
-preferences are never changed. EEVEE uses a private orthographic render of the
-node tree and split AOV readback to retain signed HDR range through half-float
-color passes. Its private Scene clears inherited World volumes and material
-overrides so they cannot alter the captured graph. An upstream managed UV bake
+Image sidecars, and evaluates the native Blender graph. Shader Image and UV
+bakes both run on Cycles CPU in the private scene. Switching the foreground
+engine or Cycles device preserves pending and published Shader bakes.
+An upstream managed UV bake
 requires the UV route to preserve its surface sampling coordinates.
 Cycles captures RGB and alpha in native passes through the Grade helper Image
 nodes. A Grade Stack bake evaluates the complete node tree containing its 65^3
 LUT; it does not run a Python approximation of the LUT. Compositor bakes use a
-native compositor output/File Output EXR path and retain their existing route.
-The effective engine/device selection is part of the route signature, so a
-change during a request discards the result. The worker returns a receipt only
+native compositor output/File Output EXR path. Render Layers inputs are
+rendered by their scene's engine, which contributes to their freshness.
+The worker returns a receipt only
 after dimensions, channels, finite pixels, and the expected route identity have
 been verified; it does not hash the `.blend`, `.npy`, or `.exr` payloads.
 
@@ -770,6 +794,19 @@ predicate, not a state machine: owner, node, space, completeness, image
 validity, and image agreement must all be true. `runtime/grade_resources.py`
 uses it at the boundary where a persisted host resource is considered the
 installed resource.
+
+Local Grade ownership uses the containing datablock and a UUID stored on the
+node. Renaming a node preserves its ownership, and copying a node gives the copy
+a new UUID. The add-on rebuilds older name-owned kernels from the stored Grade
+settings. Adoption and initial render preflight check generated graph structure
+against the shipped template manifest and verify packed Grade boundary and
+Stack LUT pixels against their content receipts.
+
+The lifecycle coordinator attempts gesture restoration, subscription cleanup,
+Bake withdrawal, and cache invalidation before Blender replaces IDs on load,
+undo, or redo. A failed gesture restoration still allows the remaining steps
+to run. Reconciliation releases the pinned resources and repairs installed
+output after Blender finishes replacing the data.
 
 The reducer sequences disposal, retention, and retirement. Disposal fences subscriptions,
 then detaches the node's Grade and kernel references. Retirement observes the
@@ -925,6 +962,11 @@ time, and Grade signature releases the render. Any mismatch or failure
 enters `failed` with an error. The consumer attempts to install visible
 failure output before delivering the failed ticket. When a render lease
 ends, the gate invalidates and wakes any ticket bound to that lease.
+
+The foreground timer services render preflight before collecting compositor
+Viewer updates. A Viewer failure is reported separately and retried on a
+later tick. It cannot delay release of a validated render or put unrelated
+Grades into error.
 
 ![Render preflight authorization](../assets/illustrations/next-policy/08-render-preflight.svg)
 

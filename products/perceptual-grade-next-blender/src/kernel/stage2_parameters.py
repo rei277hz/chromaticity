@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 from types import MappingProxyType
+from typing import Optional
 
 import numpy as np
 
@@ -152,28 +153,46 @@ def set_parameter_bundle_signature(primary, signatures):
     return receipt
 
 
+def _validated_parameter_bundles(primaries) -> Optional[tuple[dict[str, object], ...]]:
+    try:
+        pointers = set()
+        bundles = []
+        for primary in primaries:
+            images = parameter_bank_images(primary)
+            signatures = {}
+            for role, image in images.items():
+                pointer = image.as_pointer()
+                height, width, _channels = PARAMETER_ROLE_SHAPES[role]
+                if (not pointer or pointer in pointers
+                        or image.get(PARAMETER_IMAGE) != PARAMETER_SCHEMA
+                        or image.get(PARAMETER_ROLE) != role
+                        or tuple(image.size) != (width, height)):
+                    return None
+                pointers.add(pointer)
+                signatures[role] = image.get(PARAMETER_CONTENT_SIGNATURE)
+            receipt = parameter_bundle_signature(signatures)
+            if any(image.get(PARAMETER_BUNDLE_SIGNATURE) != receipt
+                   for image in images.values()):
+                return None
+            bundles.append(images)
+        return tuple(bundles)
+    except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return None
+
+
 def parameter_bundle_receipt_matches(primary) -> bool:
     """Check correlated role receipts using metadata only, without pixel reads."""
+    return _validated_parameter_bundles((primary,)) is not None
+
+
+def parameter_bank_pair_images(banks) -> Optional[tuple[dict[str, object], ...]]:
+    """Resolve two banks only when their receipts match and all role images are distinct."""
     try:
-        images = parameter_bank_images(primary)
-        pointers = tuple(image.as_pointer() for image in images.values()
-                         if image is not None)
-        if (set(images) != set(PARAMETER_ROLES)
-                or any(image is None for image in images.values())
-                or not all(pointers) or len(set(pointers)) != len(PARAMETER_ROLES)
-                or any(image.get(PARAMETER_IMAGE) != PARAMETER_SCHEMA
-                       or image.get(PARAMETER_ROLE) != role
-                       or tuple(image.size) != (PARAMETER_ROLE_SHAPES[role][1],
-                                                PARAMETER_ROLE_SHAPES[role][0])
-                       for role, image in images.items())):
-            return False
-        signatures = {role: image.get(PARAMETER_CONTENT_SIGNATURE)
-                      for role, image in images.items()}
-        receipt = parameter_bundle_signature(signatures)
-        return all(image.get(PARAMETER_BUNDLE_SIGNATURE) == receipt
-                   for image in images.values())
+        if len(banks) != 2:
+            return None
+        return _validated_parameter_bundles(banks)
     except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
-        return False
+        return None
 
 
 def bind_parameter_bank(images, signatures=None):

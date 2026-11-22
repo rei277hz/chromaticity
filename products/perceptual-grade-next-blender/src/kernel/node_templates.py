@@ -26,9 +26,9 @@ from .stage2_bindings import (
     TEMPLATE_VARIANT as TEMPLATE_VARIANT_KEY,
 )
 from .stage2_parameters import (
-    PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
+    PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLES,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, bind_parameter_bank,
-    parameter_bank_images, parameter_content_signature,
+    parameter_bank_images, parameter_bank_pair_images, parameter_content_signature,
     parameter_image_matches, prepare_parameters,
 )
 
@@ -65,6 +65,7 @@ SLOT_BAKE = "bake"
 
 STACK_KERNEL = "_perceptual_grade_stack_kernel"
 STACK_LUT_SIGNATURE = "_perceptual_grade_lut_signature"
+STACK_LUT_CONTENT = "_perceptual_grade_lut_content_sha256"
 STACK_IMAGE = "_perceptual_grade_stack_image"
 STACK_BASIS_IMAGE = "_perceptual_grade_stack_basis_signature"
 STACK_CONFIG_IMAGE = "_perceptual_grade_stack_config_signature"
@@ -76,6 +77,7 @@ BAKE_LIVE = "_pg_next_bake_live"
 BAKE_READER = "_pg_next_bake_reader"
 FALLBACK_KERNEL = "_perceptual_grade_fallback_kernel"
 FALLBACK_MODE = "_perceptual_grade_fallback_mode"
+GRADE_BOUNDARY_CONTENT = "_perceptual_grade_boundary_content_sha256"
 
 
 class TemplateAssetError(RuntimeError):
@@ -184,6 +186,90 @@ def _read_json(package, name):
 
 def _digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def _image_content_sha256(image):
+    import numpy as np
+
+    source = image.pixels
+    pixels = np.empty(len(source), dtype=np.float32)
+    source.foreach_get(pixels)
+    return _digest(pixels)
+
+
+def grade_parameter_bindings_valid(tree, active_bank, role_bundles):
+    """Validate mutable Grade bank readers and selector against fixed identities."""
+    try:
+        if type(active_bank) is not int or active_bank not in (0, 1):
+            return False
+        selector = None
+        observed = set()
+        for node in tree.nodes:
+            if node.get(PARAMETER_SELECTOR):
+                if selector is not None:
+                    return False
+                selector = node
+            image = getattr(node, "image", None)
+            if node.get(PARAMETER_READER):
+                bank = node.get(PARAMETER_READER_BANK)
+                role = node.get(PARAMETER_READER_ROLE)
+                if (bank not in (0, 1) or role not in PARAMETER_ROLES
+                        or image != role_bundles[bank][role]):
+                    return False
+                observed.add((bank, role))
+            elif image is not None and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA:
+                return False
+        if (selector is None or observed != {(bank, role) for bank in (0, 1)
+                                             for role in PARAMETER_ROLES}):
+            return False
+        if tree.bl_idname == "ShaderNodeTree":
+            if selector.bl_idname != "ShaderNodeValue":
+                return False
+            value = float(selector.outputs["Value"].default_value)
+        elif tree.bl_idname == "CompositorNodeTree":
+            value = float(selector.inputs[0].default_value)
+            if (selector.bl_idname != "ShaderNodeMath"
+                    or selector.operation != "ADD"
+                    or selector.inputs[0].is_linked
+                    or selector.inputs[1].is_linked
+                    or float(selector.inputs[1].default_value) != 0.0):
+                return False
+        else:
+            return False
+        return value == float(active_bank) and bool(selector.outputs["Value"].links)
+    except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def validate_grade_template(tree, *, store=None):
+    """Validate a generated Grade's manifest topology and static boundary image."""
+    from .boundary import SEED_HIGH_CELLS, SEED_HUE_CELLS, SEED_LOW_CELLS
+
+    try:
+        if (tree is None or tree.library is not None
+                or tree.get("_perceptual_grade_stage2_complete") is not True):
+            return False
+        store = _STORE if store is None else store
+        record = store.record(TemplateVariant("grade", tree.bl_idname))
+        _validate_tree(tree, record)
+        boundary_readers = tuple(tree.nodes[name]
+                                 for name in record.slots.get(SLOT_BOUNDARY, ()))
+        if not boundary_readers:
+            return False
+        image = boundary_readers[0].image
+        if (image is None or any(node.image != image for node in boundary_readers)
+                or image.library is not None or image.packed_file is None
+                or image.is_dirty or not image.is_float
+                or image.colorspace_settings.name != "Non-Color"
+                or image.alpha_mode != "CHANNEL_PACKED"
+                or image.use_half_precision or image.channels != 4
+                or tuple(image.size) != (SEED_HUE_CELLS + 1,
+                                         SEED_LOW_CELLS + SEED_HIGH_CELLS + 1)
+                or not tree.get(GRADE_BOUNDARY_CONTENT)):
+            return False
+        return _image_content_sha256(image) == tree.get(GRADE_BOUNDARY_CONTENT)
+    except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return False
 
 
 def _finite(value, label):
@@ -649,36 +735,27 @@ def _make_image(name, pixels, marker=None, *, retire=None):
 
 
 def _parameter_banks(prepared, supplied, *, retire=None):
-    parameters = prepared.parameters or prepare_parameters(prepared)
     if supplied is not None:
         # A publication transaction can bind the old active bank and a newly
         # staged candidate before its selector operation is authorized.  Both
         # supplied banks must be internally valid, but need not contain the
         # same settings as `prepared` or as each other.
         banks = tuple(supplied)
-        if len(banks) != 2 or banks[0] == banks[1]:
+        bundles = parameter_bank_pair_images(banks)
+        if bundles is None:
             raise TemplateAssetError("Grade templates require two distinct parameter banks")
         borrowed = []
-        for primary in banks:
+        for primary, bundle in zip(banks, bundles):
             try:
-                bundle = parameter_bank_images(primary)
-                valid = (set(bundle) == set(PARAMETER_ROLES)
-                         and len({image.as_pointer() for image in bundle.values()
-                                  if image is not None}) == len(PARAMETER_ROLES)
-                         and parameter_image_matches(primary))
-                for role, image in bundle.items():
+                valid = parameter_image_matches(primary)
+                for image in bundle.values():
                     valid = valid and (
                         image.library is None
                         and image.source in {"FILE", "GENERATED"}
                         and image.is_float
-                        and image.packed_file is not None
-                        and not image.is_dirty
                         and image.colorspace_settings.name == "Non-Color"
                         and image.alpha_mode == "CHANNEL_PACKED"
                         and not image.use_half_precision
-                        and image.get(PARAMETER_IMAGE) == PARAMETER_SCHEMA
-                        and image.get(PARAMETER_ROLE) == role
-                        and tuple(image.size) == tuple(PARAMETER_ROLE_SHAPES[role][1::-1])
                     )
                 borrowed.extend(bundle[role] for role in PARAMETER_ROLES)
             except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
@@ -689,6 +766,7 @@ def _parameter_banks(prepared, supplied, *, retire=None):
     banks = []
     created = []
     try:
+        parameters = prepared.parameters or prepare_parameters(prepared)
         for bank in (0, 1):
             role_images = {}
             for role in PARAMETER_ROLES:
@@ -723,7 +801,6 @@ def instantiate_grade(prepared, tree_type, parameter_images=None, active_bank=0,
             or getattr(prepared, "boundary", None) is None
             or prepared.tone.reference != 203.):
         raise TemplateAssetError("Grade templates require complete Tone and boundary preparation")
-    prepare_parameters(prepared)
     _check_context(store._contract()[0], prepared)
     _check_context(store._contract()[0], prepared.boundary)
     variant = TemplateVariant("grade", tree_type)
@@ -745,6 +822,7 @@ def instantiate_grade(prepared, tree_type, parameter_images=None, active_bank=0,
         # The freshly appended boundary image is already private to this tree.
         boundary = source
         boundary["_perceptual_grade_image"] = True
+        tree[GRADE_BOUNDARY_CONTENT] = _image_content_sha256(boundary)
         bindings = {SLOT_PARAMETER_0: banks[0], SLOT_PARAMETER_1: banks[1],
                     SLOT_BOUNDARY: boundary}
         for bank, primary in enumerate(banks):
@@ -810,10 +888,12 @@ def instantiate_stack(prepared, tree_type, quality=None, *, store=None, retire=N
         if (pixels.shape != (atlas_height(cube.size), ATLAS_WIDTH, 4)
                 or not np.isfinite(pixels).all()):
             raise TemplateAssetError("Stack LUT atlas does not match its template dimensions")
+        lut_content_signature = _digest(np.ascontiguousarray(pixels))
         image = _make_image(
             f"Perceptual Grade Stack LUT {cube.size}", pixels,
             marker={STACK_IMAGE: cube.signature, "_perceptual_grade_image": True,
-                    STACK_LUT_SIGNATURE: cube.signature}, retire=retire,
+                    STACK_LUT_SIGNATURE: cube.signature,
+                    STACK_LUT_CONTENT: lut_content_signature}, retire=retire,
         )
         images.append(image)
         basis_data = basis_pixels(cube.to_lut, cube.from_lut)
@@ -927,7 +1007,7 @@ def validate_fallback_instance(tree, mode, *, vector=False, store=None):
         return False
 
 
-def validate_stack_instance(tree, *, store=None):
+def validate_stack_instance(tree, *, deep=True, store=None):
     """Check a saved Stack instance's topology and complete atlas binding."""
     from .lut import (ATLAS_WIDTH, atlas_height, basis, basis_pixels,
                       stack_config_pixels)
@@ -935,13 +1015,23 @@ def validate_stack_instance(tree, *, store=None):
 
     try:
         store = _STORE if store is None else store
+        if tree is None:
+            return False
         quality = tree.get(KERNEL_QUALITY)
         size = {"preview": STACK_SIZES[0], "full": STACK_SIZES[1]}.get(quality)
         if size is None:
             return False
         variant = TemplateVariant("stack", tree.bl_idname)
         record = store.record(variant)
-        _validate_tree(tree, record)
+        if (tree is None or tree.library is not None
+                or tree.get(STACK_KERNEL) is not True
+                or tree.get(KERNEL_TREE_TYPE) != tree.bl_idname
+                or tree.get(TEMPLATE_SCHEMA) != TEMPLATE_MARKER_SCHEMA
+                or tree.get(TEMPLATE_KIND) != "stack"
+                or tree.get(TEMPLATE_VARIANT) != variant.key):
+            return False
+        if deep:
+            _validate_tree(tree, record)
         space = tree.get(KERNEL_WORKING_SPACE)
         if not isinstance(space, str):
             return False
@@ -954,10 +1044,13 @@ def validate_stack_instance(tree, *, store=None):
                 or image.is_dirty or not image.is_float
                 or image.colorspace_settings.name != "Non-Color"
                 or image.alpha_mode != "CHANNEL_PACKED"
-                or image.use_half_precision
+                or image.use_half_precision or image.channels != 4
                 or tuple(image.size) != (ATLAS_WIDTH, atlas_height(size))
                 or image.get(STACK_LUT_SIGNATURE) != tree.get(STACK_LUT_SIGNATURE)
+                or not image.get(STACK_LUT_CONTENT)
                 or not tree.get(STACK_LUT_SIGNATURE)):
+            return False
+        if deep and _image_content_sha256(image) != image.get(STACK_LUT_CONTENT):
             return False
         basis_readers = tuple(tree.nodes[name]
                               for name in record.slots.get(SLOT_BASIS, ()))
@@ -973,8 +1066,9 @@ def validate_stack_instance(tree, *, store=None):
                 or tuple(basis_image.size) != (6, 1)
                 or basis_image.get(STACK_BASIS_IMAGE) != expected_signature):
             return False
-        actual_basis = np.empty(expected_basis.shape, dtype=np.float32)
-        basis_image.pixels.foreach_get(actual_basis.ravel())
+        if deep:
+            actual_basis = np.empty(expected_basis.shape, dtype=np.float32)
+            basis_image.pixels.foreach_get(actual_basis.ravel())
         expected_config = stack_config_pixels(size)
         expected_config_signature = _digest(
             np.ascontiguousarray(expected_config).tobytes())
@@ -991,13 +1085,16 @@ def validate_stack_instance(tree, *, store=None):
                 or tuple(config_image.size) != (1, 1)
                 or config_image.get(STACK_CONFIG_IMAGE) != expected_config_signature):
             return False
-        actual_config = np.empty(expected_config.shape, dtype=np.float32)
-        config_image.pixels.foreach_get(actual_config.ravel())
-        return (np.array_equal(actual_basis, expected_basis)
-                and np.array_equal(actual_config, expected_config)
-                and all(getattr(node, "image", None)
-                        in (None, image, basis_image, config_image)
-                        for node in tree.nodes))
+        if deep:
+            actual_config = np.empty(expected_config.shape, dtype=np.float32)
+            config_image.pixels.foreach_get(actual_config.ravel())
+            if (not np.array_equal(actual_basis, expected_basis)
+                    or not np.array_equal(actual_config, expected_config)
+                    or any(getattr(node, "image", None)
+                           not in (None, image, basis_image, config_image)
+                           for node in tree.nodes)):
+                return False
+        return True
     except (AttributeError, KeyError, ReferenceError, RuntimeError, TypeError, ValueError):
         return False
 
@@ -1028,6 +1125,6 @@ __all__ = (
     "TemplateAssetError", "TemplateInstance", "TemplateRecord", "TemplateStore",
     "TemplateVariant", "instantiate_grade", "instantiate_stack",
     "instantiate_wrapper", "instantiate_fallback", "load_manifest", "reset_cache", "shader_source",
-    "structure_digest", "structure_receipt", "validate_fallback_instance",
-    "validate_stack_instance",
+    "grade_parameter_bindings_valid", "structure_digest", "structure_receipt",
+    "validate_fallback_instance", "validate_grade_template", "validate_stack_instance",
 )

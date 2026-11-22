@@ -53,9 +53,9 @@ def _open_snapshot(inputs):
     """Open the immutable per-request Blender snapshot."""
     import bpy
 
-    value = inputs.get("snapshot_path", inputs.get("snapshot"))
+    value = inputs.get("snapshot_path")
     if not isinstance(value, str):
-        return
+        raise ValueError("Bake snapshot path is absent")
     path = Path(value)
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise ValueError("Invalid bake snapshot path")
@@ -63,8 +63,8 @@ def _open_snapshot(inputs):
     result = bpy.ops.wm.open_mainfile(filepath=str(path), use_scripts=False, load_ui=False)
     if "FINISHED" not in result:
         raise RuntimeError("Bake snapshot could not be opened")
-    route = inputs.get("route", {})
-    _restore_images(inputs.get("images", ()), route.get("images", ()))
+    route = inputs["route"]
+    _restore_images(inputs["images"], route["images"])
 
 
 def _verify_sampler_bindings(host, occurrences, images):
@@ -225,9 +225,9 @@ def _live_target(target):
             raise ValueError("Stack Bake requires its full 65^3 LUT node tree")
 
 
-def _prepare_shader_sources(root, descriptor):
+def _prepare_shader_sources(root, route):
     """Preserve source alpha interpretation across independent emission passes."""
-    for occurrence in descriptor.get("images", ()):
+    for occurrence in route["images"]:
         path = tuple(occurrence.get("group_path", ()))
         tree = _copy_path(root, path)
         source = tree.nodes.get(str(occurrence["node_name"]))
@@ -243,7 +243,7 @@ def _prepare_shader_sources(root, descriptor):
         if (image.source not in {"FILE", "GENERATED"}
                 or image.type not in {"IMAGE", "UV_TEST"} or image.use_multiview):
             raise ValueError("Bake supports only ordinary still Image Textures")
-        if descriptor["domain"] == "IMAGE":
+        if route["domain"] == "IMAGE":
             # Evaluate one pixel per source texel, independent of filtering.
             # Explicit vector inputs were already rejected by route discovery.
             if _links(source.inputs["Vector"]):
@@ -466,32 +466,31 @@ def _bake_pass(scene, obj, material, tree, sink, emission, image, context, margi
 def _shader(inputs, context):
     import bpy
 
-    descriptor = dict(inputs.get("shader_bake") or inputs.get("descriptor") or {})
-    target = dict(inputs.get("target") or {})
-    scene = route_datablock(bpy, bpy.data.scenes, target or descriptor, "scene")
+    route = inputs["route"]
+    scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
     if scene is None:
         raise ValueError("Bake scene is absent")
-    _set_frame(scene, descriptor)
-    owner_kind = str(target.get("owner_kind", descriptor.get("owner_kind", "material"))).lower()
+    _set_frame(scene, route)
+    owner_kind = str(route["owner_kind"]).lower()
     owner = route_datablock(
         bpy, bpy.data.materials if owner_kind == "material" else bpy.data.worlds,
-        target or descriptor, "owner",
+        route, "owner",
     )
     if owner is None or owner.node_tree is None:
         raise ValueError("Bake shader owner is absent")
-    width, height = int(descriptor["width"]), int(descriptor["height"])
+    width, height = int(route["width"]), int(route["height"])
     if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES:
         raise ValueError("Shader Bake dimensions exceed the pixel budget")
     root = owner.node_tree.copy()
-    _prepare_shader_sources(root, descriptor)
-    backend = str(descriptor.get("shader_backend", "CYCLES_CPU"))
-    path = tuple(target.get("group_path", descriptor.get("group_path", ())))
+    _prepare_shader_sources(root, route)
+    backend = str(route["shader_backend"])
+    path = tuple(route["group_path"])
     color, alpha, root = _target_outputs(
-        root, path, str(target.get("node_name", descriptor.get("node_name", ""))))
+        root, path, str(route["node_name"]))
     if color is None:
         raise ValueError("Bake target has no Color output")
     material, tree, group, emission, sink, alpha_name = _material(root, color, alpha)
-    domain = str(descriptor.get("domain", "IMAGE"))
+    domain = route["domain"]
     if backend != "CYCLES_CPU":
         raise ValueError("Unknown Shader Bake backend: " + backend)
     if domain == "UV":
@@ -499,7 +498,7 @@ def _shader(inputs, context):
 
         if owner_kind != "material":
             raise ValueError("UV Bake requires a material")
-        obj = route_datablock(bpy, bpy.data.objects, descriptor, "object")
+        obj = route_datablock(bpy, bpy.data.objects, route, "object")
         if obj is None or obj.type != "MESH" or obj not in tuple(scene.objects):
             raise ValueError("UV Shader Bake requires the frozen active mesh")
         if any(modifier.type in {"MESH_SEQUENCE_CACHE", "MESH_CACHE"}
@@ -508,9 +507,9 @@ def _shader(inputs, context):
         # Recheck the exact saved surface before invoking native render-mode
         # baking. In particular, do not let an enabled render-only modifier
         # introduce overlap after the foreground checked the base mesh.
-        if _uv(obj, full=True) != descriptor.get("uv_map"):
+        if _uv(obj, full=True) != route["uv_map"]:
             raise ValueError("UV Bake active render map changed in the snapshot")
-        index = int(descriptor.get("material_slot", -1))
+        index = int(route["material_slot"])
         if index < 0 or index >= len(obj.material_slots):
             raise ValueError("UV Shader Bake material slot is absent")
         scratch = _new_image("PG Next Bake Other Materials", width, height)
@@ -525,8 +524,8 @@ def _shader(inputs, context):
                 scratch_node.image = scratch
                 other.node_tree.nodes.active = scratch_node
                 slot.material = other
-        uv_name = str(descriptor.get("uv_map", ""))
-        margin = int(descriptor.get("margin", 16))
+        uv_name = str(route["uv_map"])
+        margin = int(route.get("margin", 16))
     else:
         obj, uv_name = _plane(scene)
         obj.data.materials.append(material)
@@ -559,20 +558,20 @@ def _shader(inputs, context):
                               coverage_image, context, margin)
         rgb[np.max(coverage[..., :3], axis=-1) <= 0.0] = 0.0
     _checkpoint(context)
-    return _result(rgb, inputs, target, descriptor, backend="CYCLES", device=scene.cycles.device)
+    return _result(rgb, inputs, backend="CYCLES", device=scene.cycles.device)
 
 
 def _compositor(inputs, context):
     import bpy
 
-    target = dict(inputs.get("target") or {})
-    scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
+    route = inputs["route"]
+    scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
     if scene is None:
         raise ValueError("Compositor Bake scene is absent")
-    _set_frame(scene, target)
-    tree = _compositor_root(bpy, scene, target).copy()
-    path = tuple(target.get("group_path", ()))
-    output, _alpha, tree = _target_outputs(tree, path, str(target.get("node_name", "")))
+    _set_frame(scene, route)
+    tree = _compositor_root(bpy, scene, route).copy()
+    path = tuple(route["group_path"])
+    output, _alpha, tree = _target_outputs(tree, path, str(route["node_name"]))
     with tempfile.TemporaryDirectory(prefix="pg-next-compositor-bake-") as directory:
         for node in tuple(tree.nodes):
             if node.bl_idname in {"CompositorNodeOutputFile", "CompositorNodeViewer", "NodeGroupOutput"}:
@@ -650,7 +649,7 @@ def _compositor(inputs, context):
             if effects is None:
                 scene.compositing_node_group = previous
     _checkpoint(context)
-    return _result(pixels, inputs, target, target, backend="COMPOSITOR")
+    return _result(pixels, inputs, backend="COMPOSITOR")
 
 
 def _compositor_root(host, scene, route):
@@ -660,14 +659,11 @@ def _compositor_root(host, scene, route):
     return matches[0][1]
 
 
-def _set_frame(scene, values):
-    frame = values.get("frame")
-    subframe = values.get("frame_subframe", values.get("subframe", 0.0))
-    if frame is not None:
-        scene.frame_set(int(frame), subframe=float(subframe))
+def _set_frame(scene, route):
+    scene.frame_set(int(route["frame"]), subframe=float(route["subframe"]))
 
 
-def _result(pixels, inputs, target, descriptor, *, backend, device=None):
+def _result(pixels, inputs, *, backend, device=None):
     import bpy
 
     pixels = np.asarray(pixels, dtype=np.float32)
@@ -682,7 +678,8 @@ def _result(pixels, inputs, target, descriptor, *, backend, device=None):
     if pixels.shape[1] * pixels.shape[0] * 16 > MAX_PIXEL_BYTES:
         raise MemoryError("Native Bake output exceeds the pixel budget")
     image = _new_image("PG Next Bake Completed", int(pixels.shape[1]), int(pixels.shape[0]))
-    scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
+    route = inputs["route"]
+    scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
     if scene is None:
         raise ValueError("Bake output scene is absent")
     try:
@@ -696,22 +693,9 @@ def _result(pixels, inputs, target, descriptor, *, backend, device=None):
         "path": str(path),
         "width": int(pixels.shape[1]),
         "height": int(pixels.shape[0]),
-        "identity": inputs.get("identity", target.get("identity")),
-        "signature": inputs.get("signature", target.get("signature")),
-        "artifact_signature": target.get(
-            "artifact_signature", target.get("source_signature", target.get("signature"))),
-        "scene": target.get("scene"),
-        "frame": int(target.get("frame", 0)),
-        "frame_subframe": float(target.get("frame_subframe", target.get("subframe", 0.0))),
-        "node": target.get("node_name"),
+        "request_signature": route["request_signature"],
         "backend": backend,
         "device": device,
-        "shader_backend": descriptor.get("shader_backend"),
-        "evaluation": "NODE_TREE",
-        "domain": descriptor.get("domain", "COMPOSITOR"),
-        "uv_map": descriptor.get("uv_map"),
-        "interpolation": descriptor.get("interpolation", "Linear"),
-        "extension": descriptor.get("extension", "REPEAT"),
     }
 
 
@@ -725,8 +709,19 @@ class BakeWorker:
             context.checkpoint()
             _minimal_node_types()
             return {"conformance": True, "backend": "NODE_TREE", "blender": tuple(bpy.app.version)}
-        if operation in {"native_bake", "bake", "shader_bake"}:
+        if operation == "bake":
             context.checkpoint()
+            if not isinstance(inputs, dict):
+                raise TypeError("Bake inputs must be a mapping")
+            expected_inputs = {"snapshot_path", "artifact_dir", "images", "route"}
+            if set(inputs) != expected_inputs:
+                raise ValueError("Bake inputs do not match the canonical request")
+            route = inputs["route"]
+            if not isinstance(route, dict):
+                raise TypeError("Bake route must be a frozen mapping")
+            domain = route.get("domain")
+            if domain not in {"COMPOSITOR", "IMAGE", "UV"}:
+                raise ValueError("Unknown Bake route domain: " + str(domain))
             _open_snapshot(inputs)
             import bpy
 
@@ -736,28 +731,15 @@ class BakeWorker:
                     for node in tuple(tree.nodes):
                         if node.bl_idname == "CompositorNodeOutputFile":
                             tree.nodes.remove(node)
-            route = inputs.get("route")
-            if route is not None:
-                if not isinstance(route, dict):
-                    raise TypeError("Bake route must be a frozen mapping")
-                inputs = dict(inputs, target=route, descriptor=route)
-                kind = "compositor" if route.get("domain") == "COMPOSITOR" else "shader"
-            else:
-                kind = str(inputs.get("kind", "shader")).lower()
-            target = inputs.get("target", {})
-            scene = route_datablock(bpy, bpy.data.scenes, target, "scene")
+            scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
             if scene is not None and bpy.context.window is not None:
                 bpy.context.window.scene = scene
                 if scene.view_layers:
                     bpy.context.window.view_layer = scene.view_layers[0]
             context.checkpoint()
-            if kind in {"shader", "material", "world"}:
-                return _shader(inputs, context)
-            if kind in {"compositor", "composite"}:
+            if domain == "COMPOSITOR":
                 return _compositor(inputs, context)
-            raise ValueError("Unknown native Bake kind: " + kind)
-        if operation == "compositor_bake":
-            return self.dispatch("bake", dict(inputs, kind="compositor"), context)
+            return _shader(inputs, context)
         raise ValueError("Unknown Bake helper operation: " + str(operation))
 
 

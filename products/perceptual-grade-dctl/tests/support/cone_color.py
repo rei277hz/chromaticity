@@ -7,36 +7,45 @@ from color_tools.perceptual_grade_reference.grading import Color, ColorSettings
 from . import cone_reference as cone, jc_surface
 
 
-def integrate_stretch(value, knots, slopes):
-    """Two-point Gauss quadrature integrates the cubic slope exactly on each span."""
+def integrate_stretch(value, knots, slopes, *, quadratic_scale=False):
     result = np.zeros_like(value)
     for i in range(4):
         width = knots[..., i + 1] - knots[..., i]
         length = np.clip(value - knots[..., i], 0., width)
         middle = length / (2. * width)
-        offset = middle / np.sqrt(3.)
-        blend = (jc_surface.smoothstep(middle - offset) + jc_surface.smoothstep(middle + offset)) / 2.
+        if quadratic_scale:
+            blend = middle
+        else:
+            # Two-point Gauss quadrature integrates the cubic slope exactly.
+            offset = middle / np.sqrt(3.)
+            blend = (jc_surface.smoothstep(middle - offset) + jc_surface.smoothstep(middle + offset)) / 2.
         result += length * ((1. - blend) * slopes[..., i] + blend * slopes[..., i + 1])
     return result + np.maximum(value - knots[..., -1], 0.) * slopes[..., -1]
 
 
-def jc(wire, tone, settings):
+def jc(wire, tone, settings, *, anchor_centers=False):
     point = cone.enter(wire)
     ja, ab = point.ja, point.q[:, 1:]
     chroma = np.linalg.norm(ab, axis=-1)
     anchors = 100. * tone.target[1:]
     amounts = np.array([settings.get(f"tone{row}CContrast", 0.) for row in "SMWH"])
     contrast = jc_surface.anchor(abs(ja), anchors, amounts)
-    stops = jc_surface.c_response(chroma, ja, settings.get("cSaturationCenter", .5),
-                                  settings.get("cSaturationWidth", .5), contrast)
+    if anchor_centers:
+        centers = np.array([settings.get(f"tone{row}CCenter", .5) for row in "SMWH"])
+        log_pivots = np.log(centers / (1. - centers))
+        log_pivot = jc_surface.anchor(abs(ja), anchors, log_pivots)
+        c_center = 1. / (1. + np.exp(-log_pivot))
+    else:
+        c_center = settings.get("cSaturationCenter", .5)
+    stops = jc_surface.c_response(chroma, ja, c_center, settings.get("cSaturationWidth", .5), contrast)
     ab = ab * np.exp2(settings.get("globalChromaGain", 0.) + stops)[:, None]
 
     chroma = np.linalg.norm(ab, axis=-1)
     slopes = [np.ones_like(ja)]
     for row, anchor in zip("SMWH", anchors):
+        j_center = settings.get(f"tone{row}JCenter", .5) if anchor_centers else settings.get("jSaturationCenter", .5)
         response = jc_surface.j_response(chroma, np.full_like(ja, anchor),
-                                         settings.get("jSaturationCenter", .5),
-                                         settings.get("jSaturationWidth", .5))
+                                         j_center, settings.get("jSaturationWidth", .5))
         slopes.append(np.exp2(settings.get(f"tone{row}JContrast", 0.) * response))
     ja = np.sign(ja) * integrate_stretch(abs(ja), np.r_[0., anchors], np.stack(slopes, axis=-1))
     return cone.pack(ja, ab[:, 0], ab[:, 1])
@@ -70,7 +79,7 @@ def hue_field(angle, knots, values):
     return (1. - u) * values[i] + u * values[(i + 1) % 6]
 
 
-def warp(wire, tone, settings):
+def warp(wire, tone, settings, *, quadratic_scale=False):
     point = cone.enter(wire)
     ja, ab = point.ja, point.q[:, 1:]
     controls = {family: np.array([[settings.get(f"web{family}{i}{j}", 0.) for j in range(6)]
@@ -97,6 +106,6 @@ def warp(wire, tone, settings):
         stops = hue_field(hue, angles, controls["scale"][i])
         slopes.append(np.exp2(stops * jc_surface.smoothstep(10. * c_fraction)))
     stretch = integrate_stretch(radius, np.stack([np.zeros_like(radius), *knots], axis=-1),
-                               np.stack([slopes[0], *slopes], axis=-1))
+                               np.stack([slopes[0], *slopes], axis=-1), quadratic_scale=quadratic_scale)
     gain = np.divide(stretch, radius, out=np.ones_like(radius), where=radius > 0.)
     return cone.pack(ja * gain, ab[:, 0] * gain, ab[:, 1] * gain)
