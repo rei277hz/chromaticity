@@ -13,6 +13,17 @@
 - [x] Pass the final Next architecture, policy-coverage, package, localization, Bake worker, Technical Report, and handbook targets in `c1963fc7-936a-444a-843a-c8645d0d0932` (seven test targets, 51 commands with 10 remote and zero local).
 - [x] Build `verify_policies` and the extension in `6715a3ed-f682-4a8d-9b8d-9e10d4f84ace` with `--remote-only`.
 
+### Vectorscope CI follow-up
+
+- [x] Run the full Next CI inventory. The two builds passed, and test run `0f2f8bfc-aee0-4de9-8bfc-93d7d396406d` passed 64 of 67 targets.
+- [x] Apply canonical formatting to the vectorscope requirements and report BUCK file. Remote run `33b25489-1ffe-478d-b6ca-832f0e717fd5` passed all three Next BUCK files, the Blender manifest, and all ten policy requirements.
+- [x] Repair the render-preflight fixture's parameter-reader lookup. Its focused remote rerun passed in `cd7316e9-cf98-4297-968a-bcdb7ebdeea1`.
+- [x] Make repeated add-on registration reuse the vectorscope runtime and register missing Blender handles. The complete installed suite passed in remote run `5d91944c-0b10-47a5-909d-1e6a3f6bbb1d`.
+- [x] Drain queued undo reconciliation before the fixture creates its peer Grade. GUI undo passed in remote run `5d91944c-0b10-47a5-909d-1e6a3f6bbb1d`.
+- [x] Pass both selected builds on the repaired sources in remote run `6f373210-5d28-42e1-bf76-b2e9f0ca20e5`.
+- [x] Resolve the 69 selected targets and their 1,257-target dependency closure, including the vectorscope proof. The configured Next graph resolved 282 targets.
+- [x] Pass all 67 selected test targets in remote run `5d91944c-0b10-47a5-909d-1e6a3f6bbb1d`, including the installed, GUI undo, render-preflight, and native vectorscope gates. The run used the CI timeout of 1,830 seconds, with 19 remote commands and zero local commands.
+
 Update this checklist as work progresses. Validation and formatting must remain scoped to `products/perceptual-grade-next-blender`, and executable checks must use Buck2 with `--remote-only`.
 
 ## Main CI follow-up — verified

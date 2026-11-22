@@ -6256,7 +6256,7 @@ def register():
                     menu_type.append(callback)
                 _registered_menus.append(record)
         _register_handlers()
-        vectorscope_ui.register(ScopeRuntime(
+        vectorscope_ui.register(lambda: ScopeRuntime(
             bpy, _bake.manager._snapshot, _linear_settings, _working_space,
             gate=_bake.gate, upstream_ready=_scope_upstream_ready,
         ))

@@ -54,6 +54,8 @@ def main():
     if enabled is not extension or errors:
         raise RuntimeError("Could not enable the packaged extension: " + repr(errors))
     nodes = importlib.import_module(extension.__package__ + ".nodes")
+    parameter_bindings = importlib.import_module(
+        extension.__package__ + ".kernel.stage2_bindings")
     if not callable(getattr(nodes, "_write_grade_parameters", None)):
         raise RuntimeError("This report requires the persistent Grade parameter-texture path")
 
@@ -136,7 +138,7 @@ def main():
 
             def binding(item):
                 image = item.image
-                if (item.get(nodes.PARAMETER_READER)
+                if (item.get(parameter_bindings.PARAMETER_READER)
                         and image.get(nodes.PARAMETER_IMAGE) == nodes.PARAMETER_SCHEMA):
                     parameter_images.add(int(image.as_pointer()))
                     return int(item.as_pointer()), "versioned-parameter"

@@ -14,6 +14,8 @@ The vectorscope uses a single-color density plot with Rec.709 guides. Small load
 
 Buck2 remote-only run `57738ffc-1048-4fcf-a30c-633ee9e468da` passed both installed Blender cases. They cover direct Image sampling without a helper process, Linear edits, image pixel edits, processed Compositor Transform capture, playback convergence, and Shader UV edits through the active viewport. Run `db73ccfe-ceab-4053-af9c-691df4d21565` passed the focused vectorscope, Bake routes, policy verifier, and Technical Report tests. Final scoped run `c1963fc7-936a-444a-843a-c8645d0d0932` passed seven Next test targets including architecture, packaging, policy coverage, localization, Bake worker, Technical Report, and handbook checks. Remote build `6715a3ed-f682-4a8d-9b8d-9e10d4f84ace` passed both `verify_policies` and the extension target. All validation used remote execution with zero local commands.
 
+The pre-PR CI run initially passed 64 of 67 Next test targets. The follow-up makes repeated add-on registration reuse the active scope runtime, drains queued undo reconciliation before the GUI fixture creates its peer Grade, and reads the parameter-reader marker from its defining module in the render-preflight fixture. Both selected builds and all 67 selected tests passed after the repairs in Buck2 remote-only runs `6f373210-5d28-42e1-bf76-b2e9f0ca20e5` and `5d91944c-0b10-47a5-909d-1e6a3f6bbb1d`. The formatting and target selection receipts are recorded in CHECKLIST.md.
+
 ## Current status
 
 Implement the reference Stage 3 math in `products/perceptual-grade-next-blender`, including the full numeric controls, and keep the Perceptual Grade handbook aligned with current Next behavior.

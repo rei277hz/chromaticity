@@ -452,13 +452,13 @@ def reset():
         _runtime.reset()
 
 
-def register(runtime):
+def register(create_runtime):
     global _runtime, _draw_handle
-    if _runtime is not None:
-        raise RuntimeError("Vectorscope UI is already registered")
-    _runtime = runtime
-    bpy.utils.register_class(PG_OT_toggle_vectorscope)
-    if not bpy.app.background:
+    if _runtime is None:
+        _runtime = create_runtime()
+    if not PG_OT_toggle_vectorscope.is_registered:
+        bpy.utils.register_class(PG_OT_toggle_vectorscope)
+    if not bpy.app.background and _draw_handle is None:
         _draw_handle = bpy.types.SpaceNodeEditor.draw_handler_add(
             _draw, (), "WINDOW", "POST_PIXEL")
 
