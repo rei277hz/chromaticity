@@ -7,6 +7,9 @@ controls set the **local lightness stretch** for colored samples at those
 tones. Positive Midtones J Contrast increases the spacing of vivid midtone
 lightnesses and compresses the spacing of muted ones. Exact gray follows Tone.
 
+Adjacent Overlap and Broad Overlap are audition variants that give each
+contrast slider influence at neighboring tonal anchors. [Tonal overlap prototypes](JC-OVERLAP-PROTOTYPES.md)
+
 ## Node connections and inverse scope
 
 XYZ Input encodes the three signed modCAM16 cone responses, each strictly

@@ -83,6 +83,63 @@ generate(
     visibility = ["PUBLIC"],
 )
 
+generate(
+    name = "jc_overlap_prototypes",
+    args = GENERATOR_ARGS + ["--jc-overlap"],
+    outputs = {
+        variant + "_" + locale: "Perceptual-Grade-3A-Cone-Color-JC-" + slug + "-Overlap-Prototype" + suffix + ".dctl"
+        for variant, slug in [("jc_adjacent_overlap", "Adjacent"), ("jc_broad_overlap", "Broad")]
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "jc_anchor_centers_prototype",
+    args = GENERATOR_ARGS + ["--jc-anchor-centers"],
+    outputs = {
+        locale: "Perceptual-Grade-3A-Cone-Color-JC-Broad-Overlap-Anchor-Centers-Prototype" + suffix + ".dctl"
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "jc_gain_prototypes",
+    args = GENERATOR_ARGS + ["--jc-gain"],
+    outputs = {
+        variant + "_" + locale: "Perceptual-Grade-3A-Cone-Color-JC-" + slug + "-Gain-Prototype" + suffix + ".dctl"
+        for variant, slug in [("jc_linear_gain", "Linear"), ("jc_log_gain", "Log")]
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "jc_global_shape_prototype",
+    args = GENERATOR_ARGS + ["--jc-global-shape"],
+    outputs = {
+        locale: "Perceptual-Grade-3A-Cone-Color-JC-Global-Shape-Prototype" + suffix + ".dctl"
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "jc_tone_fit_prototype",
+    args = GENERATOR_ARGS + ["--jc-tone-fit"],
+    outputs = {
+        locale: "Perceptual-Grade-2-3A-Cone-Tone-JC-Prototype" + suffix + ".dctl"
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
 python_tool(
     name = "quality",
     srcs = {"pg_dctl_tools/dctl_quality.py": "tools/dctl_quality.py"},

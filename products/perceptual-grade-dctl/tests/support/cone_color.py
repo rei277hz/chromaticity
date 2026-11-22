@@ -20,23 +20,29 @@ def integrate_stretch(value, knots, slopes):
     return result + np.maximum(value - knots[..., -1], 0.) * slopes[..., -1]
 
 
-def jc(wire, tone, settings):
+def jc(wire, tone, settings, *, anchor_centers=False):
     point = cone.enter(wire)
     ja, ab = point.ja, point.q[:, 1:]
     chroma = np.linalg.norm(ab, axis=-1)
     anchors = 100. * tone.target[1:]
     amounts = np.array([settings.get(f"tone{row}CContrast", 0.) for row in "SMWH"])
     contrast = jc_surface.anchor(abs(ja), anchors, amounts)
-    stops = jc_surface.c_response(chroma, ja, settings.get("cSaturationCenter", .5),
-                                  settings.get("cSaturationWidth", .5), contrast)
+    if anchor_centers:
+        centers = np.array([settings.get(f"tone{row}CCenter", .5) for row in "SMWH"])
+        log_pivots = np.log(centers / (1. - centers))
+        log_pivot = jc_surface.anchor(abs(ja), anchors, log_pivots)
+        c_center = 1. / (1. + np.exp(-log_pivot))
+    else:
+        c_center = settings.get("cSaturationCenter", .5)
+    stops = jc_surface.c_response(chroma, ja, c_center, settings.get("cSaturationWidth", .5), contrast)
     ab = ab * np.exp2(settings.get("globalChromaGain", 0.) + stops)[:, None]
 
     chroma = np.linalg.norm(ab, axis=-1)
     slopes = [np.ones_like(ja)]
     for row, anchor in zip("SMWH", anchors):
+        j_center = settings.get(f"tone{row}JCenter", .5) if anchor_centers else settings.get("jSaturationCenter", .5)
         response = jc_surface.j_response(chroma, np.full_like(ja, anchor),
-                                         settings.get("jSaturationCenter", .5),
-                                         settings.get("jSaturationWidth", .5))
+                                         j_center, settings.get("jSaturationWidth", .5))
         slopes.append(np.exp2(settings.get(f"tone{row}JContrast", 0.) * response))
     ja = np.sign(ja) * integrate_stretch(abs(ja), np.r_[0., anchors], np.stack(slopes, axis=-1))
     return cone.pack(ja, ab[:, 0], ab[:, 1])

@@ -178,7 +178,22 @@
   },
   {
     "stages": [
-      "tone"
+      "jc_tone_fit"
+    ],
+    "name": "blackCompression",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 0,
+    "min": 0,
+    "max": 2,
+    "step": 0.001,
+    "options": null,
+    "label_id": "tone_fit.blackCompression",
+    "tooltip_id": "tone_fit.tooltip.blackCompression"
+  },
+  {
+    "stages": [
+      "tone",
+      "jc_tone_fit"
     ],
     "name": "inputShadows",
     "type": "DCTLUI_SLIDER_FLOAT",
@@ -192,7 +207,8 @@
   },
   {
     "stages": [
-      "tone"
+      "tone",
+      "jc_tone_fit"
     ],
     "name": "inputMidtones",
     "type": "DCTLUI_SLIDER_FLOAT",
@@ -206,7 +222,8 @@
   },
   {
     "stages": [
-      "tone"
+      "tone",
+      "jc_tone_fit"
     ],
     "name": "inputWhite",
     "type": "DCTLUI_SLIDER_FLOAT",
@@ -220,7 +237,8 @@
   },
   {
     "stages": [
-      "tone"
+      "tone",
+      "jc_tone_fit"
     ],
     "name": "inputHighlights",
     "type": "DCTLUI_SLIDER_FLOAT",
@@ -362,7 +380,8 @@
     "stages": [
       "tone",
       "jc",
-      "warp"
+      "warp",
+      "jc_tone_fit"
     ],
     "name": "peakNits",
     "type": "DCTLUI_COMBO_BOX",
@@ -389,7 +408,8 @@
   },
   {
     "stages": [
-      "tone"
+      "tone",
+      "jc_tone_fit"
     ],
     "name": "remapFit",
     "type": "DCTLUI_SLIDER_INT",
@@ -400,6 +420,20 @@
     "options": null,
     "label_id": "control.remap_fit.label",
     "tooltip_id": "tooltip.tone.fit"
+  },
+  {
+    "stages": [
+      "jc_tone_fit"
+    ],
+    "name": "hkInfluence",
+    "type": "DCTLUI_SLIDER_FLOAT",
+    "default": 1,
+    "min": 0,
+    "max": 1,
+    "step": 0.01,
+    "options": null,
+    "label_id": "tone_fit.hkInfluence",
+    "tooltip_id": "tone_fit.tooltip.hkInfluence"
   },
   {
     "stages": [
@@ -450,7 +484,8 @@
   {
     "stages": [
       "jc",
-      "warp"
+      "warp",
+      "jc_tone_fit"
     ],
     "name": "direction",
     "type": "DCTLUI_COMBO_BOX",

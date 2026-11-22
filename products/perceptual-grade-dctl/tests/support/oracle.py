@@ -5,15 +5,28 @@ import subprocess
 
 import numpy as np
 
-from .dctl import PROTOTYPES, STAGES, SURFACE_PROTOTYPES, controls, filename
+from .dctl import (
+    ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_PROTOTYPES, controls, filename,
+)
 
 RESOURCES = files("tests.support")
 STAGE_DIR = RESOURCES / "stages"
 PROTOTYPE_DIR = RESOURCES / "prototypes"
 SURFACE_DIR = RESOURCES / "surfaces"
+OVERLAP_DIR = RESOURCES / "overlaps"
+ANCHOR_CENTER_DIR = RESOURCES / "anchor_centers"
+GAIN_DIR = RESOURCES / "gains"
+GLOBAL_SHAPE_DIR = RESOURCES / "global_shape"
+TONE_FIT_DIR = RESOURCES / "tone_fit"
 SOURCE_DIRS = ({stage: STAGE_DIR for stage in STAGES}
                | {stage: PROTOTYPE_DIR for stage in PROTOTYPES}
-               | {stage: SURFACE_DIR for stage in SURFACE_PROTOTYPES})
+               | {stage: SURFACE_DIR for stage in SURFACE_PROTOTYPES}
+               | {stage: OVERLAP_DIR for stage in OVERLAP_PROTOTYPES}
+               | {stage: ANCHOR_CENTER_DIR for stage in ANCHOR_CENTER_PROTOTYPES}
+               | {stage: GAIN_DIR for stage in GAIN_PROTOTYPES}
+               | {stage: GLOBAL_SHAPE_DIR for stage in GLOBAL_SHAPE_PROTOTYPES}
+               | {stage: TONE_FIT_DIR for stage in TONE_FIT_PROTOTYPES})
 
 
 @cache

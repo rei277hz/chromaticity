@@ -52,6 +52,62 @@ for Blender and ACES 2.0 compatibility. Invalid cone data propagates through
 the cone nodes to the magenta diagnostic at XYZ Output. Invalid ordering of
 the Warp hues triggers the diagnostic across the image.
 
+## Color J/C tonal overlap prototypes
+
+Adjacent Overlap and Broad Overlap spread the influence of each J and C
+Contrast slider across the existing tonal anchors. Use either prototype in
+the Color J/C position of the cone chain. The target builds four files across
+English and Simplified Chinese.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_overlap_prototypes --show-output
+```
+
+Broad Overlap with Anchor Centers gives each tonal row its own J Center and
+C Center. Use the separate target to build the English and Simplified Chinese
+editions.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_anchor_centers_prototype --show-output
+```
+
+The Linear Gain and Log Gain prototypes preserve saturation during J
+adjustments. Each tonal row pairs J Contrast with a C Gain control that fades
+near gray.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_gain_prototypes --show-output
+```
+
+[Overlap weights, anchor centers, gain variants, and Resolve audition](JC-OVERLAP-PROTOTYPES.md)
+
+## Integrated Tone and Color J/C prototype
+
+This prototype combines Cone Tone and Global Shape's chroma controls in one
+DCTL. Use it in place of the separate Cone Tone and Color J/C nodes. Keep XYZ
+Input before it and retain Warp and XYZ Output after it.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_prototype --show-output
+```
+
+Build details and Resolve audition steps are in the
+[integrated Tone and J/C guide](JC-OVERLAP-PROTOTYPES.md#integrated-tone-and-jc).
+
+## Global Color J/C shaping prototype
+
+Global Shape gives lightness and saturation separate contrast pivots and
+controls for each end of their curves. J Contrast grades neutral colors and
+preserves cone-chart saturation. Shadow Chroma and Highlight Chroma adjust
+saturation by lightness.
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_global_shape_prototype --show-output
+```
+
+Use the English or Simplified Chinese DCTL in the Color J/C position of the
+cone chain. [Controls and Resolve audition](JC-OVERLAP-PROTOTYPES.md#global-jc-shaping)
+
 ## Color-JC saturation surface prototype
 
 The standalone XYZ surface prototype gives J and C one contrast amount per
