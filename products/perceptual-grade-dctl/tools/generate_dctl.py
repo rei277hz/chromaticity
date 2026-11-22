@@ -1,4 +1,4 @@
-"""Generate the Resolve DCTL product or the experimental Color J/C editions."""
+"""Generate the Resolve DCTL product or its audition variants."""
 import argparse
 import json
 from pathlib import Path
@@ -48,6 +48,20 @@ JC_GAIN_PROTOTYPES = {
 }
 JC_GLOBAL_SHAPE_PROTOTYPE = {"jc_global_shape": "3A-Cone-Color-JC-Global-Shape-Prototype"}
 JC_TONE_FIT_PROTOTYPE = {"jc_tone_fit": "2-3A-Cone-Tone-JC-Prototype"}
+JC_TONE_FIT_LINEAR_GAIN_PROTOTYPE = {
+    "jc_tone_fit_linear_gain": "2-3A-Cone-Tone-JC-Linear-Gain-Prototype",
+}
+JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE = {
+    "jc_tone_fit_unified_chroma": "2-3A-Cone-Tone-JC-Unified-Chroma-Prototype",
+}
+WARP_QUADRATIC_SCALE_PROTOTYPE = {
+    "warp_quadratic_scale": "3B-Cone-Warp-Quadratic-Scale-Prototype",
+}
+VARIANT_STAGES = {
+    "jc_tone_fit_linear_gain": "jc_tone_fit",
+    "jc_tone_fit_unified_chroma": "jc_tone_fit",
+    "warp_quadratic_scale": "warp",
+}
 # Weights for anchor distances 0 through 3 under each audition kernel.
 JC_OVERLAP_WEIGHTS = {
     "jc_adjacent_overlap": (1, 1/4, 0, 0),
@@ -142,12 +156,21 @@ def global_shape_sliders(sliders):
                    label_id=f"global_shape.{name}", tooltip_id=f"global_shape.tooltip.{name}")
 
 
-def global_chroma_controls():
+def global_chroma_controls(unified=False):
+    if unified:
+        yield from global_shape_sliders((
+            ("cMutedGain", 0, -2, 2, 0.01),
+            ("cVividGain", 0, -2, 2, 0.01),
+            ("cSaturationCrossover", 0.5, 0.05, 0.95, 0.01),
+        ))
+    else:
+        yield from global_shape_sliders((
+            ("cContrast", 0, -2, 2, 0.01),
+            ("cPivot", 0.5, 0.05, 0.95, 0.01),
+            ("cMuted", 0, -1, 1, 0.01),
+            ("cVivid", 0, -1, 1, 0.01),
+        ))
     yield from global_shape_sliders((
-        ("cContrast", 0, -2, 2, 0.01),
-        ("cPivot", 0.5, 0.05, 0.95, 0.01),
-        ("cMuted", 0, -1, 1, 0.01),
-        ("cVivid", 0, -1, 1, 0.01),
         ("shadowChroma", 0, -2, 2, 0.01),
         ("highlightChroma", 0, -2, 2, 0.01),
         ("cToneCrossover", 45, 10, 160, 0.1),
@@ -167,11 +190,11 @@ def jc_global_shape_controls(spec):
     yield dict(direction, tooltip_id="global_shape.tooltip.direction")
 
 
-def jc_tone_fit_controls(spec):
+def jc_tone_fit_controls(spec, unified):
     direction = next(control for control in spec if control["name"] == "direction")
     yield from (control for control in spec
                 if "jc_tone_fit" in control["stages"] and control["name"] != "direction")
-    yield from global_chroma_controls()
+    yield from global_chroma_controls(unified)
     yield dict(direction, tooltip_id="tone_fit.tooltip.direction")
 
 
@@ -301,11 +324,18 @@ def stage_call(stage, variant):
             "            cToneCrossover, direction)"
         )
     if stage == "jc_tone_fit":
+        if variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE:
+            mode = "PG_JC_CHROMA_UNIFIED"
+            saturation = "pg_four(0.0f, cSaturationCrossover, cMutedGain, cVividGain)"
+        else:
+            mode = ("PG_JC_CHROMA_LINEAR_GAIN" if variant in JC_TONE_FIT_LINEAR_GAIN_PROTOTYPE
+                    else "PG_JC_CHROMA_LOG_GAIN")
+            saturation = "pg_four(cContrast, cPivot, cMuted, cVivid)"
         return "", (
             "pg_cone_tone_fit(pixel, blackCompression, "
             "pg_four(inputShadows, inputMidtones, inputWhite, inputHighlights),\n"
-            "            remapFit, peakNits, hkInfluence, pg_four(cContrast, cPivot, cMuted, cVivid),\n"
-            "            shadowChroma, highlightChroma, cToneCrossover, direction)"
+            f"            remapFit, peakNits, hkInfluence, {saturation},\n"
+            f"            shadowChroma, highlightChroma, cToneCrossover, direction, {mode})"
         )
 
     # The controls are uniform for this pixel. Aggregate initialization also
@@ -319,7 +349,8 @@ def stage_call(stage, variant):
     centers = [f"make_float3(tone{row}AdaptanceA, tone{row}AdaptanceB, 0.0f)" for row in "SMWH"]
     arrays.extend(["{" + ", ".join(centers) + "}", "adaptanceHalfSaturation"])
     setup = "    PGWarpSettings settings = {\n        " + ",\n        ".join(arrays) + "\n    };\n"
-    return setup, "pg_cone_warp(pixel, settings, peakNits, direction)"
+    quadratic_scale = 1 if variant == "warp_quadratic_scale" else 0
+    return setup, f"pg_cone_warp(pixel, settings, peakNits, direction, {quadratic_scale})"
 
 
 def entry_point(stage, variant):
@@ -352,6 +383,12 @@ def main():
                             help="Emit the global J and C shaping prototype")
     prototypes.add_argument("--jc-tone-fit", action="store_true",
                             help="Emit the integrated tone calibration and chroma-shaping prototype")
+    prototypes.add_argument("--jc-tone-fit-linear-gain", action="store_true",
+                            help="Emit the integrated Tone and J/C prototype with Linear Gain")
+    prototypes.add_argument("--jc-tone-fit-unified-chroma", action="store_true",
+                            help="Emit the integrated Tone and J/C prototype with a unified chroma curve")
+    prototypes.add_argument("--warp-quadratic-scale", action="store_true",
+                            help="Emit the Warp prototype with quadratic Scale")
     args = parser.parse_args()
     version = tomllib.loads(args.metadata.read_text())["version"]
     spec = json.loads((args.source_dir / "ui-spec.json").read_text())
@@ -376,11 +413,16 @@ def main():
             stages = JC_GLOBAL_SHAPE_PROTOTYPE
         elif args.jc_tone_fit:
             stages = JC_TONE_FIT_PROTOTYPE
+        elif args.jc_tone_fit_linear_gain:
+            stages = JC_TONE_FIT_LINEAR_GAIN_PROTOTYPE
+        elif args.jc_tone_fit_unified_chroma:
+            stages = JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE
+        elif args.warp_quadratic_scale:
+            stages = WARP_QUADRATIC_SCALE_PROTOTYPE
         surface_locales = json.loads((args.source_dir / "jc-surface-locales.json").read_text(encoding="utf-8"))
         catalogs = {locale: surface_messages(messages, surface_locales[locale])
                     for locale, messages in catalogs.items()}
-    if (stages is STAGES or args.jc_overlap or args.jc_anchor_centers or args.jc_gain
-            or args.jc_global_shape or args.jc_tone_fit):
+    if not (args.jc_prototype or args.jc_surface):
         cone_locales = json.loads((args.source_dir / "cone-locales.json").read_text(encoding="utf-8"))
         catalogs = {locale: messages | cone_locales[locale] for locale, messages in catalogs.items()}
     if args.jc_gain:
@@ -399,7 +441,7 @@ def main():
     for variant, slug in stages.items():
         per_anchor_centers = variant in JC_ANCHOR_CENTERS_PROTOTYPE
         overlap = "jc_broad_overlap" if per_anchor_centers else variant
-        stage = "jc" if overlap in JC_OVERLAP_WEIGHTS else variant
+        stage = "jc" if overlap in JC_OVERLAP_WEIGHTS else VARIANT_STAGES.get(variant, variant)
         if variant in JC_GAIN_PROTOTYPES:
             stage = "jc_gain"
             overlap = "jc_broad_overlap"
@@ -436,7 +478,7 @@ def main():
         if stage == "jc_global_shape":
             controls = list(jc_global_shape_controls(spec))
         if stage == "jc_tone_fit":
-            controls = list(jc_tone_fit_controls(spec))
+            controls = list(jc_tone_fit_controls(spec, variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE))
         if stage in JC_PROTOTYPES:
             helpers += header("jc_weights")
             shared = {"lightnessFit", "chromaFit", "peakNits"}

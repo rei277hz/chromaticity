@@ -5,7 +5,8 @@ import unittest
 from tests.support import oracle
 from tests.support.dctl import (
     ALL_STAGES, ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES, LOCALES,
-    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_PROTOTYPES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
     body, controls, entry, filename,
 )
 
@@ -133,6 +134,35 @@ class InterfaceTests(unittest.TestCase):
                 self.assertEqual(records[name]["type"], "DCTLUI_SLIDER_FLOAT")
                 self.assertEqual(tuple(records[name][key] for key in ("default", "min", "max")), limits)
 
+    def test_analytic_variants_have_their_baseline_controls(self):
+        for stage, baseline, directory in (("jc_tone_fit_linear_gain", "jc_tone_fit", oracle.TONE_FIT_LINEAR_GAIN_DIR),
+                                            ("warp_quadratic_scale", "warp", oracle.WARP_QUADRATIC_SCALE_DIR)):
+            self.assertEqual({path.name for path in directory.iterdir()},
+                             {filename(stage, locale) for locale in LOCALES})
+            for locale in LOCALES:
+                with self.subTest(stage=stage, locale=locale):
+                    ui = controls(oracle.source(stage, locale))
+                    self.assertEqual(ui, controls(oracle.source(baseline, locale)))
+                    self.assertLessEqual(sum(item["type"] == "DCTLUI_SLIDER_FLOAT" for item in ui), 64)
+
+    def test_unified_chroma_replaces_both_saturation_adjustments(self):
+        stage = "jc_tone_fit_unified_chroma"
+        self.assertEqual({path.name for path in oracle.TONE_FIT_UNIFIED_CHROMA_DIR.iterdir()},
+                         {filename(stage, locale) for locale in LOCALES})
+        limits = {"cMutedGain": (0., -2., 2.), "cVividGain": (0., -2., 2.),
+                  "cSaturationCrossover": (.5, .05, .95)}
+        for locale in LOCALES:
+            with self.subTest(locale=locale):
+                baseline = controls(oracle.source("jc_tone_fit_linear_gain", locale))
+                shared = [item for item in baseline if item["name"] not in {"cContrast", "cPivot", "cMuted", "cVivid"}]
+                records = controls(oracle.source(stage, locale))
+                self.assertEqual([item for item in records if item["name"] not in limits], shared)
+                adjustment = {item["name"]: item for item in records if item["name"] in limits}
+                self.assertEqual(list(adjustment), list(limits))
+                for name, item in adjustment.items():
+                    self.assertEqual(tuple(item[key] for key in ("type", "default", "min", "max", "step")),
+                                     ("DCTLUI_SLIDER_FLOAT", *limits[name], .01))
+
     def test_locales_match_numerically_and_declare_unique_translated_controls(self):
         for stage in ALL_STAGES:
             english = oracle.source(stage)
@@ -167,7 +197,8 @@ class InterfaceTests(unittest.TestCase):
 
     def test_hk_repair_is_only_bundled_into_xyz_output(self):
         for stage in (*STAGES, *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
-                      *GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES):
+                      *GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+                      *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, *WARP_QUADRATIC_SCALE_PROTOTYPES):
             with self.subTest(stage=stage):
                 self.assertEqual("pg_guard(" in body(oracle.source(stage)), stage == "output")
 

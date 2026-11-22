@@ -8,7 +8,8 @@ from color_tools.perceptual_grade_reference.model import LinearSettings, WHITES,
 from . import cone_color, cone_reference, jc_gain, jc_global_shape, jc_prototype, jc_surface
 from .dctl import (
     ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES,
-    OVERLAP_PROTOTYPES, PROTOTYPES, SURFACE_PROTOTYPES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
 )
 
 WHITE = cone_reference.WHITE
@@ -49,7 +50,7 @@ def overlap_settings(stage, controls):
     return blended
 
 
-def apply_tone_fit(wire, tone, controls):
+def apply_tone_fit(stage, wire, tone, controls):
     compression = float(tone.nits_to_j(controls.get("blackCompression", 0.)))
     tone_active = tone.active or compression != 0.
     invert = controls.get("direction", 0)
@@ -105,6 +106,11 @@ def apply_tone_fit(wire, tone, controls):
         j_gain = np.divide(remap(hs), ja, out=scale * np.full_like(ja, origin_gain), where=ja > 0.)
         return (1. - influence) * j_gain + influence * hk_gain
 
+    def map_chroma(height, chroma):
+        if stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES:
+            return jc_global_shape.unified_chroma_map(height, chroma, controls)
+        return jc_global_shape.chroma_map(height, chroma, controls, linear_gain=stage in TONE_FIT_LINEAR_GAIN_PROTOTYPES)
+
     if invert:
         # Recover Tone scale along the output ray, then invert C at input J.
         output_hk_chroma = 66. * chroma
@@ -125,21 +131,21 @@ def apply_tone_fit(wire, tone, controls):
         chroma = np.hypot(ab[:, 0], ab[:, 1])
         low, high = np.zeros_like(chroma), np.maximum(chroma, 1.)
         for _ in range(64):
-            mapped = jc_global_shape.chroma_map(height, high, controls)
+            mapped = map_chroma(height, high)
             done = mapped >= chroma
             if np.all(done):
                 break
             high = np.where(done, high, high * 2.)
         for _ in range(80):
             middle = (low + high) / 2.
-            below = jc_global_shape.chroma_map(height, middle, controls) < chroma
+            below = map_chroma(height, middle) < chroma
             low, high = np.where(below, middle, low), np.where(below, high, middle)
         source_chroma = (low + high) / 2.
         c_gain = np.divide(source_chroma, chroma, out=np.ones_like(chroma), where=chroma > 0.)
         ab *= c_gain[:, None]
         return cone_reference.pack(ja, ab[:, 0], ab[:, 1])
 
-    adjusted = jc_global_shape.chroma_map(height, chroma, controls)
+    adjusted = map_chroma(height, chroma)
     c_gain = np.divide(adjusted, chroma, out=np.ones_like(chroma), where=chroma > 0.)
     gain = tone_ray(np.ones_like(height), height, 66. * adjusted)
     ab = ab * (c_gain * gain)[:, None]
@@ -161,17 +167,19 @@ def apply(stage, values, controls):
         controls = overlap_settings(stage, controls)
         stage = "jc"
     tone = Tone(tone_settings(controls))
-    if stage == "jc_tone_fit":
-        return apply_tone_fit(values, tone, controls)
+    if stage in (*TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES, *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES):
+        return apply_tone_fit(stage, values, tone, controls)
     if stage in GAIN_PROTOTYPES:
         return jc_gain.apply(stage, values, tone, overlap_settings(stage, controls))
-    if stage in ("jc", "warp") or stage in ANCHOR_CENTER_PROTOTYPES:
+    if stage in ("jc", "warp") or stage in ANCHOR_CENTER_PROTOTYPES or stage in WARP_QUADRATIC_SCALE_PROTOTYPES:
         if controls.get("direction", 0):
             raise ValueError("The independent Stage 3 reference evaluates the forward direction")
         if stage == "jc_anchor_centers":
             controls = overlap_settings("jc_broad_overlap", controls)
             return cone_color.jc(values, tone, controls, anchor_centers=True)
-        return (cone_color.jc if stage == "jc" else cone_color.warp)(values, tone, controls)
+        if stage == "jc":
+            return cone_color.jc(values, tone, controls)
+        return cone_color.warp(values, tone, controls, quadratic_scale=stage in WARP_QUADRATIC_SCALE_PROTOTYPES)
     if stage == "tone":
         if not tone.active:
             return values.copy()

@@ -140,7 +140,7 @@ __DEVICE__ float pg_warp_ray_anchor(float height, float lightness, float chroma)
 }
 
 __DEVICE__ float3 pg_cone_warp_scale(float3 point, PGWarpSettings settings, int peakIndex,
-                                    PGFour anchors, int invert) {
+                                    PGFour anchors, int invert, int quadraticScale) {
     float chroma = pg_hypot(point.y, point.z);
     if (chroma == 0.0f) return point;
     float radius = pg_hypot(point.x, chroma);
@@ -175,13 +175,15 @@ __DEVICE__ float3 pg_cone_warp_scale(float3 point, PGWarpSettings settings, int 
                           pg_warp_ray_anchor(anchors.w, lightnessFraction, chromaFraction),
                           pg_warp_ray_anchor(anchors.h, lightnessFraction, chromaFraction));
     PGFour raySlopes = pg_four(slopes[0], slopes[1], slopes[2], slopes[3]);
-    float result = pg_stretch(radius, knots, raySlopes, raySlopes.s, invert);
+    float result = pg_stretch_with_slope_blend(radius, knots, raySlopes, raySlopes.s, invert, quadraticScale);
     if (result == radius) return point;
     return point * (result / radius);
 }
 
-__DEVICE__ PGValue pg_cone_warp(float3 wire, PGWarpSettings settings, int peakIndex, int invert) {
+__DEVICE__ PGValue pg_cone_warp(float3 wire, PGWarpSettings settings, int peakIndex,
+                                int invert, int quadraticScale) {
     if (!pg_cone_valid(wire) || peakIndex < 0 || peakIndex >= 4 || (invert != 0 && invert != 1) ||
+        (quadraticScale != 0 && quadraticScale != 1) ||
         !(settings.halfSaturation >= 0.05f && settings.halfSaturation <= 1.0f)) {
         return pg_value(color_zero3(), 0);
     }
@@ -217,7 +219,8 @@ __DEVICE__ PGValue pg_cone_warp(float3 wire, PGWarpSettings settings, int peakIn
     float3 input = pg_cone_chart(wire);
     if (!color_finite3(input)) return pg_value(color_zero3(), 0);
     float3 point = input;
-    if (invert && scaleActive) point = pg_cone_warp_scale(point, settings, peakIndex, rayAnchors, invert);
+    if (invert && scaleActive)
+        point = pg_cone_warp_scale(point, settings, peakIndex, rayAnchors, invert, quadraticScale);
 
     float height = _fabs(point.x);
     int row = height >= anchors[2] ? 2 : (height >= anchors[1] ? 1 : 0);
@@ -230,7 +233,8 @@ __DEVICE__ PGValue pg_cone_warp(float3 wire, PGWarpSettings settings, int peakIn
         point = pg_cone_warp_adaptance(point, target, settings.halfSaturation * height, invert);
     }
     if (invert && webActive) point = pg_cone_warp_web(point, settings, peakIndex, row, fraction, invert);
-    if (!invert && scaleActive) point = pg_cone_warp_scale(point, settings, peakIndex, rayAnchors, invert);
+    if (!invert && scaleActive)
+        point = pg_cone_warp_scale(point, settings, peakIndex, rayAnchors, invert, quadraticScale);
 
     if (point.x == input.x && point.y == input.y && point.z == input.z) return pg_value(wire, 1);
     return pg_cone_wire(point);

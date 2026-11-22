@@ -16,27 +16,6 @@ __DEVICE__ float3 pg_jc_gain_lightness(float3 point, PGFour anchors, PGFour amou
     return point * (pg_stretch(height, anchors, slopes, 1.0f, invert) / height);
 }
 
-__DEVICE__ float pg_jc_linear_gain_inverse(float chroma, float knee, float gain) {
-    // Solve gain*x^2 + (knee-chroma)*x - knee*chroma = 0 for x/chroma.
-    // Normalize first, then choose the equivalent root free of cancellation.
-    float scale = _fmaxf(chroma, knee);
-    float y = chroma / scale;
-    float k = knee / scale;
-    float difference = k - y;
-    float root = _sqrtf(difference * difference + 4.0f * gain * k * y);
-    if (difference > 0.0f) return (2.0f * k) / (root + difference);
-    return (root - difference) / (2.0f * gain * y);
-}
-
-__DEVICE__ float pg_jc_linear_gain_multiplier(float chroma, float height, float amount, int invert) {
-    float knee = (35.0f / (75.0f * 9.0f)) * height;
-    float gain = _exp2f(amount);
-    if (knee == 0.0f) return invert ? 1.0f / gain : gain;
-    if (invert) return pg_jc_linear_gain_inverse(chroma, knee, gain);
-    float weight = chroma / (chroma + knee);
-    return 1.0f + (gain - 1.0f) * weight;
-}
-
 __DEVICE__ float3 pg_jc_gain_chroma(float3 point, PGFour anchors, PGFour amounts, int logGain, int invert) {
     float height = _fabs(point.x);
     float amount = pg_jc_surface_anchor(height, anchors, amounts);
@@ -44,8 +23,7 @@ __DEVICE__ float3 pg_jc_gain_chroma(float3 point, PGFour anchors, PGFour amounts
     float chroma = pg_hypot(point.y, point.z);
     if (chroma == 0.0f) return point;
 
-    float multiplier = logGain ? pg_jc_log_gain_multiplier(chroma, height, amount, invert)
-                               : pg_jc_linear_gain_multiplier(chroma, height, amount, invert);
+    float multiplier = pg_jc_gain_multiplier(chroma, height, amount, invert, logGain);
     return make_float3(point.x, point.y * multiplier, point.z * multiplier);
 }
 

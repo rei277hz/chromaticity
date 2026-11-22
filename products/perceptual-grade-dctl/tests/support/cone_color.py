@@ -7,15 +7,18 @@ from color_tools.perceptual_grade_reference.grading import Color, ColorSettings
 from . import cone_reference as cone, jc_surface
 
 
-def integrate_stretch(value, knots, slopes):
-    """Two-point Gauss quadrature integrates the cubic slope exactly on each span."""
+def integrate_stretch(value, knots, slopes, *, quadratic_scale=False):
     result = np.zeros_like(value)
     for i in range(4):
         width = knots[..., i + 1] - knots[..., i]
         length = np.clip(value - knots[..., i], 0., width)
         middle = length / (2. * width)
-        offset = middle / np.sqrt(3.)
-        blend = (jc_surface.smoothstep(middle - offset) + jc_surface.smoothstep(middle + offset)) / 2.
+        if quadratic_scale:
+            blend = middle
+        else:
+            # Two-point Gauss quadrature integrates the cubic slope exactly.
+            offset = middle / np.sqrt(3.)
+            blend = (jc_surface.smoothstep(middle - offset) + jc_surface.smoothstep(middle + offset)) / 2.
         result += length * ((1. - blend) * slopes[..., i] + blend * slopes[..., i + 1])
     return result + np.maximum(value - knots[..., -1], 0.) * slopes[..., -1]
 
@@ -76,7 +79,7 @@ def hue_field(angle, knots, values):
     return (1. - u) * values[i] + u * values[(i + 1) % 6]
 
 
-def warp(wire, tone, settings):
+def warp(wire, tone, settings, *, quadratic_scale=False):
     point = cone.enter(wire)
     ja, ab = point.ja, point.q[:, 1:]
     controls = {family: np.array([[settings.get(f"web{family}{i}{j}", 0.) for j in range(6)]
@@ -103,6 +106,6 @@ def warp(wire, tone, settings):
         stops = hue_field(hue, angles, controls["scale"][i])
         slopes.append(np.exp2(stops * jc_surface.smoothstep(10. * c_fraction)))
     stretch = integrate_stretch(radius, np.stack([np.zeros_like(radius), *knots], axis=-1),
-                               np.stack([slopes[0], *slopes], axis=-1))
+                               np.stack([slopes[0], *slopes], axis=-1), quadratic_scale=quadratic_scale)
     gain = np.divide(stretch, radius, out=np.ones_like(radius), where=radius > 0.)
     return cone.pack(ja * gain, ab[:, 0] * gain, ab[:, 1] * gain)

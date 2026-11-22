@@ -7,7 +7,8 @@ import numpy as np
 
 from .dctl import (
     ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES,
-    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_PROTOTYPES, controls, filename,
+    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES, controls, filename,
 )
 
 RESOURCES = files("tests.support")
@@ -19,6 +20,9 @@ ANCHOR_CENTER_DIR = RESOURCES / "anchor_centers"
 GAIN_DIR = RESOURCES / "gains"
 GLOBAL_SHAPE_DIR = RESOURCES / "global_shape"
 TONE_FIT_DIR = RESOURCES / "tone_fit"
+TONE_FIT_LINEAR_GAIN_DIR = RESOURCES / "tone_fit_linear_gain"
+TONE_FIT_UNIFIED_CHROMA_DIR = RESOURCES / "tone_fit_unified_chroma"
+WARP_QUADRATIC_SCALE_DIR = RESOURCES / "warp_quadratic_scale"
 SOURCE_DIRS = ({stage: STAGE_DIR for stage in STAGES}
                | {stage: PROTOTYPE_DIR for stage in PROTOTYPES}
                | {stage: SURFACE_DIR for stage in SURFACE_PROTOTYPES}
@@ -26,7 +30,10 @@ SOURCE_DIRS = ({stage: STAGE_DIR for stage in STAGES}
                | {stage: ANCHOR_CENTER_DIR for stage in ANCHOR_CENTER_PROTOTYPES}
                | {stage: GAIN_DIR for stage in GAIN_PROTOTYPES}
                | {stage: GLOBAL_SHAPE_DIR for stage in GLOBAL_SHAPE_PROTOTYPES}
-               | {stage: TONE_FIT_DIR for stage in TONE_FIT_PROTOTYPES})
+               | {stage: TONE_FIT_DIR for stage in TONE_FIT_PROTOTYPES}
+               | {stage: TONE_FIT_LINEAR_GAIN_DIR for stage in TONE_FIT_LINEAR_GAIN_PROTOTYPES}
+               | {stage: TONE_FIT_UNIFIED_CHROMA_DIR for stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES}
+               | {stage: WARP_QUADRATIC_SCALE_DIR for stage in WARP_QUADRATIC_SCALE_PROTOTYPES})
 
 
 @cache

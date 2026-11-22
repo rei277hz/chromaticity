@@ -140,6 +140,39 @@ generate(
     visibility = ["PUBLIC"],
 )
 
+generate(
+    name = "jc_tone_fit_linear_gain_prototype",
+    args = GENERATOR_ARGS + ["--jc-tone-fit-linear-gain"],
+    outputs = {
+        locale: "Perceptual-Grade-2-3A-Cone-Tone-JC-Linear-Gain-Prototype" + suffix + ".dctl"
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "jc_tone_fit_unified_chroma_prototype",
+    args = GENERATOR_ARGS + ["--jc-tone-fit-unified-chroma"],
+    outputs = {
+        locale: "Perceptual-Grade-2-3A-Cone-Tone-JC-Unified-Chroma-Prototype" + suffix + ".dctl"
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "warp_quadratic_scale_prototype",
+    args = GENERATOR_ARGS + ["--warp-quadratic-scale"],
+    outputs = {
+        locale: "Perceptual-Grade-3B-Cone-Warp-Quadratic-Scale-Prototype" + suffix + ".dctl"
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
 python_tool(
     name = "quality",
     srcs = {"pg_dctl_tools/dctl_quality.py": "tools/dctl_quality.py"},

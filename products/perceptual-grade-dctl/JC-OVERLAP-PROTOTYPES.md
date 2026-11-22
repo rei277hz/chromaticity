@@ -8,7 +8,8 @@ Linear Gain and Log Gain use the same Broad Overlap weights with two controls
 per anchor, a saturation-preserving J Contrast and a C Gain that fades near gray.
 Global Shape uses continuous lightness and saturation curves with movable pivots.
 Integrated Tone and J/C combines the Tone curve with Global Shape's C controls
-so Tone can be auditioned as the source of lightness contrast.
+so Tone can be auditioned as the source of lightness contrast. Its Unified
+Chroma variant combines muted and vivid gains in one saturation curve.
 
 ## Build and install
 
@@ -18,6 +19,8 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_anchor_centers_pro
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_gain_prototypes --show-output
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_global_shape_prototype --show-output
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_prototype --show-output
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_linear_gain_prototype --show-output
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_chroma_prototype --show-output
 ```
 
 | Prototype | English filename |
@@ -29,6 +32,8 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_prototype
 | Log Gain | `Perceptual-Grade-3A-Cone-Color-JC-Log-Gain-Prototype.dctl` |
 | Global Shape | `Perceptual-Grade-3A-Cone-Color-JC-Global-Shape-Prototype.dctl` |
 | Integrated Tone and J/C | `Perceptual-Grade-2-3A-Cone-Tone-JC-Prototype.dctl` |
+| Integrated Tone and J/C Linear Gain | `Perceptual-Grade-2-3A-Cone-Tone-JC-Linear-Gain-Prototype.dctl` |
+| Integrated Tone and J/C Unified Chroma | `Perceptual-Grade-2-3A-Cone-Tone-JC-Unified-Chroma-Prototype.dctl` |
 
 The Simplified Chinese filenames end in `-zh-HANS.dctl`. Use the overlap
 and Global Shape prototypes in the Color J/C position. Integrated Tone and J/C
@@ -144,34 +149,61 @@ for it between the output radius and the output radius divided by `2^A`.
 With only J Contrast active, a positive adjustment lowers lightness below
 J Pivot, holds the pivot, and raises lightness above it through the contrast
 range. The same move applies to grays and colors at the default J Saturation
-Bias. C Contrast separates muted and vivid colors around the C Pivot.
+Bias. C Pivot selects the crossover for C Contrast. C Muted and C Vivid shape
+the lower and upper saturation ranges around a fixed midpoint, independent of
+C Pivot.
 
 | Control | Default and range | Behavior |
 | --- | --- | --- |
 | J Contrast and J Pivot | `0` stops from `-2` to `+2`, pivot `45` from `10` to `160` | Set the lightness slope at the pivot and position the crossover along the magnitude of signed lightness. |
 | J Toe and J Shoulder | `0` from `-1` to `+1` | Lift or lower the dark and bright ends independently while holding J Pivot. |
 | J Saturation Bias | `0` from `-1` to `+1` | Positive values give vivid colors more of the J edit. Negative values favor muted colors and gray. |
-| C Contrast and C Pivot | `0` stops from `-2` to `+2`, pivot `0.50` from `0.05` to `0.95` | Set the saturation slope at the pivot and position the crossover along normalized saturation. |
-| C Muted and C Vivid | `0` from `-1` to `+1` | Enrich or subdue the muted and vivid ends independently while holding C Pivot. |
+| C Contrast and C Pivot | `0` stops from `-2` to `+2`, pivot `0.50` from `0.05` to `0.95` | Set the slope and crossover of the monotonic contrast component. Raising C Pivot raises saturation with negative contrast and lowers it with positive contrast. |
+| C Muted and C Vivid | `0` from `-1` to `+1` | Enrich or subdue the lower and upper ends around fixed normalized saturation `0.50`, regardless of C Pivot. |
 | Shadow Chroma and Highlight Chroma | `0` stops from `-2` to `+2` | Add or remove chroma as a function of lightness. Chroma gain fades near gray. |
 | C Tone Crossover | `45` from `10` to `160` | Position the lightness where both tonal chroma gains reach zero. The gains reach full strength at zero lightness and twice the crossover, respectively. |
 | Direction | Forward | Apply or undo the same grade in the cone chain. |
 
-Each axis uses two monotone rational-quadratic splines, with lightness in
-`log2(1 + |J_A|/16)` and saturation in `-log2(1 - s)`. Contrast fixes zero,
-the pivot `p`, and `p + 2` in curve coordinates. Its slope at the pivot is
-`2^Contrast` and its continuation above `p + 2` is the identity. The shape
-spline moves the output at `p/2` and `p + 2`, holds the pivot, and keeps a
-unit slope in the upper tail. Toe, Shoulder, Muted, and Vivid can act with
-Contrast at zero.
+J uses monotone rational-quadratic splines in `log2(1 + |J_A|/16)`. Its
+contrast and end shaping each preserve the selected J Pivot. C Contrast uses
+an analytic two-branch chroma curve with pivot `p` in normalized saturation
+`s = C/(C + B)`, where `B = (35/75)|J_A|`. Let `K = B*p/(1-p)` and
+`g = 2^CContrast`. The forward contrast mapping is
+`C/(g + (1-g)*C/K)` for `C < K`, and `g*C + (1-g)*K` for `C >= K`. Both
+branches meet at `K` with slope `g` for `K > 0`. Near gray the contrast gain
+approaches `1/g` at nonzero lightness. The inverse uses the same branches
+with `1/g` and the same `K`.
+
+For contrast-adjusted chroma `C1`, C Muted and C Vivid shape
+`x = log2(1 + C1/B)` at nonzero lightness. With slider values `M` and `V`,
+input knots `(0, 0.5, 1, 3)` map to `(0, 0.5 + 0.25*M, 1, 3 + V)`.
+Each rational-quadratic segment has unit slopes at both ends. For start
+`(x0, y0)`, width `w` and rise `h`, set `t = (x - x0)/w` and `d = w/h`.
+
+```text
+y = y0 + h * (t^2 + d*t*(1-t)) / (t^2 + 2*d*t*(1-t) + (1-t)^2)
+```
+
+Above `x = 3`, `y = x + V`. The output chroma is `B*(2^y - 1)`. The fixed
+knot `x = 1` corresponds to saturation `0.50` after contrast. At `B = 35`
+and input `C = 70`, C Pivot `0.50` and C Contrast `-2` take chroma to
+`43.75`. C Vivid `+1` then takes it to `44.68`.
+
+The end shape is strictly increasing and independent of C Pivot, so it
+preserves the pivot sweep direction. With negative C Contrast, increasing
+the pivot raises cone-chart saturation for chromatic samples at nonzero
+lightness. Positive contrast reverses that direction. Muted/Vivid may move
+the final output at the contrast pivot.
 
 The C step applies the saturation curve, then the lightness-dependent chroma
 gains, at fixed hue and signed lightness. The J step uses the resulting
 saturation, remaps `|J_A|`, and scales both opponent coordinates by the
 same lightness factor. That preserves hue and normalized saturation while
 letting gray move along the neutral axis. Exact black stays fixed. Chromatic
-samples at `J_A = 0` use the finite C tail gain and pass through the J step.
-The inverse undoes J first, then the tonal chroma gain and global C curve.
+samples at `J_A = 0` use the finite C tail gain `2^(C Contrast + C Vivid)`
+before tonal chroma gain and pass through the J step. The C controls leave
+exact gray fixed. The inverse undoes J first, then the tonal chroma gain,
+C Muted/Vivid shaping, and C Contrast.
 
 | Design decision | What to judge in Resolve | Flexibility before promotion |
 | --- | --- | --- |
@@ -187,8 +219,12 @@ The inverse undoes J first, then the tonal chroma gain and global C curve.
    `-0.5`. Compare the effect on gray and a vividly colored ramp at both
    ends of J Saturation Bias.
 3. On a muted-to-vivid ramp and bright colored objects, test C Contrast
-   around `0.50`, use C Muted and C Vivid separately, then try negative
-   Highlight Chroma. Use the crossover to control where it begins.
+   at `-2` with C Muted at `-1` and C Vivid at `+1`. Sweep C Pivot from
+   `0.05` to `0.95` and verify each fixed sample moves monotonically toward
+   higher saturation. Repeat with C Contrast at `+2` and verify the direction
+   reverses, then set contrast to zero and verify the pivot has no effect.
+   Change C Muted and C Vivid while holding the pivot fixed to audition their
+   fixed-midpoint end shaping. Then try negative Highlight Chroma.
 4. Compare Global Shape with Cone Tone active and bypassed on the same
    neutral and HDR material. Test a matching Forward and Inverse pair
    between the cone nodes. Record the accepted curve behavior and whether
@@ -224,10 +260,105 @@ moving a Tone landmark leaves C Tone Crossover in the same input region.
 Inverse recovers the input tone along the preserved saturation and hue ray
 before undoing C.
 
+### Linear Gain audition
+
+The integrated Linear Gain variant keeps the C Contrast, C Pivot, C Muted and
+C Vivid curve and gives Shadow Chroma and Highlight Chroma a different fade.
+For effective tonal amount `A`, chroma `C` after the C curve, and knee
+`k = (35/(75*9)) * |J_A|`, its gain is `1 + (2^A - 1) * C/(C+k)`.
+For nonzero `|J_A|`, gain approaches one near gray and `2^A` at high
+saturation. At `J_A = 0`, chromatic samples receive the full tonal gain, and
+exact gray stays gray.
+
+The tonal gain uses input `|J_A|` to choose `A` and `k`. Inverse first
+recovers that lightness with the existing Tone solve, then uses a quadratic
+root to undo the tonal gain before undoing the C curve. For output chroma
+`Y > 0` and `k > 0`, the equation `2^A * C^2 + (k - Y)*C - k*Y = 0`
+has exactly one positive root because the product of its roots is negative.
+At `k = 0`, the inverse is `C = Y / 2^A`. The C operation is closed form
+in this variant. The baseline interpolates the gain in stops,
+which changes the response between gray and high saturation.
+
+Build the variant with
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_linear_gain_prototype --show-output
+```
+
+On matched skin, muted-to-vivid, and signed HDR ramps, compare the baseline
+and Linear Gain variant with Shadow Chroma and Highlight Chroma first at reset,
+then at positive and negative stops. Check near-gray fading, the lightness
+crossover, and paired forward/inverse round trips.
+
+### Unified Chroma audition
+
+Unified Chroma replaces the serial contrast and end-shaping adjustments with
+one curve based on incoming chroma. It uses the integrated Linear Gain
+prototype's Tone, H-K Influence, and lightness-dependent chroma controls.
+
+| Control | Default and range | Behavior |
+| --- | --- | --- |
+| C Muted Gain | `0` stops, `-2` to `+2` | Set the gain limit for nearly gray colors at nonzero lightness. |
+| C Vivid Gain | `0` stops, `-2` to `+2` | Set the gain limit for highly saturated colors. Its effect builds smoothly with input saturation. |
+| C Saturation Crossover | `0.50`, `0.05` to `0.95` | Set the input saturation where the gain in stops is halfway between Muted and Vivid. |
+
+All three sliders use steps of `0.01`. Let `B = (35/75)|J_A|` and
+`s = C/(C+B)`. At the default crossover `s = 0.50`, input chroma equals
+`B`. The reference model uses that same ratio for equal low and high driver
+weights after Tone. Unified Chroma measures it before Tone. C Tone Crossover
+selects lightness for the separate Shadow and Highlight Chroma adjustments.
+[Reference chroma drivers](../../libraries/perceptual-grade-reference/src/grading.py)
+
+For Muted and Vivid stops `M` and `V`, set `L = 2^M` and `H = 2^V`.
+For a crossover setting `p`, chroma `K` is where input saturation equals
+`p`. The forward curve blends the two gains once.
+
+```text
+K = B*p/(1-p)
+k = K*sqrt(H/L)
+C_out = C*(L*k + H*C)/(k + C)
+```
+
+At `C = K`, the gain is `sqrt(L*H)`. Equal gains scale chroma uniformly. Equal and
+opposite stops hold the crossover fixed. Raising the crossover increases
+saturation when `M > V` and decreases it when `V > M`, for chromatic
+samples at nonzero lightness. With `B = 35`, `C = 70` and crossover `0.50`,
+Muted Gain `-1` gives `C_out` of `55.50` at Vivid Gain `0` and `87.50` at
+Vivid Gain `+1`, before tonal chroma and Tone.
+
+Exact gray stays gray. At nonzero lightness, the near-gray gain approaches
+`L`, so Muted Gain also affects faintly colored pixels. At zero lightness, a
+chromatic sample receives `H*C`. For `k > 0`, the slope of the curve is
+`(L*k^2 + 2*H*k*C + H*C^2)/(k+C)^2 > 0` throughout the chroma range.
+Given output chroma `Y > 0`, the quadratic
+`H*C^2 + (L*k - Y)*C - k*Y = 0` has one positive root. The DCTL evaluates
+it with the stable Linear Gain inverse using output `Y/L`, knee `k`, and
+relative gain `H/L`. Inverse recovers input lightness with the Tone solve
+and undoes tonal chroma gain before undoing the unified curve.
+
+Build the English and Simplified Chinese DCTLs with
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_chroma_prototype --show-output
+```
+
+Compare Unified Chroma and integrated Linear Gain on the same muted-to-vivid
+ramp and skin shot, with matching Tone settings and tonal chroma at reset.
+Set Muted Gain to `-1` and sweep Vivid Gain from `0` to `+1`. At `+1`, sweep
+C Saturation Crossover from `0.05` to `0.95`, then swap the endpoint gains
+and confirm that the sweep reverses. Check matching Forward and Inverse nodes
+with Tone and both tonal chroma gains active on signed HDR material before
+export. Record the accepted controls and curve in Resolve before implementing
+them in `libraries/perceptual-grade-reference` and then propagating them to
+`products/perceptual-grade-next-blender`.
+
 | Design choice | What to compare in Resolve | Flexibility before promotion |
 | --- | --- | --- |
 | H-K Influence | Compare gray and saturated ramps at both endpoints and halfway between them | High. The gain blend can be tuned while keeping the Tone ray fixed. |
 | Black Compression | Compare separation near black and the placement of source-nit landmarks | Medium. The compression law can change if it stays invertible and applies to samples and landmarks together. |
+| Tonal chroma gain | Compare log-gain and Linear Gain between gray and their full-stop endpoints | Medium. Endpoint fades stay fixed while the midrange response changes. |
+| Unified saturation gains | Compare Vivid's reach on moderate colors and Muted's effect near gray | High. Slider limits and default crossover can be tuned. |
+| Unified saturation blend | Check the ordered crossover sweep and whether opposite stops hold the intended input saturation | Medium. A different blend needs to preserve positive slopes, the crossover behavior, and the closed-form inverse. |
 | C selector at input tone | Move the Tone landmarks while keeping C Tone Crossover fixed | Low. Changing the selector would change which input colors receive each gain and how the inverse recovers it. |
 | H-K and C interaction | Compare bright color separation at full H-K Influence with the C controls at reset and then active | High. Influence and the C curve provide independent controls for the overlap. |
 

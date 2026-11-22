@@ -20,30 +20,57 @@ def spline(value, knots, outputs, slopes):
     return result
 
 
-def shape(value, pivot, contrast, lower, upper):
-    knots = (0., pivot, pivot + 2.)
-    value = spline(value, knots, knots, (1., np.exp2(contrast), 1.))
+def end_shape(value, pivot, lower, upper):
     knots = (0., pivot / 2., pivot, pivot + 2.)
     outputs = (0., pivot / 2. * (1. + lower / 2.), pivot, pivot + 2. + upper)
     return spline(value, knots, outputs, (1., 1., 1., 1.))
 
 
-def chroma_map(height, chroma, settings):
-    c_base = (35. / 75.) * height
-    c_pivot = -np.log2(1. - settings.get("cPivot", .5))
-    c_upper = settings.get("cVivid", 0.)
-    c_ratio = np.divide(chroma, c_base, out=np.zeros_like(chroma), where=c_base > 0.)
-    c_position = np.log1p(c_ratio) / np.log(2.)
-    c_result = shape(c_position, c_pivot, settings.get("cContrast", 0.),
-                     settings.get("cMuted", 0.), c_upper)
-    c_mapped = np.where(height == 0., chroma * np.exp2(c_upper),
-                        c_base * np.expm1(c_result * np.log(2.)))
+def shape(value, pivot, contrast, lower, upper):
+    knots = (0., pivot, pivot + 2.)
+    value = spline(value, knots, knots, (1., np.exp2(contrast), 1.))
+    return end_shape(value, pivot, lower, upper)
 
+
+def chroma_map(height, chroma, settings, *, linear_gain=False):
+    c_base = (35. / 75.) * height
+    pivot = settings.get("cPivot", .5)
+    knee = c_base * pivot / (1. - pivot)
+    contrast_gain = np.exp2(settings.get("cContrast", 0.))
+    below = chroma < knee
+    fraction = np.divide(chroma, knee, out=np.zeros_like(chroma), where=below)
+    contrasted = np.where(below, chroma / (contrast_gain * (1. - fraction) + fraction),
+                          knee + contrast_gain * (chroma - knee))
+
+    c_upper = settings.get("cVivid", 0.)
+    c_ratio = np.divide(contrasted, c_base, out=np.zeros_like(chroma), where=c_base > 0.)
+    c_position = np.log1p(c_ratio) / np.log(2.)
+    c_result = end_shape(c_position, 1., settings.get("cMuted", 0.), c_upper)
+    c_mapped = np.where(height == 0., contrasted * np.exp2(c_upper),
+                        c_base * np.expm1(c_result * np.log(2.)))
+    return tonal_chroma_gain(height, c_base, c_mapped, settings, linear_gain)
+
+
+def unified_chroma_map(height, chroma, settings):
+    c_base = (35. / 75.) * height
+    pivot = settings.get("cSaturationCrossover", .5)
+    knee = c_base * pivot / (1. - pivot)
+    muted = np.exp2(settings.get("cMutedGain", 0.))
+    vivid = np.exp2(settings.get("cVividGain", 0.))
+    ratio = np.sqrt(vivid / muted)
+    gain = np.divide(np.sqrt(muted * vivid) * (ratio * chroma + knee), chroma + ratio * knee,
+                     out=np.full_like(chroma, vivid), where=(chroma + ratio * knee) > 0.)
+    return tonal_chroma_gain(height, c_base, chroma * gain, settings, linear_gain=True)
+
+
+def tonal_chroma_gain(height, c_base, c_mapped, settings, linear_gain):
     tone = height / settings.get("cToneCrossover", 45.)
     gain_stops = (settings.get("shadowChroma", 0.) * jc_surface.smoothstep(1. - tone)
                   + settings.get("highlightChroma", 0.) * jc_surface.smoothstep(tone - 1.))
     fade = np.divide(c_mapped, c_mapped + c_base / 9., out=np.zeros_like(c_mapped),
                      where=c_mapped + c_base / 9. > 0.)
+    if linear_gain:
+        return c_mapped * ((1. - fade) + fade * np.exp2(gain_stops))
     return c_mapped * np.exp2(gain_stops * fade)
 
 
