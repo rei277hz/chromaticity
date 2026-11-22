@@ -2,12 +2,12 @@
   "schema": 1,
   "metadata": {
     "repository": "rei277hz/chromaticity",
-    "commit": "1f0b3cef85323b8e04c09cab4d8ddc2f1f266b77",
-    "run_id": "44887737464",
-    "run_number": 59,
+    "commit": "ead1961eae44275e2ece17ab3d328cadea82112c",
+    "run_id": "45025394642",
+    "run_number": 61,
     "run_attempt": 1,
-    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/44887737464",
-    "timestamp": "2026-11-21T09:34:43+00:00"
+    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/45025394642",
+    "timestamp": "2026-11-22T13:35:14+00:00"
   },
   "builds": {
     "passed": 2,
@@ -30,13 +30,13 @@
     ]
   },
   "tests": {
-    "passed": 62,
+    "passed": 63,
     "total": 65,
     "outcome": "failed",
     "exit_code": 32,
     "counts": {
-      "failed": 3,
-      "passed": 62
+      "failed": 2,
+      "passed": 63
     },
     "issues": [],
     "targets": [
@@ -226,7 +226,7 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:grade_render_preflight",
-        "status": "passed"
+        "status": "failed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gate_policy",
@@ -262,7 +262,7 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:installed",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:installed_animation",
@@ -282,7 +282,7 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:compositor_carriers",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gesture_undo_gui",
