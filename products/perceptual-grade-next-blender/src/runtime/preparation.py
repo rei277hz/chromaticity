@@ -91,6 +91,14 @@ class _Record:
     changed: asyncio.Event
 
 
+class PreparationCoordinatorError(RuntimeError):
+    """The coordinator can no longer accept or publish preparation work."""
+
+    def __init__(self, cause):
+        super().__init__(f"Preparation coordinator failed ({type(cause).__name__}): {cause}")
+        self.__cause__ = cause
+
+
 class PreparationRuntime:
     """Own scheduler state on an asyncio loop; workers receive opaque payloads.
 
@@ -123,6 +131,7 @@ class PreparationRuntime:
         self._prepared = {}
         self._tasks = set()
         self._failure = None
+        self._failure_acknowledged = False
         self._shutdown_task = None
         self._ready = threading.Event()
         self._thread = threading.Thread(
@@ -151,8 +160,7 @@ class PreparationRuntime:
         try:
             asyncio.run(self._serve())
         except BaseException as error:
-            with self._lock:
-                self._failure = error
+            self._fail(error)
         finally:
             with self._lock:
                 self.closed = True
@@ -166,7 +174,7 @@ class PreparationRuntime:
 
     def _raise_failure(self):
         if self._failure is not None:
-            raise RuntimeError("Preparation coordinator failed") from self._failure
+            raise PreparationCoordinatorError(self._failure)
 
     def _observe(self, event, **fields):
         observer = self.on_event
@@ -217,11 +225,28 @@ class PreparationRuntime:
             self._lanes[name] = _Lane(None, bool(progressive), owner)
 
     @property
+    def failure(self) -> Optional[BaseException]:
+        with self._lock:
+            return self._failure
+
+    @property
+    def pending_failure(self) -> Optional[BaseException]:
+        with self._lock:
+            return None if self._failure_acknowledged else self._failure
+
+    def acknowledge_failure(self):
+        """Finish host delivery after an admitted fail-closed update."""
+        with self._lock:
+            if self._failure is not None:
+                self._failure_acknowledged = True
+
+    @property
     def pending(self):
         with self._lock:
-            pending = bool(self._pending or self._publications or self._failure)
-        with self._host_lock:
-            return pending or bool(self._host_queue or self._host_active)
+            pending = (bool(self._pending or self._publications)
+                       if self._failure is None else not self._failure_acknowledged)
+            with self._host_lock:
+                return pending or bool(self._host_queue or self._host_active)
 
     def request(self, source, signature, payload, *, lane=None,
                 progressive=None, playback_session: Optional[int] = None):
@@ -288,7 +313,7 @@ class PreparationRuntime:
             subscription.dirty = True
             self._pending.discard(subscription)
             self._discard_unwanted_host_work_locked()
-            if not self.closed:
+            if not self.closed and self._failure is None:
                 self._schedule_locked(subscription)
 
     def _has_host_demand_locked(self, signature):
@@ -323,6 +348,8 @@ class PreparationRuntime:
         try:
             with self._lock:
                 source.wake_pending = False
+                if self._failure is not None:
+                    return
                 self._sync_locked(source)
                 self._prune_locked()
         except Exception as error:
@@ -433,7 +460,7 @@ class PreparationRuntime:
 
     async def _publish_preview(self, snapshot, prepared):
         with self._lock:
-            if self.closed:
+            if self.closed or self._failure is not None:
                 return
             for source in tuple(self._sources.values()):
                 if source.dirty:
@@ -467,7 +494,8 @@ class PreparationRuntime:
                 prepared = await lane.prepare(snapshot.payload)
             result = _WorkResult(job_key, prepared, None, snapshot.playback_session)
             with self._lock:
-                self._prepared[job_key] = prepared
+                if self._failure is None:
+                    self._prepared[job_key] = prepared
             if self.on_event is not None:
                 self._observe(
                     "preparation_execute_finish", signature=snapshot.signature,
@@ -499,6 +527,7 @@ class PreparationRuntime:
             if snapshot.progressive else None,
         )
         with self._lock:
+            self._raise_failure()
             if self.closed:
                 raise RuntimeError("Preparation runtime is closed")
             if not self._has_host_demand_locked(snapshot.request_signature):
@@ -511,33 +540,30 @@ class PreparationRuntime:
         """Advance one authorized host-lane step; callers must be on main thread."""
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("Host preparation must be pumped on the main thread")
-        with self._host_lock:
-            if self._host_active is None and self._host_queue:
-                self._host_active = self._host_queue.popleft()
-            work = self._host_active
+        with self._lock:
+            failure = self._failure
+            with self._host_lock:
+                if self._host_active is None and failure is None and self._host_queue:
+                    self._host_active = self._host_queue.popleft()
+                work = self._host_active
         if work is None:
             return False
 
         lane = self._lanes[work.lane]
         try:
-            if work.preview_emitted:
+            if failure is not None and work.job is None:
+                raise PreparationCoordinatorError(failure)
+            if failure is not None or work.preview_emitted:
                 with self._lock:
-                    still_demanded = self._has_host_demand_locked(
+                    still_demanded = failure is None and self._has_host_demand_locked(
                         work.snapshot.request_signature
                     )
                 if not still_demanded:
                     cancel = getattr(work.job, "cancel", None)
                     if callable(cancel):
                         cancel()
-                    else:
-                        self._retire_host_job(work)
-                        self._finish_host_work(
-                            work,
-                            error=RuntimeError(
-                                "Host preparation superseded after its preview"
-                            ),
-                        )
-                        return True
+                    elif failure is None:
+                        raise RuntimeError("Host preparation superseded after its preview")
             if work.job is None:
                 work.job = lane.host_owner.create_job(
                     work.snapshot.payload,
@@ -550,7 +576,8 @@ class PreparationRuntime:
             if quality == "preview":
                 if not work.snapshot.progressive:
                     raise RuntimeError("A final-only host job emitted a preview")
-                work.on_preview(prepared)
+                if self.failure is None:
+                    work.on_preview(prepared)
                 work.preview_emitted = True
                 return True
             if quality != "full":
@@ -593,11 +620,17 @@ class PreparationRuntime:
             else:
                 work.future.set_result(prepared)
 
-        self.loop.call_soon_threadsafe(finish)
+        try:
+            self.loop.call_soon_threadsafe(finish)
+        except RuntimeError:
+            if not self.loop.is_closed():
+                raise
 
     async def _prepare(self, source, record, snapshot):
         job_key = (snapshot.lane, snapshot.signature, snapshot.progressive)
         with self._lock:
+            if self._failure is not None:
+                return
             prepared = self._prepared.get(job_key)
             has_prepared = job_key in self._prepared
             job = self._jobs.get(job_key)
@@ -617,6 +650,8 @@ class PreparationRuntime:
             outcome = await asyncio.shield(job)
 
         with self._lock:
+            if self._failure is not None:
+                return
             if self._records.get(source) is not record:
                 if self.on_event is not None:
                     self._observe(
@@ -665,10 +700,21 @@ class PreparationRuntime:
 
     def _fail(self, error):
         with self._lock:
-            if self._failure is None:
-                self._failure = error
-            for record in self._records.values():
-                record.changed.set()
+            if self._failure is not None:
+                return
+            self._failure = error
+            self._pending.clear()
+            self._publications.clear()
+            self._prepared.clear()
+            with self._host_lock:
+                queued = tuple(self._host_queue)
+                self._host_queue.clear()
+            loop = getattr(self, "loop", None)
+            if loop is not None and loop.is_running():
+                for work in queued:
+                    self._finish_host_work(work, error=PreparationCoordinatorError(error))
+                for record in self._records.values():
+                    record.changed.set()
 
     def _prune_locked(self):
         wanted = set(self._jobs)
@@ -791,7 +837,8 @@ class PreparationRuntime:
             for source in sources:
                 source.latest = None
                 source.dirty = True
-                self._sync_locked(source)
+                if self._failure is None:
+                    self._sync_locked(source)
         with self._host_lock:
             queued = tuple(self._host_queue)
             self._host_queue.clear()

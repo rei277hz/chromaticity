@@ -133,3 +133,25 @@ The installed receipt difference was traced to native Blender flushing a float32
 - [x] Check `sl status`; only intended Next/book/CI sources and the two root tracking documents are pending, with no build outputs/tool state or `rei-rgb.blend` fixture.
 
 `rei-rgb.blend` is absent, including ignored files; it is not a regression fixture.
+
+## Current implementation: runtime hardening
+
+- [x] Extract Bake state and orchestration into `runtime/bake_controller.py`, retain thin `nodes.py` UI, timer, handler, and public API delegates, and update the Technical Report source inventory.
+- [x] Fix Bake deletion retirement, deferred graph reconciliation, and canonical effective-input fingerprints with explicit receipt fingerprint versioning.
+- [x] Extract load/undo/redo phase sequencing into `runtime/lifecycle.py` and guarantee invalidation fences despite individual gesture cleanup failures.
+- [x] Preserve preparation coordinator root failures, deliver fail-closed output once admission is available, and prevent acknowledged terminal failures from keeping the timer active.
+- [x] Replace singleton `JobGroup` wrappers with direct `JobHandle` use while preserving preview suppression, cancellation, and physical retirement polling.
+- [x] Assign and enforce persistent UUID identity for locally owned Grade nodes, regenerating it on copies without legacy kernel migration.
+- [x] Reuse template manifest validation for full Grade graph checks, verify packed Grade boundary and Stack LUT pixel digests, and keep full checks off interactive hot paths.
+- [x] Filter Grade resource adoption before expensive graph checks, remove dead methods, and skip full image retirement sweeps when bank-only publication displaced no kernels.
+- [x] Add focused runtime and installed regressions for all changed contracts, including save/load and undo cases.
+- [x] Run affected Next Blender runtime, installed Blender, packaging, policy, and documentation audit targets through Buck2 with `--remote-only`.
+- [x] Keep root tracking status current and verify DCTL changes remain untouched.
+
+Remote build `1068f756-a591-4a9e-9762-2f715d4363b5` passed preparation, Bake manager/routes/freshness, native node templates, architecture, and packaging. The Technical Report audit identified a missing Bake source marker in `nodes.py`. The marker has been restored and the audit will be rerun.
+
+Remote build `ddd509f2-5f4b-43f4-9381-c30f2152e55b` passed the Technical Report audit, the Blender 5.3 working-space Bake, and Stack helper and gesture reload on Blender 5.3 and 5.2.4 LTS. The installed Grade and Bake fixtures needed corrections to node initialization and a controller reference.
+
+Remote build `cee0343d-66e2-461d-a16e-c8c0430f12bd` passed the corrected full installed Grade suites on Blender 5.3 and 5.2.4 LTS, and both dedicated Bake suites on Blender 5.3.
+
+Final remote build `96f1f60f-0e36-4407-b5d8-cfa49620dc3c` passed 14 runtime, native, policy, packaging, and Technical Report targets. Packaging included the shipped policy proof dependencies. The Buck2 runs used zero local commands.

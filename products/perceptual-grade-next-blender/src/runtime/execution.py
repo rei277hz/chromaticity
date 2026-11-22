@@ -103,7 +103,7 @@ class JobHandle:
 
     @property
     def preview(self):
-        return self._job.preview
+        return None if self._job.error is not None else self._job.preview
 
     def done(self):
         return self._job.state == "finished"
@@ -128,72 +128,6 @@ class JobHandle:
         if error is not None:
             raise error
         return self._job.value
-
-
-class JobGroup:
-    """Nonblocking ordered join; failed groups retire every child before error."""
-
-    def __init__(self, runtime, handles):
-        self.runtime = runtime
-        self.handles = tuple(handles)
-        for handle in self.handles:
-            runtime._require_handle(handle)
-        self._failure = None
-        self._cancelling = False
-
-    def _reconcile(self):
-        if self._failure is None:
-            self._failure = next(
-                (handle._job.error for handle in self.handles
-                 if handle.done() and handle._job.error is not None),
-                None,
-            )
-        if self._failure is not None and not self._cancelling:
-            self._cancelling = True
-            for handle in self.handles:
-                if not handle.done():
-                    handle.cancel()
-
-    @property
-    def preview(self):
-        self._reconcile()
-        if self._failure is not None or any(handle.preview is None for handle in self.handles):
-            return None
-        return tuple(handle.preview for handle in self.handles)
-
-    def poll(self):
-        self.runtime.poll()
-        self._reconcile()
-        return all(handle.done() for handle in self.handles)
-
-    def done(self):
-        return self.poll()
-
-    def retired(self):
-        return self.poll()
-
-    def cancel(self):
-        self._reconcile()
-        if all(handle.done() for handle in self.handles):
-            return False
-        self._cancelling = True
-        changed = False
-        for handle in self.handles:
-            if not handle.done():
-                changed = handle.cancel() or changed
-        return changed
-
-    def exception(self):
-        self._reconcile()
-        if not all(handle.done() for handle in self.handles):
-            raise InvalidStateError("Joined helper computations have not retired")
-        return self._failure
-
-    def result(self):
-        error = self.exception()
-        if error is not None:
-            raise error
-        return tuple(handle._job.value for handle in self.handles)
 
 
 class HelperRuntime:
@@ -267,9 +201,6 @@ class HelperRuntime:
         self._queue.append(job.identity)
         self._transition(helper_policy.Event("submit", job_id=job.identity))
         return JobHandle(self, job)
-
-    def join(self, handles):
-        return JobGroup(self, handles)
 
     def cancel(self, handle):
         _require_main_thread()

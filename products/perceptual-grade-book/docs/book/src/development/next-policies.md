@@ -198,6 +198,12 @@ coordinates the asynchronous Grade preparer and the main-thread-polled Stack
 helper. The Grade preparer owns its worker pool. Withdrawing demand leaves the
 physical slot occupied until the Grade work or Stack helper retires.
 
+If the coordinator itself fails, it keeps the original exception and discards
+undelivered preparations. Later requests and render waits report that cause.
+The main-thread timer waits for publication admission, clears pending
+installations, and delivers the error output once. Active helper work remains
+owned and polled until retirement.
+
 Each physical job records the playback session that requested it, or `None`
 for ordinary requests. The job's preview and final receipts carry the
 originating session to every subscriber. When a request reuses an already
@@ -562,6 +568,10 @@ would discard the workflow they represent. Shader and Compositor Grade/Stack
 nodes use the same policy and manager, while each node owns a private wrapper
 around its live kernel and its own baked-output selector.
 
+`src/runtime/bake_controller.py` coordinates the Blender Image transaction,
+source observations, and output selection. It retries deferred selector
+changes under the graph gate, including changes on nodes without a receipt.
+
 `src/policy/bake.py` stores the request phase and optional request signature.
 The signature is present from acceptance through the active request and absent
 in `idle` and `terminal`. Terminal effects carry errors for the manager to
@@ -576,8 +586,10 @@ scene at click time, then dispatches requests through one serialized helper
 lane. Each request has a unique artifact directory and uses the fixed filename
 `bake.exr` within it.
 
-The manager associates later policy events with their accepted request. The
-execution runtime correlates helper receipts by session and job ID, and the
+The manager associates later policy events with their accepted request. Node
+deletion withdraws the accepted request by its saved identity, so retirement
+can proceed after Blender invalidates the node wrapper. The execution runtime
+correlates helper receipts by session and job ID, and the
 manager checks the returned signature before reporting completion. The policy
 compares the current source signature at completion, publication, and
 activation. Dependency generations still contribute to freshness checks. A
@@ -670,6 +682,11 @@ uses the scene canvas, this signature includes the expected pixel dimensions
 so resizing the canvas cancels pending work. A published bake keeps the
 original receipt signature and the Image's actual dimensions. Restoring the
 canvas size therefore clears a size warning without a rebake.
+
+The graph digest records effective socket values and links. Linked sockets
+ignore unused defaults, and unavailable sockets do not enter the digest. The
+fingerprint version makes older receipts stale while keeping their valid baked
+Images selectable.
 
 The settings digest includes every Linear, Tone, and Stage 3 numeric field,
 including J/C response, fit, Global C Gain, Adaptance, and all Warp handles.
@@ -777,6 +794,19 @@ predicate, not a state machine: owner, node, space, completeness, image
 validity, and image agreement must all be true. `runtime/grade_resources.py`
 uses it at the boundary where a persisted host resource is considered the
 installed resource.
+
+Local Grade ownership uses the containing datablock and a UUID stored on the
+node. Renaming a node preserves its ownership, and copying a node gives the copy
+a new UUID. The add-on rebuilds older name-owned kernels from the stored Grade
+settings. Adoption and initial render preflight check generated graph structure
+against the shipped template manifest and verify packed Grade boundary and
+Stack LUT pixels against their content receipts.
+
+The lifecycle coordinator attempts gesture restoration, subscription cleanup,
+Bake withdrawal, and cache invalidation before Blender replaces IDs on load,
+undo, or redo. A failed gesture restoration still allows the remaining steps
+to run. Reconciliation releases the pinned resources and repairs installed
+output after Blender finishes replacing the data.
 
 The reducer sequences disposal, retention, and retirement. Disposal fences subscriptions,
 then detaches the node's Grade and kernel references. Retirement observes the

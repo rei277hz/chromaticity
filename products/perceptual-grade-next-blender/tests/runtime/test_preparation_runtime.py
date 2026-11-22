@@ -126,6 +126,97 @@ class PreparationRuntimeTests(unittest.TestCase):
         runtime.forget(source)
         self.assertEqual(len(observed), count)
 
+    def test_coordinator_failure_is_sticky_and_delivered_once(self):
+        runtime = self.runtime(lambda value: value)
+        source = object()
+        runtime.request(source, "A", "A")
+        self.wait_settled(runtime, source)
+        failure = RuntimeError("coordinator loop failed")
+        self.loop_read(runtime, lambda: runtime._fail(failure))
+
+        self.assertIs(runtime.failure, failure)
+        self.assertIs(runtime.pending_failure, failure)
+        self.assertTrue(runtime.pending)
+        self.assertEqual(runtime._publications, {})
+        for operation in (
+                lambda: runtime.request(source, "B", "B"),
+                runtime.collect,
+                runtime.wait,
+        ):
+            with self.assertRaises(self.runtime_module.PreparationCoordinatorError) as raised:
+                operation()
+            self.assertIs(raised.exception.__cause__, failure)
+
+        runtime.acknowledge_failure()
+        self.loop_read(runtime, lambda: runtime._fail(ValueError("later error")))
+        self.assertIsNone(runtime.pending_failure)
+        self.assertFalse(runtime.pending)
+        self.assertIs(runtime.failure, failure)
+        with self.assertRaises(self.runtime_module.PreparationCoordinatorError):
+            runtime.collect()
+
+    def test_failed_coordinator_keeps_polling_active_host_work_to_retirement(self):
+        steps, created = [], []
+
+        class Job:
+            def __init__(self):
+                self.complete = False
+                self.cancel_calls = 0
+                self.close_calls = 0
+
+            def advance(self):
+                steps.append("advance")
+                return ("full", "prepared") if self.complete else None
+
+            def cancel(self):
+                self.cancel_calls += 1
+
+            def close(self):
+                self.close_calls += 1
+
+        job = Job()
+
+        class Owner:
+            def create_job(self, payload, _progressive):
+                created.append(payload)
+                return job
+
+            def close(self):
+                pass
+
+        runtime = self.runtime()
+        runtime.register_polled_lane("host", Owner())
+        self.addCleanup(setattr, job, "complete", True)
+        active, queued = object(), object()
+        runtime.request(active, "A", "A", lane="host")
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertEqual(steps, ["advance"])
+        runtime.request(queued, "B", "B", lane="host")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with runtime._host_lock:
+                if runtime._host_queue:
+                    break
+            time.sleep(.001)
+        else:
+            self.fail("successor preparation was not queued")
+
+        failure = RuntimeError("coordinator loop failed")
+        self.loop_read(runtime, lambda: runtime._fail(failure))
+        runtime.acknowledge_failure()
+        self.assertTrue(runtime.pending)
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertEqual(job.cancel_calls, 1)
+        self.assertTrue(runtime.pending)
+
+        job.complete = True
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertEqual(job.close_calls, 1)
+        self.assertFalse(runtime.pump_main_thread())
+        self.assertEqual(created, ["A"])
+        self.assertFalse(runtime.pending)
+
     def test_trace_correlates_latest_inputs_and_replaced_publications(self):
         started, release = threading.Event(), threading.Event()
         observed, calls = [], []

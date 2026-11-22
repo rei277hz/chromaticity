@@ -61,6 +61,9 @@ with _timings.operation("extension imports"):
     lut_kernel = importlib.import_module(
         "bl_ext.pg_grade_smoke.perceptual_grade.kernel.lut"
     )
+    stage2_bindings = importlib.import_module(
+        "bl_ext.pg_grade_smoke.perceptual_grade.kernel.stage2_bindings"
+    )
 initial_scans = []
 original_ensure_all_kernels = nodes._ensure_all_kernels
 for operation_name, attribute in (
@@ -348,9 +351,11 @@ def parameter_banks(node):
     else:
         selected = int(round(float(selector.inputs[0].default_value)))
     assert selected == active, (node.name, active, selected)
-    readers = [item for item in node.node_tree.nodes if item.get(nodes.PARAMETER_READER)]
-    observed = {(item.get(nodes.PARAMETER_READER_BANK),
-                 item.get(nodes.PARAMETER_READER_ROLE)): item.image for item in readers}
+    readers = [item for item in node.node_tree.nodes
+               if item.get(stage2_bindings.PARAMETER_READER)]
+    observed = {(item.get(stage2_bindings.PARAMETER_READER_BANK),
+                 item.get(stage2_bindings.PARAMETER_READER_ROLE)): item.image
+                for item in readers}
     assert {(bank, role) for bank in (0, 1) for role in nodes.PARAMETER_ROLES} <= set(observed), (
         node.name, observed,
     )
@@ -407,7 +412,9 @@ def assert_local_grade_resources(identities):
         kernel = node.node_tree
         assert kernel.get(nodes.PARAMETER_OWNER) == owner
         assert not kernel[nodes.PARAMETER_OWNER].is_embedded_data
-        assert kernel.get(nodes.PARAMETER_OWNER_NODE) == node_name
+        node_uuid = node.get(nodes.NODE_UUID)
+        assert isinstance(node_uuid, str) and node_uuid
+        assert kernel.get(nodes.PARAMETER_OWNER_NODE) == node_uuid
         resources.append((kernel.name, tuple(
             image.name for primary in parameter_banks(node)
             for image in nodes.parameter_bank_images(primary).values()
@@ -676,10 +683,16 @@ assert_grade_current(first_node)
 
 # Equal local settings retain separate writable resources within one tree and
 # across containing datablocks whose Grade nodes have the same name.
-local_grade_identities = [("materials", first_material_name, first_node_name)]
+first_kernel = first_node.node_tree
+first_uuid = first_node[nodes.NODE_UUID]
+original_local_name = first_node_name
+first_node.name = f"{original_local_name} Renamed"
 second_local_node = nodes.create_node(first_material.node_tree)
+second_local_node.name = original_local_name
+renamed_local_name = first_node.name
+local_grade_identities = [("materials", first_material_name, renamed_local_name)]
 local_grade_identities.append(
-    ("materials", first_material_name, second_local_node.name))
+    ("materials", first_material_name, original_local_name))
 for collection, owner in (
         ("materials", bpy.data.materials.new("Independent Material Grade")),
         ("worlds", bpy.data.worlds.new("Local World Grade")),
@@ -694,7 +707,10 @@ reconcile_for_render(bpy.context.scene)
 failures = nodes._drain_preparations()
 assert not failures, failures
 assert_local_grade_resources(local_grade_identities)
-del first_context, first_node, first_material, second_local_node, owner, local_node
+assert first_node[nodes.NODE_UUID] == first_uuid
+assert second_local_node[nodes.NODE_UUID] != first_uuid
+assert first_node.node_tree == first_kernel
+del first_context, first_node, first_kernel, first_material, second_local_node, owner, local_node
 
 shader_tree = bpy.data.node_groups.new("Grade Shader Test", "ShaderNodeTree")
 shader_tree.use_fake_user = True
@@ -1087,21 +1103,30 @@ for exposure in (1.0625, 1.125):
     assert not nodes._drain_preparations()
 role_uploads = []
 original_color_writer = nodes._write_grade_parameters
+retirement_sweeps = []
+original_retire_images = nodes._retire_images
+
+def record_retirement_sweep():
+    retirement_sweeps.append(None)
+    return original_retire_images()
 
 def record_color_upload(image, pixels):
     role_uploads.append(image[nodes.PARAMETER_ROLE])
     return original_color_writer(image, pixels)
 
 nodes._write_grade_parameters = record_color_upload
+nodes._retire_images = record_retirement_sweep
 try:
     shared_grade.pg_color.web_hue_1_0 = 14.0
     reconcile_for_render(bpy.context.scene)
     assert not nodes._drain_preparations()
 finally:
     nodes._write_grade_parameters = original_color_writer
+    nodes._retire_images = original_retire_images
 # The candidate bank still has the first exposure, so its scalar role must
 # catch up along with Web. All other Color roles already match and are reused.
 assert set(role_uploads) == {"parameter", "web"}, role_uploads
+assert not retirement_sweeps, "A live bank-only update swept unrelated Images"
 for node in color_users:
     assert_grade_current(node)
 assert shared_grade.pg_color.web_hue_1_0 == 14.0
@@ -1167,9 +1192,10 @@ assert_grade_current(independent_node)
 for corruption in ("unmarked", "misbound", "misbound_tracked"):
     corrupt_kernel = independent_node.node_tree
     corrupt_kernel.use_fake_user = True
-    reader = next(item for item in corrupt_kernel.nodes if item.get(nodes.PARAMETER_READER))
+    reader = next(item for item in corrupt_kernel.nodes
+                  if item.get(stage2_bindings.PARAMETER_READER))
     if corruption == "unmarked":
-        del reader[nodes.PARAMETER_READER]
+        del reader[stage2_bindings.PARAMETER_READER]
     else:
         reader.image = parameter_image(shared_shader_nodes[0])
     assert not nodes._parameter_kernel_valid(corrupt_kernel)
@@ -1182,11 +1208,11 @@ for corruption in ("unmarked", "misbound", "misbound_tracked"):
         audited_kernels = []
         corrupt_kernel_pointer = corrupt_kernel.as_pointer()
 
-        def track_deep_audit(kernel):
+        def track_deep_audit(kernel, **options):
             audited_kernels.append(
                 kernel.as_pointer() if kernel is not None else None
             )
-            return original_valid(kernel)
+            return original_valid(kernel, **options)
 
         nodes._parameter_kernel_valid = track_deep_audit
         try:
@@ -1213,9 +1239,9 @@ for corruption in ("unmarked", "misbound", "misbound_tracked"):
 corrupt_kernel = independent_node.node_tree
 corrupt_kernel.use_fake_user = True
 role_reader = next(item for item in corrupt_kernel.nodes
-                   if item.get(nodes.PARAMETER_READER)
-                   and item.get(nodes.PARAMETER_READER_ROLE) == "color")
-role_bank = role_reader[nodes.PARAMETER_READER_BANK]
+                   if item.get(stage2_bindings.PARAMETER_READER)
+                   and item.get(stage2_bindings.PARAMETER_READER_ROLE) == "color")
+role_bank = role_reader[stage2_bindings.PARAMETER_READER_BANK]
 role_reader.image = nodes.parameter_bank_images(
     corrupt_kernel[nodes.PARAMETER_BANK_BINDINGS[role_bank]])["web"]
 assert not nodes._parameter_kernel_valid(corrupt_kernel)
@@ -1231,8 +1257,8 @@ assert not nodes._retire_kernels((corrupt_kernel,))
 # parameter branches, rather than trusting reader metadata alone.
 shader_kernel = independent_node.node_tree
 shader_selector = next(item for item in shader_kernel.nodes
-                       if item.get(nodes.PARAMETER_SAMPLE_SELECTOR)
-                       and item.get(nodes.PARAMETER_SAMPLE_KIND) == "vector")
+                       if item.get(stage2_bindings.PARAMETER_SAMPLE_SELECTOR)
+                       and item.get(stage2_bindings.PARAMETER_SAMPLE_KIND) == "vector")
 shader_factor = shader_selector.inputs[0]
 shader_factor_link = shader_factor.links[0]
 shader_factor_source, shader_factor_target = (
@@ -1245,19 +1271,16 @@ assert nodes._parameter_kernel_valid(shader_kernel)
 
 # Each bank's receipt remains valid when the pair shares an equal-content
 # role image. Reject the alias even when every reader follows its binding.
-bindings = importlib.import_module(
-    "bl_ext.pg_grade_smoke.perceptual_grade.kernel.stage2_bindings"
-)
 first_bank, second_bank = parameter_banks(independent_node)
 role = "color"
-binding = bindings.PARAMETER_ROLE_BINDING + role
+binding = stage2_bindings.PARAMETER_ROLE_BINDING + role
 original_image = second_bank[binding]
 shared_image = first_bank[binding]
 second_readers = tuple(
     reader for reader in shader_kernel.nodes
-    if (reader.get(nodes.PARAMETER_READER)
-        and reader.get(nodes.PARAMETER_READER_BANK) == 1
-        and reader.get(nodes.PARAMETER_READER_ROLE) == role)
+    if (reader.get(stage2_bindings.PARAMETER_READER)
+        and reader.get(stage2_bindings.PARAMETER_READER_BANK) == 1
+        and reader.get(stage2_bindings.PARAMETER_READER_ROLE) == role)
 )
 assert second_readers
 assert nodes._parameter_kernel_receipt_current(shader_kernel)
@@ -1276,17 +1299,17 @@ finally:
 assert nodes._parameter_kernel_valid(shader_kernel)
 
 compositor_kernel = shared_compositor_node.node_tree
-sample_id = next(item[nodes.PARAMETER_SAMPLE_ID]
+sample_id = next(item[stage2_bindings.PARAMETER_SAMPLE_ID]
                  for item in compositor_kernel.nodes
-                 if item.get(nodes.PARAMETER_SAMPLE_SELECTOR))
+                 if item.get(stage2_bindings.PARAMETER_SAMPLE_SELECTOR))
 map_uv = next(item for item in compositor_kernel.nodes
               if item.bl_idname == "CompositorNodeMapUV"
-              and item.get(nodes.PARAMETER_SAMPLE_ID) == sample_id
-              and item.get(nodes.PARAMETER_SAMPLE_BANK) == 0)
+              and item.get(stage2_bindings.PARAMETER_SAMPLE_ID) == sample_id
+              and item.get(stage2_bindings.PARAMETER_SAMPLE_BANK) == 0)
 separate = next(item for item in compositor_kernel.nodes
                 if item.bl_idname == "CompositorNodeSeparateColor"
-                and item.get(nodes.PARAMETER_SAMPLE_ID) == sample_id
-                and item.get(nodes.PARAMETER_SAMPLE_BANK) == 0)
+                and item.get(stage2_bindings.PARAMETER_SAMPLE_ID) == sample_id
+                and item.get(stage2_bindings.PARAMETER_SAMPLE_BANK) == 0)
 compositor_link = separate.inputs["Image"].links[0]
 compositor_source, compositor_target = (
     compositor_link.from_socket, compositor_link.to_socket,
@@ -1297,7 +1320,7 @@ compositor_kernel.links.new(compositor_source, compositor_target)
 assert nodes._parameter_kernel_valid(compositor_kernel)
 other_map_uv = next(item for item in compositor_kernel.nodes
                     if item.bl_idname == "CompositorNodeMapUV"
-                    and item.get(nodes.PARAMETER_SAMPLE_ID) != sample_id)
+                    and item.get(stage2_bindings.PARAMETER_SAMPLE_ID) != sample_id)
 wrong_uv_link = other_map_uv.inputs["UV"].links[0]
 wrong_uv = (wrong_uv_link.from_socket, wrong_uv_link.to_socket)
 original_uv_link = map_uv.inputs["UV"].links[0]

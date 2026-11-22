@@ -18,6 +18,7 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_image_save.perceptual_grade")
 nodes = importlib.import_module("bl_ext.pg_image_save.perceptual_grade.nodes")
+stage2_bindings = importlib.import_module(extension.__name__ + ".kernel.stage2_bindings")
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append
@@ -61,9 +62,10 @@ def parameter_banks(node):
                and image.get(nodes.PARAMETER_ROLE) == role
                and image.packed_file is not None and not image.is_dirty
                for bundle in bundles for role, image in bundle.items())
-    readers = [item for item in tree.nodes if item.get(nodes.PARAMETER_READER)]
-    observed = {(item.get(nodes.PARAMETER_READER_BANK),
-                 item.get(nodes.PARAMETER_READER_ROLE)): item.image for item in readers}
+    readers = [item for item in tree.nodes if item.get(stage2_bindings.PARAMETER_READER)]
+    observed = {(item.get(stage2_bindings.PARAMETER_READER_BANK),
+                 item.get(stage2_bindings.PARAMETER_READER_ROLE)): item.image
+                for item in readers}
     assert {(bank, role) for bank in (0, 1) for role in nodes.PARAMETER_ROLES} <= set(observed)
     assert all(observed[bank, role] == bundles[bank][role]
                for bank, role in observed), node.name

@@ -453,6 +453,7 @@
         "products/perceptual-grade-next-blender/src/policy/bake.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_freshness.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_manager.py",
+        "products/perceptual-grade-next-blender/src/runtime/bake_controller.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_helper.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_graph.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_routes.py",
@@ -474,6 +475,7 @@
       "sources": [
         "products/perceptual-grade-next-blender/src/policy/resources.py",
         "products/perceptual-grade-next-blender/src/runtime/resource_lifecycle.py",
+        "products/perceptual-grade-next-blender/src/runtime/lifecycle.py",
         "products/perceptual-grade-next-blender/src/nodes.py"
       ],
       "evidence": [

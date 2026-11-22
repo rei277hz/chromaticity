@@ -363,6 +363,55 @@ class BakeManagerTests(unittest.TestCase):
         self.assertFalse(entry["root"].exists())
         self.assertFalse(self.manager.jobs)
 
+    def test_withdraw_ready_entry_by_key_retires_artifact_without_rna(self):
+        entry = self.request(self.node(1))
+        self.manager.poll()
+        self.busy = True
+        self.complete()
+        self.assertEqual(entry["state"].phase, "ready")
+        self.assertTrue(entry["root"].exists())
+
+        self.assertTrue(self.manager.withdraw(entry["node_key"]))
+
+        self.assertFalse(entry["root"].exists())
+        self.assertFalse(self.manager.jobs)
+        self.assertFalse(self.manager.publication_queue)
+        self.assertFalse(self.manager.poll())
+
+    def test_withdraw_active_entry_by_key_cancels_until_helper_retires(self):
+        entry = self.request(self.node(1))
+        self.manager.poll()
+        self.assertIs(self.manager.active, entry)
+
+        self.assertTrue(self.manager.withdraw(entry["node_key"]))
+
+        self.assertEqual(self.backend.jobs[0].cancel_calls, 1)
+        self.assertIs(self.manager.active, entry)
+        self.assertTrue(entry["root"].exists())
+
+        self.complete(result=CancelledError("disposed"))
+
+        self.assertFalse(entry["root"].exists())
+        self.assertFalse(self.manager.jobs)
+
+    def test_deferred_result_retires_when_node_pointer_is_invalid(self):
+        node = self.node(1)
+        entry = self.request(node)
+        self.manager.poll()
+        self.busy = True
+        self.complete()
+        self.assertEqual(entry["state"].phase, "ready")
+
+        def invalid_pointer():
+            raise ReferenceError("Node was removed")
+
+        node.as_pointer = invalid_pointer
+
+        self.assertFalse(self.manager.poll())
+        self.assertFalse(entry["root"].exists())
+        self.assertFalse(self.manager.jobs)
+        self.assertFalse(self.events)
+
     def test_edit_discards_deferred_result_before_retrying_host_admission(self):
         entry = self.request(self.node(1))
         self.manager.poll()

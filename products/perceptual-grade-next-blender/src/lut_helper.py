@@ -51,7 +51,7 @@ class StackHelperBackend:
 
 
 class HelperStackJob:
-    """A nonblocking one-child join, replaceable by a composed operation later."""
+    """Poll one Stack computation through preview and physical retirement."""
 
     def __init__(self, backend, payload, progressive):
         entries, working_space = payload
@@ -63,43 +63,43 @@ class HelperStackJob:
             "working_space": working_space,
             "progressive": bool(progressive),
         }
-        self.group = None
+        self.handle = None
         self.preview_emitted = False
         self.cancelled = False
 
     def advance(self):
         _require_main_thread()
         runtime = self.backend.runtime
-        if self.group is None:
+        if self.handle is None:
             if self.cancelled:
                 raise CancelledError("Stack preparation superseded")
             if not self.backend.probe.poll():
                 return None
             self.backend.probe.result()
-            handle = runtime.submit("stack_lut", self.inputs)
-            self.group = runtime.join((handle,))
-        finished = self.group.poll()
+            self.handle = runtime.submit("stack_lut", self.inputs)
+        finished = self.handle.poll()
         if (self.inputs["progressive"] and not self.cancelled
                 and not self.preview_emitted):
-            preview = self.group.preview
+            preview = self.handle.preview
             if preview is not None:
                 self.preview_emitted = True
-                return "preview", thaw_prepared(preview[0])
+                return "preview", thaw_prepared(preview)
         if not finished:
             return None
-        prepared, = self.group.result()
-        return "full", thaw_prepared(prepared)
+        return "full", thaw_prepared(self.handle.result())
 
     def cancel(self):
         """Withdraw interest now; advance keeps polling until the writer retires."""
         _require_main_thread()
+        if self.cancelled:
+            return
         self.cancelled = True
-        if self.group is not None:
-            self.group.cancel()
+        if self.handle is not None:
+            self.handle.cancel()
 
     def close(self):
         _require_main_thread()
-        if self.group is not None and not self.group.retired():
+        if self.handle is not None and not self.handle.poll():
             raise RuntimeError("Stack preparation closed before helper retirement")
 
 

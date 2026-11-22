@@ -194,6 +194,13 @@ class BakeRouteTests(unittest.TestCase):
         self.assertIsNone(route["object_name"])
         self.assertEqual(self.module.describe(self.grade, route)["request_signature"], route["request_signature"])
 
+    def test_fingerprint_version_does_not_change_route_payload_schema(self):
+        current = self.module.describe(self.grade, self.context)
+        with patch.object(self.module, "FINGERPRINT_SCHEMA", 1):
+            previous_version = self.module.describe(self.grade, self.context)
+        self.assertEqual(current["schema"], previous_version["schema"])
+        self.assertNotEqual(current["receipt_signature"], previous_version["receipt_signature"])
+
     def test_shader_backend_always_uses_private_cycles_cpu(self):
         cases = (
             ("CYCLES", "CPU"),
@@ -409,6 +416,38 @@ class BakeRouteTests(unittest.TestCase):
         self.assertEqual((route["domain"], route["width"], route["height"]), ("IMAGE", 3, 2))
         self.assertEqual(route["images"][0]["image_key"], (texture.image.name, None))
         self.assertEqual(texture.image.pixels.reads, 0)
+
+    def test_linked_native_fallback_does_not_change_identity(self):
+        source = Node(self.tree, "ShaderNodeRGB", outputs=(("Color", None),))
+        math = Node(self.tree, "ShaderNodeMath",
+                    inputs=(("Value", .2), ("Value_001", .7)),
+                    outputs=(("Value", None),))
+        link(source, "Color", math, "Value")
+        link(math, "Value", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)["request_signature"]
+
+        math.inputs.get("Value").default_value = .9
+        linked_default_changed = self.module.describe(self.grade, self.context)["request_signature"]
+        self.assertEqual(first, linked_default_changed)
+
+        math.inputs.get("Value_001").default_value = .8
+        unlinked_default_changed = self.module.describe(self.grade, self.context)["request_signature"]
+        self.assertNotEqual(linked_default_changed, unlinked_default_changed)
+
+    def test_linked_upstream_grade_alpha_ignores_its_unused_default(self):
+        upstream = self.make_grade(self.tree, name="Alpha source")
+        value = Node(self.tree, "ShaderNodeValue", outputs=(("Value", None),))
+        source_link = link(value, "Value", upstream, "Alpha")
+        link(upstream, "Alpha", self.grade, "Alpha")
+        first = self.module.describe(self.grade, self.context)["request_signature"]
+
+        upstream.inputs.get("Alpha").default_value = .2
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
+
+        source_link.is_muted = True
+        unlinked = self.module.describe(self.grade, self.context)["request_signature"]
+        upstream.inputs.get("Alpha").default_value = .5
+        self.assertNotEqual(unlinked, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_keeps_library_image_identity_in_the_sampler_descriptor(self):
         texture = self.texture()
@@ -879,6 +918,52 @@ class BakeRouteTests(unittest.TestCase):
         self.grade.pg_bake_image = Image("Own bake destination")
         self.grade.pg_bake_image[self.module.BAKE_DOMAIN] = "IMAGE"
         self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
+
+    def test_linked_upstream_baked_vector_ignores_its_unused_default(self):
+        self.mesh()
+        upstream = self.make_grade(self.tree, name="Baked vector source")
+        upstream.pg_use_bake = True
+        upstream.pg_bake_image = Image("Stored bake")
+        upstream.pg_bake_image[self.module.BAKE_DOMAIN] = "IMAGE"
+        upstream.node_tree = Tree("Managed bake wrapper")
+        upstream.node_tree[self.module.bake_graph.WRAPPER] = 1
+        reader = Node(upstream.node_tree, "ShaderNodeTexImage", "Baked Image",
+                      image=upstream.pg_bake_image)
+        reader[self.module.bake_graph.READER] = 1
+        uv = Node(self.tree, "ShaderNodeUVMap", outputs=(("UV", None),))
+        link(uv, "UV", upstream, "Vector")
+        link(upstream, "Color", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)["request_signature"]
+
+        upstream.inputs.get("Vector").default_value = (.3, .4, .5)
+
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
+
+    def test_group_fingerprints_only_inputs_feeding_the_selected_output(self):
+        child = Tree("Nested")
+        group_input = Node(child, "NodeGroupInput", outputs=(("Used", None), ("Unused", None)))
+        group_output = Node(child, "NodeGroupOutput", inputs=(("Color", None), ("Other", None)))
+        link(group_input, "Used", group_output, "Color")
+        link(group_input, "Unused", group_output, "Other")
+        group = Node(self.tree, "ShaderNodeGroup", node_tree=child,
+                     inputs=(("Used", .2), ("Unused", .3)),
+                     outputs=(("Color", None), ("Other", None)))
+        link(group, "Color", self.grade, "Color")
+        first = self.module.describe(self.grade, self.context)["request_signature"]
+
+        group.inputs.get("Unused").default_value = .4
+        self.assertEqual(first, self.module.describe(self.grade, self.context)["request_signature"])
+
+        group.inputs.get("Used").default_value = .5
+        second = self.module.describe(self.grade, self.context)["request_signature"]
+        self.assertNotEqual(first, second)
+
+        source = Node(self.tree, "ShaderNodeValue", outputs=(("Value", None),))
+        link(source, "Value", group, "Used")
+        linked = self.module.describe(self.grade, self.context)["request_signature"]
+        self.assertNotEqual(second, linked)
+        group.inputs.get("Used").default_value = .7
+        self.assertEqual(linked, self.module.describe(self.grade, self.context)["request_signature"])
 
     def test_reused_group_requires_exact_occurrence_and_resolves_parent_input(self):
         child = Tree("Nested")

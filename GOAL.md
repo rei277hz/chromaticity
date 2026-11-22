@@ -79,3 +79,11 @@ Parameter schema 4 adds two texels within the existing 512×1 scalar image for t
 ## Handbook contract
 
 The manual describes Next node installation and workflows while retaining a clearly labeled legacy ZIP link. The Technical Report describes the shipped Next math, role-based settings publication, Stack shader evaluation, and Compositor Auto precision. Existing animation producers remain available as build targets but their animated outputs and animation-specific manifests are excluded from all book products (site, ZIP archive, PDF, and EPUB).
+
+## Current implementation: runtime hardening
+
+Harden Bake request ownership, retry and receipt identity, preparation failure delivery, and undo/load safety in `products/perceptual-grade-next-blender`. Extract the Blender-specific Bake controller and lifecycle phase coordinator from `nodes.py`, while keeping node UI and Grade-specific operations behind explicit callbacks. Give local Grade nodes persistent UUID ownership with a fresh identity on copy; do not migrate name-owned legacy kernels. Validate generated Grade templates and packed Stack LUT content at adoption and initial render validation, and avoid global image scans for bank-only publications. Keep the Technical Report audit inventory aligned. DCTL work is unrelated and excluded.
+
+Implementation constraints: preserve fail-closed magenta output and alpha, published fallback retention for undo, active helper file ownership through physical retirement, current public `invalidate_source(image)` behavior, and existing Bake availability for stale but valid images. Run executable checks only with product-scoped Buck2 targets and `--remote-only`.
+
+Completed. Bake and lifecycle orchestration now have dedicated runtime modules. Local ownership survives rename and save/load, and generated Grade and Stack assets are checked at adoption and initial render preflight. All planned remote validation passed. The build IDs and Blender-version coverage are recorded in CHECKLIST.md.

@@ -48,33 +48,32 @@ class BakeHelperJob:
     def __init__(self, backend, inputs):
         self.backend = backend
         self.inputs = dict(inputs)
-        self.group = None
+        self.handle = None
         self.cancelled = False
 
     def advance(self):
         _require_main_thread()
         runtime = self.backend.runtime
-        if self.cancelled and self.group is None:
+        if self.cancelled and self.handle is None:
             raise CancelledError("Bake was cancelled before helper submission")
-        if self.group is None:
+        if self.handle is None:
             if not self.backend.probe.poll():
                 return None
             self.backend.probe.result()
-            handle = runtime.submit("bake", self.inputs)
-            self.group = runtime.join((handle,))
-        if not self.group.poll():
+            self.handle = runtime.submit("bake", self.inputs)
+        if not self.handle.poll():
             return None
-        return self.group.result()[0]
+        return self.handle.result()
 
     def cancel(self):
         _require_main_thread()
         self.cancelled = True
-        if self.group is not None:
-            self.group.cancel()
+        if self.handle is not None:
+            self.handle.cancel()
 
     def retired(self):
         _require_main_thread()
-        return self.group is None or self.group.retired()
+        return self.handle is None or self.handle.poll()
 
 
 def _require_main_thread():

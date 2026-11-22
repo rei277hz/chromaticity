@@ -24,6 +24,8 @@ from .shader_scene import shader_scene_inventory
 
 
 SCHEMA = 1
+# Version the persisted digest independently of the worker route payload.
+FINGERPRINT_SCHEMA = 2
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
@@ -591,31 +593,26 @@ class _Walker:
         self.coordinate_depth = 0
         self.unknown_compositor_extent = False
 
-    def input(self, socket, parents):
-        links = _links(socket)
+    def input(self, socket, parents, *, links=None):
+        if links is None:
+            links = _links(socket)
         if len(links) > 1 and not getattr(socket, "is_multi_input", False):
             raise RouteBlocked("input_links", "Bake input has multiple effective sources")
         self.graph.append(("input", tuple(_semantic_identity(item) for item in parents),
                            _semantic_identity(socket.node), _socket_name(socket),
                            None if links else _plain(getattr(socket, "default_value", None)),
-                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket)) for link in links)))
-        if links:
-            for link in links:
-                self.output(link.from_node, link.from_socket, parents)
+                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
+                                 for link in links)))
+        for link in links:
+            self.output(link.from_node, link.from_socket, parents)
 
     def _observe(self, node, output, parents, semantic=None):
         state = (_rna_state(node, dependencies=self.dependencies,
                             dependency_seen=self.dependency_pointers)
                  if semantic is None else semantic)
-        inputs = tuple(item for item in node.inputs
-                       if semantic is None or item.name in {"Color", "Alpha"})
-        sockets = tuple((_socket_name(item), _plain(getattr(item, "default_value", None)),
-                         tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
-                               for link in _links(item))) for item in inputs)
-        defaults = tuple((_socket_name(item), _plain(getattr(item, "default_value", None)))
-                         for item in node.outputs if hasattr(item, "default_value"))
         self.graph.append((tuple(_semantic_identity(item) for item in parents), _semantic_identity(node),
-                           node.bl_idname, _socket_name(output), state, sockets, defaults))
+                           node.bl_idname, _socket_name(output), state,
+                           _plain(getattr(output, "default_value", None))))
 
     def _image(self, node, image, output, parents, *, baked=False):
         if image is None:
@@ -646,17 +643,21 @@ class _Walker:
         if (baked and not self.compositor
                 and image.get(BAKE_DOMAIN) == "UV"):
             self.reasons.add("upstream_uv_bake")
-        vector = next((item for item in node.inputs if item.name == "Vector"), None)
         if baked:
-            self.graph.append((key, "baked_sampling", item["interpolation"], item["extension"],
-                               None if vector is None else _plain(getattr(vector, "default_value", None)),
-                               () if vector is None else tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
-                                                               for link in _links(vector))))
-        if vector is not None and _links(vector):
+            self.graph.append((key, "baked_sampling", item["interpolation"], item["extension"]))
+        for socket in node.inputs:
+            if socket.name != "Vector":
+                if not baked:
+                    self.input(socket, parents)
+                continue
+            links = _links(socket)
+            if not links:
+                self.input(socket, parents, links=links)
+                continue
             self.reasons.add("linked_coordinates")
             self.coordinate_depth += 1
             try:
-                self.input(vector, parents)
+                self.input(socket, parents, links=links)
             finally:
                 self.coordinate_depth -= 1
 
@@ -691,10 +692,7 @@ class _Walker:
                 if output.name == "Alpha":
                     alpha = next((item for item in node.inputs if item.name == "Alpha"), None)
                     if alpha is not None:
-                        self.graph.append((_semantic_identity(node), "Alpha", "alpha",
-                                           _plain(getattr(alpha, "default_value", None)),
-                                           tuple((_semantic_identity(link.from_node), _socket_name(link.from_socket))
-                                                 for link in _links(alpha))))
+                        self.graph.append((_semantic_identity(node), "Alpha", "alpha"))
                         self.input(alpha, parents)
                     return
                 self._observe(node, output, parents, _grade_settings(node))
@@ -1020,7 +1018,7 @@ def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
     working_space = (getattr(colorspace, "working_space_interop_id", None),
                      getattr(colorspace, "working_space", None))
     receipt_observation = (
-        SCHEMA, domain, width if domain == "UV" else None,
+        FINGERPRINT_SCHEMA, domain, width if domain == "UV" else None,
         height if domain == "UV" else None, _semantic_identity(scene),
         _semantic_identity(owner), _semantic_identity(node),
         tuple(_semantic_identity(item) for item in parents),

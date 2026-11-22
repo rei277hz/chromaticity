@@ -1,4 +1,4 @@
-"""Lifecycle and join tests for the product-local GPU helper runtime."""
+"""Lifecycle and job tests for the product-local GPU helper runtime."""
 
 from concurrent.futures import CancelledError
 from dataclasses import fields
@@ -61,32 +61,6 @@ class FakeChannel:
 
     def close(self):
         self.closed = True
-
-
-class FakeJob:
-    def __init__(self, runtime, identity, state="running"):
-        self.identity = identity
-        self.state = state
-        self.error = None
-        self.value = None
-        self.preview = None
-        self.runtime = runtime
-
-
-class FakeJoinRuntime:
-    def __init__(self):
-        self.cancelled = []
-
-    def _require_handle(self, handle):
-        if handle.runtime is not self:
-            raise ValueError("foreign handle")
-
-    def poll(self):
-        pass
-
-    def cancel(self, handle):
-        self.cancelled.append(handle._job.identity)
-        return True
 
 
 class HelperRuntimeTests(unittest.TestCase):
@@ -261,7 +235,7 @@ class HelperRuntimeTests(unittest.TestCase):
         handle = runtime.submit("stack_lut", {})
         job = self.adapter.HelperStackJob(
             SimpleNamespace(runtime=runtime), ((), "ACEScg"), False)
-        job.group = runtime.join((handle,))
+        job.handle = handle
         runtime._message(dict(envelope, kind="failed", job=handle._job.identity,
                               error="AttributeError: parameters"))
 
@@ -269,7 +243,6 @@ class HelperRuntimeTests(unittest.TestCase):
             job.advance()
         self.assertEqual(runtime.phase, "failed")
         self.assertTrue(handle.retired())
-        self.assertTrue(job.group.retired())
         job.close()
         job.close()
         self.assertEqual(runtime.state.error, "AttributeError: parameters")
@@ -405,7 +378,7 @@ class HelperRuntimeTests(unittest.TestCase):
         backend = self.adapter.StackHelperBackend()
         backend.runtime, backend.probe = runtime, runtime._probe
         job = self.adapter.HelperStackJob(backend, ((), "ACEScg"), False)
-        job.group = runtime.join((handle,))
+        job.handle = handle
         runtime._message(dict(envelope, kind="failed", job=handle._job.identity,
                               error="original worker error"))
         channel = runtime._channel
@@ -543,32 +516,26 @@ class HelperRuntimeTests(unittest.TestCase):
             owner.remaining_failures = 0
             runtime.close()
 
-    def test_join_preserves_result_order_and_waits_for_every_child(self):
-        runtime = FakeJoinRuntime()
-        first = self.module.JobHandle(runtime, FakeJob(runtime, 1, "finished"))
-        second = self.module.JobHandle(runtime, FakeJob(runtime, 2, "running"))
-        first._job.value = "first"
-        group = self.module.JobGroup(runtime, (first, second))
+    def test_stack_failure_suppresses_preview_received_in_the_same_poll(self):
+        runtime, envelope = self.ready_runtime(FakeProcess())
+        self.addCleanup(runtime.close)
+        handle = runtime.submit("stack_lut", {})
+        job = self.adapter.HelperStackJob(
+            SimpleNamespace(runtime=runtime), ((), "ACEScg"), True)
+        job.handle = handle
+        messages = (
+            dict(envelope, kind="preview", job=handle._job.identity, value="preview"),
+            dict(envelope, kind="failed", job=handle._job.identity, error="worker failed"),
+        )
 
-        self.assertFalse(group.poll())
-        second._job.state = "finished"
-        second._job.value = "second"
-        self.assertTrue(group.poll())
-        self.assertEqual(group.result(), ("first", "second"))
-
-    def test_join_failure_cancels_siblings_but_waits_for_retirement(self):
-        runtime = FakeJoinRuntime()
-        first = self.module.JobHandle(runtime, FakeJob(runtime, 1, "finished"))
-        second = self.module.JobHandle(runtime, FakeJob(runtime, 2, "running"))
-        first._job.error = RuntimeError("child failed")
-        group = self.module.JobGroup(runtime, (first, second))
-
-        self.assertFalse(group.poll())
-        self.assertEqual(runtime.cancelled, [2])
-        second._job.state = "finished"
-        self.assertTrue(group.poll())
-        with self.assertRaisesRegex(RuntimeError, "child failed"):
-            group.result()
+        with patch.object(runtime._channel, "pump", return_value=messages):
+            with self.assertRaisesRegex(self.module.HelperError, "worker failed"):
+                job.advance()
+        self.assertEqual(handle._job.preview, "preview")
+        self.assertIsNone(handle.preview)
+        self.assertFalse(job.preview_emitted)
+        self.assertTrue(handle.retired())
+        job.close()
 
     def test_worker_preview_uses_role_and_job_for_sidecar_prefix(self):
         class Payloads:

@@ -173,20 +173,19 @@ class BakeManager:
         self.queue.append(entry)
         self.jobs[node_key] = entry
 
-    def _discard_queued(self, entry):
-        try:
-            self.queue.remove(entry)
-        except ValueError:
-            pass
-        self._retire(entry)
-
     def invalidate(self, node, signature):
         """Withdraw stale demand; active helper ownership lasts until terminal."""
-        entry = self.jobs.get(self._node_key(node))
+        return self._withdraw(self.jobs.get(self._node_key(node)), "invalidate", signature)
+
+    def withdraw(self, node_key):
+        """Withdraw a disposed node by its accepted key, without touching RNA."""
+        return self._withdraw(self.jobs.get(node_key), "invalidate")
+
+    def _withdraw(self, entry, kind, signature=None):
         if entry is None:
             return False
         effects = self._event(entry, bake_policy.Event(
-            "invalidate",
+            kind,
             current_signature=signature,
         ))
         if effects.action == "cancel":
@@ -195,11 +194,9 @@ class BakeManager:
                     entry["job"].cancel()
                 except Exception as error:
                     entry.setdefault("callback_errors", []).append(error)
-            elif self.active is not entry:
-                self._discard_queued(entry)
             return True
         if effects.action == "discard":
-            self._discard_queued(entry)
+            self._retire(entry)
             return True
         return False
 
@@ -223,7 +220,7 @@ class BakeManager:
     def _publish(self, entry, result):
         signature = self._resolve_signature(entry)
         if signature != entry["route"]["request_signature"]:
-            self.invalidate(entry["node"], signature)
+            self._withdraw(entry, "invalidate", signature)
             return False
         factory = entry.get("publication_context")
         try:
@@ -308,31 +305,15 @@ class BakeManager:
 
     def _withdraw_all(self, event_kind):
         for entry in tuple(self.jobs.values()):
-            effects = self._event(entry, bake_policy.Event(
-                event_kind,
-                current_signature=None,
-            ))
-            if effects.action == "cancel":
-                if self.active is entry and entry.get("job") is not None:
-                    try:
-                        entry["job"].cancel()
-                    except Exception as error:
-                        entry.setdefault("callback_errors", []).append(error)
-            elif effects.action == "discard":
-                self._retire(entry)
+            self._withdraw(entry, event_kind)
 
     def _start_next(self):
         while self.active is None and self.queue and not self.closed:
             entry = self.queue.popleft()
             signature = self._resolve_signature(entry)
-            if signature != entry["route"]["request_signature"]:
-                effects = self._event(entry, bake_policy.Event(
-                    "invalidate",
-                    current_signature=signature,
-                ))
-                if effects.action == "discard":
-                    self._retire(entry)
-                    continue
+            if (signature != entry["route"]["request_signature"]
+                    and self._withdraw(entry, "invalidate", signature)):
+                continue
             effects = self._event(entry, bake_policy.Event(
                 "start",
             ))
