@@ -985,6 +985,33 @@ native jobs from start to matching finish and protect image writes while
 those jobs run. Render preflight admits an exclusive main-thread scope for
 its own render lease when other activity permits it.
 
+## Live Linear vectorscope
+
+<a id="next-policy.vectorscope"></a>
+
+`src/runtime/vectorscope.py` schedules captures of a selected per-node Grade's
+Color input. A capture records the source, scene time, and any relevant
+viewport state. Changes to a source dependency advance its revision so an
+existing sample cannot satisfy the new capture demand. The runtime samples a
+small, loaded Compositor Image directly when its buffer preserves the evaluated
+values. The helper uses an isolated Compositor tree for processed inputs and
+Shader AOVs to capture pixel values using the active viewport projection.
+
+`src/runtime/vectorscope_policy.py` correlates capture and Linear analysis
+demand independently, which allows an exposure edit to reuse a matching sample.
+For completed captures, it passes the active ticket match, source match, exact
+capture match, and displayed generation comparison to `src/policy/vectorscope.py`.
+Only a completed analysis of matching samples can become current. A completed
+same-source result may update the plot while a newer capture is pending if it
+will preserve display ordering. Superseded failures have no display effect.
+An exact failure selects the visible unavailable state.
+
+The analysis applies the Grade's Linear correction and plots Rec.709 Cb/Cr
+density weighted by alpha. The focused tests check the histogram coordinates,
+sample filtering, and receipt ordering. The installed Blender tests exercise
+the Node Editor display through Linear edits, source changes, and playback.
+[Focused tests](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py) · [Installed Blender tests](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/tests/installed/test_vectorscope_native.py).
+
 ## How the proofs should be read
 
 The policy requirements are executable contracts, not a model of all Blender
@@ -1015,6 +1042,9 @@ behavior. For example:
 * `requirements/render_preflight.inv` proves scene/time correlation, exact
   publication signatures, and fail-closed mismatches. It does not prove
   Blender's live scene observations or exclusive host-scope premises.
+* `requirements/vectorscope.inv` proves when a capture completion can publish
+  a current plot, a lagging plot, or a visible failure. The runtime establishes
+  capture identity, completes density analysis, and applies the effect.
 * `requirements/bake.inv` proves bounded queue capacity, signature admission,
   current-input checks, stale-result discard, cancellation, publication and
   activation rollback, and the derived live/baked/error output policy.
@@ -1117,6 +1147,7 @@ runtime consumers.
 * Gesture coordination: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/gesture.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/gesture.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/gesture_coordinator.py).
 * Render preflight: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/render_preflight.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/render_preflight.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/publication.py), resolved from `nodes.py`.
 * Bake requests: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/bake.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/bake.inv) · [manager](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_manager.py) · [routes](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_routes.py) · [worker](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_worker.py) · [wrapper graph](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/bake_graph.py).
+* Linear vectorscope publication. [Policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/vectorscope.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/vectorscope.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/vectorscope.py).
 
 Regenerate the diagram assets and both English reading formats from the
 repository root with the declared Buck2 targets:
@@ -1151,6 +1182,8 @@ buck2 test //products/perceptual-grade-next-blender/tests:policy_bake \
   //products/perceptual-grade-next-blender/tests:bake_manager_runtime \
   //products/perceptual-grade-next-blender/tests:runtime_bake_routes \
   //products/perceptual-grade-next-blender/tests:bake_installed --remote-only
+buck2 test //products/perceptual-grade-next-blender/tests:vectorscope \
+  //products/perceptual-grade-next-blender/tests:vectorscope_native --remote-only
 ```
 
 These checks are deliberately scoped to `products/perceptual-grade-next-blender`.

@@ -29,10 +29,10 @@ class BakeHelperBackend:
         )
         self.probe = self.runtime.start_probe()
 
-    def create_job(self, inputs):
+    def create_job(self, inputs, *, operation="bake"):
         _require_main_thread()
         self._ensure_runtime()
-        return BakeHelperJob(self, inputs)
+        return BakeHelperJob(self, inputs, operation)
 
     def close(self):
         _require_main_thread()
@@ -45,9 +45,10 @@ class BakeHelperBackend:
 
 
 class BakeHelperJob:
-    def __init__(self, backend, inputs):
+    def __init__(self, backend, inputs, operation="bake"):
         self.backend = backend
         self.inputs = dict(inputs)
+        self.operation = operation
         self.handle = None
         self.cancelled = False
 
@@ -60,7 +61,7 @@ class BakeHelperJob:
             if not self.backend.probe.poll():
                 return None
             self.backend.probe.result()
-            self.handle = runtime.submit("bake", self.inputs)
+            self.handle = runtime.submit(self.operation, self.inputs)
         if not self.handle.poll():
             return None
         return self.handle.result()

@@ -30,6 +30,7 @@ MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
 _COMPOSITOR_OVERRIDES = frozenset(("compositor_device", "compositor_precision"))
+_IMAGE_LAYER_VIEW = frozenset(("layer", "view"))
 _COMPOSITOR_POINTWISE = frozenset((
     "CompositorNodeRGB", "CompositorNodeValue", "CompositorNodeMath", "CompositorNodeMixRGB",
 ))
@@ -192,8 +193,11 @@ def _rna_state(value, seen=None, depth=0, dependencies=None, dependency_seen=Non
                 entry, seen | {key}, depth + 1, dependencies, dependency_seen,
             ) for entry in item)
         else:
+            nested_exclude = (_IMAGE_LAYER_VIEW if name == "image_user"
+                              and prop.type == "POINTER" and exclude == _IMAGE_LAYER_VIEW
+                              else ())
             frozen = _rna_state(item, seen | {key}, depth + 1,
-                                dependencies, dependency_seen)
+                                dependencies, dependency_seen, exclude=nested_exclude)
         result.append((name, frozen))
     return tuple(result)
 
@@ -572,7 +576,7 @@ def _instance_observations(inventory):
 
 class _Walker:
     def __init__(self, host, scene, *, owner_kind, owner, full, compositor,
-                 compositor_locator, dependencies=None):
+                 compositor_locator, dependencies=None, allow_dynamic_images=False):
         self.host, self.scene, self.full = host, scene, full
         self.owner = (owner_kind, datablock_key(host, owner))
         self.compositor = compositor
@@ -592,6 +596,7 @@ class _Walker:
         self.render_observations = []
         self.coordinate_depth = 0
         self.unknown_compositor_extent = False
+        self.allow_dynamic_images = allow_dynamic_images
 
     def input(self, socket, parents, *, links=None):
         if links is None:
@@ -607,8 +612,11 @@ class _Walker:
             self.output(link.from_node, link.from_socket, parents)
 
     def _observe(self, node, output, parents, semantic=None):
+        # The enums have no valid item on ordinary single-layer, single-view images.
+        exclude = (_IMAGE_LAYER_VIEW if self.allow_dynamic_images
+                   and node.bl_idname == "CompositorNodeImage" else ())
         state = (_rna_state(node, dependencies=self.dependencies,
-                            dependency_seen=self.dependency_pointers)
+                            dependency_seen=self.dependency_pointers, exclude=exclude)
                  if semantic is None else semantic)
         self.graph.append((tuple(_semantic_identity(item) for item in parents), _semantic_identity(node),
                            node.bl_idname, _socket_name(output), state,
@@ -620,9 +628,30 @@ class _Walker:
                                "Bake source Image is unbound")
         image_identity = _identity(image)
         if image_identity not in self.image_states:
-            self.image_states[image_identity] = _image_state(
-                self.host, image, full=self.full,
-            )
+            if self.allow_dynamic_images and str(image.source) in {"MOVIE", "SEQUENCE"}:
+                if getattr(image, "use_multiview", False):
+                    raise RouteBlocked("source_multiview", "Vectorscope cannot capture multiview Images")
+                if getattr(image, "type", "IMAGE") != "IMAGE":
+                    raise RouteBlocked("source_multilayer", "Vectorscope cannot capture multilayer Images")
+                width, height = (int(value) for value in image.size)
+                if min(width, height) < 1:
+                    raise RouteBlocked("source_empty", "Vectorscope source Image has no dimensions")
+                state = (
+                    _semantic_identity(image), str(image.source),
+                    _absolute_path(self.host, getattr(image, "filepath", ""),
+                                   library=getattr(image, "library", None)),
+                    width, height, int(getattr(image, "frame_duration", 0)),
+                    int(getattr(image, "frame_start", 0)),
+                    int(getattr(image, "frame_offset", 0)),
+                    bool(getattr(image, "use_cyclic", False)),
+                    bool(getattr(image, "use_auto_refresh", False)),
+                    str(image.colorspace_settings.name), str(image.alpha_mode),
+                )
+                self.image_states[image_identity] = state, width, height
+            else:
+                self.image_states[image_identity] = _image_state(
+                    self.host, image, full=self.full,
+                )
             self._add_dependency(image)
         state, width, height = self.image_states[image_identity]
         self.image_pointers.add(_identity(image))
@@ -636,7 +665,8 @@ class _Walker:
                     image_key=datablock_key(self.host, image), width=width, height=height,
                     alpha_linked=alpha or bool(previous and previous[1]["alpha_linked"]),
                     interpolation=str(getattr(sampler, "interpolation", "Linear")),
-                    extension=str(getattr(sampler, "extension", "REPEAT")), baked=baked)
+                    extension=str(getattr(sampler, "extension", "REPEAT")), baked=baked,
+                    dynamic=str(image.source) in {"MOVIE", "SEQUENCE"})
         if self.owner[0] == "compositor":
             item.update(self.compositor_locator)
         self.images[key] = (state, item)
@@ -1068,6 +1098,218 @@ def describe(node, context=None, *, dependencies=None, upstream_grades=None):
     """
     return _describe(node, context, full=True, dependencies=dependencies,
                      upstream_grades=upstream_grades)
+
+
+def _vectorscope_size(width, height):
+    width, height = int(width), int(height)
+    if min(width, height) < 1:
+        raise RouteBlocked("dimensions", "Vectorscope capture has no pixel domain")
+    scale = min(1.0, 512 / max(width, height))
+    return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
+
+
+def _vectorscope_geometry_observation(obj):
+    mesh = getattr(obj, "data", None)
+    is_mesh = getattr(obj, "type", None) == "MESH" and mesh is not None
+    layers = tuple((str(layer.name), len(layer.data), bool(layer.active_render))
+                   for layer in getattr(mesh, "uv_layers", ())) if is_mesh else ()
+    return (
+        _semantic_identity(obj), _semantic_identity(mesh),
+        bool(getattr(obj, "hide_render", False)),
+        (len(mesh.vertices), len(mesh.loops), len(mesh.polygons), layers) if is_mesh else None,
+        tuple(tuple(float(value) for value in row)
+              for row in getattr(obj, "matrix_world", ())),
+        tuple(_rna_state(item) for item in getattr(obj, "modifiers", ())),
+        tuple(_semantic_identity(item.material) for item in getattr(obj, "material_slots", ())),
+    )
+
+
+def _vectorscope_structural_graph(graph, images):
+    structure = []
+    for item in graph:
+        if len(item) == 6 and item[0] == "input":
+            _kind, parents, node, socket, _default, links = item
+            structure.append(("input", parents, node, socket, links))
+        elif len(item) == 4 and item[2] == "muted":
+            structure.append(item)
+        elif len(item) == 3 and item[1] == "baked_sampling":
+            structure.append(item)
+        elif len(item) >= 4 and isinstance(item[0], tuple) and isinstance(item[2], str):
+            parents, node, kind, output = item[:4]
+            structure.append((parents, node, kind, output))
+        else:
+            structure.append(item[:2] if len(item) >= 2 else item)
+    image_sources = tuple(
+        (tuple(descriptor["image_key"]), descriptor.get("node_name"),
+         descriptor.get("group_path"), bool(descriptor.get("dynamic")))
+        for _state, descriptor in images
+    )
+    return tuple(structure), image_sources
+
+
+def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None,
+                         upstream_grades=None):
+    """Freeze one per-node Grade input capture and its render-domain identity."""
+    import bpy
+
+    tree_type = getattr(getattr(node, "id_data", None), "bl_idname", None)
+    if getattr(node, "bl_idname", None) not in PER_NODE_TYPES:
+        raise RouteBlocked("target", "Vectorscope is available only for per-node Grades")
+    if tree_type not in {"ShaderNodeTree", "CompositorNodeTree"}:
+        raise RouteBlocked("target", "Vectorscope requires a Shader or Compositor Grade")
+    color = node.inputs.get("Color")
+    if color is None or color.type != "RGBA":
+        raise RouteBlocked("input", "Per-node Grade has no Color input")
+
+    context = context or bpy.context
+    kind, owner, scene, parents, locator = _owner(bpy, node, context)
+    compositor = kind == "compositor"
+    selected_view = None if viewport is None else dict(viewport)
+    layer = (scene.view_layers.get(selected_view.get("view_layer", ""))
+             if selected_view is not None else None)
+    if layer is None:
+        context_layer = getattr(context, "view_layer", None)
+        layer = (scene.view_layers.get(getattr(context_layer, "name", ""))
+                 or (scene.view_layers[0] if scene.view_layers else None))
+    if layer is None:
+        raise RouteBlocked("view_layer", "Vectorscope scene has no active view layer")
+
+    if compositor:
+        percentage = int(scene.render.resolution_percentage)
+        requested = (
+            max(1, int(scene.render.resolution_x * percentage / 100)),
+            max(1, int(scene.render.resolution_y * percentage / 100)),
+        )
+        width, height = _vectorscope_size(*requested)
+        view = dict(
+            source="compositor", scene=str(scene.name), frame=int(scene.frame_current),
+            frame_subframe=float(scene.frame_subframe), view_layer=str(layer.name),
+            engine=str(scene.render.engine), width=width, height=height,
+        )
+    else:
+        if selected_view is None or selected_view.get("source") != "viewport":
+            raise RouteBlocked("viewport", "Shader vectorscope needs an active 3D viewport")
+        if selected_view.get("scene") not in (None, str(scene.name)):
+            raise RouteBlocked("scene", "Shader vectorscope viewport belongs to another scene")
+        if not all(name in selected_view for name in (
+                "view_matrix", "projection_matrix", "clip_start", "clip_end")):
+            raise RouteBlocked("viewport", "Shader vectorscope viewport projection is incomplete")
+        width, height = _vectorscope_size(selected_view.get("width", 0),
+                                         selected_view.get("height", 0))
+        view = dict(selected_view)
+        view.update(viewport_width=int(selected_view["width"]),
+                    viewport_height=int(selected_view["height"]))
+        view.update(scene=str(scene.name), frame=int(scene.frame_current),
+                    frame_subframe=float(scene.frame_subframe),
+                    view_layer=str(layer.name), engine=str(scene.render.engine),
+                    width=width, height=height)
+
+    collected_dependencies = []
+    walker = _Walker(
+        bpy, scene, owner_kind=kind, owner=owner, full=False,
+        compositor=compositor, compositor_locator=locator,
+        dependencies=collected_dependencies, allow_dynamic_images=True,
+    )
+    walker.input(color, parents)
+    alpha = node.inputs.get("Alpha") if not compositor else None
+    if alpha is not None:
+        walker.input(alpha, parents)
+    walker._add_dependency(node.id_data)
+    for parent in parents:
+        walker._add_dependency(parent.id_data)
+    input_graph = tuple(walker.graph)
+    input_images = tuple((state, descriptor) for state, descriptor in walker.images.values())
+    if not compositor:
+        owner_tree = getattr(owner, "node_tree", None)
+        walker._add_dependency(owner)
+        walker._add_dependency(owner_tree)
+        walker._add_dependency(scene)
+        inventory = shader_scene_inventory(scene, view_layers=(layer,))
+        visible_names = view.get("visible_objects")
+        visible_names = None if visible_names is None else set(visible_names)
+        objects = tuple(obj for obj in inventory.objects
+                        if visible_names is None or obj.name in visible_names)
+        for obj in objects:
+            walker._add_dependency(obj)
+            walker._add_dependency(getattr(obj, "data", None))
+        for collection in inventory.collections:
+            walker._add_dependency(collection)
+        for _owner_kind, scene_owner in inventory.owners:
+            walker._add_dependency(scene_owner)
+            walker._add_dependency(getattr(scene_owner, "node_tree", None))
+        scene_observation = (
+            _semantic_identity(scene),
+            _rna_state(scene.render, exclude=_COMPOSITOR_OVERRIDES),
+            _rna_state(getattr(scene, "cycles", None)),
+            _rna_state(getattr(scene, "eevee", None)),
+            _instance_observations(inventory),
+            tuple(_vectorscope_geometry_observation(obj) for obj in objects),
+            tuple((layer.name, bool(layer.use),
+                   _semantic_identity(getattr(layer, "material_override", None)),
+                   _semantic_identity(getattr(layer, "world_override", None)))
+                  for layer in inventory.view_layers),
+            tuple((_semantic_identity(scene_owner),
+                   _rna_state(scene_owner, exclude={"node_tree"}))
+                  for _owner_kind, scene_owner in inventory.owners),
+        )
+    else:
+        scene_observation = (
+            _semantic_identity(scene),
+            _rna_state(scene.render, exclude=_COMPOSITOR_OVERRIDES),
+            tuple(walker.render_observations),
+        )
+
+    still_images = tuple(
+        descriptor for _state, descriptor in walker.images.values()
+        if not descriptor.get("dynamic")
+    )
+    dynamic_images = tuple(
+        descriptor for _state, descriptor in walker.images.values()
+        if descriptor.get("dynamic")
+    )
+    object_value = getattr(context, "object", None)
+    if isinstance(context, Mapping) and context.get("object_key") is not None:
+        object_value = route_datablock(bpy, bpy.data.objects, context, "object")
+    object_key = None
+    if object_value is not None and any(_same(object_value, item) for item in scene.objects):
+        object_key = datablock_key(bpy, object_value)
+        walker._add_dependency(object_value)
+        walker._add_dependency(getattr(object_value, "data", None))
+
+    if dependencies is not None:
+        existing = {_identity(item) for item in dependencies}
+        for item in collected_dependencies:
+            key = _identity(item)
+            if key not in existing:
+                existing.add(key)
+                dependencies.append(item)
+    if upstream_grades is not None:
+        existing = {_identity(item) for item in upstream_grades}
+        upstream_grades.extend(grade for key, grade in walker.upstream_grades.items()
+                               if key not in existing)
+
+    route = dict(
+        schema=1, scene=str(scene.name), scene_key=datablock_key(bpy, scene),
+        frame=int(scene.frame_current), subframe=float(scene.frame_subframe),
+        owner_kind=kind, owner_name=str(owner.name), owner_key=datablock_key(bpy, owner),
+        group_path=tuple(str(item.name) for item in parents), node_name=str(node.name),
+        socket_name="Color", root_key=locator.get("root_key"),
+        effect_name=locator.get("effect_name"), object_key=object_key,
+        width=width, height=height, view=view, images=still_images,
+        dynamic_images=dynamic_images,
+    )
+    structural_graph, image_sources = _vectorscope_structural_graph(input_graph, input_images)
+    source_observation = (
+        "pg-vectorscope-source-v1", kind, route["owner_key"], route["root_key"],
+        route["effect_name"], route["group_path"], _semantic_identity(node),
+        structural_graph, image_sources,
+    )
+    route["source_signature"] = _digest(source_observation)
+    route["capture_signature"] = _digest((
+        "pg-vectorscope-capture-v1", route["source_signature"],
+        route["frame"], route["subframe"], view, scene_observation, input_graph, input_images,
+    ))
+    return route
 
 
 def preview(node, context=None, *, dependencies=None):

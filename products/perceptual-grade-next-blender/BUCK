@@ -582,6 +582,25 @@ invariant_proof(
     visibility = ["PUBLIC"],
 )
 
+invariant_proof(
+    name = "proof_vectorscope",
+    required_mutations = [
+        "unmatched_receipt_is_admitted",
+        "superseded_capture_overwrites_newer_display",
+    ],
+    required_properties = [
+        "unmatched_or_different_source_receipt_is_inert",
+        "current_requires_exact_success",
+        "superseded_success_cannot_overwrite_newer_display",
+        "only_exact_failure_is_visible",
+    ],
+    required_witnesses = ["lagging_same_source_preview_is_reachable"],
+    requirements = "requirements/vectorscope.inv",
+    runtime_source = "policy/vectorscope.py",
+    source = POLICY_PREFIX + "vectorscope.py",
+    visibility = ["PUBLIC"],
+)
+
 POLICY_PROOFS = [
     ":proof_color_authoring",
     ":proof_bake",
@@ -592,6 +611,7 @@ POLICY_PROOFS = [
     ":proof_resources",
     ":proof_gesture",
     ":proof_render_preflight",
+    ":proof_vectorscope",
 ]
 
 verification_group(

@@ -1,8 +1,24 @@
 # Goal: Stage 3 for Next Blender
 
-Implement the reference Stage 3 math in `products/perceptual-grade-next-blender`, including the full numeric controls, and keep the Perceptual Grade handbook aligned with current Next behavior.
+## Live Linear vectorscope
+
+Implement a live, read-only vectorscope in the Linear Gizmo for selected per-node Shader and Compositor Grades in `products/perceptual-grade-next-blender`.
+
+The scope captures the selected Grade's `Color` input, applies that node's evaluated Linear correction, then displays Rec.709 Cb/Cr sample density with a circular guide, center axes, and labeled RGB/CMY targets. It excludes Tone and Color stages and does not add source-white dragging.
+
+Support direct Image sampling when it preserves evaluated input semantics, isolated Compositor capture for processed inputs, and active-viewport AOV capture for Shader inputs. Refresh for Linear edits and scene/source pixel changes. During playback, retain the last complete plot with an `Updating` status while newer demands are pending, discard superseded captures, and converge on the latest frame.
+
+Keep scope state transient. Mark a plot current only when it matches the latest demand. Show an unavailable status when the capture context or evaluation cannot be resolved.
+
+The vectorscope uses a single-color density plot with Rec.709 guides. Small loaded, compatible Compositor Images can be sampled directly. Processed Compositor inputs and Shader surfaces use isolated capture. During playback, those captures can lag behind the timeline and the display shows `Updating` until the current frame is ready.
+
+Buck2 remote-only run `57738ffc-1048-4fcf-a30c-633ee9e468da` passed both installed Blender cases. They cover direct Image sampling without a helper process, Linear edits, image pixel edits, processed Compositor Transform capture, playback convergence, and Shader UV edits through the active viewport. Run `db73ccfe-ceab-4053-af9c-691df4d21565` passed the focused vectorscope, Bake routes, policy verifier, and Technical Report tests. Final scoped run `c1963fc7-936a-444a-843a-c8645d0d0932` passed seven Next test targets including architecture, packaging, policy coverage, localization, Bake worker, Technical Report, and handbook checks. Remote build `6715a3ed-f682-4a8d-9b8d-9e10d4f84ace` passed both `verify_policies` and the extension target. All validation used remote execution with zero local commands.
+
+The pre-PR CI run initially passed 64 of 67 Next test targets. The follow-up makes repeated add-on registration reuse the active scope runtime, drains queued undo reconciliation before the GUI fixture creates its peer Grade, and reads the parameter-reader marker from its defining module in the render-preflight fixture. Both selected builds and all 67 selected tests passed after the repairs in Buck2 remote-only runs `6f373210-5d28-42e1-bf76-b2e9f0ca20e5` and `5d91944c-0b10-47a5-909d-1e6a3f6bbb1d`. The formatting and target selection receipts are recorded in CHECKLIST.md.
 
 ## Current status
+
+Implement the reference Stage 3 math in `products/perceptual-grade-next-blender`, including the full numeric controls, and keep the Perceptual Grade handbook aligned with current Next behavior.
 
 2026-11-18 main CI follow-up is implemented and remotely verified. GitHub run `44146241261` on merged commit `5a2cf26636c1` passed both builds and 62/66 test targets. The repair restores the isolated Color fixture's required `J_A`, makes custom hue/Adaptance reset and rollback storage-aware, and gives diagram Chromium a private short temporary root. The first broad remote pass (`75d35ef8`) passed 64/66 and exposed a conversion fixture that asserted readiness before asynchronous preparation finished, plus a live compositor timeout after four of 18 rows. The fixture now drains preparation before asserting; the compositor harness bounds Blender and llvmpipe to two threads and preserves any failure report. No thresholds, timeouts, normal-exit checks, or CI targets were relaxed.
 

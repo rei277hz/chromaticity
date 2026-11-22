@@ -356,6 +356,17 @@ def _configure_linear(scene):
         pass
 
 
+def _disable_file_outputs():
+    import bpy
+
+    for tree in tuple(bpy.data.node_groups):
+        if tree.bl_idname != "CompositorNodeTree":
+            continue
+        for node in tuple(tree.nodes):
+            if node.bl_idname == "CompositorNodeOutputFile":
+                tree.nodes.remove(node)
+
+
 def _plane(scene):
     import bpy
 
@@ -726,11 +737,7 @@ class BakeWorker:
             import bpy
 
             # Saved output nodes must never write to a user's file paths.
-            for tree in tuple(bpy.data.node_groups):
-                if tree.bl_idname == "CompositorNodeTree":
-                    for node in tuple(tree.nodes):
-                        if node.bl_idname == "CompositorNodeOutputFile":
-                            tree.nodes.remove(node)
+            _disable_file_outputs()
             scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
             if scene is not None and bpy.context.window is not None:
                 bpy.context.window.scene = scene
@@ -740,6 +747,11 @@ class BakeWorker:
             if domain == "COMPOSITOR":
                 return _compositor(inputs, context)
             return _shader(inputs, context)
+        if operation == "vectorscope_capture":
+            from .vectorscope_capture import capture
+
+            context.checkpoint()
+            return capture(inputs, context)
         raise ValueError("Unknown Bake helper operation: " + str(operation))
 
 

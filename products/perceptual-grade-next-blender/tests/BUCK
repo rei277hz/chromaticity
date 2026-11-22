@@ -1338,6 +1338,46 @@ python_test(
     }),
 )
 
+python_test(
+    name = "vectorscope",
+    srcs = ["runtime/test_vectorscope.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+    },
+    deps = ["//third_party:numpy"],
+)
+
+python_test(
+    name = "vectorscope_native",
+    srcs = [
+        "installed/gui_support.py",
+        "installed/test_vectorscope_native.py",
+    ],
+    base_module = "tests.perceptual_grade_blender",
+    labels = [
+        "installed",
+        "gui",
+        "gpu",
+        "acceptance",
+    ],
+    resources = select({
+        "prelude//os:linux": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "vectorscope_runner.py": "installed/vectorscope_runner.py",
+            "vectorscope_shader_runner.py": "installed/vectorscope_shader_runner.py",
+            "xvfb": "//third_party:xvfb_software_linux",
+        },
+        "prelude//os:macos": {
+            "blender": "//third_party:blender_native",
+            "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+            "vectorscope_runner.py": "installed/vectorscope_runner.py",
+            "vectorscope_shader_runner.py": "installed/vectorscope_shader_runner.py",
+        },
+    }),
+)
+
 # Installed compatibility coverage on Blender 5.2.4.
 python_test(
     name = "installed_lts",

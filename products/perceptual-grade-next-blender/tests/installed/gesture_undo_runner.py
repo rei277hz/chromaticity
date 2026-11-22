@@ -246,6 +246,10 @@ color = current_node().pg_grade.pg_color
 assert (color.j_a_1, color.j_b_1) == (0.0, 0.0)
 del color
 
+# Scripted undo leaves reconciliation queued until Blender returns to its event loop.
+assert nodes._undo_redo_reconcile_tick() is None
+assert not nodes._lifecycle.reset_pending
+
 # Reconciliation is idempotent, and independent nodes share the same immutable
 # fallback. Removing either reader must preserve the ID held by undo history.
 node = current_node()

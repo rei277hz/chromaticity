@@ -64,6 +64,8 @@
     "//products/perceptual-grade-next-blender/tests:bake_installed",
     "//products/perceptual-grade-next-blender/tests:bake_workspace_installed",
     "//products/perceptual-grade-next-blender/tests:compositor_gui",
+    "//products/perceptual-grade-next-blender/tests:vectorscope",
+    "//products/perceptual-grade-next-blender/tests:vectorscope_native",
     "//products/perceptual-grade-next-blender/tests:compositor_carriers",
     "//products/perceptual-grade-next-blender/tests:gesture_undo_gui",
     "//products/perceptual-grade-next-blender/tests:gesture_drag_gui",

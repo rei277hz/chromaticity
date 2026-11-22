@@ -105,15 +105,18 @@ horizontal movement for `a` and vertical movement for `b`.
   grading and animation data intact. If a future importer reads legacy Gizmo
   focus, it can map saved J or C focus to the matching opponent layer.
 
-## Waveform and vectorscope
+## Linear vectorscope
 
-Both plots analyze the selected node's output. While editing a Stack entry,
-they show the output of the entire Stack, including enabled entries after the
-selected one. With Use Bake enabled, sample the bound image and show the same
-freshness warning as the node. The plots can therefore stay still while a drag
-changes the authored Grade behind a bake.
+Select a per-node Shader or Compositor Grade and toggle **Vectorscope** in the
+Linear sidebar. The plot samples the Grade's `Color` input after applying its
+evaluated Linear correction. It displays Rec.709 Cb/Cr density in a single
+color with a circular guide, center axes, and labeled RGB/CMY targets.
 
-While a new capture of the same output is pending, display the last complete
-plots with an **Updating** label. Clear the plots when the user selects a
-different output. Publish a capture only if it still matches the current
-selection and the most recent demand for that output.
+The Compositor scope samples compatible loaded Image buffers directly and
+evaluates processed sources in an isolated copy. The Shader scope samples
+visible surfaces through AOVs using the last-used 3D
+viewport in the same window. It uses the largest viewport when none has been
+used. The scope updates for Linear controls, current frame, source pixels,
+geometry, and viewport changes. During playback, a complete capture of the
+same source can remain visible with **Updating** as newer frames are captured.
+Capture failures and unavailable contexts appear in the scope.
