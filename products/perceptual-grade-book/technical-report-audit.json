@@ -139,7 +139,7 @@
     {
       "path": "development/next-policies.md",
       "scope": "next",
-      "review": "Documents current Next policy machines and adapters, including Color authoring claims/effects, signature/undo separation, frame/Peak lifecycle, and the existing resource policy's undo-retention branch. Describes six manifest-validated persistent fallback variants, policy-authorized fake-user protection, retained historical helpers, and failed-unpublished cleanup; resource state/sequence diagrams include retention. Scalar proof boundaries remain separate from numerical and native lifetime acceptance. Existing coverage includes complete five-role Stage 2/3 publication, fixed schema 6 Adaptance storage, fresh link indexing, compositor recalculation, exact template receipts and measured assets, finite routing, semantic J_A carry, conditional legal projection, and native Image/UV bake freshness. Defines explicit custom-RNA backing-key presence and reset/rollback restoration inside existing authoring boundaries.",
+      "review": "Documents current Next policy machines and adapters, including Color authoring claims/effects, signature/undo separation, frame/Peak lifecycle, and the existing resource policy's undo-retention branch. Describes six manifest-validated persistent fallback variants, policy-authorized fake-user protection, retained historical helpers, and failed-unpublished cleanup; resource state/sequence diagrams include retention. Scalar proof boundaries remain separate from numerical and native lifetime acceptance. Existing coverage includes complete five-role Stage 2/3 publication, fixed schema 6 Adaptance storage, fresh link indexing, compositor recalculation, exact template receipts and measured assets, finite routing, semantic J_A carry, conditional legal projection, and native Image/UV bake freshness. Defines explicit custom-RNA backing-key presence and reset/rollback restoration inside existing authoring boundaries. Adds the live Linear vectorscope policy, capture gate, Rec.709 density analysis, source invalidation, and superseded-result evidence.",
       "evidence": [
         "products/perceptual-grade-next-blender/src/policy/color_authoring.py",
         "products/perceptual-grade-next-blender/requirements/color_authoring.inv",
@@ -169,7 +169,13 @@
         "products/perceptual-grade-next-blender/tests/runtime/test_bake_routes.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_bake_manager.py",
         "products/perceptual-grade-next-blender/tests/installed/runner.py",
-        "products/perceptual-grade-next-blender/tests/installed/stack_ui_checks.py"
+        "products/perceptual-grade-next-blender/tests/installed/stack_ui_checks.py",
+        "products/perceptual-grade-next-blender/src/policy/vectorscope.py",
+        "products/perceptual-grade-next-blender/src/runtime/vectorscope.py",
+        "products/perceptual-grade-next-blender/src/runtime/vectorscope_capture.py",
+        "products/perceptual-grade-next-blender/src/vectorscope.py",
+        "products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py",
+        "products/perceptual-grade-next-blender/tests/installed/test_vectorscope_native.py"
       ],
       "remaining_work": []
     },
@@ -520,6 +526,19 @@
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_render_preflight.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_publication.py"
+      ]
+    },
+    {
+      "anchor": "next-policy.vectorscope",
+      "kind": "production",
+      "sources": [
+        "products/perceptual-grade-next-blender/src/policy/vectorscope.py",
+        "products/perceptual-grade-next-blender/src/runtime/vectorscope.py",
+        "products/perceptual-grade-next-blender/src/runtime/vectorscope_policy.py"
+      ],
+      "evidence": [
+        "products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py",
+        "products/perceptual-grade-next-blender/tests/installed/test_vectorscope_native.py"
       ]
     }
   ]

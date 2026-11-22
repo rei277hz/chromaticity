@@ -95,7 +95,8 @@ from .runtime import bake_controller
 from .runtime.lifecycle import LifecycleCoordinator
 from .runtime import bake_routes
 from .runtime.bank_publication import run_bank_publication
-from . import localization
+from .runtime.vectorscope import ScopeRuntime
+from . import localization, vectorscope_ui
 
 
 SHADER_TREE = "ShaderNodeTree"
@@ -294,6 +295,7 @@ def _bake_tick():
 
 
 def invalidate_source(image):
+    vectorscope_ui.invalidate(None, (image,))
     return _bake.invalidate_source(image)
 
 
@@ -3622,6 +3624,9 @@ class PG_OT_gesture_router(bpy.types.Operator):
             return {"PASS_THROUGH"}
         if admission == "stale":
             return {"CANCELLED", "PASS_THROUGH"}
+        if (event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
+                or (event.type.endswith("MOUSE") and event.value == "PRESS")):
+            vectorscope_ui.remember_viewport(context.window, event.mouse_x, event.mouse_y)
         if _gesture_token(self.window_key) in _color_gestures:
             return {"PASS_THROUGH"}
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
@@ -3982,7 +3987,7 @@ def _undo_redo_pre(*_args):
 def _begin_lifecycle_change():
     failures = _lifecycle.begin((
         _cancel_color_gestures, _clear_gestures, _bake.withdraw_all,
-        _invalidate_node_stores,
+        vectorscope_ui.reset, _invalidate_node_stores,
     ))
     for error in failures:
         print("Perceptual Grade lifecycle cleanup failed:", error)
@@ -4317,6 +4322,17 @@ def _depsgraph_update_post(_scene, _depsgraph=None):
     # Images, Mesh geometry and Object transforms invalidate their readers.
     # Object geometry-only updates also arise from material/selector changes.
     changed_ids = []
+    scope_ids = []
+    scope_types = tuple(
+        value for value in (
+            getattr(bpy.types, name, None) for name in (
+                "Image", "Object", "Mesh", "Curve", "Curves", "PointCloud",
+                "Volume", "Camera", "Light", "Collection", "Scene", "NodeTree",
+                "Material", "World",
+            )
+        )
+        if value is not None
+    )
     if _depsgraph is not None:
         try:
             for update in _depsgraph.updates:
@@ -4331,10 +4347,16 @@ def _depsgraph_update_post(_scene, _depsgraph=None):
                     geometry = getattr(update, "is_updated_geometry", None)
                     if geometry is None or geometry:
                         changed_ids.append(identifier)
+                if isinstance(identifier, scope_types):
+                    original = getattr(identifier, "original", None)
+                    scope_ids.append(identifier if original is None else original)
         except (AttributeError, ReferenceError, RuntimeError, TypeError):
             changed_ids = []
+            scope_ids = []
     if changed_ids and not _bake.restoring:
         _bake.mark_sources(changed_ids)
+    if scope_ids and not _bake.restoring:
+        vectorscope_ui.invalidate(_scene, scope_ids)
     try:
         working_space = _working_space()
     except Exception as error:
@@ -4358,6 +4380,8 @@ def _linear_changed(settings, _context):
         return
 
     if _is_per_node_grade_node(holder):
+        if not _frame_change_active:
+            vectorscope_ui.linear_changed(holder)
         _per_node_grade_changed(holder)
         return
 
@@ -4475,6 +4499,7 @@ def _assign_values(node, values):
         with _suspend(settings):
             for name, value in values.items():
                 setattr(settings, name, value)
+        vectorscope_ui.linear_changed(node)
         _per_node_grade_changed(node)
         return
     if not _is_shared_grade_node(node) or node.pg_grade is None:
@@ -5717,6 +5742,8 @@ class PG_PT_linear(bpy.types.Panel):
         layout.prop(settings, "cr_heading", slider=True)
         layout.prop(settings, "yb_heading", slider=True)
         layout.operator(PG_OT_reset_directions.bl_idname, icon="LOOP_BACK")
+        if _is_per_node_grade_node(node):
+            vectorscope_ui.draw_toggle(layout, context, node)
 
 
 class PG_PT_tone(bpy.types.Panel):
@@ -6137,6 +6164,20 @@ def _unregister_handlers():
         ]
 
 
+def _scope_upstream_ready(grades):
+    if _lifecycle.changing or _lifecycle.reset_pending or _frame_change_active:
+        return False
+    if not grades:
+        return True
+    signatures = {node.as_pointer(): _settings_signature_for(node) for node in grades}
+    if any(signature is None for signature in signatures.values()):
+        raise RuntimeError("Could not read evaluated upstream Grade settings")
+    current, error = _animation_outputs_current(grades, signatures)
+    if error is not None:
+        raise RuntimeError(error)
+    return current
+
+
 def register():
     global _preparation_runtime, _grade_preparer, _grade_resources
     retrying_preparation_runtime = (
@@ -6215,6 +6256,10 @@ def register():
                     menu_type.append(callback)
                 _registered_menus.append(record)
         _register_handlers()
+        vectorscope_ui.register(ScopeRuntime(
+            bpy, _bake.manager._snapshot, _linear_settings, _working_space,
+            gate=_bake.gate, upstream_ready=_scope_upstream_ready,
+        ))
         if not bpy.app.timers.is_registered(_startup_reconcile_tick):
             bpy.app.timers.register(_startup_reconcile_tick, first_interval=0.1)
         _ensure_gesture_router_timer()
@@ -6243,11 +6288,15 @@ def unregister():
         # acknowledge existing readers and make a later retry safe.
         _grade_resources.gate.reset()
     # Retain request ownership and callbacks if the helper has not retired.
+    errors = []
+    try:
+        vectorscope_ui.unregister()
+    except Exception as exc:
+        errors.append(exc)
     _bake.close()
     if _preparation_runtime is not None:
         _preparation_runtime.close()
         _preparation_runtime = None
-    errors = []
     _clear_gestures()
     try:
         if bpy.app.timers.is_registered(_render_preflight_tick):

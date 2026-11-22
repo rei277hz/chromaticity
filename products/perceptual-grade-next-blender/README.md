@@ -21,8 +21,8 @@ behavior and retains a clearly labeled legacy 1.23.2 ZIP link. Stage 3 supplies
 numeric J, C, Adaptance, and Warp controls; the draggable Warp diagram is deferred.
 Warp hue is displayed as its stored degree offset. All Grade paths follow the
 reference's Adaptance → H–K repair → common positive Scale order.
-The [Stage 3 Color Gizmo design](docs/GIZMO_DESIGN.md) describes a future
-graphical editor for the J and C controls.
+The [Gizmo design](docs/GIZMO_DESIGN.md) describes the Linear vectorscope and
+the planned graphical editor for the J and C controls.
 
 Adaptance drags use 0.01 increments and tonal soft spans of ±4, ±10, ±20,
 and ±25. Finite requests beyond the physical response domain are limited

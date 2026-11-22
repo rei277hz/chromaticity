@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["new"],
+  "step": "step",
+  "invariants": {},
+  "properties": [
+    {
+      "name": "unmatched_or_different_source_receipt_is_inert",
+      "variables": {"state": "State", "event": "Event"},
+      "assume": ["not state.active or not state.same_source"],
+      "assert": "step(state, event) == (state, Effects())"
+    },
+    {
+      "name": "current_requires_exact_success",
+      "variables": {"state": "State", "event": "Event"},
+      "lets": {"effects": "step(state, event)[1]"},
+      "assert": "effects.current == (state.active and state.same_source and state.exact and event.success) and (not effects.current or effects.publish)"
+    },
+    {
+      "name": "superseded_success_cannot_overwrite_newer_display",
+      "variables": {"state": "State"},
+      "assume": ["not state.exact", "state.display_newer"],
+      "assert": "step(state, Event(True))[1] == Effects()"
+    },
+    {
+      "name": "only_exact_failure_is_visible",
+      "variables": {"state": "State", "event": "Event"},
+      "lets": {"effects": "step(state, event)[1]"},
+      "assert": "effects.fail == (state.active and state.same_source and state.exact and not event.success) and (event.success or not effects.publish)"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "lagging_same_source_preview_is_reachable",
+      "assert": "publication(True, True, True, False, False) == Effects(True, False, False)"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "unmatched_receipt_is_admitted",
+      "function": "step",
+      "target": "not state.active or not state.same_source",
+      "replacement": "False",
+      "detects": ["property.unmatched_or_different_source_receipt_is_inert"]
+    },
+    {
+      "name": "superseded_capture_overwrites_newer_display",
+      "function": "step",
+      "target": "state.exact or not state.display_newer",
+      "replacement": "True",
+      "detects": ["property.superseded_success_cannot_overwrite_newer_display"]
+    }
+  ]
+}

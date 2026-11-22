@@ -1,5 +1,18 @@
 # Implementation Checklist
 
+## Live Linear vectorscope
+
+- [x] Inspect Next's node, runtime, Gizmo, policy, and test architecture and current worktree state.
+- [x] Design transient capture demand/result correlation and live invalidation for per-node Shader and Compositor Grades.
+- [x] Wire the Linear panel toggle, lifecycle reset, and source invalidation through the installed add-on.
+- [x] Implement input capture, Linear-only Rec.709 density analysis, and vectorscope drawing/status in the Linear Gizmo.
+- [x] Sample compatible loaded Images directly and preserve isolated evaluation for processed Compositor and UV-driven Shader inputs.
+- [x] Pass the focused vectorscope, Bake routes, policy verifier, and Technical Report tests through Buck2 `--remote-only` (`db73ccfe-ceab-4053-af9c-691df4d21565`).
+- [x] Pass the installed Blender cases for Image/Linear edits, Compositor Transform, playback convergence, and Shader UV edits (`57738ffc-1048-4fcf-a30c-633ee9e468da`).
+- [x] Update the Gizmo design and Technical Report. Include both vectorscope test targets and the publication proof in Next CI.
+- [x] Pass the final Next architecture, policy-coverage, package, localization, Bake worker, Technical Report, and handbook targets in `c1963fc7-936a-444a-843a-c8645d0d0932` (seven test targets, 51 commands with 10 remote and zero local).
+- [x] Build `verify_policies` and the extension in `6715a3ed-f682-4a8d-9b8d-9e10d4f84ace` with `--remote-only`.
+
 Update this checklist as work progresses. Validation and formatting must remain scoped to `products/perceptual-grade-next-blender`, and executable checks must use Buck2 with `--remote-only`.
 
 ## Main CI follow-up — verified

@@ -1004,6 +1004,47 @@ class BakeRouteTests(unittest.TestCase):
         self.assertIsNone(route["width"])
         self.assertIsNone(route["height"])
 
+    def test_vectorscope_compositor_image_skips_only_invalid_layer_view_enums(self):
+        def properties(**fields):
+            return tuple(SimpleNamespace(identifier=name, is_readonly=False, type=kind)
+                         for name, kind in fields.items())
+
+        class InvalidImageEnums:
+            @property
+            def layer(self):
+                raise AssertionError("Invalid Image layer enum was read")
+
+            @property
+            def view(self):
+                raise AssertionError("Invalid Image view enum was read")
+
+        class ImageUser(InvalidImageEnums):
+            bl_rna = SimpleNamespace(properties=properties(layer="ENUM", view="ENUM", frame_offset="INT"))
+            frame_offset = 3
+
+        class CompositorImage(InvalidImageEnums, Node):
+            pass
+
+        tree = Tree("Compositor", "CompositorNodeTree")
+        self.scene.compositing_node_group = tree
+        self.scene.view_layers = Collection((ID("View Layer"),))
+        target = self.make_grade(tree, kind="PGCompositorGradePerNode")
+        target.inputs.get("Color").type = "RGBA"
+        user = ImageUser()
+        source = CompositorImage(tree, "CompositorNodeImage", outputs=(("Image", None),),
+                                 image=Image(source="SEQUENCE"), image_user=user,
+                                 bl_rna=SimpleNamespace(properties=properties(
+                                     layer="ENUM", view="ENUM", image_user="POINTER")))
+        link(source, "Image", target, "Color")
+        context = SimpleNamespace(scene=self.scene, object=None,
+                                  space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
+
+        before = self.module.describe_vectorscope(target, context)
+        user.frame_offset += 1
+        after = self.module.describe_vectorscope(target, context)
+        self.assertEqual(before["source_signature"], after["source_signature"])
+        self.assertNotEqual(before["capture_signature"], after["capture_signature"])
+
     def test_saved_compositor_bake_resolves_original_effect_after_selection(self):
         tree = Tree("Bake Graph", "CompositorNodeTree")
         target = self.make_grade(tree)

@@ -1,0 +1,103 @@
+"""Exercise the installed Linear vectorscope through its node-editor toggle."""
+
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import tempfile
+import unittest
+import zipfile
+
+from importlib.resources import files
+
+from .gui_support import virtual_display
+
+
+def log_tail(path, limit=16_000):
+    with path.open("rb") as stream:
+        size = stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, size - limit))
+        return stream.read().decode(errors="replace")
+
+
+class VectorscopeNativeTests(unittest.TestCase):
+    def run_installed_case(self, runner_name):
+        resources = files("tests.perceptual_grade_blender")
+        blender_root = Path(str(resources / "blender")).resolve()
+        blender = next((path for path in (
+            blender_root / "Blender.app/Contents/MacOS/Blender",
+            blender_root / "blender",
+        ) if path.is_file()), None)
+        self.assertIsNotNone(blender, "Pinned native Blender artifact missing")
+        runner = Path(str(resources / runner_name)).resolve()
+        with tempfile.TemporaryDirectory(prefix="pg-vectorscope-") as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            package = repository / "perceptual_grade"
+            package.mkdir(parents=True)
+            with zipfile.ZipFile(str(resources / "extension.zip")) as archive:
+                archive.extractall(package)
+            environment = {key: value for key, value in os.environ.items() if key not in {
+                "PYTHONPATH", "PYTHONHOME", "BLENDER_USER_SCRIPTS",
+                "BLENDER_SYSTEM_SCRIPTS", "BLENDER_SYSTEM_PYTHON",
+            }}
+            environment.update(
+                BLENDER_USER_CONFIG=str(root / "config"),
+                BLENDER_USER_EXTENSIONS=str(root / "extensions"),
+                OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1",
+                PYTHONDONTWRITEBYTECODE="1",
+                TMPDIR=str(root),
+            )
+            with virtual_display(resources, root, environment):
+                report = root / "report.json"
+                log = root / "blender.log"
+                with log.open("w") as output_file:
+                    process = subprocess.Popen([
+                        str(blender), "--factory-startup", "--disable-autoexec",
+                        "--window-geometry", "0", "0", "1280", "960",
+                        "--python-exit-code", "1", "--python", str(runner), "--",
+                        str(repository), str(report),
+                    ], cwd=root, env=environment, stdout=output_file,
+                        stderr=subprocess.STDOUT, text=True, start_new_session=True)
+                    try:
+                        process.wait(timeout=300)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=10)
+                        data = json.loads(report.read_text()) if report.exists() else {}
+                        helper_output = "\n".join(
+                            log_tail(path) for path in sorted(
+                                root.glob("perceptual-grade-helper-*/helper.log")
+                            )
+                        )
+                        self.fail("Installed vectorscope acceptance timed out\n"
+                                  + log_tail(log)
+                                  + "\n" + helper_output
+                                  + "\n" + json.dumps(data, indent=2))
+                output = log_tail(log)
+            data = json.loads(report.read_text()) if report.exists() else {}
+            details = output + "\n" + json.dumps(data, indent=2)
+            self.assertEqual(process.returncode, 0, details)
+            self.assertTrue(data.get("passed"), details)
+            self.assertEqual(data.get("initial_shape"), [144, 144], details)
+            return data, details
+
+    def test_compositor_grade_scope_tracks_edits_and_playback(self):
+        data, details = self.run_installed_case("vectorscope_runner.py")
+        self.assertTrue(data.get("direct_image_visible"), details)
+        self.assertTrue(data.get("linear_edit_refreshed"), details)
+        self.assertTrue(data.get("image_pixels_refreshed"), details)
+        self.assertTrue(data.get("processed_input_visible"), details)
+        self.assertGreaterEqual(len(set(data.get("playback_frames", []))), 2, details)
+        self.assertTrue(data.get("retained_complete_during_updates"), details)
+        self.assertTrue(data.get("latest_frame_published"), details)
+
+    def test_shader_grade_scope_captures_active_viewport_input(self):
+        data, details = self.run_installed_case("vectorscope_shader_runner.py")
+        self.assertTrue(data.get("shader_aov_visible"), details)
+        self.assertTrue(data.get("linear_edit_refreshed"), details)
+
+
+if __name__ == "__main__":
+    unittest.main()
