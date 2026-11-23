@@ -13,8 +13,13 @@ The reference has no required Blender dependency. It owns the accelerated CPU
 kernel, forward/inverse/boundary GPU shader builders and optional Blender GPU
 adapter; callers can supply a `program_factory` when constructing `BakeStack`.
 
-Stage 3 evaluates J/C edits → Warp hue/chroma → Adaptance → H–K repair →
-common positive J_A/chroma Scale. Appearance handoffs contain this repaired,
+The default grade applies Original Unified Chroma and full H–K Tone before
+Warp. The signed appearance stage exposes forward and inverse evaluation
+through `UnifiedChroma`. The JSON CLI, analytic Stack, and CPU and GPU
+BakeStack accept the same `tone_chroma` settings. [Settings and equations](src/README.md#original-unified-chroma)
+
+Warp evaluates hue/chroma → Adaptance → H–K repair → common positive
+J_A/chroma Scale. Appearance handoffs contain this repaired,
 scaled state; RGB export applies only cube containment. Repair is not repeated
 at export. Its nonnegative-H branch has nonnegative energy, so positive Scale
 preserves the compact pad coordinates and cannot enter the negative-energy
@@ -22,7 +27,7 @@ Scale branch. Negative-H requests retain the existing bypass and black export
 policy. The frozen `perceptual-grade-blender` implementation retains its
 historical order; `perceptual-grade-next-blender` has not implemented Warp yet.
 
-Analytic low/high chroma membership crosses at `C=(35/75)*abs(J_A)`, with
+Legacy low/high chroma membership crosses at `C=(35/75)*abs(J_A)`, with
 neutral visibility `C²/(C²+4)` and frozen post-Tone inputs. This applies to
 float64/scaled Model, inverse, Stack, CLI and reference BakeStack CPU/GLSL
 evaluation. BakeStack supports nonzero low/high lightness/chroma controls.

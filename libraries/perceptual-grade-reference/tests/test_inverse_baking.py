@@ -1,11 +1,14 @@
 """Public reference accelerated support and analytic crossover integration."""
 from dataclasses import asdict, replace
 import unittest
+from unittest.mock import patch
 import numpy as np
+from color_tools.perceptual_grade_core.model import bake_inverse
 from color_tools.perceptual_grade_reference.model import Model, Settings
 from color_tools.perceptual_grade_reference.grading import ColorSettings, ToneSettings
 from color_tools.perceptual_grade_reference.stack import Stack
 from color_tools.perceptual_grade_reference.stack_bake import BakeStack
+from color_tools.perceptual_grade_reference.unified_chroma import UnifiedChromaSettings
 from color_tools.perceptual_grade_core.model.tonal_web import WebSettings
 
 
@@ -13,6 +16,44 @@ class ReferenceBakeSupportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.table = BakeStack([Settings()]).table
+
+    def test_unified_chroma_simple_inverse_with_and_without_tone_table(self):
+        points = np.array([[.14, .18, .21], [.31, .27, .23], [.1, .1, .1], [0., 0., 0.]], dtype='f4')
+        base = UnifiedChromaSettings(muted_gain=-.15, vivid_gain=.23, shadow_chroma=-.2)
+        for controls in (base, replace(base, input_nits=(3., 40., 205., 1100.),
+                                       black_compression_nits=.5, fit=2)):
+            setting = Settings(tone_chroma=controls)
+            model = Model(setting, hk_guard=False)
+            stack = BakeStack([setting], ['INVERSE'], self.table, hk_guard=False)
+            solver = stack.solvers[0]
+            with self.subTest(controls=controls):
+                self.assertFalse(solver.kernel.identity)
+                self.assertTrue(solver.simple)
+                self.assertEqual(solver.tone_table is not None, controls != base)
+                entered = solver.kernel.enter(points)
+                target = solver.kernel.grade(solver.kernel.tone_state(entered))
+                np.testing.assert_allclose(target, np.concatenate((
+                    model.grade_state(model.enter_native(points)).q,
+                    model.grade_state(model.enter_native(points)).energy[:, None],
+                ), axis=-1), rtol=2.e-4, atol=2.e-4)
+                with patch.object(bake_inverse, 'minimize', side_effect=AssertionError('Unexpected raw fit')):
+                    result = solver.evaluate(target, appearance=True)
+                self.assertTrue(np.all(result[:, 3] <= solver.acceptance_limit(target, True)), result)
+                np.testing.assert_allclose(result[:, :3], points, rtol=3.e-4, atol=1.e-6)
+
+    def test_unified_chroma_stack_cancellation_uses_effective_settings(self):
+        baseline = UnifiedChromaSettings(muted_gain=.3, vivid_gain=-.2)
+        first = Settings(tone_chroma=baseline)
+        second = Settings(tone_chroma=replace(baseline, muted_gain=.1))
+        points = np.array([[.11, .18, .17], [.28, .22, .25]], dtype='f4')
+        directions = ['FORWARD', 'INVERSE']
+        analytic = Stack([first, second], directions, hk_guard=False).apply_native(points)
+        baked = BakeStack([first, second], directions, self.table, hk_guard=False)
+        self.assertFalse(baked.matching(0, 1))
+        self.assertGreater(np.max(abs(analytic - points)), 1.e-4)
+        np.testing.assert_allclose(baked.bake_native(points)[:, :3], analytic, atol=2.e-5, rtol=3.e-4)
+        matching = BakeStack([first, first], directions, self.table, hk_guard=False)
+        np.testing.assert_array_equal(matching.bake_native(points)[:, :3], points)
 
     def test_low_high_controls_match_analytic_for_every_row(self):
         points = np.array([[.1, .2, .3], [.7, .2, .1], [.02, .08, .4],

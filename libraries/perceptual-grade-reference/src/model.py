@@ -9,6 +9,7 @@ from .export import input_repair
 from .cube import context as cube_context
 from .cube_guard import guard as cube_guard, guard_scaled as cube_guard_scaled
 from .responses import compress, coordinates, requested_energy, State
+from .unified_chroma import UnifiedChroma, UnifiedChromaSettings
 
 
 WHITES = {'D65': (.3127, .329), 'D60': (.32161671, .33761992), 'ACES': (.32168, .33767),
@@ -34,6 +35,7 @@ class Settings:
     linear: LinearSettings = field(default_factory=LinearSettings)
     tone: ToneSettings = field(default_factory=ToneSettings)
     color: ColorSettings = field(default_factory=ColorSettings)
+    tone_chroma: UnifiedChromaSettings | None = None
 
 
 def xyz_from_xy(xy):
@@ -154,7 +156,19 @@ class Model:
         for fit in fits:
             if not np.isfinite(fit):
                 raise ValueError('Fit must be finite')
-        self.tone = Tone(settings.tone)
+        baseline = settings.tone_chroma
+        if baseline is not None and not isinstance(baseline, UnifiedChromaSettings):
+            raise ValueError('Unknown Unified Chroma settings schema')
+        defaults = ToneSettings()
+        legacy = (tuple(settings.tone.input_nits) != defaults.input_nits
+                  or settings.tone.fit != defaults.fit
+                  or settings.tone.peak_nits != defaults.peak_nits
+                  or any(np.any(getattr(settings.color, name)) for name in
+                         ('lightness', 'chroma', 'global_gain', 'lightness_fit', 'chroma_fit')))
+        if legacy and baseline is not None:
+            raise ValueError('Unified Chroma requires reset legacy Tone and J/C controls')
+        self.tone_chroma = None if legacy else UnifiedChroma(baseline or UnifiedChromaSettings())
+        self.tone = Tone(settings.tone) if legacy else self.tone_chroma.tone
         self.color = Color(settings.color, self.tone, lambda: self.boundary, hk_guard=self.hk_guard)
         self.white_cones = CAT16 @ self.white
         self.cones_to_xyz = np.linalg.inv(CAT16) @ np.diag(self.white_cones)
@@ -182,6 +196,19 @@ class Model:
     def boundary(self):
         return cube_context(self.fl, self.aw, self.native_matrix)
 
+    @property
+    def _tone_stage(self):
+        return self.tone if self.tone_chroma is None else self.tone_chroma
+
+    @property
+    def nonlinear_active(self):
+        return self._tone_stage.active or self.color.active
+
+    @property
+    def nonlinear_key(self):
+        baseline = self.tone_chroma.settings if self.tone_chroma is not None else None
+        return self.settings.tone if baseline is None else baseline, self.settings.color, self.hk_guard
+
     def encode_cones(self, cones):
         boundary = self.boundary
         return encode_cones(cones, self.tone.reference, (boundary.fl, boundary.aw))
@@ -196,12 +223,13 @@ class Model:
 
     def grade_state(self, state):
         """Grade through pre-Scale H-K repair; hand off before cube export."""
+        stage = self._tone_stage
         if state.q.dtype!=object and self.vector_controls:
-            tone=self.tone.apply(state)
+            tone=stage.apply_state(state) if self.tone_chroma is not None else stage.apply(state)
             return self.color.apply_state(tone)
         coordinates=[];energies=[]
         for q,j,e in zip(state.q.reshape(-1,3),state.ja.reshape(-1),state.energy.reshape(-1)):
-            base,j=self.tone.scaled_apply(list(map(S,q)),S(j))
+            base,j=stage.scaled_apply(list(map(S,q)),S(j))
             reference = j*abs(j) if self.tone.active else S(e)
             request,energy=self.color.scaled_apply_state(base,j,reference)
             coordinates.append(request);energies.append(energy)
@@ -285,7 +313,7 @@ class Model:
         source = [compress(v, boundary.fl) for v in cones]
         q, ja = coordinates(source, boundary.aw)
         if cones[0] == cones[1] == cones[2]:q = [ja, S(), S()]
-        stage2_q, stage2_ja = self.tone.scaled_apply(q, ja)
+        stage2_q, stage2_ja = self._tone_stage.scaled_apply(q, ja)
         request, energy = self.color.scaled_apply_state(stage2_q, stage2_ja)
         if export:
             return cube_guard_scaled(boundary,request,energy)[2]
@@ -293,7 +321,7 @@ class Model:
 
     def _core_arrays(self, cones, export=True):
         source = self.encode_cones(cones)
-        stage2 = self.tone.apply(source)
+        stage2 = self._tone_stage.apply(source)
         if np.any((stage2.ja != 0) & (np.abs(stage2.ja) < 2.**-200)):return None
         result = self.color.apply_state(stage2)
         request, energy = result.q, result.energy
@@ -313,7 +341,7 @@ class Model:
         before = self.cones_to_xyz @ np.linalg.inv(self.boundary.matrix)
         if entry:
             if apply_linear:values = self.input_native(values,before,True)
-            if export and not (self.tone.active or self.color.active):
+            if export and not self.nonlinear_active:
                 return np.asarray(values,dtype=float) if values.dtype==object else input_repair(values,self.acescg_y)
             if values.dtype==object:return self._scaled_entry(values,export)
             values = self.prepare_native(values)

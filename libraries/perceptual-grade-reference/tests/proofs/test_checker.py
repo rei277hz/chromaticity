@@ -167,6 +167,13 @@ class ProofTests(unittest.TestCase):
             'hk_cube_ray_guard_positive_luminance_from_prefix',
             'cube_guard_positive_energy', 'hk_cube_guard_positive_luminance',
         })
+        required.update({
+            'unified_radial_strict_mono', 'unified_radial_quadratic', 'unified_radial_inverse_exists',
+            'unified_radial_stable_inverse',
+            'unified_black_inverse_exists', 'unified_fitted_inverse_exists',
+            'unified_tone_curve_inverse_exists', 'unified_chroma_radius_inverse_exists',
+            'unified_ray_height_unique', 'unified_ray_gain', 'unified_chroma_tone_inverse_exists_unique',
+        })
         self.assertLessEqual({'PerceptualGrade.'+name for name in required}, set(report['theorems']))
         correspondence = (RESOURCES / 'README.md').read_text().partition('## Machine-checked theorem correspondence')[2]
         documented = re.findall(r'`([a-z]+(?:_[a-z0-9]+)+)`', correspondence)

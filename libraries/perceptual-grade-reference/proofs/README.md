@@ -13,6 +13,12 @@ These statements do not automatically prove correspondence with every Python,
 GPU shader or DCTL implementation. Numerical tests and implementation-specific
 validation provide that separate evidence.
 
+`UnifiedChroma.lean` proves that every signed Cartesian appearance triple has
+exactly one preimage under Original Unified Chroma and full H–K Tone. It also
+verifies both stable quadratic branches used to invert the radial maps. The
+theorem applies at the appearance handoff before Warp, repair, and RGB
+boundary mapping.
+
 `WarpRepairedScale.lean` formalizes the corrected reference order: repair after
 Adaptance, then common positive J_A/chroma Scale. It proves the carried-energy
 law E′=k²E, preservation of nonnegative/positive J_A and energy, invariance of

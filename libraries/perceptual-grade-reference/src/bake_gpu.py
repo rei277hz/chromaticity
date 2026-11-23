@@ -12,7 +12,9 @@ LAYOUT=dict(TONE_ACTIVE=0,BLACK=1,SPAN=2,SLOPE=3,HIGH=4,TONE_WIDTH=5,
     HK_GUARD=29,DIRECTIONAL=30,INVERSE_SIMPLE=31,LIGHT=32,CHROMA=48,
     TONE_NORMALIZERS=72,TONE_CONSTANTS=76,COEFF_NORMALIZERS=80,COEFF_CONSTANTS=88,
     ANCHORS=96,LOG_RADII=100,ANGLES=124,LOG_CHROMA=148,HUE_RADIANS=172,LOG_SCALE=196,
-    CANONICAL_FIRST=220,CANONICAL_LAST=223,Y_WEIGHTS=226,TONE_TABLE=229,ADAPTANCE_LOG_GAINS=234)
+    CANONICAL_FIRST=220,CANONICAL_LAST=223,Y_WEIGHTS=226,TONE_TABLE=229,ADAPTANCE_LOG_GAINS=234,
+    UNIFIED_CHROMA=246,MUTED_GAIN=247,VIVID_GAIN=248,SATURATION_CROSSOVER=249,
+    SHADOW_CHROMA=250,HIGHLIGHT_CHROMA=251,CHROMA_TONE_CROSSOVER=252)
 HEADER_SIZE=256
 
 
@@ -40,6 +42,11 @@ def parameters(kernel):
     put('ANCHORS',kernel.anchors);put('LOG_RADII',kernel.web_radii);put('ANGLES',kernel.web_angles)
     put('LOG_CHROMA',kernel.web_controls['log_chroma']);put('HUE_RADIANS',kernel.web_controls['hue_degrees']*np.float32(np.pi/180))
     put('LOG_SCALE',kernel.web_controls['log_scale'])
+    if kernel.tone_chroma is not None:
+        controls=kernel.tone_chroma.settings
+        put('UNIFIED_CHROMA',1.)
+        put('MUTED_GAIN',[controls.muted_gain,controls.vivid_gain,controls.saturation_crossover,
+                         controls.shadow_chroma,controls.highlight_chroma,controls.tone_crossover])
     return result
 
 
@@ -77,6 +84,12 @@ MATH=r'''
 #endif
 float pg_param(int i) {return texelFetch(grade_parameters,ivec2(i,0),0).x;}
 float pg_div(float a,float b) {return b!=0.0?a/b:0.0;}
+float pg_hypot(vec2 value) {
+    float peak=max(abs(value.x),abs(value.y));
+    if(peak==0.0)return 0.0;
+    if(peak<1e-15||peak>1e15)return peak*length(value/peak);
+    return length(value);
+}
 // Native atan/pow error can move a pixel across a cube-face crease. Reduce
 // their arguments before polynomial evaluation so lookup coordinates retain
 // float32 accuracy even on software drivers with coarse native intrinsics.
@@ -166,13 +179,69 @@ vec4 pg_enter(vec3 rgb) {
     float ja=sign(t)*PG_WHITE*pg_power(abs(t),PG_GAMMA);
     return vec4(pg_hk(ja,c),c*direction,ja*abs(ja));
 }
+float pg_radial_gain(float c,float knee,float low,float high,bool invert) {
+    if(low==high)return invert?1.0/low:low;
+    if(knee==0.0)return invert?1.0/high:high;
+    if(!invert)return low+(high-low)*(c/(c+knee));
+    float scale=max(c,knee),y=c/scale,k=knee/scale;
+    float d=low*k-y,root=length(vec2(d,2.0*sqrt(high*k)*sqrt(y)));
+    return d>=0.0?2.0*k/(root+d):(root-d)/(2.0*high*y);
+}
+vec4 pg_unified_chroma(vec4 q,float ja,bool invert) {
+    float muted=pg_param(PG_P_MUTED_GAIN),vivid=pg_param(PG_P_VIVID_GAIN);
+    float shadow=pg_param(PG_P_SHADOW_CHROMA),highlight=pg_param(PG_P_HIGHLIGHT_CHROMA);
+    if(muted==0.0&&vivid==0.0&&shadow==0.0&&highlight==0.0)return q;
+    float c=pg_hypot(q.yz);
+    if(c==0.0)return q;
+    float lightness=abs(ja),base=PG_CHROMA_CROSSOVER*lightness;
+    float p=pg_param(PG_P_SATURATION_CROSSOVER);
+    float low=exp2(muted),high=exp2(vivid);
+    float knee=base*(p/(1.0-p))*sqrt(high/low);
+    float offset=lightness/pg_param(PG_P_CHROMA_TONE_CROSSOVER)-1.0;
+    float t=min(abs(offset),1.0);
+    float stops=offset<0.0?shadow:highlight;
+    float tonal=exp2(stops*t*t*(3.0-2.0*t)),gain;
+    if(invert) {
+        gain=pg_radial_gain(c,base/9.0,1.0,tonal,true);
+        gain*=pg_radial_gain(c*gain,knee,low,high,true);
+    } else {
+        gain=pg_radial_gain(c,knee,low,high,false);
+        gain*=pg_radial_gain(c*gain,base/9.0,1.0,tonal,false);
+    }
+    if(gain==1.0)return q;
+    vec2 ab=q.yz*gain;
+    return vec4(pg_hk(ja,pg_hypot(ab)),ab,q.w);
+}
+vec4 pg_scale_hk_ray(vec4 q,float ja,float c,float source_height,float target_height) {
+    if(source_height==0.0)return q;
+    if(c==0.0) {
+        float j=sign(ja)*target_height;
+        return vec4(j,q.yz,j*abs(j));
+    }
+    // Normalize by the incoming squared H-K height before applying the root.
+    float ratio=target_height/source_height,j=ja/source_height;
+    float chroma_fraction=sqrt(66.0*c)/source_height;
+    chroma_fraction*=chroma_fraction;
+    float denominator=pg_hypot(vec2(chroma_fraction,2.0*j*ratio))+chroma_fraction;
+    float gain=pg_div(2.0*ratio*ratio,denominator);
+    float out_j=ja*gain;vec2 ab=q.yz*gain;
+    return vec4(pg_hk(out_j,pg_hypot(ab)),ab,out_j*abs(out_j));
+}
 vec4 pg_tone(vec4 q) {
-    if(pg_param(0)==0.0)return q;
-    float ja=sign(q.w)*sqrt(abs(q.w)),c=length(q.yz),magnitude=length(vec2(ja,sqrt(66.0*c)));
-    float t=max(0.0,(magnitude/100.0-pg_param(1))/pg_param(2));
+    float ja=sign(q.w)*sqrt(abs(q.w));
+    bool unified=pg_param(PG_P_UNIFIED_CHROMA)!=0.0;
+    if(unified)q=pg_unified_chroma(q,ja,false);
+    if(pg_param(PG_P_TONE_ACTIVE)==0.0)return q;
+    float c=unified?pg_hypot(q.yz):length(q.yz);
+    vec2 components=vec2(ja,sqrt(66.0*c));
+    float magnitude=unified?pg_hypot(components):length(components);
+    float input_j=magnitude/100.0,black=pg_param(PG_P_BLACK);
+    float position=unified?input_j*pg_radial_gain(input_j,2.0*black,.5,1.0,false):max(0.0,input_j-black);
+    float t=position/pg_param(PG_P_SPAN);
     vec4 k=pg_kernels(t,PG_P_TONE_KNOTS,pg_param(PG_P_TONE_WIDTH),PG_P_TONE_NORMALIZERS,PG_P_TONE_CONSTANTS),residual;
     for(int i=0;i<4;i++)residual[i]=pg_param(11+i);
     float h=100.0*(pg_param(3)*t+dot(k,residual));if(t==1.0)h=pg_param(4);
+    if(unified)return pg_scale_hk_ray(q,ja,c,magnitude,h);
     float gain=pg_div(2.0*h*h,length(vec2(66.0*c,2.0*ja*h))+66.0*c);
     float j=ja*gain;vec2 ab=q.yz*gain;
     return vec4(pg_hk(j,length(ab)),ab,j*abs(j));

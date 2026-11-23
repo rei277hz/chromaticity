@@ -42,17 +42,11 @@ vec3 pg_input_repair(vec3 rgb) {
     float down=limit>0.0?uintBitsToFloat(floatBitsToUint(limit)-1u):0.0;
     return unit*max(0.0,min(amplitude,down));
 }
-float pg_inverse_hypot(vec2 value) {
-    float peak=max(abs(value.x),abs(value.y));
-    if(peak==0.0)return 0.0;
-    if(peak<1e-15||peak>1e15)return peak*length(value/peak);
-    return length(value);
-}
 vec2 pg_chroma_scale(vec4 target) {
     float ceiling=66.0*PG_CHROMA_TOE_MAX;
     float h=min(abs(target.x),sqrt(ceiling));
     float energy=max(h*h,min(abs(target.w),ceiling));
-    float c=pg_inverse_hypot(min(abs(target.yz),vec2(PG_CHROMA_TOE_MAX)));
+    float c=pg_hypot(min(abs(target.yz),vec2(PG_CHROMA_TOE_MAX)));
     float tau=max(PG_CHROMA_TOE_MIN,min(PG_CHROMA_TOE_MAX,max(energy/66.0,c)));
     return vec2(tau,log(tau));
 }
@@ -75,10 +69,24 @@ float pg_chroma_residual(float radius,float c,float gain,vec2 scale) {
     return actual-predicted;
 }
 vec4 pg_undo_tone(vec4 q) {
-    if(pg_param(0)==0.0)return q;
+    bool unified=pg_param(PG_P_UNIFIED_CHROMA)!=0.0;
+    if(unified) {
+        float ja=sign(q.w)*sqrt(abs(q.w));
+        if(pg_param(PG_P_TONE_ACTIVE)!=0.0) {
+            float c=pg_hypot(q.yz),h=pg_hypot(vec2(ja,sqrt(66.0*c)));
+            if(h==0.0)return q;
+            float t=h==pg_param(PG_P_HIGH)?1.0:pg_tone_table_inverse(h);
+            float compressed=pg_param(PG_P_SPAN)*t;
+            float original=100.0*compressed*pg_radial_gain(compressed,2.0*pg_param(PG_P_BLACK),.5,1.0,true);
+            q=pg_scale_hk_ray(q,ja,c,h,original);
+            ja=sign(q.w)*sqrt(abs(q.w));
+        }
+        return pg_unified_chroma(q,ja,true);
+    }
+    if(pg_param(PG_P_TONE_ACTIVE)==0.0)return q;
     float j=sqrt(max(q.w,0.0)),c=length(q.yz),h=sqrt(j*j+66.0*c);
     float original=h==0.0?0.0:100.0*(pg_param(1)+pg_param(2)*pg_tone_table_inverse(h));
-    float gain=pg_div(2.0*original*original,pg_inverse_hypot(vec2(66.0*c,2.0*j*original))+66.0*c);
+    float gain=pg_div(2.0*original*original,pg_hypot(vec2(66.0*c,2.0*j*original))+66.0*c);
     float jj=j*gain;vec2 ab=q.yz*gain;
     return vec4(sqrt(jj*jj+66.0*length(ab)),ab,jj*jj);
 }
@@ -91,17 +99,17 @@ vec4 pg_direct_state(vec4 raw) {
     return pg_undo_tone(q);
 }
 vec2 pg_opponent_encode(vec2 ab,float logscale) {
-    float c=pg_inverse_hypot(ab);
+    float c=pg_hypot(ab);
     float encoded=c>0.0?pg_chroma_encode(log(c),logscale):0.0;
     return ab*pg_div(encoded,c);
 }
 vec2 pg_opponent_decode(vec2 x,float logscale) {
-    float radius=pg_inverse_hypot(x);
+    float radius=pg_hypot(x);
     return x*pg_div(pg_chroma_decode(radius,logscale),radius);
 }
 vec4 pg_reduced(vec3 x,vec4 target,vec2 scale,bool reconstruct,out vec4 state) {
     float j=exp(x.x);vec2 ab=pg_opponent_decode(x.yz,scale.y);
-    vec4 candidate=vec4(sqrt(j*j+66.0*pg_inverse_hypot(ab)),ab,j*j);
+    vec4 candidate=vec4(sqrt(j*j+66.0*pg_hypot(ab)),ab,j*j);
     state=candidate;
     if(reconstruct)return vec4(0.0);
     vec4 actual=pg_grade(candidate);

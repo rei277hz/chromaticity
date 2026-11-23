@@ -39,7 +39,7 @@ def nonlinear_inverse(model,target,appearance=False):
             return np.asarray([float(S(a)/S(b)) for a,b in zip(delta.flat,np.broadcast_to(divisor,delta.shape).flat)]).reshape(delta.shape)
         return delta/divisor
     out=np.empty_like(prior);errors=np.empty(len(prior))
-    if not (model.tone.active or model.color.active):
+    if not model.nonlinear_active:
         return prior.reshape(shape),np.max(abs(residual(prior,np.arange(len(prior)))),axis=-1).reshape(shape[:-1])
     for row,p in enumerate(prior):
         amplitude=max(1.,np.max(abs(p)))
@@ -93,7 +93,7 @@ class Stack:
                 result=m.input_native(result,before,True)
                 following=i+1<len(self.models) and self.directions[i+1]=='INVERSE'
                 n=self.models[i+1] if following else None
-                cancelled=following and m.settings.tone==n.settings.tone and m.settings.color==n.settings.color
+                cancelled=following and m.nonlinear_key==n.nonlinear_key
                 pending=result if cancelled else m.grade_state(m.enter_native(result))
                 if not following:result=m.release_state(pending,guard=True);pending=None
             else:
