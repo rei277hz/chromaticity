@@ -252,6 +252,28 @@ def scenario():
     assert red_density > blue_density, (red_density, blue_density)
     report["mixed_trace_rgb"] = True
 
+    captures = len(capture_jobs)
+    yield from pointer.click_control("tone_tab", shared)
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.status == "current"
+        and value.waveforms is not None,
+        "Shared Shader Grade did not publish Tone waveforms",
+    )
+    waveforms = state().waveforms
+    assert waveforms.before.any() and waveforms.after.any()
+    before = pointer.settings(shared)
+    edited = yield from pointer.drag_control("fit", shared, (35, 0))
+    assert edited.tone.fit > before.tone.fit
+    assert shared.pg_grade.pg_tone.fit == edited.tone.fit
+    assert pointer.settings(grade) == baseline
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.status == "current"
+        and value.waveforms is not None and value.waveforms is not waveforms,
+        "Shared Shader Tone Fit did not refresh the waveforms",
+    )
+    assert len(capture_jobs) == captures, "Shared Shader Tone edits recaptured unchanged inputs"
+    report["shared_tone_gizmo"] = True
+
 
 sequence = scenario()
 started = time.monotonic()

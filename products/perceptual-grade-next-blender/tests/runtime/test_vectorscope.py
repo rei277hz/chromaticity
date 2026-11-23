@@ -28,6 +28,7 @@ class VectorscopeTests(unittest.TestCase):
         cls.policy = importlib.import_module(package_name + ".runtime.vectorscope_policy")
         cls.runtime = importlib.import_module(package_name + ".runtime.vectorscope")
         cls.analysis = importlib.import_module(package_name + ".vectorscope")
+        cls.tone_scope = importlib.import_module(package_name + ".tone_scope")
         cls.kernel = importlib.import_module(package_name + ".kernel")
 
     def request(self, state, capture, *, key=1, source="source", analysis=None,
@@ -246,6 +247,73 @@ class VectorscopeTests(unittest.TestCase):
                 self.assertIsNotNone(trace)
                 self.assertEqual((status, error), ("current", None))
 
+    def test_tone_switch_and_edits_reuse_the_linear_capture(self):
+        pixels = np.ones((2, 2, 4), dtype=np.float32)
+        backend = Mock()
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree)
+        runtime = self.runtime.ScopeRuntime(
+            None, Mock(), lambda _node: self.kernel.LinearSettings(),
+            lambda: "Linear Rec.709", backend=backend,
+        )
+        route = {"owner_kind": "compositor", "capture_signature": "frame one",
+                 "source_signature": "source"}
+        tone = self.kernel.ToneSettings()
+        edited = replace(tone, input_nits=(*tone.input_nits[:3], 400., tone.input_nits[4]))
+        with (patch.object(self.runtime.bake_routes, "describe_vectorscope", return_value=route),
+              patch.object(self.runtime, "capture_loaded_image", return_value=pixels) as capture):
+            self.assertEqual(runtime.observe(1, None, node, None), (None, "updating", None))
+            self.assertFalse(runtime.poll())
+            self.assertEqual(runtime.tone_changed(node), ())
+
+            first, status, error = runtime.observe(1, None, node, None, tone=tone)
+            self.assertEqual((status, error), ("current", None))
+            np.testing.assert_array_equal(first.before, first.after)
+            self.assertEqual(runtime.tone_changed(node), (1,))
+            self.assertEqual(runtime.linear_changed(node), (1,))
+            self.assertIsNone(runtime.drag_inputs(1, node))
+
+            second, status, error = runtime.observe(1, None, node, None, tone=edited)
+            self.assertEqual((status, error), ("current", None))
+            np.testing.assert_array_equal(second.before, first.before)
+            self.assertFalse(np.array_equal(second.after, first.after))
+
+            route["capture_signature"] = "frame two"
+            self.assertEqual(runtime.observe(1, None, node, None), (None, "updating", None))
+            self.assertEqual(capture.call_count, 1)
+            self.assertFalse(runtime.poll())
+            trace, status, error = runtime.observe(1, None, node, None)
+            self.assertEqual(trace.shape[-1], 4)
+            self.assertEqual((status, error), ("current", None))
+            self.assertEqual(capture.call_count, 2)
+            backend.create_job.assert_not_called()
+
+    def test_pending_capture_publishes_the_latest_stage(self):
+        job = Mock()
+        job.advance.return_value = {"rgba": np.ones((1, 1, 4), dtype=np.float32)}
+        backend = Mock()
+        backend.create_job.return_value = job
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree)
+        runtime = self.runtime.ScopeRuntime(
+            None, lambda _route: (None, "snapshot.blend", []),
+            lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709", backend=backend,
+        )
+        route = {"owner_kind": "compositor", "capture_signature": "frame",
+                 "source_signature": "source"}
+        tone = self.kernel.ToneSettings()
+        with (patch.object(self.runtime.bake_routes, "describe_vectorscope", return_value=route),
+              patch.object(self.runtime, "capture_loaded_image", return_value=None)):
+            self.assertEqual(runtime.observe(1, None, node, None), (None, "updating", None))
+            self.assertTrue(runtime.poll())
+            self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
+                             (None, "updating", None))
+            self.assertFalse(runtime.poll())
+            waveform, status, error = runtime.observe(1, None, node, None, tone=tone)
+            self.assertIsInstance(waveform, self.tone_scope.ToneWaveforms)
+            self.assertEqual((status, error), ("current", None))
+            backend.create_job.assert_called_once()
+
     def make_runtime(self, watch, dependencies):
         runtime = self.runtime.ScopeRuntime(None, None, None, None, backend=object())
         runtime.dependencies = {1: frozenset(dependencies)}
@@ -384,6 +452,21 @@ class VectorscopeTests(unittest.TestCase):
         self.assertTrue(np.all(np.diff(brightness[0]) > 0.0))
         self.assertLess(float(brightness[0, -1]), 1.0)
         self.assertFalse(brightness.flags.writeable)
+
+    def test_tone_waveforms_use_neutral_lightness_and_finite_alpha_mass(self):
+        pixels = np.array([[[1., 1., 1., .25], [1., 1., 1., 0.], [np.inf, 1., 1., 1.]],
+                           [[1., 1., 1., 1.], [1., 1., 1., np.nan], [0., 0., 0., 2.]]])
+        linear = self.kernel.prepare_linear(space="ACEScg")
+        waveform = self.tone_scope.analyze(pixels, linear, self.kernel.ToneSettings())
+        self.assertEqual(waveform.before.shape, (160, 192))
+        self.assertEqual(waveform.histogram.shape, (128,))
+        white_row = int(160 / waveform.plot_max)
+        self.assertEqual(np.argwhere(waveform.before > 0.).tolist(), [[0, 160], [white_row, 32]])
+        self.assertAlmostEqual(float(waveform.histogram.sum()), 2.25, places=6)
+        np.testing.assert_array_equal(waveform.before, waveform.after)
+        self.assertFalse(waveform.before.flags.writeable)
+        self.assertFalse(waveform.after.flags.writeable)
+        self.assertFalse(waveform.histogram.flags.writeable)
 
     @staticmethod
     def linear_pixels(code, alpha):

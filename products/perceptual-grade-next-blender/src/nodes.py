@@ -744,6 +744,13 @@ def _scope_linear_settings(node):
     return _linear_settings(_linear_controls(owner))
 
 
+def _scope_tone_settings(node):
+    owner = _linear_owner_for_node(node)
+    if owner is None:
+        raise ValueError("Select a Grade datablock to use the Tone Gizmo")
+    return _tone_settings(_tone_controls(owner))
+
+
 def _kernel_signature(tree_type, settings, working_space):
     if isinstance(settings, Settings):
         return _signature(tree_type, _snapshot_values(settings), working_space)
@@ -3334,8 +3341,13 @@ class _ColorGesture:
     baseline: tuple[tuple[str, float | None], ...]
 
     @property
-    def linear(self):
-        return self.baseline[0][0] == "source_x"
+    def stage(self):
+        field = self.baseline[0][0]
+        if field in _LINEAR_FIELDS:
+            return "linear"
+        if field in _ANIMATABLE_TONE_FIELDS:
+            return "tone"
+        return "color"
 
 
 def _color_gesture_entry(node):
@@ -3360,13 +3372,20 @@ def _begin_color_gesture(window_key, node, fields):
     return _begin_pair_gesture(window_key, node, owner, settings, fields)
 
 
-def _begin_source_white_gesture(window_key, node):
+def _begin_gizmo_gesture(window_key, node, fields):
+    """Bind one supported Gizmo control to the current Grade owner."""
+    if fields in {("source_x", "source_y"), ("exposure",),
+                  ("cr_balance",), ("yb_balance",),
+                  ("cr_spread", "cr_heading"), ("yb_spread", "yb_heading")}:
+        get_controls = _linear_controls
+    elif len(fields) == 1 and fields[0] in _ANIMATABLE_TONE_FIELDS:
+        get_controls = _tone_controls
+    else:
+        raise ValueError("Invalid Gizmo gesture fields")
     owner = _linear_owner_for_node(node)
     if owner is None:
         return None
-    return _begin_pair_gesture(
-        window_key, node, owner, _linear_controls(owner), ("source_x", "source_y"),
-    )
+    return _begin_pair_gesture(window_key, node, owner, get_controls(owner), fields)
 
 
 def _begin_pair_gesture(window_key, node, owner, settings, fields):
@@ -3375,7 +3394,7 @@ def _begin_pair_gesture(window_key, node, owner, settings, fields):
         return None
     entry = _color_gesture_entry(node)
     baseline = tuple((name, float(getattr(settings, name))
-                      if settings.is_property_set(name) else None) for name in fields)
+                      if _color_property_is_set(settings, name) else None) for name in fields)
     token = _press_gesture(window_key, node, (0, 0), bpy.context.scene, fields=fields)
     if token is not None:
         _color_gestures[token] = _ColorGesture(
@@ -3389,7 +3408,7 @@ def _color_gesture_matches(gesture, node):
     try:
         if node is None or _gesture_node(gesture.node_id) != node:
             return False
-        if gesture.linear:
+        if gesture.stage in {"linear", "tone"}:
             return _linear_owner_for_node(node) == gesture.owner
         owner, _settings = _color_settings_for_node(node)
         return owner == gesture.owner and _color_gesture_entry(node) == gesture.entry_identity
@@ -3428,20 +3447,37 @@ def _color_gesture_is_current(window_key, token, node):
     return False
 
 
-def _edit_color_gesture(window_key, token, node, values):
+def _edit_gizmo_gesture(window_key, token, node, values):
     if not _color_gesture_is_current(window_key, token, node):
         return False
-    x, y = map(float, values)
-    if not (math.isfinite(x) and math.isfinite(y)):
-        raise ValueError("Color gesture values must be finite")
+    gesture = _color_gestures[token]
+    values = tuple(map(float, values))
+    if len(values) != len(gesture.baseline) or not all(map(math.isfinite, values)):
+        raise ValueError("Gesture values must match its settings fields and be finite")
+    if gesture.stage != "color":
+        fields = tuple(name for name, _value in gesture.baseline)
+        controls = (_linear_controls if gesture.stage == "linear" else _tone_controls)(
+            gesture.owner,
+        )
+        if fields == ("source_x", "source_y"):
+            values = project_source_white(values)
+        elif fields[0] in TONE_LEVEL_FIELDS:
+            values = (clamp_tone_anchor(
+                _tone_settings(controls), TONE_LEVEL_FIELDS.index(fields[0]), values[0],
+            ),)
+        else:
+            limits = tuple(controls.bl_rna.properties[name] for name in fields)
+            values = tuple(max(prop.hard_min, min(prop.hard_max, value))
+                           for prop, value in zip(limits, values))
+        values = tuple(float(np.float32(value)) for value in values)
     _dispatch_gesture(gesture_policy.Event(
-        "edit_color_pair", window_id=window_key, gesture_token=token, color_values=(x, y),
+        "edit_color_pair", window_id=window_key, gesture_token=token, color_values=values,
     ))
     return True
 
 
-def _edit_source_white_gesture(window_key, token, node, values):
-    return _edit_color_gesture(window_key, token, node, project_source_white(values))
+def _edit_color_gesture(window_key, token, node, values):
+    return _edit_gizmo_gesture(window_key, token, node, values)
 
 
 def _end_color_gesture(window_key, token, node):
@@ -3453,7 +3489,11 @@ def _end_color_gesture(window_key, token, node):
 
 def _write_color_gesture(gesture, values):
     try:
-        controls = _linear_controls if gesture.linear else _color_controls
+        controls, changed = {
+            "linear": (_linear_controls, _linear_changed),
+            "tone": (_tone_controls, _tone_changed),
+            "color": (_color_controls, _color_changed),
+        }[gesture.stage]
         settings = controls(gesture.owner)
     except ReferenceError:
         # A deleted owner has no surviving settings to restore.
@@ -3461,23 +3501,33 @@ def _write_color_gesture(gesture, values):
     if values is None:
         writes = gesture.baseline
     else:
-        if gesture.linear:
-            values = tuple(float(np.float32(value)) for value in values)
-        writes = tuple((name, value) for (name, _baseline), value in zip(gesture.baseline, values)
+        writes = tuple((name, value) for (name, _baseline), value
+                       in zip(gesture.baseline, values, strict=True))
+    previous = tuple((name, float(getattr(settings, name))
+                      if _color_property_is_set(settings, name) else None)
+                     for name, _value in writes)
+    if values is None:
+        writes = tuple((name, value) for (name, value), (_name, prior)
+                       in zip(writes, previous) if value != prior)
+    else:
+        writes = tuple((name, value) for name, value in writes
                        if value != float(getattr(settings, name)))
     if not writes:
         return
-    with _suspend(settings):
-        for name, value in writes:
+
+    def assign(items):
+        for name, value in items:
             if value is None:
-                if gesture.linear:
-                    if settings.is_property_set(name):
-                        settings.property_unset(name)
-                else:
-                    _unset_color_property(settings, name)
+                _unset_color_property(settings, name)
             else:
                 setattr(settings, name, value)
-    changed = _linear_changed if gesture.linear else _color_changed
+
+    with _suspend(settings):
+        try:
+            assign(writes)
+        except (AttributeError, ReferenceError, RuntimeError, ValueError):
+            assign(previous)
+            raise
     changed(settings, bpy.context)
 
 
@@ -4469,9 +4519,13 @@ def _tone_changed(settings, _context):
     if holder is None:
         return
     if holder.bl_idname == PGGradeData.bl_idname:
+        if not _frame_change_active:
+            vectorscope_ui.tone_changed(holder)
         _grade_changed(holder)
         return
     if _is_per_node_grade_node(holder):
+        if not _frame_change_active:
+            vectorscope_ui.tone_changed(holder)
         _per_node_grade_changed(holder)
         return
     if _is_shared_grade_node(holder) and holder.pg_grade is None:
@@ -4643,6 +4697,11 @@ def _linear_setting_properties(*, animatable):
     }
 
 
+def _tone_peak_items():
+    return [(str(peak), localization.native(f"tone.peak.{peak}"), "")
+            for peak in TONE_PEAKS]
+
+
 def _tone_setting_properties(*, animatable):
     return {
         name: _float_setting(
@@ -4659,8 +4718,7 @@ def _tone_setting_properties(*, animatable):
             translation_context=localization.CONTEXT,
             description=localization.native("tooltip.peak"),
             default="1000",
-            items=[(str(peak), localization.native(f"tone.peak.{peak}"), "")
-                   for peak in TONE_PEAKS],
+            items=_tone_peak_items(),
             options=set(), update=_peak_changed,
         ),
     }
@@ -5445,15 +5503,66 @@ class PG_OT_reset_tone(bpy.types.Operator):
         if node is None:
             return {"CANCELLED"}
         if _is_per_node_grade_node(node):
-            _reset_tone(_tone_controls(node))
-            _per_node_grade_changed(node)
+            settings = _tone_controls(node)
+            _reset_tone(settings)
+            _tone_changed(settings, context)
             return {"FINISHED"}
         grade = _stack_active_grade(node) if _is_stack_node(node) else node.pg_grade
         if grade is None:
             return {"CANCELLED"}
         _reset_tone(grade.pg_tone)
-        _grade_changed(grade)
+        _tone_changed(grade.pg_tone, context)
         return {"FINISHED"}
+
+
+class PG_OT_gizmo_set_peak(bpy.types.Operator):
+    bl_idname = "perceptual_grade.gizmo_set_peak"
+    bl_label = localization.native("property.peak")
+    bl_description = localization.native("tooltip.peak")
+    bl_translation_context = localization.CONTEXT
+    bl_options = {"INTERNAL", "UNDO"}
+
+    peak_nits: EnumProperty(items=_tone_peak_items(), options={"SKIP_SAVE"})
+    node_pointer: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+    owner_pointer: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+
+    def execute(self, context):
+        node = _node_from_context(context)
+        owner = _linear_owner_for_node(node)
+        if (owner is None or not node.select
+                or str(node.as_pointer()) != self.node_pointer
+                or str(owner.as_pointer()) != self.owner_pointer):
+            return {"CANCELLED"}
+        settings = _tone_controls(owner)
+        if settings.peak_nits == self.peak_nits:
+            return {"CANCELLED"}
+        settings.peak_nits = self.peak_nits
+        if context.area is not None:
+            context.area.tag_redraw()
+        return {"FINISHED"}
+
+
+def _show_gizmo_peak_menu(context, node):
+    owner = _linear_owner_for_node(node)
+    if owner is None:
+        return
+    node_pointer = str(node.as_pointer())
+    owner_pointer = str(owner.as_pointer())
+    selected = _tone_controls(owner).peak_nits
+
+    def draw(menu, _context):
+        for peak in TONE_PEAKS:
+            value = str(peak)
+            icon = "RADIOBUT_ON" if value == selected else "RADIOBUT_OFF"
+            operator = menu.layout.operator(
+                PG_OT_gizmo_set_peak.bl_idname, icon=icon,
+                text=localization.tr(f"tone.peak.{value}"),
+            )
+            operator.peak_nits = value
+            operator.node_pointer = node_pointer
+            operator.owner_pointer = owner_pointer
+
+    context.window_manager.popup_menu(draw, title=localization.tr("property.peak"))
 
 
 class PG_OT_color_notice(bpy.types.Operator):
@@ -6279,6 +6388,7 @@ def register():
         PG_OT_match_white,
         PG_OT_reset_directions,
         PG_OT_reset_tone,
+        PG_OT_gizmo_set_peak,
         PG_OT_color_notice,
         PG_OT_reset_color,
         PG_OT_add_grade,
@@ -6330,8 +6440,10 @@ def register():
         vectorscope_ui.register(lambda: ScopeRuntime(
             bpy, _bake.manager._snapshot, _scope_linear_settings, _working_space,
             gate=_bake.gate, upstream_ready=_scope_upstream_ready,
-        ), begin=_begin_source_white_gesture, edit=_edit_source_white_gesture,
-            finish=_end_color_gesture, cancel=_cancel_color_gesture)
+        ), begin=_begin_gizmo_gesture, edit=_edit_gizmo_gesture,
+            finish=_end_color_gesture, cancel=_cancel_color_gesture,
+            linear_settings=_scope_linear_settings, tone_settings=_scope_tone_settings,
+            peak_menu=_show_gizmo_peak_menu)
         if not bpy.app.timers.is_registered(_startup_reconcile_tick):
             bpy.app.timers.register(_startup_reconcile_tick, first_interval=0.1)
         _ensure_gesture_router_timer()

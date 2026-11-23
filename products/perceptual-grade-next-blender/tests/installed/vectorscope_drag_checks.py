@@ -66,11 +66,63 @@ class ScopePointer:
 
     def event(self, kind, value, delta=(0, 0)):
         x, y, side = self.ui._plot_rect(self.area, self.region)
+        self.event_at(kind, value, (x + side / 2 + delta[0], y + side / 2 + delta[1]))
+
+    def event_at(self, kind, value, point):
         self.window.event_simulate(
             type=kind, value=value,
-            x=self.region.x + x + side // 2 + delta[0],
-            y=self.region.y + y + side // 2 + delta[1],
+            x=self.region.x + round(point[0]),
+            y=self.region.y + round(point[1]),
         )
+
+    def control_point(self, control, node):
+        with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):
+            box = self.ui._gizmo_layout(self.area, self.region)
+        assert box is not None
+        if control in ("cr", "yb"):
+            linear = self.settings(node).linear
+            return self.ui.geometry.handle_positions(box["scope"], linear, box["scale"])[control]
+        if control == "curve":
+            tone = self.ui._tone_model(self.settings(node).tone)
+            return self.ui._curve_point(box["curve"], tone.source[3], tone.target[3])
+        x, y, width, height = box[control]
+        return x + width / 2, y + height / 2
+
+    def click_control(self, control, node):
+        point = self.control_point(control, node)
+        self.event_at("MOUSEMOVE", "NOTHING", point)
+        yield .05
+        self.event_at("LEFTMOUSE", "PRESS", point)
+        yield .05
+        self.event_at("LEFTMOUSE", "RELEASE", point)
+        yield .05
+
+    def drag_control(self, control, node, delta, *, cancel=False):
+        start = self.control_point(control, node)
+        end = tuple(value + change for value, change in zip(start, delta))
+        before = self.settings(node)
+        window_key = self.window.as_pointer()
+        self.event_at("MOUSEMOVE", "NOTHING", start)
+        yield .05
+        self.event_at("LEFTMOUSE", "PRESS", start)
+        yield .05
+        self.event_at("MOUSEMOVE", "NOTHING", end)
+        deadline = time.monotonic() + 5
+        while self.nodes._gesture_token(window_key) is None:
+            assert time.monotonic() < deadline, ("Gizmo control did not begin", control)
+            yield .05
+        after = self.settings(node)
+        assert before != after, ("Gizmo control did not edit settings", control)
+        if cancel:
+            self.event_at("ESC", "PRESS", end)
+            self.event_at("ESC", "RELEASE", end)
+        self.event_at("LEFTMOUSE", "RELEASE", end)
+        yield .05
+        while self.nodes._gesture_token(window_key) is not None:
+            assert time.monotonic() < deadline, ("Gizmo control did not finish", control)
+            yield .05
+        assert self.settings(node) == (before if cancel else after), control
+        return after
 
     def settings(self, node):
         grade = getattr(node, "pg_grade", None)

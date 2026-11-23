@@ -1341,6 +1341,7 @@ python_test(
 python_test(
     name = "vectorscope",
     srcs = [
+        "runtime/test_gizmo_geometry.py",
         "runtime/test_vectorscope.py",
         "runtime/test_vectorscope_capture.py",
     ],

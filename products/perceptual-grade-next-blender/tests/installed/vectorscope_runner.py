@@ -148,6 +148,16 @@ space.node_tree = tree
 space.show_region_ui = True
 region = next(item for item in area.regions if item.type == "WINDOW")
 pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui, window, area, region)
+draw_tone = vectorscope_ui._draw_tone
+
+
+def track_tone_draw(box, state, key, linear, tone):
+    draw_tone(box, state, key, linear, tone)
+    if state is not None and state.status == "current" and state.waveforms is not None:
+        report["tone_gizmo_drawn"] = True
+
+
+vectorscope_ui._draw_tone = track_tone_draw
 
 
 def checkpoint(step):
@@ -304,6 +314,55 @@ def check_additive_trace_pixels():
                                rtol=0, atol=5e-4)
     np.testing.assert_array_equal(trace, original)
     report["additive_trace_pixels"] = True
+
+
+def exercise_gizmo_controls():
+    baseline = pointer.settings(grade)
+    exposed = yield from pointer.drag_control("exposure", grade, (0, 25), cancel=True)
+    assert exposed.linear.exposure > baseline.linear.exposure
+    balanced = yield from pointer.drag_control("cr_balance", grade, (0, 25), cancel=True)
+    assert balanced.linear.balance[0] < baseline.linear.balance[0]
+    balanced = yield from pointer.drag_control("yb_balance", grade, (25, 0), cancel=True)
+    assert balanced.linear.balance[1] < baseline.linear.balance[1]
+    for axis, index in (("cr", 0), ("yb", 1)):
+        directed = yield from pointer.drag_control(axis, grade, (13, 19), cancel=True)
+        assert directed.linear.spread[index] != baseline.linear.spread[index]
+        assert directed.linear.heading[index] != baseline.linear.heading[index]
+        assert directed.linear.spread[1 - index] == baseline.linear.spread[1 - index]
+        assert directed.linear.heading[1 - index] == baseline.linear.heading[1 - index]
+    report["linear_gizmo_controls"] = True
+
+    yield from pointer.click_control("tone_tab", grade)
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.status == "current"
+        and value.waveforms is not None,
+        "Tone Gizmo did not publish waveforms",
+    )
+    before = state().waveforms
+    assert before.before.any() and before.after.any()
+    yield from wait_for(lambda: report.get("tone_gizmo_drawn"), "Tone Gizmo failed to draw", 5.)
+    adjusted = yield from pointer.drag_control("curve", grade, (20, 0), cancel=True)
+    assert adjusted.tone.input_nits[3] > baseline.tone.input_nits[3]
+    assert adjusted.tone.input_nits[:3] == baseline.tone.input_nits[:3]
+    assert adjusted.tone.input_nits[4] == baseline.tone.input_nits[4]
+    adjusted = yield from pointer.drag_control("fit", grade, (35, 0), cancel=True)
+    assert adjusted.tone.fit > baseline.tone.fit
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(
+            peak_nits="2000", node_pointer=str(grade.as_pointer()),
+            owner_pointer=str(grade.as_pointer()),
+        ) == {"FINISHED"}
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.status == "current"
+        and value.waveforms is not None and value.waveforms is not before,
+        "Peak edit did not update Tone waveforms",
+    )
+    assert pointer.settings(grade).tone.peak_nits == 2000
+    grade.peak_nits = "1000"
+    yield from pointer.click_control("linear_tab", grade)
+    yield from wait_for(lambda: current(RED), "Linear trace did not return from Tone")
+    assert report.get("helper_jobs", 0) == 0
+    report["tone_gizmo_controls"] = True
 
 
 def exercise_drags():
@@ -486,6 +545,9 @@ def scenario():
     report["direct_image_visible"] = True
     report["direct_sampling_avoids_helper"] = report.get("helper_jobs", 0) == 0
     assert report["direct_sampling_avoids_helper"], "Direct Image sampling started a helper job"
+
+    checkpoint("native Linear and Tone Gizmo controls")
+    yield from exercise_gizmo_controls()
 
     grade.exposure = 1.0
     yield from wait_for(lambda: current(RED, 1.0), "Linear exposure did not move the red peak")

@@ -11,8 +11,9 @@ import shutil
 import threading
 import time
 
-from .. import vectorscope as analysis
-from ..kernel.prepare import prepare_linear
+from .. import tone_scope, vectorscope as analysis
+from ..kernel.prepare import PreparedLinear, prepare_linear
+from ..kernel.settings import ToneSettings
 from . import vectorscope_policy as policy
 from .bake_helper import BakeHelperBackend
 from . import bake_routes
@@ -28,9 +29,22 @@ CACHE_BYTES = 64 * 1024 * 1024
 @dataclass(frozen=True)
 class _Payload:
     route: object
-    matrix: object
-    space: str
+    linear: PreparedLinear
     source_epoch: int
+    tone: ToneSettings | None
+
+    @property
+    def matrix(self):
+        return self.linear.rgb_matrix
+
+    @property
+    def space(self):
+        return self.linear.space
+
+    def analyze(self, rgba):
+        if self.tone is not None:
+            return tone_scope.analyze(rgba, self.linear, self.tone)
+        return analysis.analyze(rgba, self.linear.rgb_matrix, self.linear.space)
 
 
 @dataclass(frozen=True)
@@ -172,8 +186,8 @@ class ScopeRuntime:
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             return None
 
-    def observe(self, node_editor_key, context, node, viewport):
-        """Record one visible scope demand and return immutable display state."""
+    def observe(self, node_editor_key, context, node, viewport, *, tone: ToneSettings | None = None):
+        """Record the visible Linear or Tone demand and return its immutable display."""
         if threading.current_thread() is not self._main_thread:
             raise RuntimeError("Vectorscope observation must run on Blender's main thread")
         key = self._key(node_editor_key)
@@ -237,7 +251,7 @@ class ScopeRuntime:
             source_signature = self._digest((selection, route["source_signature"]))
             capture_signature = self._digest((route["capture_signature"],
                                               selection, epoch))
-            analysis_signature = self._digest((capture_signature, linear, space))
+            analysis_signature = self._analysis_signature(capture_signature, linear, space, tone)
             route_finished = self._clock()
             previous = next((item for item in self.state.desired if item.key == key), None)
             changed = (previous is None or previous.capture_signature != capture_signature
@@ -246,12 +260,11 @@ class ScopeRuntime:
             ready = self.upstream_ready is None or self.upstream_ready(tuple(upstream))
             if changed:
                 linear_started = self._clock()
-                matrix = prepare_linear(linear, space).rgb_matrix
+                payload = _Payload(route, prepare_linear(linear, space), epoch, tone)
                 linear_finished = self._clock()
                 samples = self.samples.get(capture_signature)
                 lookup_finished = self._clock()
-                trace = (None if samples is None
-                         else analysis.analyze(samples, matrix, space))
+                trace = None if samples is None else payload.analyze(samples)
                 timings = ()
                 if route_started is not None:
                     timings = (
@@ -261,7 +274,7 @@ class ScopeRuntime:
                     )
                     if samples is not None:
                         timings += (("cached_density", lookup_finished, self._clock()),)
-                self.payloads[key] = _Payload(route, matrix, space, epoch)
+                self.payloads[key] = payload
                 self._dispatch(policy.Event(
                     "request", key=key, capture_signature=capture_signature,
                     source_signature=source_signature, analysis_signature=analysis_signature,
@@ -283,7 +296,8 @@ class ScopeRuntime:
         key = self._key(key)
         demand = next((item for item in self.state.desired if item.key == key), None)
         payload = self.payloads.get(key)
-        if demand is None or payload is None or key in self.state.waiting:
+        if (demand is None or payload is None or payload.tone is not None
+                or key in self.state.waiting):
             return None
         with self._observations:
             if (self.targets.get(key) != self._target(node)
@@ -308,15 +322,23 @@ class ScopeRuntime:
             return None
         linear, space = self.linear_settings(node), self.working_space()
         demand = next(item for item in self.state.desired if item.key == key)
-        if demand.analysis_signature != self._digest((signature, linear, space)):
+        if demand.analysis_signature != self._analysis_signature(signature, linear, space, None):
             return None
         return samples, linear, space
+
+    def _analysis_signature(self, capture_signature, linear, space, tone):
+        return self._digest((capture_signature, linear, space, tone))
 
     def _display_state(self, key):
         status, error = policy.status(self.state, key)
         if status == "error":
             return None, status, error
-        return self.displays.get(key), status, None
+        display = self.displays.get(key)
+        payload = self.payloads.get(key)
+        if (display is not None and payload is not None
+                and isinstance(display, tone_scope.ToneWaveforms) != (payload.tone is not None)):
+            return None, status, None
+        return display, status, None
 
     def record_draw(self, key, trace):
         if self.timing is None or self.displays.get(key) is not trace:
@@ -354,7 +376,7 @@ class ScopeRuntime:
                 return
             rgba = self._validated_samples(rgba)
             density_started = self._clock()
-            trace = analysis.analyze(rgba, payload.matrix, payload.space)
+            trace = payload.analyze(rgba)
             density_finished = self._clock()
             if density_started is not None:
                 self._record_timing("result_density", density_started, density_finished, ticket,
@@ -394,7 +416,7 @@ class ScopeRuntime:
                 rgba = self._validated_samples(result["rgba"])
                 payload = self.payloads[ticket.key]
                 density_started = self._clock()
-                trace = analysis.analyze(rgba, payload.matrix, payload.space)
+                trace = payload.analyze(rgba)
                 self._record_timing("result_density", density_started, self._clock(), ticket)
             if rgba is not None and self.timing is not None and job.timings:
                 metadata = {"helper_reused": job.helper_reused,
@@ -498,13 +520,21 @@ class ScopeRuntime:
         ))
 
     def linear_changed(self, owner):
+        return self._affected_editors(owner)
+
+    def tone_changed(self, owner):
+        return self._affected_editors(owner, tone_only=True)
+
+    def _affected_editors(self, owner, *, tone_only=False):
         try:
             pointer = int(owner.as_pointer())
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             return ()
         with self._observations:
             return tuple(key for key, target in self.targets.items()
-                         if pointer in target)
+                         if pointer in target and (not tone_only or (
+                             (payload := self.payloads.get(key)) is not None
+                             and payload.tone is not None)))
 
     def _forget_observation(self, key):
         self.payloads.pop(key, None)

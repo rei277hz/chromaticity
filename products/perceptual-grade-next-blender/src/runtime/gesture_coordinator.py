@@ -53,7 +53,7 @@ class Action:
     gesture_token: Optional[int] = None
     node_id: Optional[int] = None
     frame: Optional[float] = None
-    color_values: Optional[tuple[float, float]] = None
+    color_values: Optional[tuple[float, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ class Event:
     success: bool = False
     latest: Literal["none", "move", "finish"] = "none"
     frame: Optional[float] = None
-    color_values: Optional[tuple[float, float]] = None
+    color_values: Optional[tuple[float, ...]] = None
     color_pair: bool = False
 
 
