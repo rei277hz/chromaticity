@@ -13,6 +13,11 @@ __DEVICE__ int pg_tone_default_levels(PGFour levelNits, int peakIndex) {
     return pg_four_equal(levelNits, pg_four(3.148082606120999f, 36.54f, 203.0f, pg_selected_peak(peakIndex)));
 }
 
+__DEVICE__ int pg_jc_tone_active(float blackNits, PGFour levelNits, int peakIndex, PGFour source, PGFour target) {
+    return blackNits > 0.0f ||
+        !(pg_tone_default_levels(levelNits, peakIndex) || pg_four_equal(source, target));
+}
+
 __DEVICE__ float pg_tone_nits_to_j(float nits) {
     return pg_neutral_j(_fmaxf(0.0f, nits) / 203.0f) * .01f;
 }

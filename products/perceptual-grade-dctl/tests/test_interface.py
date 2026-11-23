@@ -154,9 +154,17 @@ class InterfaceTests(unittest.TestCase):
         for locale in LOCALES:
             with self.subTest(locale=locale):
                 baseline = controls(oracle.source("jc_tone_fit_linear_gain", locale))
-                shared = [item for item in baseline if item["name"] not in {"cContrast", "cPivot", "cMuted", "cVivid"}]
+                removed = {"cContrast", "cPivot", "cMuted", "cVivid", "hkInfluence", "remapFit"}
+                shared = [item for item in baseline if item["name"] not in removed]
+                self.assertEqual(next(item for item in baseline if item["name"] == "remapFit")["max"], 6.)
                 records = controls(oracle.source(stage, locale))
-                self.assertEqual([item for item in records if item["name"] not in limits], shared)
+                overlay = next(item for item in records if item["name"] == "showToneCurve")
+                self.assertEqual((overlay["type"], overlay["default"]), ("DCTLUI_CHECK_BOX", 0))
+                fit = next(item for item in records if item["name"] == "remapFit")
+                self.assertEqual(tuple(fit[key] for key in ("type", "default", "min", "max", "step")),
+                                 ("DCTLUI_SLIDER_INT", 0., -2., 2., 1.))
+                new_controls = {*limits, "showToneCurve", "remapFit"}
+                self.assertEqual([item for item in records if item["name"] not in new_controls], shared)
                 adjustment = {item["name"]: item for item in records if item["name"] in limits}
                 self.assertEqual(list(adjustment), list(limits))
                 for name, item in adjustment.items():
@@ -181,9 +189,12 @@ class InterfaceTests(unittest.TestCase):
                     if "options" in left:
                         self.assertEqual(left["options"][0], right["options"][0])
                 for source in (english, chinese):
-                    ui = controls(source)
-                    self.assertEqual(len({item["label"] for item in ui}), len(ui))
-                    self.assertEqual(len(re.findall(r"^DEFINE_UI_TOOLTIP\(", source, re.M)), len(ui))
+                    labels = [item["label"] for item in controls(source)]
+                    self.assertEqual(len(set(labels)), len(labels))
+                    for label in labels:
+                        self.assertNotRegex(label, r"[()]")
+                    tooltip_labels = re.findall(r"^DEFINE_UI_TOOLTIP\(([^,]+),", source, re.M)
+                    self.assertCountEqual(tooltip_labels, labels)
 
     def test_public_transform_signature_and_return(self):
         expected = "intp_Width,intp_Height,intp_X,intp_Y,floatp_R,floatp_G,floatp_B"
@@ -198,7 +209,8 @@ class InterfaceTests(unittest.TestCase):
     def test_hk_repair_is_only_bundled_into_xyz_output(self):
         for stage in (*STAGES, *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
                       *GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES,
-                      *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, *WARP_QUADRATIC_SCALE_PROTOTYPES):
+                      *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
+                      *WARP_QUADRATIC_SCALE_PROTOTYPES):
             with self.subTest(stage=stage):
                 self.assertEqual("pg_guard(" in body(oracle.source(stage)), stage == "output")
 

@@ -8,7 +8,8 @@ from tests.support import cone_reference as cone, dctl_reference as reference, j
 from tests.support.dctl import (
     ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES, OVERLAP_PROTOTYPES,
     PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES, TONE_FIT_PROTOTYPES,
-    TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
+    TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
+    WARP_QUADRATIC_SCALE_PROTOTYPES,
 )
 
 SAMPLES = np.array([[.25, .18, .04], [.15, .07, .42], [.5, .8, .2], [3., 1., .8],
@@ -51,7 +52,8 @@ class NumericalTests(unittest.TestCase):
                          [1.e-25, -1.e-25, 1.e-12]], dtype="f4")
         for stage in ("tone", "jc", "warp", *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
                       *GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES,
-                      *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, *WARP_QUADRATIC_SCALE_PROTOTYPES):
+                      *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
+                      *WARP_QUADRATIC_SCALE_PROTOTYPES):
             with self.subTest(stage=stage):
                 actual = oracle.run(stage, wire)
                 np.testing.assert_array_equal(actual.view("u4"), wire.view("u4"))
@@ -88,8 +90,9 @@ class NumericalTests(unittest.TestCase):
                                          inputHighlights=1680., remapFit=2)):
                 with self.subTest(peak=peak, calibration=calibration):
                     settings = dict(calibration, peakNits=peak)
-                    actual = self.compare("jc_tone_fit", wire, settings)
+                    actual = self.compare("jc_tone_fit_unified_chroma", wire, settings)
                     self.assert_stage_close(actual, oracle.run("tone", wire, settings))
+                    np.testing.assert_array_equal(actual, oracle.run("jc_tone_fit", wire, settings))
 
     def test_integrated_tone_applies_global_chroma_first(self):
         wire = cone.from_xyz(np.vstack([SAMPLES, 20. * SAMPLES])).astype("f4")
@@ -155,11 +158,13 @@ class NumericalTests(unittest.TestCase):
         for stage in (*TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES, *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES):
             if stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES:
                 shape = dict(cMutedGain=-1.3, cVividGain=1.7, cSaturationCrossover=.22)
+                influences = ({},)
             else:
                 shape = dict(cContrast=-1.3, cPivot=.22, cMuted=-.65, cVivid=.85)
-            for influence in (0., .37, 1.):
-                with self.subTest(stage=stage, influence=influence):
-                    forward_settings = dict(settings, **shape, hkInfluence=influence)
+                influences = tuple(dict(hkInfluence=value) for value in (0., .37, 1.))
+            for influence in influences:
+                with self.subTest(stage=stage, **influence):
+                    forward_settings = dict(settings, **shape, **influence)
                     inverse_settings = dict(forward_settings, direction=1)
                     result = self.compare(stage, wire, forward_settings)
                     self.assert_stage_close(self.compare(stage, result, inverse_settings), wire)
@@ -167,6 +172,42 @@ class NumericalTests(unittest.TestCase):
                     self.assert_stage_close(self.compare(stage, restored, forward_settings), wire)
                     for active in (forward_settings, inverse_settings):
                         np.testing.assert_array_equal(oracle.run(stage, black, active).view("u4"), black.view("u4"))
+
+    def test_unified_tone_hits_highlight_target_and_orders_signed_rays(self):
+        stage = "jc_tone_fit_unified_chroma"
+        calibration = dict(inputShadows=2.4, inputMidtones=42., inputWhite=225., inputHighlights=1600.)
+        for peak in range(4):
+            tone = Tone(reference.tone_settings(dict(calibration, peakNits=peak)))
+            heights = 100. * tone.source[1:]
+            neighbor_heights = (heights[:, None] * np.array([.9999, 1., 1.0001])).ravel()
+            neutral = cone.pack(neighbor_heights, 0., 0.).astype("f4")
+            fixed_ray = np.unique(np.r_[np.geomspace(1.e-4, 450., 80), heights])
+            signed_j = np.r_[-fixed_ray[::-1], 0., fixed_ray]
+            radius = .25 * abs(signed_j)
+            chromatic = cone.pack(signed_j, .8 * radius, -.6 * radius).astype("f4")
+            wire = np.vstack([neutral, chromatic])
+            for fit in range(-2, 3):
+                with self.subTest(peak=peak, fit=fit):
+                    settings = dict(calibration, peakNits=peak, remapFit=fit, blackCompression=1.8)
+                    forward = self.compare(stage, wire, settings)
+                    output = cone.enter(forward)
+                    mapped = output.ja[:len(neutral)]
+                    self.assertAlmostEqual(mapped[-2], 100. * tone.target[-1], delta=3.e-4)
+                    self.assertTrue(np.all(np.diff(mapped) > 0.))
+                    ray_j = output.ja[len(neutral):]
+                    self.assertTrue(np.all(np.diff(ray_j) > 0.))
+                    np.testing.assert_allclose(output.q[len(neutral):, 1], .2 * abs(ray_j), rtol=4.e-5, atol=1.e-5)
+                    np.testing.assert_allclose(output.q[len(neutral):, 2], -.15 * abs(ray_j), rtol=4.e-5, atol=1.e-5)
+                    self.assert_stage_close(self.compare(stage, forward, dict(settings, direction=1)), wire)
+
+    def test_unified_tone_rejects_out_of_range_fit(self):
+        wire = cone.from_xyz(SAMPLES[:1])
+        for fit in (-3, 3):
+            for direction in (0, 1):
+                with self.subTest(fit=fit, direction=direction):
+                    settings = dict(remapFit=fit, direction=direction, inputMidtones=42.)
+                    actual = oracle.run("jc_tone_fit_unified_chroma", wire, settings)
+                    np.testing.assert_array_equal(actual, [[400., 0., 400.]])
 
     def test_integrated_linear_gain_changes_only_tonal_chroma_fade(self):
         stage = "jc_tone_fit_linear_gain"
@@ -254,7 +295,7 @@ class NumericalTests(unittest.TestCase):
         gray = np.array([[0., -0., 0.], [22., 22., 22.], [-37., -37., -37.]], dtype="f4")
         axis = np.array([[11., -22., 0.], [-13., 26., 0.]], dtype="f4")
         wire = np.vstack([gray, axis, cone.from_xyz(SAMPLES)]).astype("f4")
-        tone = dict(blackCompression=1.1, inputMidtones=55., hkInfluence=.37,
+        tone = dict(blackCompression=1.1, inputMidtones=55.,
                     shadowChroma=-1., highlightChroma=1.5)
         for pivot in (.05, .95):
             settings = dict(cMutedGain=2., cVividGain=-1., cSaturationCrossover=pivot)
@@ -999,3 +1040,123 @@ class NumericalTests(unittest.TestCase):
         np.testing.assert_array_equal(oracle.run("jc", probe, {"globalChromaGain": 3.}), marker)
         np.testing.assert_array_equal(oracle.run("warp", probe, {f"webscale{i}{j}": 8.
                                                               for i in range(4) for j in range(6)}), marker)
+
+
+class ToneOverlayTests(unittest.TestCase):
+    stages = TONE_FIT_UNIFIED_CHROMA_PROTOTYPES
+
+    def screen(self, x, y, frame):
+        """Convert normalized J to pixels in the lower-left square."""
+        width, height = frame
+        size = min(width, height) // 3
+        padding = max(3, size // 32)
+        start = max(1, size // 24) + padding
+        maximum = Tone(ToneSettings()).nits_to_j(4000.)
+        span = (size - 1 - 2 * padding) / maximum
+        return np.rint(start + x * span).astype(int), np.rint(height - 1 - start - y * span).astype(int)
+
+    def render(self, stage, settings, x, y, frame, wire=(0., 0., 0.)):
+        x, y = np.broadcast_arrays(x, y)
+        return oracle.run(stage, np.broadcast_to(wire, (x.size, 3)), settings,
+                          x=x.ravel(), y=y.ravel(), width=frame[0], height=frame[1])
+
+    def orange(self, pixels):
+        r, g, b = pixels.T
+        return (r > g) & (g > b) & (r - b > 1.)
+
+    def test_curve_tracks_graded_neutrals_in_both_directions(self):
+        frame = (2160, 3840)
+        calibration = dict(inputShadows=1., inputMidtones=18., inputWhite=330., inputHighlights=2400.,
+                           peakNits=2, blackCompression=1.7)
+        tone = Tone(reference.tone_settings(calibration))
+        measured = tone.nits_to_j([6., 70., 130., 540., 1300.])
+        neutrals = cone.pack(100. * measured, 0., 0.)
+        for stage in self.stages:
+            for fit in (-2, 1):
+                for direction in (0, 1):
+                    with self.subTest(stage=stage, fit=fit, direction=direction):
+                        settings = dict(calibration, remapFit=fit, direction=direction)
+                        mapped = cone.enter(oracle.run(stage, neutrals, settings)).ja / 100.
+                        x, y = self.screen(measured, mapped, frame)
+                        pixels = self.render(stage, dict(settings, showToneCurve=1), x, y, frame)
+                        self.assertTrue(self.orange(pixels).all(), (x, y, pixels))
+
+    def test_overlay_bounds_identity_backdrop_and_invalid_pixels(self):
+        for stage in self.stages:
+            for frame in ((1920, 1080), (1080, 1920)):
+                with self.subTest(stage=stage, frame=frame):
+                    # A nonzero scene makes the translucent background measurable.
+                    wire = np.array([14., 14., 14.], dtype="f4")
+                    size = min(frame) // 3
+                    margin = size // 24
+                    top = frame[1] - size - margin
+                    x = [margin, margin - 1, margin + size, margin, margin]
+                    y = [top, top, top, top - 1, top + size]
+                    settings = dict(inputMidtones=50.)
+                    before = self.render(stage, settings, x, y, frame, wire)
+                    disabled = self.render(stage, dict(settings, showToneCurve=0), x, y, frame, wire)
+                    np.testing.assert_array_equal(disabled.view("u4"), before.view("u4"))
+                    enabled = self.render(stage, dict(settings, showToneCurve=1), x, y, frame, wire)
+                    np.testing.assert_array_equal(enabled[1:].view("u4"), before[1:].view("u4"))
+                    self.assertTrue(np.all((0. < enabled[0]) & (enabled[0] < before[0])))
+                    on = dict(showToneCurve=1)
+                    black = self.render(stage, on, x[0], y[0], frame)
+                    self.assertTrue(np.all(enabled[0] > black[0]))
+                    j = np.array([.3, .7, 1.4, 2.2])
+                    cx, cy = self.screen(j, j, frame)
+                    self.assertTrue(self.orange(self.render(stage, on, cx, cy, frame)).all())
+                    self.assertFalse(self.orange(self.render(stage, on, cx, cy + 12, frame)).any())
+                    invalid = self.render(stage, on, cx, cy, frame, (400., 0., 0.))
+                    np.testing.assert_array_equal(invalid, np.tile([400., 0., 400.], (len(j), 1)))
+
+    def test_declared_anchor_rings_and_fitted_dots(self):
+        frame = (2160, 2160)
+        scale = (min(frame) // 3) / 300.
+        settings = dict(inputShadows=.2, inputMidtones=4., inputWhite=850., inputHighlights=3500.,
+                        blackCompression=1., peakNits=2, remapFit=-2)
+        tone = Tone(reference.tone_settings(settings))
+        source, target = tone.source[1:], tone.target[1:]
+        neutrals = cone.pack(100. * source, 0., 0.)
+        angles = np.linspace(0., 2. * np.pi, 24, endpoint=False)
+        for stage in self.stages:
+            mapped = cone.enter(oracle.run(stage, neutrals, settings)).ja / 100.
+            for direction in (0, 1):
+                with self.subTest(stage=stage, direction=direction):
+                    active = dict(settings, direction=direction, showToneCurve=1)
+                    declared = (target, source) if direction else (source, target)
+                    actual = (mapped, source) if direction else (source, mapped)
+                    rx, ry = self.screen(*declared, frame)
+                    dx, dy = self.screen(*actual, frame)
+                    # The pale target ring is visible even when the dot and target coincide.
+                    ring_x = rx[:, None] + np.rint(4.25 * scale * np.cos(angles)).astype(int)
+                    ring_y = ry[:, None] + np.rint(4.25 * scale * np.sin(angles)).astype(int)
+                    ring = self.render(stage, active, ring_x, ring_y, frame)
+                    pale = (np.min(ring, axis=1) > 5.) & (np.ptp(ring, axis=1) < 1.)
+                    self.assertTrue(np.all(pale.reshape(len(source), -1).sum(axis=1) >= 4))
+                    # The soft fit can miss an interior target by more than the ring radius.
+                    separation = np.hypot(dx - rx, dy - ry)
+                    self.assertGreater(np.max(separation), 4.25 * scale)
+                    dots = self.render(stage, active, dx, dy, frame)
+                    self.assertTrue(self.orange(dots).all(), dots)
+
+    def test_offscale_highlight_and_clipped_curve(self):
+        frame = (1920, 1080)
+        for stage in self.stages:
+            for direction in (0, 1):
+                with self.subTest(stage=stage, direction=direction):
+                    settings = dict(showToneCurve=1, direction=direction, inputHighlights=10000., peakNits=2)
+                    tone = Tone(reference.tone_settings(settings))
+                    limit, peak = tone.nits_to_j([4000., 2000.])
+                    tip = (peak, limit) if direction else (limit, peak)
+                    cx, cy = self.screen(*tip, frame)
+                    self.assertTrue(self.orange(self.render(stage, settings, cx, cy, frame))[0])
+                    # A 4000-nit output peak reached early must not flatten against the edge.
+                    short = dict(settings, inputHighlights=500., peakNits=3)
+                    end = tone.nits_to_j(500.)
+                    boundary = (limit, end) if direction else (end, limit)
+                    cx, cy = self.screen(*boundary, frame)
+                    self.assertTrue(self.orange(self.render(stage, short, cx, cy, frame))[0])
+                    tail = tone.nits_to_j([2200., 3000.])
+                    edge = (limit, tail) if direction else (tail, limit)
+                    cx, cy = self.screen(*edge, frame)
+                    self.assertFalse(self.orange(self.render(stage, short, cx, cy, frame)).any())

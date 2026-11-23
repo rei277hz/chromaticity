@@ -190,12 +190,21 @@ def jc_global_shape_controls(spec):
     yield dict(direction, tooltip_id="global_shape.tooltip.direction")
 
 
-def jc_tone_fit_controls(spec, unified):
+def jc_tone_fit_controls(spec, variant):
+    unified = variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE
     direction = next(control for control in spec if control["name"] == "direction")
-    yield from (control for control in spec
-                if "jc_tone_fit" in control["stages"] and control["name"] != "direction")
+    shared = (control for control in spec
+              if "jc_tone_fit" in control["stages"] and control["name"] != "direction"
+              and not (unified and control["name"] == "hkInfluence"))
+    for control in shared:
+        if unified and control["name"] == "remapFit":
+            control = dict(control, max=2)
+        yield control
     yield from global_chroma_controls(unified)
     yield dict(direction, tooltip_id="tone_fit.tooltip.direction")
+    if unified:
+        yield dict(name="showToneCurve", type="DCTLUI_CHECK_BOX", default=0,
+                   label_id="tone_fit.showToneCurve", tooltip_id="tone_fit.tooltip.showToneCurve")
 
 
 def surface_messages(messages, surface_locale):
@@ -222,6 +231,8 @@ def ui_header(stage, slug, version, controls, messages):
     for control in controls:
         name = control["name"]
         label = messages[control["label_id"]]
+        if "(" in label or ")" in label:
+            raise ValueError(f"ASCII parentheses in Resolve control label for {stage}: {name} / {label}")
         if name in names or label in labels:
             raise ValueError(f"Duplicate Resolve control in {stage}: {name} / {label}")
         names.add(name)
@@ -231,6 +242,8 @@ def ui_header(stage, slug, version, controls, messages):
             enums, options = control["options"]
             arguments = [str(control["default"]), "{" + ", ".join(enums) + "}",
                          "{" + ", ".join(messages[key] for key in options) + "}"]
+        elif kind == "DCTLUI_CHECK_BOX":
+            arguments = [str(control["default"])]
         else:
             encode = number if kind == "DCTLUI_SLIDER_FLOAT" else str
             arguments = [encode(control[key]) for key in ("default", "min", "max", "step")]
@@ -324,18 +337,21 @@ def stage_call(stage, variant):
             "            cToneCrossover, direction)"
         )
     if stage == "jc_tone_fit":
-        if variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE:
+        unified = variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE
+        if unified:
             mode = "PG_JC_CHROMA_UNIFIED"
             saturation = "pg_four(0.0f, cSaturationCrossover, cMutedGain, cVividGain)"
         else:
             mode = ("PG_JC_CHROMA_LINEAR_GAIN" if variant in JC_TONE_FIT_LINEAR_GAIN_PROTOTYPE
                     else "PG_JC_CHROMA_LOG_GAIN")
             saturation = "pg_four(cContrast, cPivot, cMuted, cVivid)"
+        tone = ("pixel, blackCompression, pg_four(inputShadows, inputMidtones, inputWhite, inputHighlights),\n"
+                "            remapFit, peakNits")
+        tonal_chroma = "shadowChroma, highlightChroma, cToneCrossover, direction"
+        influence = "1.0f" if unified else "hkInfluence"
         return "", (
-            "pg_cone_tone_fit(pixel, blackCompression, "
-            "pg_four(inputShadows, inputMidtones, inputWhite, inputHighlights),\n"
-            f"            remapFit, peakNits, hkInfluence, {saturation},\n"
-            f"            shadowChroma, highlightChroma, cToneCrossover, direction, {mode})"
+            f"pg_cone_tone_fit({tone}, {influence}, {saturation},\n"
+            f"            {tonal_chroma}, {mode})"
         )
 
     # The controls are uniform for this pixel. Aggregate initialization also
@@ -355,6 +371,14 @@ def stage_call(stage, variant):
 
 def entry_point(stage, variant):
     setup, call = stage_call(stage, variant)
+    overlay = ""
+    if variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE:
+        overlay = """    if (showToneCurve && result.valid) {
+        output = pg_jc_tone_overlay_pixel(output, p_Width, p_Height, p_X, p_Y,
+                    pg_four(inputShadows, inputMidtones, inputWhite, inputHighlights),
+                    blackCompression, remapFit, peakNits, direction);
+    }
+"""
     diagnostic = ("make_float3(400.0f, 0.0f, 400.0f)" if stage in CONE_OUTPUTS else
                   "pg_diagnostic(p_Width, p_Height, p_X, p_Y)")
     return """__DEVICE__ float3 transform(int p_Width,int p_Height,int p_X,int p_Y,float p_R,float p_G,float p_B) {
@@ -362,7 +386,7 @@ def entry_point(stage, variant):
 """ + setup + f"""    PGValue result = pg_value(color_zero3(), 0);
     if (color_finite3(pixel)) result = {call};
     float3 output = result.valid ? result.v : {diagnostic};
-    return make_float3(output.x,output.y,output.z);
+{overlay}    return make_float3(output.x,output.y,output.z);
 }}
 """
 
@@ -453,7 +477,9 @@ def main():
             if stage == "output":
                 headers.extend(["hk_repair", "cone_output"])
             elif stage == "jc_tone_fit":
-                headers.extend(["jc_gain_common", "jc_global_shape", "tone_fit", "jc_tone_fit"])
+                headers.extend(["jc_gain_common", "jc_global_shape", "jc_tone_compression", "tone_fit", "jc_tone_fit"])
+                if variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE:
+                    headers.append("jc_tone_overlay")
             elif stage != "input":
                 if stage in {"jc_gain", "jc_global_shape"}:
                     headers.append("jc_gain_common")
@@ -478,7 +504,7 @@ def main():
         if stage == "jc_global_shape":
             controls = list(jc_global_shape_controls(spec))
         if stage == "jc_tone_fit":
-            controls = list(jc_tone_fit_controls(spec, variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE))
+            controls = list(jc_tone_fit_controls(spec, variant))
         if stage in JC_PROTOTYPES:
             helpers += header("jc_weights")
             shared = {"lightnessFit", "chromaFit", "peakNits"}

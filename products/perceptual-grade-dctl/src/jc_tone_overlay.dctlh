@@ -1,0 +1,152 @@
+typedef struct {
+    PGJCToneCurve fitted;
+    int active;
+} PGToneOverlayCurve;
+
+__DEVICE__ float pg_jc_tone_overlay_map(float j, PGToneOverlayCurve curve) {
+    return curve.active ? pg_jc_tone_forward(j, curve.fitted) : j;
+}
+
+__DEVICE__ int pg_jc_tone_overlay_size(int width, int height) {
+    int size = (width < height ? width : height) / 3;
+    return size >= 24 ? size : 0;
+}
+
+__DEVICE__ int pg_jc_tone_overlay_margin(int size) {
+    int margin = size / 24;
+    return margin > 1 ? margin : 1;
+}
+
+__DEVICE__ int pg_jc_tone_overlay_contains(int height, int px, int py, int size) {
+    int margin = pg_jc_tone_overlay_margin(size);
+    int fromBottom = height - 1 - py;
+    return px >= margin && px < margin + size && fromBottom >= margin && fromBottom < margin + size;
+}
+
+__DEVICE__ float pg_jc_tone_overlay_coverage(float distance, float radius) {
+    return _fminf(1.0f, _fmaxf(0.0f, radius + 0.5f - distance));
+}
+
+__DEVICE__ float pg_jc_tone_overlay_segment(float x, float y, float x0, float y0, float x1, float y1) {
+    float dx = x1 - x0;
+    float dy = y1 - y0;
+    float along = ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy);
+    along = _fminf(1.0f, _fmaxf(0.0f, along));
+    float offsetX = x - (x0 + along * dx);
+    float offsetY = y - (y0 + along * dy);
+    return _sqrtf(offsetX * offsetX + offsetY * offsetY);
+}
+
+__DEVICE__ float pg_jc_tone_overlay_marker(float x, float y, float anchorX, float anchorY,
+                                          float span, float scale, int hollow) {
+    float radius = (hollow ? 4.25f : 2.1f) * scale;
+    float thickness = (hollow ? 0.85f : 1.0f) * scale;
+    if (anchorX <= span && anchorY <= span) {
+        float dx = x - anchorX;
+        float dy = y - anchorY;
+        float distance = _sqrtf(dx * dx + dy * dy);
+        return hollow ? pg_jc_tone_overlay_coverage(_fabs(distance - radius), thickness)
+                      : pg_jc_tone_overlay_coverage(distance, radius);
+    }
+
+    float length = (hollow ? 6.0f : 3.0f) * scale;
+    if (anchorX > span && anchorY > span) {
+        float nearEdge = span - 0.70710678f * (length - radius);
+        float farEdge = span - 0.70710678f * (length + radius);
+        float upper = pg_jc_tone_overlay_segment(x, y, farEdge, nearEdge, span, span);
+        float lower = pg_jc_tone_overlay_segment(x, y, nearEdge, farEdge, span, span);
+        return pg_jc_tone_overlay_coverage(_fminf(upper, lower), thickness);
+    }
+    // Rotate a right-pointing chevron to the top when only the output is off scale.
+    if (anchorY > span) {
+        float oldX = x;
+        x = y;
+        y = oldX;
+        anchorY = anchorX;
+    }
+    if (_fabs(y - anchorY) > radius + 2.0f * scale) return 0.0f;
+    float base = span - length;
+    float top = pg_jc_tone_overlay_segment(x, y, base, anchorY + radius, span, anchorY);
+    float bottom = pg_jc_tone_overlay_segment(x, y, base, anchorY - radius, span, anchorY);
+    return pg_jc_tone_overlay_coverage(_fminf(top, bottom), thickness);
+}
+
+__DEVICE__ float3 pg_jc_tone_overlay_blend(float3 pixel, float3 ink, float opacity) {
+    return pixel + (ink - pixel) * opacity;
+}
+
+__DEVICE__ float3 pg_jc_tone_overlay(float3 graded, int size, int height, int px, int py,
+                                    PGFour source, PGFour target, PGToneOverlayCurve curve, int invert) {
+    int padding = size / 32;
+    if (padding < 3) padding = 3;
+    int inset = pg_jc_tone_overlay_margin(size) + padding;
+    float span = (float)(size - 1 - 2 * padding);
+    float x = (float)(px - inset);
+    float y = (float)(height - 1 - py - inset);
+    float scale = _fmaxf(1.0f, (float)size / 300.0f);
+    float dark = pg_cone_compress(0.015f);
+    float3 pixel = pg_jc_tone_overlay_blend(graded, make_float3(dark, dark, dark), 0.88f);
+    if (x < 0.0f || x > span || y < 0.0f || y > span) return pixel;
+
+    // Transpose the forward graph for Inverse, including its anchors.
+    if (invert) {
+        float oldX = x;
+        x = y;
+        y = oldX;
+    }
+
+    float limit = pg_tone_nits_to_j(4000.0f);
+    float pixelsPerJ = span / limit;
+    float white = pixelsPerJ;
+    float hdr = 2.0f * pixelsPerJ;
+    float edge = _fminf(_fminf(x, span - x), _fminf(y, span - y));
+    float grid = _fminf(_fminf(_fabs(x - white), _fabs(y - white)),
+                        _fminf(_fabs(x - hdr), _fabs(y - hdr)));
+    float diagonal = _fabs(x - y) * 0.70710678f;
+    float gridAlpha = _fmaxf(pg_jc_tone_overlay_coverage(edge, 0.65f * scale),
+                             0.62f * pg_jc_tone_overlay_coverage(_fminf(grid, diagonal), 0.6f * scale));
+    float gray = pg_cone_compress(0.085f);
+    pixel = pg_jc_tone_overlay_blend(pixel, make_float3(gray, gray, gray), gridAlpha);
+
+    // Span the stroke's footprint in x so steep curves retain their width.
+    float left = _fmaxf(0.0f, x - scale - 0.5f);
+    float right = _fminf(span, x + scale + 0.5f);
+    float leftY = pg_jc_tone_overlay_map(left / pixelsPerJ, curve) * pixelsPerJ;
+    float rightY = pg_jc_tone_overlay_map(right / pixelsPerJ, curve) * pixelsPerJ;
+    float curveAlpha = 0.0f;
+    if (leftY <= span && rightY >= 0.0f) {
+        float distance = pg_jc_tone_overlay_segment(x, y, left, leftY, right, rightY);
+        curveAlpha = pg_jc_tone_overlay_coverage(distance, scale);
+    }
+
+    float ringAlpha = 0.0f;
+    float dotAlpha = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        float anchorJ = i == 0 ? source.s : (i == 1 ? source.m : (i == 2 ? source.w : source.h));
+        float anchorX = (anchorJ / limit) * span;
+        if (_fabs(x - _fminf(anchorX, span)) > 8.0f * scale) continue;
+        float targetJ = i == 0 ? target.s : (i == 1 ? target.m : (i == 2 ? target.w : target.h));
+        float targetY = (targetJ / limit) * span;
+        float actualY = (pg_jc_tone_overlay_map(anchorJ, curve) / limit) * span;
+        ringAlpha = _fmaxf(ringAlpha, pg_jc_tone_overlay_marker(x, y, anchorX, targetY, span, scale, 1));
+        dotAlpha = _fmaxf(dotAlpha, pg_jc_tone_overlay_marker(x, y, anchorX, actualY, span, scale, 0));
+    }
+
+    float3 orange = pg_cone_input(color_rgb_xyz(make_float3(1.0f, 0.32f, 0.035f))).v;
+    float light = pg_cone_compress(0.65f);
+    pixel = pg_jc_tone_overlay_blend(pixel, orange, curveAlpha);
+    pixel = pg_jc_tone_overlay_blend(pixel, make_float3(light, light, light), ringAlpha);
+    return pg_jc_tone_overlay_blend(pixel, orange, dotAlpha);
+}
+__DEVICE__ float3 pg_jc_tone_overlay_pixel(float3 graded, int width, int height, int px, int py,
+                                          PGFour levels, float blackNits, int fit, int peakIndex, int invert) {
+    int size = pg_jc_tone_overlay_size(width, height);
+    if (!pg_jc_tone_overlay_contains(height, px, py, size)) return graded;
+
+    PGFour source = pg_tone_input_anchors(levels, 0.0f);
+    PGFour target = pg_tone_anchors(peakIndex);
+    PGToneOverlayCurve curve;
+    curve.fitted = pg_jc_tone_curve(source, target, pg_tone_nits_to_j(blackNits), fit);
+    curve.active = pg_jc_tone_active(blackNits, levels, peakIndex, source, target);
+    return pg_jc_tone_overlay(graded, size, height, px, py, source, target, curve, invert);
+}
