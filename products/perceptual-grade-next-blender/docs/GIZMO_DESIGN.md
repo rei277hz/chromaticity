@@ -112,9 +112,13 @@ sidebar. Each plot shows the selected node's Linear output. Nodes that share a
 Grade use its Linear settings and sample their own Color inputs. Cb increases
 to the right and Cr increases upward in Rec.709 signal space, with fixed
 bounds of -0.65 to +0.65 on both axes. The trace averages the measured
-display-encoded RGB, weighted by sample alpha and a one-bin Gaussian. The
-same weights set logarithmic trace opacity. The dark graticule has a fixed
-circle, six outlined 75% RGB/CMY targets, and a dim 123-degree skin-tone guide.
+display-encoded RGB, weighted by sample alpha and a one-bin Gaussian. A bin
+with share `d` of the total plotted mass has logarithmic density
+`L = log1p(65535 * d) / log1p(65535)`. An endpoint-normalized exponential
+shoulder sets the intensity to `expm1(-L) / expm1(-1)`, lifting sparse bins and
+compressing the upper end of the density range. Each bin adds its measured RGB
+to the dark background at that intensity. The graticule has a fixed circle,
+six outlined 75% RGB/CMY targets, and a dim 123-degree skin-tone guide.
 
 Left-drag anywhere in a current plot to steer its cloud in the pointer
 direction. The gesture follows a fixed, alpha-weighted set of representative

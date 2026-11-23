@@ -22,6 +22,7 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_vectorscope.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
+vectorscope = importlib.import_module(extension.__name__ + ".vectorscope")
 vectorscope_ui = importlib.import_module(extension.__name__ + ".vectorscope_ui")
 errors = []
 assert addon_utils.enable(
@@ -251,6 +252,60 @@ def exercise_mixed_trace(previous):
     report["mixed_trace_rgb"] = True
 
 
+def check_additive_trace_pixels():
+    import gpu
+    from mathutils import Matrix
+
+    background = 0.023
+    mass = np.array([[0.0, 1.0, 1.0, 998.0]])
+    measured_rgb = np.array([[0.0, 0.0, 0.0],
+                             [0.3, 0.12, 0.06],
+                             [0.6, 0.24, 0.12],
+                             [0.95, 0.95, 0.95]])
+    trace = vectorscope.trace_rgba(mass, mass[..., None] * measured_rgb)
+    original = trace.copy()
+    assert not trace.flags.writeable
+    width, height = 32, 8
+    saved_blend = gpu.state.blend_get()
+    saved_depth = gpu.state.depth_test_get()
+    saved_viewport = gpu.state.viewport_get()
+    saved_scissor = gpu.state.scissor_get()
+    key = object()
+    offscreen = gpu.types.GPUOffScreen(width, height, format="RGBA32F")
+    try:
+        with offscreen.bind(), gpu.matrix.push_pop(), gpu.matrix.push_pop_projection():
+            gpu.matrix.load_identity()
+            gpu.matrix.load_projection_matrix(Matrix.Identity(4))
+            gpu.state.viewport_set(0, 0, width, height)
+            gpu.state.scissor_set(0, 0, width, height)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("ALPHA")
+            framebuffer = gpu.state.active_framebuffer_get()
+            framebuffer.clear(color=(background, background, background, 1.0))
+            vectorscope_ui._draw_trace((-1, -1, 2, 2), trace, key)
+            assert gpu.state.blend_get() == "ALPHA"
+            pixels = np.asarray(framebuffer.read_color(0, 0, width, height, 4, 0, "FLOAT"))
+            actual = pixels.reshape(height, width, 4)[height // 2, (4, 12, 20, 28), :3]
+    finally:
+        gpu.state.blend_set(saved_blend)
+        gpu.state.depth_test_set(saved_depth)
+        gpu.state.viewport_set(*saved_viewport)
+        gpu.state.scissor_set(*saved_scissor)
+        vectorscope_ui._TEXTURES.pop(key, None)
+        offscreen.free()
+
+    log_density = np.log1p(65535 * mass[0] / mass.sum()) / np.log(65536)
+    density = (1.0 - np.exp(-log_density)) / (1.0 - np.exp(-1.0))
+    expected = background + measured_rgb * density[:, None]
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=5e-4)
+    previous = background + measured_rgb * log_density[:, None]
+    assert np.all(actual[1:3] > previous[1:3] + 5e-4)
+    np.testing.assert_allclose(actual[1] - background, (actual[2] - background) / 2,
+                               rtol=0, atol=5e-4)
+    np.testing.assert_array_equal(trace, original)
+    report["additive_trace_pixels"] = True
+
+
 def exercise_drags():
     cleanup()
     tree.links.new(source.outputs["Image"], grade.inputs["Color"])
@@ -424,6 +479,8 @@ def scenario():
     yield from wait_for(lambda: current(RED), "Direct Image input did not plot red")
     initial_state, initial = snapshot()
     assert_solid_trace(initial_state, RED)
+    checkpoint("draw additive trace into framebuffer")
+    check_additive_trace_pixels()
     assert np.sum(initial) > 0.0, "The direct Image input produced an empty plot"
     report["initial_shape"] = list(initial.shape)
     report["direct_image_visible"] = True

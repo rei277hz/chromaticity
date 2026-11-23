@@ -482,7 +482,13 @@ def _draw_trace(rect, rgba, key):
             "pos": _quad(*rect), "texCoord": _quad(0, 0, 1, 1),
         })
         _remember_batch(batch_key, batch)
-    batch.draw(shader)
+    blend = gpu.state.blend_get()
+    try:
+        # Additive blending applies the trace density once to measured RGB.
+        gpu.state.blend_set("ADDITIVE")
+        batch.draw(shader)
+    finally:
+        gpu.state.blend_set(blend)
 
 
 _CIRCLE = tuple((math.cos(i * math.tau / 96), math.sin(i * math.tau / 96))

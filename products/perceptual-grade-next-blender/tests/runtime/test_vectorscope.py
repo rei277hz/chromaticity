@@ -372,6 +372,19 @@ class VectorscopeTests(unittest.TestCase):
         brightness = self.analysis.normalize_histogram(histogram)
         np.testing.assert_array_equal(brightness, np.zeros((8, 8), dtype=np.float32))
 
+    def test_density_shoulder_lifts_logarithmic_response(self):
+        histogram = np.array([[0.0, 1.0, 10.0, 159.0, 830.0]])
+        brightness = self.analysis.normalize_histogram(histogram)
+        fraction = histogram / histogram.sum()
+        log_density = np.log1p(65535.0 * fraction) / np.log1p(65535.0)
+        expected = (1.0 - np.exp(-log_density)) / (1.0 - np.exp(-1.0))
+        np.testing.assert_allclose(brightness, expected, rtol=0, atol=1e-7)
+        self.assertEqual(brightness[0, 0], 0.0)
+        np.testing.assert_array_less(log_density[0, 1:], brightness[0, 1:])
+        self.assertTrue(np.all(np.diff(brightness[0]) > 0.0))
+        self.assertLess(float(brightness[0, -1]), 1.0)
+        self.assertFalse(brightness.flags.writeable)
+
     @staticmethod
     def linear_pixels(code, alpha):
         code = np.asarray(code, dtype=np.float64)

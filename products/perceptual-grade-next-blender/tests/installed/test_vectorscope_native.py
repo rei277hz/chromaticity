@@ -89,6 +89,7 @@ class VectorscopeNativeTests(unittest.TestCase):
 
     def test_compositor_grade_scope_tracks_edits_and_playback(self):
         data, details = self.run_installed_case("vectorscope_runner.py")
+        self.assertTrue(data.get("additive_trace_pixels"), details)
         self.assertTrue(data.get("direct_image_visible"), details)
         self.assertTrue(data.get("linear_edit_refreshed"), details)
         self.assertTrue(data.get("image_pixels_refreshed"), details)

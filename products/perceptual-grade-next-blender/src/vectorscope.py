@@ -100,11 +100,12 @@ def accumulate(cr, cb, weights, edges):
 
 
 def normalize_histogram(histogram):
-    """Convert raw histogram weights to immutable display brightness."""
+    """Convert raw histogram weights to immutable display density."""
     total = float(histogram.sum())
     if total > 0.0:
         normalized = histogram / total
-        brightness = np.log1p(normalized * _DISPLAY_GAIN) / np.log1p(_DISPLAY_GAIN)
+        log_density = np.log1p(_DISPLAY_GAIN * normalized) / np.log1p(_DISPLAY_GAIN)
+        brightness = np.expm1(-log_density) / np.expm1(-1.0)
     else:
         brightness = np.zeros_like(histogram, dtype=np.float64)
     result = np.asarray(brightness, dtype=np.float32)
@@ -163,7 +164,7 @@ def trace_components(rgba, linear_matrix, space, *, size=SIZE):
 
 
 def trace_rgba(mass, energy):
-    """Encode measured RGB and logarithmic density as straight-alpha RGBA."""
+    """Encode measured RGB and display density as straight-alpha RGBA."""
     rgba = np.zeros((*mass.shape, 4), dtype=np.float32)
     color = rgba[..., :3]
     np.divide(energy, mass[..., None], out=color, where=mass[..., None] > 0)
