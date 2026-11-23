@@ -1,11 +1,13 @@
 """Generic helper loop; extension operations are injected by module name."""
 
 from concurrent.futures import CancelledError
+from contextlib import contextmanager, nullcontext
 from importlib import import_module
 import os
 import queue
 import socket
 import threading
+from time import perf_counter_ns
 import traceback
 
 from .payloads import PayloadStore
@@ -21,6 +23,25 @@ class WorkerContext:
         self._cancelled = cancelled
         self._send = send
         self._payloads = payloads
+        self.timings = [] if job.get("profile") is True else None
+
+    def measure(self, stage):
+        return nullcontext() if self.timings is None else self._measure(stage)
+
+    def start_timing(self):
+        return perf_counter_ns() if self.timings is not None else None
+
+    def finish_timing(self, stage, started):
+        if started is not None:
+            self.timings.append((stage, started, perf_counter_ns(), "worker"))
+
+    @contextmanager
+    def _measure(self, stage):
+        started = self.start_timing()
+        try:
+            yield
+        finally:
+            self.finish_timing(stage, started)
 
     def checkpoint(self):
         if self._cancelled.is_set():
@@ -105,14 +126,20 @@ def run(config, namespace):
             context = WorkerContext(config, message, cancelled, send, payloads)
             prefix = f"{config['role']}-{identity}"
             try:
-                inputs = payloads.decode(message["inputs"], copy=True)
+                with context.measure("worker_decode"):
+                    inputs = payloads.decode(message["inputs"], copy=True)
                 context.checkpoint()
-                result = worker.dispatch(message["operation"], inputs, context)
+                with context.measure("worker_dispatch"):
+                    result = worker.dispatch(message["operation"], inputs, context)
                 context.checkpoint()
-                encoded, files = payloads.encode(result, prefix=prefix)
+                with context.measure("worker_encode"):
+                    encoded, files = payloads.encode(result, prefix=prefix)
                 try:
                     context.checkpoint()
-                    send(dict(kind="complete", job=identity, value=encoded, files=files))
+                    receipt = dict(kind="complete", job=identity, value=encoded, files=files)
+                    if context.timings is not None:
+                        receipt["timings"] = context.timings
+                    send(receipt)
                 except BaseException:
                     payloads.release(files)
                     raise

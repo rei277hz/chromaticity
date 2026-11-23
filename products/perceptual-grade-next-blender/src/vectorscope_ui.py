@@ -1,5 +1,6 @@
 """Transient Node Editor controls and display for the Linear vectorscope."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import math
 import threading
@@ -8,10 +9,12 @@ import bpy
 import numpy as np
 
 from . import localization
-from .vectorscope import CHROMA_LIMIT
+from .kernel.settings import LinearSettings
+from .vectorscope import CHROMA_LIMIT, WhiteDrag, color_bar_targets
 
 
 _PER_NODE_TYPES = {"PGShaderGradePerNode", "PGCompositorGradePerNode"}
+_SHARED_TYPES = {"PGShaderGrade", "PGCompositorGrade"}
 _SMALL_SIDE = 112
 _MAX_SIDE = 216
 _INTERVAL = 1 / 60
@@ -23,15 +26,44 @@ _LAST_VIEW = {}
 _TEXTURES = {}
 _SHADERS = {}
 _BATCHES = {}
+_DRAGS = {}
 _runtime = None
 _draw_handle = None
+_gesture = None
 
 
 @dataclass(frozen=True)
 class DisplayState:
-    brightness: np.ndarray | None
+    rgba: np.ndarray | None
     status: str
     error: str | None
+
+    @property
+    def brightness(self):
+        return None if self.rgba is None else self.rgba[..., 3]
+
+
+@dataclass(frozen=True)
+class _GestureCallbacks:
+    begin: Callable
+    edit: Callable
+    finish: Callable
+    cancel: Callable
+
+
+@dataclass
+class _Drag:
+    key: tuple[int, int]
+    binding: tuple[int, int | None]
+    frame: tuple[int, int, float]
+    capture: tuple[str, int, str]
+    model: WhiteDrag
+    linear: LinearSettings
+    x: int
+    y: int
+    side: int
+    threshold: float
+    token: int | None = None
 
 
 def _key(window, area):
@@ -41,9 +73,17 @@ def _key(window, area):
 def _selected(space):
     tree = getattr(space, "edit_tree", None)
     node = getattr(getattr(tree, "nodes", None), "active", None)
-    if getattr(node, "bl_idname", None) in _PER_NODE_TYPES and node.select:
+    if node is None or not node.select:
+        return None
+    if (node.bl_idname in _PER_NODE_TYPES
+            or node.bl_idname in _SHARED_TYPES and node.pg_grade is not None):
         return node
     return None
+
+
+def _binding(node):
+    grade = getattr(node, "pg_grade", None)
+    return node.as_pointer(), None if grade is None else grade.as_pointer()
 
 
 def _node_editor(context):
@@ -157,6 +197,9 @@ def _plot_rect(area, region):
 
 
 def _release(key):
+    drag = _DRAGS.get(key[0])
+    if drag is not None and drag.key == key:
+        _cancel_drag(key[0])
     _PLOTS.pop(key, None)
     with _REVISION_LOCK:
         _REVISIONS.pop(key, None)
@@ -169,9 +212,140 @@ def _frame_key(scene):
     return scene.as_pointer(), scene.frame_current, scene.frame_subframe
 
 
+def _cancel_drag(window_key, *, before_frame_change=False):
+    drag = _DRAGS.pop(window_key, None)
+    if drag is None or drag.token is None:
+        return
+    manager = bpy.context.window_manager
+    window = None if manager is None else next(
+        (item for item in manager.windows if item.as_pointer() == window_key), None)
+    restore = window is None or (_frame_key(window.scene) == drag.frame)
+    if before_frame_change and window is not None:
+        restore = window.scene.as_pointer() == drag.frame[0]
+    _gesture.cancel(window_key, drag.token, restore)
+
+
+def _drag_is_current(drag, window, node):
+    return (node is not None and _binding(node) == drag.binding
+            and _frame_key(window.scene) == drag.frame
+            and _runtime.drag_capture(drag.key, node) == drag.capture)
+
+
+def frame_change_pre(scene):
+    """Cancel same-scene drags before animation evaluates the destination frame."""
+    if threading.current_thread() is not threading.main_thread():
+        return
+    try:
+        scene_pointer = int(scene.as_pointer())
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return
+    for window_key, drag in tuple(_DRAGS.items()):
+        if drag.frame[0] == scene_pointer:
+            _cancel_drag(window_key, before_frame_change=True)
+
+
+def _press_plot(window, event):
+    for area in window.screen.areas:
+        key = _key(window, area)
+        if key not in _ENABLED or area.type != "NODE_EDITOR":
+            continue
+        region = next(iter(_view_regions(area)), None)
+        node = _selected(area.spaces.active)
+        if region is None or node is None:
+            continue
+        bounds = _plot_rect(area, region)
+        if bounds is None:
+            continue
+        x, y, side = bounds
+        mouse_x, mouse_y = event.mouse_x - region.x, event.mouse_y - region.y
+        if not (x <= mouse_x < x + side and y <= mouse_y < y + side):
+            continue
+        with bpy.context.temp_override(window=window, area=area, region=region):
+            state = display_state(bpy.context)
+            if (state is None or state.status != "current" or state.brightness is None
+                    or not state.brightness.any()):
+                return True
+            capture = _runtime.drag_capture(key, node)
+            inputs = _runtime.drag_inputs(key, node)
+            if capture is None or inputs is None:
+                return True
+            rgba, linear, space = inputs
+            model = WhiteDrag.from_capture(rgba, linear, space)
+            if model is not None:
+                _DRAGS[key[0]] = _Drag(
+                    key, _binding(node), _frame_key(window.scene), capture, model, linear,
+                    event.mouse_x, event.mouse_y, side,
+                    3.0 * bpy.context.preferences.system.ui_scale,
+                )
+        return True
+    return False
+
+
+def _move_drag(drag, node, dx, dy):
+    values = drag.model.move(drag.linear, dx, dy, drag.side)
+    if drag.token is None:
+        if values == drag.linear.source_xy:
+            return
+        inputs = _runtime.drag_inputs(drag.key, node)
+        if inputs is None or inputs[1] != drag.linear:
+            _cancel_drag(drag.key[0])
+            return
+        drag.token = _gesture.begin(drag.key[0], node)
+        if drag.token is None:
+            _cancel_drag(drag.key[0])
+            return
+    if not _gesture.edit(drag.key[0], drag.token, node, values):
+        _cancel_drag(drag.key[0])
+
+
+def pointer_event(window, event):
+    """Handle plot input through the window's existing Grade gesture router."""
+    if window is None or window.screen is None or not _ENABLED:
+        return False
+    window_key = window.as_pointer()
+    drag = _DRAGS.get(window_key)
+    if drag is None:
+        return (event.type == "LEFTMOUSE" and event.value == "PRESS"
+                and _press_plot(window, event))
+    if event.type == "WINDOW_DEACTIVATE":
+        _cancel_drag(window_key)
+        return False
+    if event.type in {"ESC", "RIGHTMOUSE"} and event.value == "PRESS":
+        _cancel_drag(window_key)
+        return True
+    moving = event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
+    releasing = event.type == "LEFTMOUSE" and event.value == "RELEASE"
+    if not (moving or releasing):
+        return False
+    dx, dy = event.mouse_x - drag.x, event.mouse_y - drag.y
+    if drag.token is None and math.hypot(dx, dy) < drag.threshold:
+        if releasing:
+            _cancel_drag(window_key)
+        return True
+    area = next((area for area in window.screen.areas
+                 if area.as_pointer() == drag.key[1] and area.type == "NODE_EDITOR"), None)
+    region = None if area is None else next(iter(_view_regions(area)), None)
+    node = None if area is None else _selected(area.spaces.active)
+    if region is None or node is None or _plot_rect(area, region) is None:
+        _cancel_drag(window_key)
+        return True
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        if releasing or drag.token is None:
+            # A link or viewport change can precede the next timer observation.
+            _observe(drag.key, window, area, region, node)
+        if (_DRAGS.get(window_key) is not drag
+                or not _drag_is_current(drag, window, node)):
+            _cancel_drag(window_key)
+            return True
+        _move_drag(drag, node, dx, dy)
+        if releasing and _DRAGS.pop(window_key, None) is drag and drag.token is not None:
+            _gesture.finish(window_key, drag.token, node)
+    return True
+
+
 def _observe(key, window, area, region, node):
     previous = _PLOTS.get(key)
-    binding = node.as_pointer()
+    binding = _binding(node)
     if previous is not None and previous[0] != binding:
         _release(key)
         previous = None
@@ -182,15 +356,20 @@ def _observe(key, window, area, region, node):
         frame = _frame_key(context.scene)
         try:
             viewport = (_viewport_descriptor(window, context)
-                        if node.bl_idname == "PGShaderGradePerNode" else None)
+                        if node.id_data.bl_idname == "ShaderNodeTree" else None)
             state = DisplayState(*_runtime.observe(key, context, node, viewport))
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
-            state = DisplayState(None, "error", str(error))
+            state = DisplayState(*_runtime.unavailable(key, error))
     _PLOTS[key] = binding, frame, state, revision
-    if state.brightness is None:
+    drag = _DRAGS.get(key[0])
+    if (drag is not None and drag.key == key
+            and (state.status in {"error", "unavailable"}
+                 or not _drag_is_current(drag, window, node))):
+        _cancel_drag(key[0])
+    if state.rgba is None:
         _TEXTURES.pop(key, None)
     if (previous is None or previous[3] != revision
-            or previous[2].brightness is not state.brightness
+            or previous[2].rgba is not state.rgba
             or previous[2].status != state.status or previous[2].error != state.error):
         area.tag_redraw()
 
@@ -237,16 +416,16 @@ def display_state(context):
     node = _selected(context.space_data)
     key = _key(context.window, context.area)
     plot = _PLOTS.get(key)
-    if node is None or plot is None or plot[0] != node.as_pointer():
+    if node is None or plot is None or plot[0] != _binding(node):
         return None
-    _binding, frame, state, revision = plot
+    _, frame, state, revision = plot
     active_frame = _frame_key(context.scene)
     if frame[0] != active_frame[0]:
         return None
     with _REVISION_LOCK:
         invalidated = revision != _REVISIONS.get(key)
     if state.status == "current" and (frame != active_frame or invalidated):
-        return DisplayState(state.brightness, "updating", None)
+        return DisplayState(state.rgba, "updating", None)
     return state
 
 
@@ -280,21 +459,18 @@ def _remember_batch(key, batch):
         _BATCHES.pop(next(iter(_BATCHES)))
 
 
-def _density(rect, brightness, key):
+def _draw_trace(rect, rgba, key):
     import gpu
     from gpu_extras.batch import batch_for_shader
     cached = _TEXTURES.get(key)
-    if cached is None or cached[0] is not brightness:
-        height, width = brightness.shape
-        rgba = np.empty((height, width, 4), dtype=np.float32)
-        rgba[..., :3] = 0.34, 0.91, 0.67
-        rgba[..., 3] = brightness
+    if cached is None or cached[0] is not rgba:
+        height, width, _ = rgba.shape
         texture = gpu.types.GPUTexture(
-            (width, height), format="RGBA8",
+            (width, height), format="RGBA16F",
             data=gpu.types.Buffer("FLOAT", rgba.shape, rgba),
         )
         texture.filter_mode(False)
-        cached = brightness, texture
+        cached = rgba, texture
         _TEXTURES[key] = cached
     shader = _shader("IMAGE")
     shader.bind()
@@ -311,14 +487,8 @@ def _density(rect, brightness, key):
 
 _CIRCLE = tuple((math.cos(i * math.tau / 96), math.sin(i * math.tau / 96))
                 for i in range(97))
-_TARGETS = (
-    ("R", (1, 0, 0), (0.98, 0.39, 0.36, 1.0)),
-    ("Y", (1, 1, 0), (0.97, 0.83, 0.38, 1.0)),
-    ("G", (0, 1, 0), (0.49, 0.88, 0.48, 1.0)),
-    ("C", (0, 1, 1), (0.38, 0.88, 0.9, 1.0)),
-    ("B", (0, 0, 1), (0.5, 0.65, 1.0, 1.0)),
-    ("M", (1, 0, 1), (0.93, 0.55, 0.84, 1.0)),
-)
+_TARGETS = color_bar_targets()
+_SKIN_ANGLE = math.radians(123.0)
 
 
 def _text(label, x, y, size, color, width):
@@ -341,30 +511,40 @@ def _guides(rect):
     x, y, side, _ = rect
     radius = side * 0.5
     cx, cy = x + radius, y + radius
+    scale = radius / CHROMA_LIMIT
+    targets = [(label, cx + cb * scale, cy + cr * scale)
+               for label, cb, cr in _TARGETS]
+    half_box = max(3.0, radius * 0.055)
     shader = _shader("POLYLINE_UNIFORM_COLOR")
     shader.bind()
     shader.uniform_float("viewportSize", gpu.state.viewport_get()[2:])
     shader.uniform_float("lineWidth", 1.0)
-    shader.uniform_float("color", (0.59, 0.65, 0.62, 0.36))
     key = ("guides", tuple(rect))
     batch = _BATCHES.get(key)
     if batch is None:
-        positions = [(x, cy, 0), (x + side, cy, 0),
-                     (cx, y, 0), (cx, y + side, 0)]
-        for ring in (0.25, 0.5, CHROMA_LIMIT):
-            r = radius * ring / CHROMA_LIMIT
-            points = tuple((cx + r * dx, cy + r * dy, 0) for dx, dy in _CIRCLE)
-            positions.extend(point for segment in zip(points, points[1:])
+        points = tuple((cx + radius * dx, cy + radius * dy, 0) for dx, dy in _CIRCLE)
+        positions = [point for segment in zip(points, points[1:]) for point in segment]
+        for _, px, py in targets:
+            corners = _quad(px - half_box, py - half_box, 2 * half_box, 2 * half_box)
+            positions.extend((*point, 0) for segment in zip(corners, (*corners[1:], corners[0]))
                              for point in segment)
         batch = batch_for_shader(shader, "LINES", {"pos": positions})
         _remember_batch(key, batch)
+    shader.uniform_float("color", (0.68, 0.68, 0.68, 0.55))
     batch.draw(shader)
-    for label, (r, g, b), color in _TARGETS:
-        luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        px = cx + ((b - luma) / 1.8556) * radius / CHROMA_LIMIT
-        py = cy + ((r - luma) / 1.5748) * radius / CHROMA_LIMIT
-        _fill((px - 1.5, py - 1.5, 3, 3), color)
-        _text(label, px + 3, py + 2, 9, color, 20)
+    key = ("skin guide", tuple(rect))
+    batch = _BATCHES.get(key)
+    if batch is None:
+        dx, dy = radius * math.cos(_SKIN_ANGLE), radius * math.sin(_SKIN_ANGLE)
+        batch = batch_for_shader(shader, "LINES", {
+            "pos": [(cx, cy, 0), (cx + dx, cy + dy, 0)],
+        })
+        _remember_batch(key, batch)
+    shader.uniform_float("color", (0.68, 0.68, 0.68, 0.32))
+    batch.draw(shader)
+    color = (0.72, 0.72, 0.72, 0.92)
+    for label, px, py in targets:
+        _text(label, px + half_box + 2, py + half_box, 9, color, 20)
 
 
 def _draw():
@@ -386,23 +566,26 @@ def _draw():
     try:
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("NONE")
-        _fill((x - 7, y - 28, side + 14, side + 53), (0.065, 0.08, 0.075, 0.97))
-        _fill(rect, (0.028, 0.035, 0.032, 1.0))
-        if state is not None and state.brightness is not None:
-            _density(rect, state.brightness, key)
+        _fill((x - 7, y - 28, side + 14, side + 53), (0.075, 0.075, 0.075, 0.97))
+        _fill(rect, (0.023, 0.023, 0.023, 1.0))
+        if state is not None and state.rgba is not None:
+            _draw_trace(rect, state.rgba, key)
         _guides(rect)
         _text(localization.tr("label.vectorscope"), x, y + side + 8, 12,
-              (0.9, 0.94, 0.92, 1.0), side)
+              (0.94, 0.94, 0.94, 1.0), side)
         if state is None or state.status != "current":
             error = state is not None and state.status in {"error", "unavailable"}
             status = "scope.vectorscope.unavailable" if error else "scope.vectorscope.updating"
-            color = (1.0, 0.63, 0.45, 1.0) if error else (0.72, 0.78, 0.75, 1.0)
+            color = (1.0, 0.63, 0.45, 1.0) if error else (0.76, 0.76, 0.76, 1.0)
             _text(localization.tr(status), x, y - 12, 10, color, side)
             if error and state.error:
                 _text(state.error.splitlines()[0], x, y - 22, 8, color, side)
     finally:
         gpu.state.blend_set(blend)
         gpu.state.depth_test_set(depth)
+    if (getattr(_runtime, "timing", None) is not None
+            and state is not None and state.status == "current" and state.rgba is not None):
+        _runtime.record_draw(key, state.rgba)
 
 
 def invalidate(scene, changed_ids):
@@ -437,6 +620,8 @@ def _mark_updating(affected):
 
 
 def _clear_display():
+    for window_key in tuple(_DRAGS):
+        _cancel_drag(window_key)
     _ENABLED.clear()
     _PLOTS.clear()
     with _REVISION_LOCK:
@@ -452,8 +637,9 @@ def reset():
         _runtime.reset()
 
 
-def register(create_runtime):
-    global _runtime, _draw_handle
+def register(create_runtime, *, begin, edit, finish, cancel):
+    global _runtime, _draw_handle, _gesture
+    _gesture = _GestureCallbacks(begin, edit, finish, cancel)
     if _runtime is None:
         _runtime = create_runtime()
     if not PG_OT_toggle_vectorscope.is_registered:
@@ -464,7 +650,7 @@ def register(create_runtime):
 
 
 def unregister():
-    global _runtime, _draw_handle
+    global _runtime, _draw_handle, _gesture
     if bpy.app.timers.is_registered(_tick):
         bpy.app.timers.unregister(_tick)
     if _draw_handle is not None:
@@ -472,9 +658,10 @@ def unregister():
         _draw_handle = None
     if PG_OT_toggle_vectorscope.is_registered:
         bpy.utils.unregister_class(PG_OT_toggle_vectorscope)
+    _clear_display()
+    _gesture = None
     runtime = _runtime
     if runtime is not None:
         runtime.close()
         _runtime = None
-    _clear_display()
     _SHADERS.clear()

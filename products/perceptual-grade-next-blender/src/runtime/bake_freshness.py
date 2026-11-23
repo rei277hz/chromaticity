@@ -134,8 +134,14 @@ class BakeSources:
         )
 
     def invalidate(self, dependencies):
+        keys = set()
+        for value in dependencies:
+            try:
+                keys.add(source_key(value))
+            except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+                continue
         affected = set()
-        for key in {source_key(value) for value in dependencies}:
+        for key in keys:
             if key in self.readers:
                 self.generations[key] = self.generations.get(key, 0) + 1
                 affected.update(self.readers[key])

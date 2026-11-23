@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import bpy
 import numpy as np
@@ -793,6 +794,12 @@ assert shader.pg_use_bake
 # Unchanged baked outputs use a cheap observation, including unrelated native
 # dependency updates. A relevant source event marks the Image as stale even
 # when this test leaves its pixels unchanged.
+class RemovedDependencyUpdate:
+    @property
+    def id(self):
+        raise ReferenceError("Depsgraph ID was removed")
+
+
 nodes._bake._remember_observation(shader)
 source_receipt = nodes._bake.receipt_signature(shader)
 source_bake = shader.pg_bake_image
@@ -806,8 +813,13 @@ try:
     nodes._bake.reconcile((shader,))
     assert_shader_uses_image(shader, source_bake)
     assert_bake_controls(shader, image_context)
-    nodes._depsgraph_update_post(scene, SimpleNamespace(
-        updates=(SimpleNamespace(id=source_image),)))
+    with patch.object(nodes.vectorscope_ui, "invalidate") as scope_invalidate:
+        nodes._depsgraph_update_post(scene, SimpleNamespace(updates=(
+            SimpleNamespace(id=unrelated_image),
+            RemovedDependencyUpdate(),
+            SimpleNamespace(id=source_image),
+        )))
+        scope_invalidate.assert_called_once_with(scene, [unrelated_image, source_image])
     nodes._bake.reconcile((shader,))
     assert_shader_uses_image(shader, source_bake)
     assert nodes._bake.receipt_signature(shader) == source_receipt

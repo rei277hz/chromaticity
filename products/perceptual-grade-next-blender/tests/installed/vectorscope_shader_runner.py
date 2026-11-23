@@ -1,10 +1,11 @@
-"""Exercise active-viewport Shader Color capture for a per-node Grade."""
+"""Exercise Shader viewport capture and native vectorscope drags."""
 
 import addon_utils
 import importlib
 import json
 import os
 from pathlib import Path
+import runpy
 import sys
 import time
 import traceback
@@ -26,6 +27,13 @@ errors = []
 assert addon_utils.enable(extension.__name__, default_set=False,
                           handle_error=errors.append) is extension, errors
 assert not errors and not bpy.app.background, errors
+bpy.ops.wm.save_userpref()
+drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
+select = drag_checks["select"]
+encoded_rgb = drag_checks["encoded_rgb"]
+chroma_bin = drag_checks["chroma_bin"]
+complete_trace = drag_checks["complete_trace"]
+assert_solid_trace = drag_checks["assert_solid_trace"]
 
 report = {"passed": False}
 scene = bpy.context.scene
@@ -65,13 +73,26 @@ color.image = image
 color.interpolation = "Closest"
 grade = nodes.create_per_node_node(tree)
 grade.name = "Vectorscope Shader Grade"
-shader = tree.nodes.new("ShaderNodeEmission")
+shader = tree.nodes.new("ShaderNodeBsdfPrincipled")
 output = tree.nodes.new("ShaderNodeOutputMaterial")
 tree.links.new(coordinates.outputs["UV"], color.inputs["Vector"])
 tree.links.new(color.outputs["Color"], grade.inputs["Color"])
-tree.links.new(grade.outputs["Color"], shader.inputs["Color"])
+tree.links.new(grade.outputs["Color"], shader.inputs["Base Color"])
 tree.links.new(shader.outputs[0], output.inputs["Surface"])
 obj.data.materials.append(material)
+
+runtime = vectorscope_ui._runtime
+backend = runtime.backend
+create_job = backend.create_job
+capture_jobs = []
+
+
+def track_capture(*args, **kwargs):
+    capture_jobs.append(None)
+    return create_job(*args, **kwargs)
+
+
+backend.create_job = track_capture
 
 camera_data = bpy.data.cameras.new("Vectorscope shader camera")
 camera_data.type = "ORTHO"
@@ -95,6 +116,7 @@ tree.nodes.active = grade
 for item in tree.nodes:
     item.select = item == grade
 node_region = next(item for item in node_area.regions if item.type == "WINDOW")
+pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui, window, node_area, node_region)
 view_area = next(item for item in window.screen.areas if item.type == "OUTLINER")
 view_area.type = "VIEW_3D"
 view_area.spaces.active.region_3d.view_perspective = "CAMERA"
@@ -139,13 +161,26 @@ def matches(color, exposure=0.0):
     brightness = state().brightness
     if not np.any(brightness > 0):
         return False
-    linear = np.asarray(color[:3]) * 2.0 ** exposure
-    code = np.where(linear < 0.018, 4.5 * linear, 1.099 * linear ** 0.45 - 0.099)
-    luma = np.dot(code, (0.2126, 0.7152, 0.0722))
-    cr, cb = (code[0] - luma) / 1.5748, (code[2] - luma) / 1.8556
-    expected = tuple(int((value + 0.65) * 144 / 1.3) for value in (cr, cb))
+    expected = chroma_bin(encoded_rgb(color, exposure))
     peak = np.unravel_index(np.argmax(brightness), brightness.shape)
     return max(abs(actual - target) for actual, target in zip(peak, expected)) <= 1
+
+
+def mixed_peaks(display):
+    if display is None or display.status != "current" or display.rgba is None:
+        return None
+    trace = complete_trace(display)
+    peaks = []
+    for sample in (red, blue):
+        code = encoded_rgb(sample)
+        row, column = chroma_bin(code)
+        neighborhood = trace[row - 1:row + 2, column - 1:column + 2]
+        index = np.unravel_index(np.argmax(neighborhood[..., 3]), (3, 3))
+        rgba = neighborhood[index]
+        if rgba[3] <= 0 or not np.allclose(rgba[:3], code, rtol=0, atol=1e-3):
+            return None
+        peaks.append(float(rgba[3]))
+    return peaks
 
 
 def scenario():
@@ -155,17 +190,67 @@ def scenario():
     yield from wait_for(lambda: matches(red), "Shader AOV capture did not plot the first UV sample")
     first = np.asarray(state().brightness).copy()
     assert first.shape == (144, 144) and np.sum(first) > 0
+    assert_solid_trace(state(), red)
     report["initial_shape"] = list(first.shape)
     report["shader_aov_visible"] = True
+    previous_captures = len(capture_jobs)
     grade.exposure = 1.0
     yield from wait_for(lambda: matches(red, 1.0), "Shader Linear edit did not refresh")
+    assert_solid_trace(state(), red, 1.0)
+    assert len(capture_jobs) == previous_captures, "Shader Linear edit recaptured unchanged inputs"
     report["linear_edit_refreshed"] = True
     for item in uv.uv:
         item.vector = (0.75, 0.5)
     mesh.update()
     mesh.update_tag()
     yield from wait_for(lambda: matches(blue, 1.0), "Shader UV edit did not move the vectorscope peak")
+    assert len(capture_jobs) > previous_captures, "Shader UV edit reused stale samples"
     report["uv_edit_refreshed"] = True
+    grade.exposure = 0.0
+    yield from wait_for(lambda: matches(blue), "Shader plot did not restore its exposure")
+    captures = len(capture_jobs)
+    checkpoint("native per-node Shader drag")
+    yield from pointer.drag(grade, (-24, 20), cancel="RIGHTMOUSE")
+    report["right_click_cancelled"] = True
+    yield from wait_for(lambda: matches(blue), "Right-click did not restore the Shader trace")
+    yield from pointer.drag(grade, (-24, 20))
+    assert len(capture_jobs) == captures, "Per-node Shader drag recaptured unchanged inputs"
+    report["per_node_drag"] = True
+
+    shared = nodes.create_node(tree)
+    shared.pg_grade = nodes._make_grade()
+    tree.links.new(color.outputs["Color"], shared.inputs["Color"])
+    tree.links.new(shared.outputs["Color"], shader.inputs["Base Color"])
+    select(tree, shared)
+    yield from wait_for(lambda: matches(blue), "Shared Shader Grade did not plot its UV input")
+    captures = len(capture_jobs)
+    baseline = pointer.settings(grade)
+    checkpoint("native shared Shader drag")
+    xy = yield from pointer.drag(shared, (-24, 20))
+    assert (shared.pg_grade.pg_linear.source_x, shared.pg_grade.pg_linear.source_y) == xy
+    assert pointer.settings(grade) == baseline
+    assert len(capture_jobs) == captures, "Shared Shader drag recaptured unchanged inputs"
+    report["shared_drag"] = True
+
+    # Sample both sides of the texture in one opaque surface capture, with
+    # separate Grade input alpha and surface coverage.
+    shared.pg_grade.pg_linear.source_x = 0.3127
+    shared.pg_grade.pg_linear.source_y = 0.329
+    image.pixels.foreach_set(np.asarray((*red, *blue[:3], 0.125), dtype=np.float32))
+    image.update()
+    image.update_tag()
+    tree.links.new(color.outputs["Alpha"], shared.inputs["Alpha"])
+    for loop, item in zip(mesh.loops, uv.uv):
+        item.vector = (0.25 if mesh.vertices[loop.vertex_index].co.x < 0 else 0.75, 0.5)
+    mesh.update()
+    mesh.update_tag()
+    yield from wait_for(
+        lambda: mixed_peaks(state()) is not None,
+        "Shader UV capture did not plot both encoded source colors",
+    )
+    red_density, blue_density = mixed_peaks(state())
+    assert red_density > blue_density, (red_density, blue_density)
+    report["mixed_trace_rgb"] = True
 
 
 sequence = scenario()
@@ -183,8 +268,7 @@ def request_quit():
 def advance():
     try:
         assert time.monotonic() - started < 285.0
-        next(sequence)
-        return 0.02
+        return next(sequence)
     except StopIteration:
         report["passed"] = True
         checkpoint("passed")

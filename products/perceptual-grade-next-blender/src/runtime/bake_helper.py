@@ -5,6 +5,7 @@
 from concurrent.futures import CancelledError
 from pathlib import Path
 from threading import current_thread, main_thread
+from time import perf_counter_ns
 
 from .execution import HelperRuntime
 
@@ -29,10 +30,17 @@ class BakeHelperBackend:
         )
         self.probe = self.runtime.start_probe()
 
-    def create_job(self, inputs, *, operation="bake"):
+    def create_job(self, inputs, *, operation="bake", profile=False):
         _require_main_thread()
+        previous = self.runtime
+        started = perf_counter_ns() if profile else None
         self._ensure_runtime()
-        return BakeHelperJob(self, inputs, operation)
+        job = BakeHelperJob(self, inputs, operation, profile=profile)
+        if profile:
+            job.helper_reused = self.runtime is previous and self.runtime.gpu_ready
+            job.probe_started = perf_counter_ns()
+            job.record("helper_start", started, job.probe_started)
+        return job
 
     def close(self):
         _require_main_thread()
@@ -45,12 +53,19 @@ class BakeHelperBackend:
 
 
 class BakeHelperJob:
-    def __init__(self, backend, inputs, operation="bake"):
+    def __init__(self, backend, inputs, operation="bake", *, profile=False):
         self.backend = backend
         self.inputs = dict(inputs)
         self.operation = operation
         self.handle = None
         self.cancelled = False
+        self.timings = [] if profile else None
+        self.helper_reused = None
+        self.probe_started = None
+        self.submit_started = None
+
+    def record(self, stage, started, finished):
+        self.timings.append((stage, started, finished, "host"))
 
     def advance(self):
         _require_main_thread()
@@ -61,9 +76,18 @@ class BakeHelperJob:
             if not self.backend.probe.poll():
                 return None
             self.backend.probe.result()
-            self.handle = runtime.submit(self.operation, self.inputs)
+            if self.timings is None:
+                self.handle = runtime.submit(self.operation, self.inputs)
+            else:
+                self.submit_started = perf_counter_ns()
+                self.record("helper_probe_wait", self.probe_started, self.submit_started)
+                self.handle = runtime.submit(self.operation, self.inputs, profile=True)
+                self.record("helper_submit", self.submit_started, perf_counter_ns())
         if not self.handle.poll():
             return None
+        if self.timings is not None:
+            self.record("helper_round_trip", self.submit_started, perf_counter_ns())
+            self.timings.extend(self.handle.timings)
         return self.handle.result()
 
     def cancel(self):

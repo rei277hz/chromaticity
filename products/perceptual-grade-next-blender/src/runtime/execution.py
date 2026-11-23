@@ -86,6 +86,8 @@ class _Job:
     operation: str
     inputs: object
     probe: bool
+    profile: bool = False
+    timings: tuple = ()
     state: str = "queued"
     value: object = None
     preview: object = None
@@ -104,6 +106,10 @@ class JobHandle:
     @property
     def preview(self):
         return None if self._job.error is not None else self._job.preview
+
+    @property
+    def timings(self):
+        return self._job.timings if self.done() else ()
 
     def done(self):
         return self._job.state == "finished"
@@ -191,13 +197,13 @@ class HelperRuntime:
         self._transition(helper_policy.Event("launch", job_id=job.identity))
         return self._probe
 
-    def submit(self, operation, inputs):
+    def submit(self, operation, inputs, *, profile=False):
         _require_main_thread()
         if not self.gpu_ready:
             raise HelperError("GPU helper must pass its startup probe before work")
         if not isinstance(operation, str) or not operation:
             raise TypeError("Helper operation name must be a nonempty string")
-        job = self._new_job(operation, inputs, probe=False)
+        job = self._new_job(operation, inputs, probe=False, profile=profile)
         self._queue.append(job.identity)
         self._transition(helper_policy.Event("submit", job_id=job.identity))
         return JobHandle(self, job)
@@ -217,9 +223,9 @@ class HelperRuntime:
         return (job.state == "finished" or job.identity == self.state.active_id
                 or job.identity == self.state.probe_id and self.state.close_requested)
 
-    def _new_job(self, operation, inputs, *, probe):
+    def _new_job(self, operation, inputs, *, probe, profile=False):
         identity = next(self._serial)
-        job = _Job(identity, operation, inputs, probe)
+        job = _Job(identity, operation, inputs, probe, profile)
         self._jobs[identity] = job
         return job
 
@@ -360,12 +366,15 @@ class HelperRuntime:
             prefix = f"{self.role}-{identity}"
             value, files = self.payloads.encode(job.inputs, prefix=prefix)
             job.input_files = tuple(files)
-            self._send({
+            message = {
                 "kind": "run",
                 "job": identity,
                 "operation": job.operation,
                 "inputs": value,
-            })
+            }
+            if job.profile:
+                message["profile"] = True
+            self._send(message)
             job.state = "running"
         except Exception as error:
             job.error = HelperError(f"Could not dispatch helper operation: {error}")
@@ -444,7 +453,11 @@ class HelperRuntime:
             job.pending_files = files
             self._transition(helper_policy.Event("preview", job_id=identity))
         elif kind == "complete":
+            started = time.perf_counter_ns() if job.profile else None
             value = self.payloads.decode(message["value"], copy=True)
+            if started is not None:
+                job.timings = (("helper_receive", started, time.perf_counter_ns(), "host"),
+                               *message.get("timings", ()))
             job.pending_value = value
             job.pending_files = files
             if job.probe:

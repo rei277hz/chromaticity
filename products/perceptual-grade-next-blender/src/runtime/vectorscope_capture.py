@@ -1,4 +1,4 @@
-"""Isolated capture of one per-node Grade Color input for the Linear scope."""
+"""Isolated capture of one Grade Color input for the Linear scope."""
 
 from pathlib import Path
 import tempfile
@@ -181,16 +181,68 @@ def _exr_dimensions(path):
     return width, height
 
 
+def _rgba_buffer(pixels, dtype, *, copy=False):
+    if pixels.shape[-1] == 3:
+        rgba = np.empty((*pixels.shape[:2], 4), dtype=dtype)
+        rgba[..., :3] = pixels
+        rgba[..., 3] = 1.0
+    else:
+        rgba = (np.array(pixels, dtype=dtype, order="C", copy=True) if copy
+                else np.ascontiguousarray(pixels, dtype=dtype))
+    invalid = ~np.isfinite(rgba).all(axis=-1)
+    if np.any(invalid):
+        if rgba is pixels:
+            rgba = rgba.copy()
+        rgba[invalid] = 0.0
+    return rgba
+
+
 def _sample_pixels(pixels):
     height, width = pixels.shape[:2]
     sample_width, sample_height = _bounded_size(width, height)
     if (sample_width, sample_height) == (width, height):
-        return np.ascontiguousarray(pixels)
-    xs = np.minimum(width - 1, ((np.arange(sample_width) + 0.5)
-                                * width / sample_width).astype(np.int64))
-    ys = np.minimum(height - 1, ((np.arange(sample_height) + 0.5)
-                                 * height / sample_height).astype(np.int64))
-    return np.ascontiguousarray(pixels[ys[:, None], xs[None, :]])
+        return _rgba_buffer(pixels, np.float32)
+
+    # Reduce along the longer axis first to bound temporary storage per row.
+    transposed = width > height
+    if transposed:
+        pixels = pixels.swapaxes(0, 1)
+        height, width = width, height
+        sample_height, sample_width = sample_width, sample_height
+
+    # Integer edges retain exact overlap at fractional source-pixel boundaries.
+    left = np.arange(sample_width) * width
+    right = left + width
+    first = left // sample_width
+    last = (right - 1) // sample_width
+    columns = first[:, None] + np.arange(np.max(last - first) + 1)
+    column_weights = np.maximum(
+        0, np.minimum(right[:, None], (columns + 1) * sample_width)
+        - np.maximum(left[:, None], columns * sample_width),
+    ) / width
+    np.minimum(columns, width - 1, out=columns)
+
+    reduced = np.empty((sample_height, sample_width, 4), dtype=np.float32)
+    for row in range(sample_height):
+        bottom, top = row * height, (row + 1) * height
+        start = bottom // sample_height
+        stop = (top - 1) // sample_height + 1
+        rows = np.arange(start, stop)
+        row_weights = (
+            np.minimum(top, (rows + 1) * sample_height)
+            - np.maximum(bottom, rows * sample_height)
+        ) / height
+        band = _rgba_buffer(pixels[start:stop], np.float64, copy=True)
+        alpha = band[..., 3]
+        np.clip(alpha, 0.0, 1.0, out=alpha)
+        alpha *= row_weights[:, None]
+        band[..., :3] *= alpha[..., None]
+        integrated = np.sum(band, axis=0)
+        cells = np.sum(integrated[columns] * column_weights[..., None], axis=1)
+        alpha = cells[:, 3:4]
+        np.divide(cells[:, :3], alpha, out=cells[:, :3], where=alpha > 0.0)
+        reduced[row] = cells
+    return np.ascontiguousarray(reduced.swapaxes(0, 1) if transposed else reduced)
 
 
 def _read_buffer(image):
@@ -201,11 +253,6 @@ def _read_buffer(image):
         raise MemoryError("Vectorscope source readback exceeds its 512 MiB budget")
     pixels = np.empty((height, width, channels), dtype=np.float32)
     image.pixels.foreach_get(pixels.reshape(-1))
-    if channels == 3:
-        pixels = np.concatenate((pixels, np.ones((height, width, 1), np.float32)), axis=-1)
-    invalid = ~np.isfinite(pixels).all(axis=-1)
-    if np.any(invalid):
-        pixels[invalid] = 0.0
     return _sample_pixels(pixels)
 
 
@@ -296,6 +343,7 @@ def _compositor_capture(route, scene, context):
     import bpy
     from .bake_worker import _compositor_root, _configure_linear
 
+    started = context.start_timing()
     root = _compositor_root(bpy, scene, route)
     tree = root.copy()
     output, = _sources(tree, route.get("group_path", ()), route["node_name"],
@@ -311,21 +359,24 @@ def _compositor_capture(route, scene, context):
         tree.links.new(output, endpoint.inputs[item.name])
         _install_tree(scene, tree)
         _configure_linear(scene)
-        _render(scene, route, context)
-        files = tuple(Path(directory).glob("scope_" + token + "_*.exr"))
-        if len(files) > 1:
-            raise RuntimeError("Compositor vectorscope capture did not produce one image")
-        if files:
-            path = files[0]
-        else:
-            # A constant has no native image domain. Its root output is evaluated
-            # across the scene canvas and returned through Render Result.
-            rendered = bpy.data.images.get("Render Result")
-            if rendered is None:
-                raise RuntimeError("Compositor vectorscope capture produced no pixels")
-            path = Path(directory) / "constant.exr"
-            rendered.save_render(str(path), scene=scene)
-        return _read_image(path, _exr_dimensions(path))
+        context.finish_timing("capture_setup", started)
+        with context.measure("capture_render"):
+            _render(scene, route, context)
+        with context.measure("capture_readback"):
+            files = tuple(Path(directory).glob("scope_" + token + "_*.exr"))
+            if len(files) > 1:
+                raise RuntimeError("Compositor vectorscope capture did not produce one image")
+            if files:
+                path = files[0]
+            else:
+                # A constant has no native image domain. Its root output is evaluated
+                # across the scene canvas and returned through Render Result.
+                rendered = bpy.data.images.get("Render Result")
+                if rendered is None:
+                    raise RuntimeError("Compositor vectorscope capture produced no pixels")
+                path = Path(directory) / "constant.exr"
+                rendered.save_render(str(path), scene=scene)
+            return _read_image(path, _exr_dimensions(path))
 
 
 def _camera(scene, view, render_size):
@@ -440,6 +491,7 @@ def _shader_capture(route, scene, view_layer, context):
     import bpy
     from .bake_worker import _configure_linear
 
+    started = context.start_timing()
     owner = _shader_owner(route)
     if owner is None or owner.node_tree is None:
         raise ValueError("Shader vectorscope owner has no node tree")
@@ -487,15 +539,18 @@ def _shader_capture(route, scene, view_layer, context):
         tree.links.new(alpha_aov, alpha_endpoint.inputs[alpha_item.name])
         tree.links.new(mask_output, mask_endpoint.inputs[mask_item.name])
         _install_tree(scene, tree)
-        _render(scene, route, context)
+        context.finish_timing("capture_setup", started)
+        with context.measure("capture_render"):
+            _render(scene, route, context)
         color_files = tuple(Path(directory).glob("scope_color_" + token + "_*.exr"))
         alpha_files = tuple(Path(directory).glob("scope_alpha_" + token + "_*.exr"))
         mask_files = tuple(Path(directory).glob("scope_mask_" + token + "_*.exr"))
         if len(color_files) != 1 or len(alpha_files) != 1 or len(mask_files) != 1:
             raise RuntimeError("Shader vectorscope capture did not produce its AOV images")
-        rgba = _read_image(color_files[0], (width, height))
-        alpha = _read_image(alpha_files[0], (width, height))[..., 0]
-        mask = _read_image(mask_files[0], (width, height))[..., 0]
+        with context.measure("capture_readback"):
+            rgba = _read_image(color_files[0], (width, height))
+            alpha = _read_image(alpha_files[0], (width, height))[..., 0]
+            mask = _read_image(mask_files[0], (width, height))[..., 0]
         coverage = np.clip(mask, 0.0, 1.0)
         np.divide(rgba[..., :3], coverage[..., None], out=rgba[..., :3],
                   where=coverage[..., None] > 1e-8)
@@ -516,25 +571,31 @@ def capture(inputs, context):
     route = inputs["route"]
     if not isinstance(route, dict) or not isinstance(route.get("view"), dict):
         raise TypeError("Vectorscope capture requires a frozen route and view")
-    _open_snapshot(inputs)
+    with context.measure("capture_snapshot_open"):
+        _open_snapshot(inputs)
     scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
     if scene is None:
         raise ValueError("Vectorscope capture scene is absent")
-    if bpy.context.window is not None:
-        bpy.context.window.scene = scene
-    view_layer = scene.view_layers.get(str(route["view"].get("view_layer", "")))
-    if view_layer is None:
-        raise ValueError("Vectorscope capture view layer is absent")
-    if bpy.context.window is not None:
-        bpy.context.window.view_layer = view_layer
-    scene.frame_set(int(route["frame"]), subframe=float(route.get("subframe", 0.0)))
-    _disable_file_outputs()
+    with context.measure("capture_scene_setup"):
+        if bpy.context.window is not None:
+            bpy.context.window.scene = scene
+        view_layer = scene.view_layers.get(str(route["view"].get("view_layer", "")))
+        if view_layer is None:
+            raise ValueError("Vectorscope capture view layer is absent")
+        if bpy.context.window is not None:
+            bpy.context.window.view_layer = view_layer
+        scene.frame_set(int(route["frame"]), subframe=float(route.get("subframe", 0.0)))
+        _disable_file_outputs()
     context.checkpoint()
 
     kind = str(route.get("owner_kind", "")).lower()
     if kind == "compositor":
         image = _raw_compositor_image(route, scene)
-        rgba = _compositor_capture(route, scene, context) if image is None else _read_buffer(image)
+        if image is None:
+            rgba = _compositor_capture(route, scene, context)
+        else:
+            with context.measure("capture_readback"):
+                rgba = _read_buffer(image)
     elif kind in {"material", "world"}:
         rgba = _shader_capture(route, scene, view_layer, context)
     else:

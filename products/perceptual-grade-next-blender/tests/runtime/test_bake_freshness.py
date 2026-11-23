@@ -135,6 +135,20 @@ class BakeFreshnessTests(unittest.TestCase):
         self.assertEqual(self.sources.invalidate((evaluated, image)), {10})
         self.assertEqual(self.sources.generations[self.module.source_key(image)], 1)
 
+    def test_unreadable_source_update_preserves_other_invalidations(self):
+        class RemovedImage:
+            @property
+            def original(self):
+                raise ReferenceError("Image was removed")
+
+        first, second = Image(1), Image(2)
+        self.sources.bind(10, (first,))
+        self.sources.bind(20, (second,))
+
+        self.assertEqual(self.sources.invalidate((first, RemovedImage(), second)), {10, 20})
+        self.assertEqual(self.sources.generations[self.module.source_key(first)], 1)
+        self.assertEqual(self.sources.generations[self.module.source_key(second)], 1)
+
     def test_clean_to_dirty_transition_invalidates_a_bound_snapshot(self):
         image = Image(1, is_dirty=False)
         baseline = self.sources.bind(10, (image,))

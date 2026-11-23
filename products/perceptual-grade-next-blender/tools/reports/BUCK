@@ -35,8 +35,14 @@ python_library(
 
 EVALUATION_SOURCES = {
     path[len(TOOL_PREFIX):]: path
-    for path in glob([TOOL_PREFIX + "*.py"])
-    if path != TOOL_PREFIX + "gate_policy.py"
+    for path in glob(
+        [TOOL_PREFIX + "*.py"],
+        exclude = [
+            TOOL_PREFIX + "gate_policy.py",
+            TOOL_PREFIX + "vectorscope_latency.py",
+            TOOL_PREFIX + "vectorscope_latency_runner.py",
+        ],
+    )
 }
 
 python_library(
@@ -355,6 +361,46 @@ python_binary(
     )
     for surface in ("shader", "compositor")
 ]
+
+python_library(
+    name = "vectorscope_latency_sources",
+    srcs = {"vectorscope_latency.py": TOOL_PREFIX + "vectorscope_latency.py"},
+    base_module = "tools.perceptual_grade.reports",
+    resources = {
+        "blender": "//third_party:blender_native",
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+        "vectorscope_latency_runner.py": TOOL_PREFIX + "vectorscope_latency_runner.py",
+        "vectorscope_gpu.py": TOOL_PREFIX + "vectorscope_gpu.py",
+        "vectorscope_reducers.py": TOOL_PREFIX + "vectorscope_reducers.py",
+        "vectorscope_shader_tree.py": TOOL_PREFIX + "vectorscope_shader_tree.py",
+        "xvfb": "//third_party:xvfb_software_linux",
+    },
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    deps = [":stack_lut_timing_sources"],
+)
+
+python_binary(
+    name = "vectorscope_latency",
+    main_module = "tools.perceptual_grade.reports.vectorscope_latency",
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
+    deps = [":vectorscope_latency_sources"],
+)
+
+generate(
+    name = "vectorscope_latency_report",
+    outputs = {
+        "json": "report.json",
+        "markdown": "report.md",
+    },
+    tool = ":vectorscope_latency",
+    visibility = ["PUBLIC"],
+)
 
 python_binary(
     name = "audit_fields",

@@ -30,6 +30,7 @@ from .kernel import (
     ToneSettings,
     WebSettings,
     prepare_linear,
+    project_source_white,
     project_source_white_component,
 )
 from .kernel.node_templates import (
@@ -728,6 +729,19 @@ def _linear_settings(settings):
         spread=(settings.cr_spread, settings.yb_spread),
         heading=(settings.cr_heading, settings.yb_heading),
     )
+
+
+def _linear_owner_for_node(node):
+    if _is_shared_grade_node(node):
+        return node.pg_grade
+    return node if _is_per_node_grade_node(node) else None
+
+
+def _scope_linear_settings(node):
+    owner = _linear_owner_for_node(node)
+    if owner is None:
+        raise ValueError("Select a Grade datablock to use the vectorscope")
+    return _linear_settings(_linear_controls(owner))
 
 
 def _kernel_signature(tree_type, settings, working_space):
@@ -3319,6 +3333,10 @@ class _ColorGesture:
     entry_identity: str | int | None
     baseline: tuple[tuple[str, float | None], ...]
 
+    @property
+    def linear(self):
+        return self.baseline[0][0] == "source_x"
+
 
 def _color_gesture_entry(node):
     entry = _stack_active_entry(node) if _is_stack_node(node) else None
@@ -3336,10 +3354,24 @@ def _begin_color_gesture(window_key, node, fields):
         )
     }:
         raise ValueError("Invalid Color gesture fields")
-    if not _is_output_node(node) or _gesture_token(window_key) in _color_gestures:
+    if not _is_output_node(node):
         return None
     owner, settings = _color_settings_for_node(node)
-    if owner is None or any(gesture.owner == owner for gesture in _color_gestures.values()):
+    return _begin_pair_gesture(window_key, node, owner, settings, fields)
+
+
+def _begin_source_white_gesture(window_key, node):
+    owner = _linear_owner_for_node(node)
+    if owner is None:
+        return None
+    return _begin_pair_gesture(
+        window_key, node, owner, _linear_controls(owner), ("source_x", "source_y"),
+    )
+
+
+def _begin_pair_gesture(window_key, node, owner, settings, fields):
+    if (owner is None or _gesture_token(window_key) in _color_gestures
+            or any(gesture.owner == owner for gesture in _color_gestures.values())):
         return None
     entry = _color_gesture_entry(node)
     baseline = tuple((name, float(getattr(settings, name))
@@ -3357,17 +3389,20 @@ def _color_gesture_matches(gesture, node):
     try:
         if node is None or _gesture_node(gesture.node_id) != node:
             return False
+        if gesture.linear:
+            return _linear_owner_for_node(node) == gesture.owner
         owner, _settings = _color_settings_for_node(node)
         return owner == gesture.owner and _color_gesture_entry(node) == gesture.entry_identity
     except (AttributeError, ReferenceError, RuntimeError):
         return False
 
 
-def _cancel_color_gesture(window_key, token):
+def _cancel_color_gesture(window_key, token, restore=True):
     """Restore the press-time pair for Escape, right click, or a lost owner."""
     if token in _color_gestures:
+        event = "cancel_color_pair" if restore else "discard_color_pair"
         _dispatch_gesture(gesture_policy.Event(
-            "cancel_color_pair", window_id=window_key, gesture_token=token,
+            event, window_id=window_key, gesture_token=token,
             observed=_gesture_observations(window_key),
         ))
 
@@ -3405,6 +3440,10 @@ def _edit_color_gesture(window_key, token, node, values):
     return True
 
 
+def _edit_source_white_gesture(window_key, token, node, values):
+    return _edit_color_gesture(window_key, token, node, project_source_white(values))
+
+
 def _end_color_gesture(window_key, token, node):
     if not _color_gesture_is_current(window_key, token, node):
         return False
@@ -3414,22 +3453,32 @@ def _end_color_gesture(window_key, token, node):
 
 def _write_color_gesture(gesture, values):
     try:
-        settings = _color_controls(gesture.owner)
+        controls = _linear_controls if gesture.linear else _color_controls
+        settings = controls(gesture.owner)
     except ReferenceError:
         # A deleted owner has no surviving settings to restore.
         return
-    writes = (gesture.baseline if values is None else
-              tuple((name, value) for (name, _baseline), value in zip(gesture.baseline, values)
-                    if value != float(getattr(settings, name))))
+    if values is None:
+        writes = gesture.baseline
+    else:
+        if gesture.linear:
+            values = tuple(float(np.float32(value)) for value in values)
+        writes = tuple((name, value) for (name, _baseline), value in zip(gesture.baseline, values)
+                       if value != float(getattr(settings, name)))
     if not writes:
         return
     with _suspend(settings):
         for name, value in writes:
             if value is None:
-                _unset_color_property(settings, name)
+                if gesture.linear:
+                    if settings.is_property_set(name):
+                        settings.property_unset(name)
+                else:
+                    _unset_color_property(settings, name)
             else:
                 setattr(settings, name, value)
-    _color_changed(settings, bpy.context)
+    changed = _linear_changed if gesture.linear else _color_changed
+    changed(settings, bpy.context)
 
 
 def _push_gesture_undo(window_key):
@@ -3624,6 +3673,8 @@ class PG_OT_gesture_router(bpy.types.Operator):
             return {"PASS_THROUGH"}
         if admission == "stale":
             return {"CANCELLED", "PASS_THROUGH"}
+        if vectorscope_ui.pointer_event(context.window, event):
+            return {"RUNNING_MODAL"}
         if (event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
                 or (event.type.endswith("MOUSE") and event.value == "PRESS")):
             vectorscope_ui.remember_viewport(context.window, event.mouse_x, event.mouse_y)
@@ -3788,6 +3839,7 @@ def _all_grade_nodes():
 def _frame_change_pre(scene, *_args):
     global _frame_change_active
     _frame_change_active = True
+    vectorscope_ui.frame_change_pre(scene)
     _observe_color_frame(scene)
     if threading.current_thread() is threading.main_thread():
         _clear_frame_color_claims(scene)
@@ -4336,23 +4388,39 @@ def _depsgraph_update_post(_scene, _depsgraph=None):
     if _depsgraph is not None:
         try:
             for update in _depsgraph.updates:
-                identifier = update.id
-                if isinstance(identifier, bpy.types.Image):
-                    changed_ids.append(identifier)
-                elif isinstance(identifier, bpy.types.Object):
-                    transform = getattr(update, "is_updated_transform", None)
-                    if transform is None or transform:
+                try:
+                    identifier = update.id
+                    include_scope = isinstance(identifier, scope_types)
+                    if isinstance(identifier, bpy.types.Image):
                         changed_ids.append(identifier)
-                elif isinstance(identifier, bpy.types.Mesh):
-                    geometry = getattr(update, "is_updated_geometry", None)
-                    if geometry is None or geometry:
-                        changed_ids.append(identifier)
-                if isinstance(identifier, scope_types):
-                    original = getattr(identifier, "original", None)
-                    scope_ids.append(identifier if original is None else original)
+                    elif isinstance(identifier, bpy.types.Object):
+                        transform = getattr(update, "is_updated_transform", None)
+                        geometry = getattr(update, "is_updated_geometry", None)
+                        if transform is None or transform:
+                            changed_ids.append(identifier)
+                        include_scope = (transform is None or bool(transform)
+                                         or geometry is None
+                                         or geometry and (
+                                             identifier.type != "MESH"
+                                             or bool(identifier.modifiers)
+                                             or identifier.data is None
+                                             or getattr(identifier.data, "shape_keys", None) is not None
+                                             or identifier.mode == "EDIT"))
+                    elif isinstance(identifier, bpy.types.Mesh):
+                        geometry = getattr(update, "is_updated_geometry", None)
+                        if geometry is None or geometry:
+                            changed_ids.append(identifier)
+                        include_scope = geometry is None or bool(geometry)
+                    if include_scope:
+                        original = getattr(identifier, "original", None)
+                        scope_ids.append(identifier if original is None else original)
+                except (AttributeError, ReferenceError, RuntimeError, TypeError):
+                    # Depsgraph wrappers can become invalid during iteration.
+                    # Preserve independent observations from the rest of the batch.
+                    continue
         except (AttributeError, ReferenceError, RuntimeError, TypeError):
-            changed_ids = []
-            scope_ids = []
+            # An iterator failure must not discard notifications already read.
+            pass
     if changed_ids and not _bake.restoring:
         _bake.mark_sources(changed_ids)
     if scope_ids and not _bake.restoring:
@@ -4376,6 +4444,8 @@ def _linear_changed(settings, _context):
     if holder is None:
         return
     if holder.bl_idname == PGGradeData.bl_idname:
+        if not _frame_change_active:
+            vectorscope_ui.linear_changed(holder)
         _grade_changed(holder)
         return
 
@@ -4483,6 +4553,7 @@ def _selection_changed(node, _context):
         return
     _cancel_stale_color_gestures(node)
     _index_output_node(node)
+    vectorscope_ui.linear_changed(node)
     if node.pg_grade is None:
         _reset_linear(node.pg_linear)
         _reset_tone(node.pg_tone)
@@ -4508,6 +4579,7 @@ def _assign_values(node, values):
     with _suspend(settings):
         for name, value in values.items():
             setattr(settings, name, value)
+    vectorscope_ui.linear_changed(node.pg_grade)
     _grade_changed(node.pg_grade)
 
 
@@ -5742,8 +5814,7 @@ class PG_PT_linear(bpy.types.Panel):
         layout.prop(settings, "cr_heading", slider=True)
         layout.prop(settings, "yb_heading", slider=True)
         layout.operator(PG_OT_reset_directions.bl_idname, icon="LOOP_BACK")
-        if _is_per_node_grade_node(node):
-            vectorscope_ui.draw_toggle(layout, context, node)
+        vectorscope_ui.draw_toggle(layout, context, node)
 
 
 class PG_PT_tone(bpy.types.Panel):
@@ -6257,9 +6328,10 @@ def register():
                 _registered_menus.append(record)
         _register_handlers()
         vectorscope_ui.register(lambda: ScopeRuntime(
-            bpy, _bake.manager._snapshot, _linear_settings, _working_space,
+            bpy, _bake.manager._snapshot, _scope_linear_settings, _working_space,
             gate=_bake.gate, upstream_ready=_scope_upstream_ready,
-        ))
+        ), begin=_begin_source_white_gesture, edit=_edit_source_white_gesture,
+            finish=_end_color_gesture, cancel=_cancel_color_gesture)
         if not bpy.app.timers.is_registered(_startup_reconcile_tick):
             bpy.app.timers.register(_startup_reconcile_tick, first_interval=0.1)
         _ensure_gesture_router_timer()

@@ -107,16 +107,59 @@ horizontal movement for `a` and vertical movement for `b`.
 
 ## Linear vectorscope
 
-Select a per-node Shader or Compositor Grade and toggle **Vectorscope** in the
-Linear sidebar. The plot samples the Grade's `Color` input after applying its
-evaluated Linear correction. It displays Rec.709 Cb/Cr density in a single
-color with a circular guide, center axes, and labeled RGB/CMY targets.
+Select a Shader or Compositor Grade and toggle **Vectorscope** in the Linear
+sidebar. Each plot shows the selected node's Linear output. Nodes that share a
+Grade use its Linear settings and sample their own Color inputs. Cb increases
+to the right and Cr increases upward in Rec.709 signal space, with fixed
+bounds of -0.65 to +0.65 on both axes. The trace averages the measured
+display-encoded RGB, weighted by sample alpha and a one-bin Gaussian. The
+same weights set logarithmic trace opacity. The dark graticule has a fixed
+circle, six outlined 75% RGB/CMY targets, and a dim 123-degree skin-tone guide.
+
+Left-drag anywhere in a current plot to steer its cloud in the pointer
+direction. The gesture follows a fixed, alpha-weighted set of representative
+pixels and edits only `source_x` and `source_y`. A click or movement below
+three UI-scaled pixels leaves the settings untouched. Release confirms one
+undo step. With Auto Key enabled, a per-node Grade keys changed coordinates
+at the press frame. Escape, right-click, a frame or source change, or switching
+the selected node or Grade cancels the drag and restores its original owner.
 
 The Compositor scope samples compatible loaded Image buffers directly and
 evaluates processed sources in an isolated copy. The Shader scope samples
-visible surfaces through AOVs using the last-used 3D
-viewport in the same window. It uses the largest viewport when none has been
-used. The scope updates for Linear controls, current frame, source pixels,
-geometry, and viewport changes. During playback, a complete capture of the
-same source can remain visible with **Updating** as newer frames are captured.
-Capture failures and unavailable contexts appear in the scope.
+visible surfaces through AOVs using the last-used 3D viewport in the same
+window. It uses the largest viewport when none has been used. Captures are
+bounded to 512 pixels per edge. Larger buffers are averaged by area and
+alpha so narrow features contribute to the reduced pixels. Linear edits
+recompute the trace from cached RGBA while the capture remains current.
+The scope updates when the frame, source pixels, geometry, or viewport
+changes. During playback, a complete capture of the same source can remain
+visible with **Updating** as newer frames are captured. Capture failures and
+unavailable contexts appear in the scope.
+
+Build the Linux x86-64 latency report with
+
+```sh
+buck2 build --remote-only //products/perceptual-grade-next-blender/tools/reports:vectorscope_latency_report
+```
+
+The output includes `report.json` and `report.md`. It measures cold and warm
+captures for direct Images, processed Compositor inputs, and Shader viewport
+inputs. It also measures a Linear exposure edit for each route and records
+whether that edit reused the sampled pixels. Linear-edit diagnostics include
+source epochs, matching invalidation IDs, and capture or render attempts.
+
+The report compares three reducers on the final warm RGBA capture from each
+route. The live Gizmo uses NumPy. The GPU experiment maps each sample to a
+chroma bin with a compute shader and sums its alpha weight in a float
+framebuffer. The Shader Editor experiment renders bin and weight outputs from
+a temporary material tree and uses the same float framebuffer to sum them.
+The benchmark executable accepts `--reducer cpu`, `--reducer gpu`,
+`--reducer shader-tree`, and `--reducer all` (the default).
+
+Capture latency and scalar reducer latency are measured separately. The
+report adds them for each comparison and checks the raw weighted bins
+against NumPy. It separately checks the live trace's mass and RGB energy
+against independent histograms and measures their Gaussian splat.
+GPU readback includes synchronization. Shader Editor mapping includes the
+temporary scene setup, render, and readback. The remote fixture uses Mesa
+llvmpipe, so GPU timings describe software rendering on the worker.

@@ -989,7 +989,7 @@ its own render lease when other activity permits it.
 
 <a id="next-policy.vectorscope"></a>
 
-`src/runtime/vectorscope.py` schedules captures of a selected per-node Grade's
+`src/runtime/vectorscope.py` schedules captures of a selected Grade's
 Color input. A capture records the source, scene time, and any relevant
 viewport state. Changes to a source dependency advance its revision so an
 existing sample cannot satisfy the new capture demand. The runtime samples a
@@ -999,6 +999,13 @@ Shader AOVs to capture pixel values using the active viewport projection.
 
 `src/runtime/vectorscope_policy.py` correlates capture and Linear analysis
 demand independently, which allows an exposure edit to reuse a matching sample.
+Each timer turn observes the enabled editors and admits the first ready editor
+in capture queue order. An editor waiting for an upstream Grade shows Updating
+and keeps its queue position. Closing an editor, losing its source, or resetting
+the runtime requests cancellation of its active capture. The helper retains the
+capture slot and snapshot until retirement. A retired capture from a removed
+demand cannot update the plot or sample cache.
+
 For completed captures, it passes the active ticket match, source match, exact
 capture match, and displayed generation comparison to `src/policy/vectorscope.py`.
 Only a completed analysis of matching samples can become current. A completed
