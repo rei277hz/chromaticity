@@ -23,12 +23,13 @@ bpy.context.preferences.extensions.repos.new(
 extension = importlib.import_module("bl_ext.pg_vectorscope_shader.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
 vectorscope_ui = importlib.import_module(extension.__name__ + ".vectorscope_ui")
+drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
+pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui)
 errors = []
 assert addon_utils.enable(extension.__name__, default_set=False,
                           handle_error=errors.append) is extension, errors
 assert not errors and not bpy.app.background, errors
 bpy.ops.wm.save_userpref()
-drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
 select = drag_checks["select"]
 encoded_rgb = drag_checks["encoded_rgb"]
 chroma_bin = drag_checks["chroma_bin"]
@@ -116,7 +117,7 @@ tree.nodes.active = grade
 for item in tree.nodes:
     item.select = item == grade
 node_region = next(item for item in node_area.regions if item.type == "WINDOW")
-pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui, window, node_area, node_region)
+pointer.bind(window, node_area, node_region)
 view_area = next(item for item in window.screen.areas if item.type == "OUTLINER")
 view_area.type = "VIEW_3D"
 view_area.spaces.active.region_3d.view_perspective = "CAMERA"
@@ -292,12 +293,18 @@ def advance():
         assert time.monotonic() - started < 285.0
         return next(sequence)
     except StopIteration:
+        pointer.close()
         report["passed"] = True
         checkpoint("passed")
         bpy.app.timers.register(request_quit, first_interval=0.1, persistent=True)
         return None
     except BaseException:
         report["error"] = traceback.format_exc()
+        report["pointer_trace"] = pointer.diagnostics()
+        try:
+            pointer.close()
+        except BaseException as error:
+            report["cleanup_error"] = str(error)
         checkpoint("failed")
         print(report["error"], flush=True)
         os._exit(1)

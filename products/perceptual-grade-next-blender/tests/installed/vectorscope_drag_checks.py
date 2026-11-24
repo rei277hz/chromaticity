@@ -1,5 +1,6 @@
 """Exercise the installed vectorscope using the window's native event queue."""
 
+from collections import deque
 from dataclasses import replace
 import time
 
@@ -60,20 +61,155 @@ def keyframes(tree):
 
 
 class ScopePointer:
-    def __init__(self, nodes, ui, window, area, region):
+    _MOVES = {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
+    _EVENTS = _MOVES | {"LEFTMOUSE", "RIGHTMOUSE", "ESC", "WINDOW_DEACTIVATE"}
+
+    def __init__(self, nodes, ui):
         self.nodes, self.ui = nodes, ui
+        self.window = None
+        self.trace = deque(maxlen=64)
+        self._injected = None
+        self._acknowledged = None
+        self._started = time.monotonic()
+        router_cls = nodes.PG_OT_gesture_router
+        modal, press_plot, cancel_drag = router_cls.modal, ui._press_plot, ui._cancel_drag
+        self._originals = [
+            (router_cls, "modal", modal),
+            (ui, "_press_plot", press_plot),
+            (ui, "_cancel_drag", cancel_drag),
+        ]
+
+        def trace_modal(router, context, event):
+            if (self.window is None or router.window_key != self.window.as_pointer()
+                    or event.type not in self._EVENTS):
+                return modal(router, context, event)
+            before = ui._DRAGS.get(router.window_key)
+            area, region = context.area, context.region
+            entry = self._record(
+                "router", type=event.type, value=event.value, xy=(event.mouse_x, event.mouse_y),
+                window=router.window_key,
+                area=None if area is None else (area.type, area.as_pointer()),
+                region=None if region is None else region.type,
+                observer=router.token,
+                admission=nodes.gesture_policy.observer_status(
+                    nodes._gesture_state, router.window_key, router.token),
+            )
+            injected = self._injected
+            matches = (injected is not None and event.value == injected["value"]
+                       and (event.type == injected["type"]
+                            or injected["type"] == "MOUSEMOVE" and event.type in self._MOVES))
+            if matches and self._acknowledged is None:
+                injected["received_xy"] = entry["xy"]
+                if entry["xy"] == injected["xy"]:
+                    injected["admission"] = entry["admission"]
+            result = modal(router, context, event)
+            after = ui._DRAGS.get(router.window_key)
+            entry["result"] = sorted(result)
+            if after is not before:
+                if after is not None:
+                    entry["created_drag"] = after.mode
+                if before is not None:
+                    entry["removed_drag"] = before.mode
+            # Keep the receipt for the current injection even if the trace rolls over.
+            if (matches and self._acknowledged is None and entry["xy"] == injected["xy"]
+                    and entry["admission"] == "current"):
+                self._acknowledged = entry
+            return result
+
+        def trace_press_plot(window, event):
+            result = press_plot(window, event)
+            if window == self.window:
+                key = ui._key(window, self.area)
+                tree = getattr(self.area.spaces.active, "edit_tree", None)
+                active = None if tree is None else tree.nodes.active
+                region = next(iter(ui._view_regions(self.area)), None)
+                enabled = key in ui._ENABLED
+                box = None
+                if not result and enabled and region is not None:
+                    box = ui._gizmo_layout(self.area, region, key)
+                drag = ui._DRAGS.get(key[0])
+                injected = self._injected
+                if (injected is not None and injected["type"] == event.type
+                        and injected["value"] == event.value
+                        and injected["xy"] == (event.mouse_x, event.mouse_y)):
+                    injected["hit"] = result
+                self._record(
+                    "hit_test", hit=result, xy=(event.mouse_x, event.mouse_y),
+                    enabled=enabled, stage=ui._stage(key),
+                    fixture_active_node=None if active is None else active.name,
+                    fixture_active_node_selected=None if active is None else active.select,
+                    local_xy=(event.mouse_x - region.x, event.mouse_y - region.y)
+                    if region is not None else None,
+                    region=None if region is None else (region.x, region.y, region.width, region.height),
+                    gizmo_rect=None if box is None else box["rect"],
+                    control=None if drag is None else drag.mode,
+                    hit_area=None if drag is None else drag.key[1],
+                )
+            return result
+
+        def trace_cancel_drag(window_key, *, before_frame_change=False):
+            if self.window is not None and window_key == self.window.as_pointer():
+                drag = ui._DRAGS.get(window_key)
+                if drag is not None:
+                    self._record("cancel_drag", control=drag.mode, token=drag.token,
+                                 before_frame_change=before_frame_change)
+            return cancel_drag(window_key, before_frame_change=before_frame_change)
+
+        # Blender captures the Python callback when the operator is registered.
+        router_cls.modal = trace_modal
+        ui._press_plot = trace_press_plot
+        ui._cancel_drag = trace_cancel_drag
+
+    def bind(self, window, area, region):
         self.window, self.area, self.region = window, area, region
+
+    def close(self):
+        self.window = None
+        for owner, name, original in self._originals:
+            setattr(owner, name, original)
+        self._originals.clear()
+
+    def diagnostics(self):
+        return {
+            "events": list(self.trace),
+            "last_injection": None if self._injected is None else dict(self._injected),
+            "last_receipt": None if self._acknowledged is None else dict(self._acknowledged),
+        }
+
+    def _record(self, step, **details):
+        entry = {"step": step, "seconds": time.monotonic() - self._started, **details}
+        self.trace.append(entry)
+        return entry
 
     def event(self, kind, value, delta=(0, 0)):
         x, y, side = self.ui._plot_rect(self.area, self.region)
         self.event_at(kind, value, (x + side / 2 + delta[0], y + side / 2 + delta[1]))
 
     def event_at(self, kind, value, point):
-        self.window.event_simulate(
-            type=kind, value=value,
-            x=self.region.x + round(point[0]),
-            y=self.region.y + round(point[1]),
-        )
+        x = self.region.x + round(point[0])
+        y = self.region.y + round(point[1])
+        injected = self._record("inject", type=kind, value=value, xy=(x, y),
+                                area=self.area.as_pointer(), local_xy=point)
+        self._injected = injected
+        self._acknowledged = None
+        self.window.event_simulate(type=kind, value=value, x=x, y=y)
+        return injected
+
+    def _delivery_failure(self, injected):
+        event = "press" if injected["type"] == "LEFTMOUSE" else "move"
+        if "received_xy" not in injected:
+            return f"Gizmo router did not receive {event}"
+        if "admission" not in injected:
+            return f"Gizmo router received {event} at different coordinates"
+        if injected["admission"] != "current":
+            return f"Gizmo router rejected {event} at observer admission"
+        if self._acknowledged is not None and "created_drag" in self._acknowledged:
+            return "Gizmo drag was created and lost before polling"
+        if injected.get("hit") is False:
+            return "Gizmo hit test rejected press"
+        if self._acknowledged is None:
+            return f"Gizmo router did not finish handling {event}"
+        return "Gizmo router handled press without creating a drag"
 
     def control_point(self, control, node):
         with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):
@@ -88,25 +224,32 @@ class ScopePointer:
         x, y, width, height = box[control]
         return x + width / 2, y + height / 2
 
-    def press_at(self, point, control=None):
+    def press_at(self, point, control=None, node=None):
         window_key = self.window.as_pointer()
+        self._record("prepare_press", control=control, node=None if node is None else node.name,
+                     window=window_key, area=self.area.as_pointer(), local_xy=point)
         deadline = time.monotonic() + 5
         while self.nodes._gesture_observer_token(window_key) is None:
             assert time.monotonic() < deadline, "The window gesture router did not register"
             yield .05
-        self.event_at("MOUSEMOVE", "NOTHING", point)
-        yield .05
-        self.event_at("LEFTMOUSE", "PRESS", point)
+        move = self.event_at("MOUSEMOVE", "NOTHING", point)
         deadline = time.monotonic() + 5
-        while (drag := self.ui._DRAGS.get(window_key)) is None:
-            assert time.monotonic() < deadline, ("Gizmo did not receive press", control, point)
+        while self._acknowledged is None:
+            assert time.monotonic() < deadline, (
+                self._delivery_failure(move), control, move["xy"])
+            yield .05
+        press = self.event_at("LEFTMOUSE", "PRESS", point)
+        deadline = time.monotonic() + 5
+        while ((drag := self.ui._DRAGS.get(window_key)) is None
+               or self._acknowledged is None or "created_drag" not in self._acknowledged):
+            assert time.monotonic() < deadline, (self._delivery_failure(press), control, press["xy"])
             yield .05
         if control is not None:
             assert drag.mode == control, ("Gizmo pressed a different control", control, drag.mode)
 
     def click_control(self, control, node):
         point = self.control_point(control, node)
-        yield from self.press_at(point, control)
+        yield from self.press_at(point, control, node)
         self.event_at("LEFTMOUSE", "RELEASE", point)
         yield .05
 
@@ -115,7 +258,7 @@ class ScopePointer:
         end = tuple(value + change for value, change in zip(start, delta))
         before = self.settings(node)
         window_key = self.window.as_pointer()
-        yield from self.press_at(start, control)
+        yield from self.press_at(start, control, node)
         self.event_at("MOUSEMOVE", "NOTHING", end)
         deadline = time.monotonic() + 5
         while self.nodes._gesture_token(window_key) is None:

@@ -24,6 +24,8 @@ extension = importlib.import_module("bl_ext.pg_vectorscope.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
 vectorscope = importlib.import_module(extension.__name__ + ".vectorscope")
 vectorscope_ui = importlib.import_module(extension.__name__ + ".vectorscope_ui")
+drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
+pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui)
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append
@@ -32,7 +34,6 @@ assert not errors and not bpy.app.background, errors
 bpy.context.preferences.edit.use_global_undo = True
 # A saved preferences file suppresses the first-run Quick Setup popup.
 bpy.ops.wm.save_userpref()
-drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
 select = drag_checks["select"]
 keyframes = drag_checks["keyframes"]
 encoded_rgb = drag_checks["encoded_rgb"]
@@ -147,7 +148,7 @@ space.pin = True
 space.node_tree = tree
 space.show_region_ui = True
 region = next(item for item in area.regions if item.type == "WINDOW")
-pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui, window, area, region)
+pointer.bind(window, area, region)
 draw_tone = vectorscope_ui._draw_tone
 
 
@@ -636,6 +637,7 @@ def advance():
         assert time.monotonic() - started < 285.0, "Vectorscope acceptance exceeded its budget"
         return next(sequence)
     except StopIteration:
+        pointer.close()
         cleanup()
         report["passed"] = True
         checkpoint("passed")
@@ -643,7 +645,9 @@ def advance():
         return None
     except BaseException:
         report["error"] = traceback.format_exc()
+        report["pointer_trace"] = pointer.diagnostics()
         try:
+            pointer.close()
             cleanup()
         except BaseException as error:
             report["cleanup_error"] = str(error)
