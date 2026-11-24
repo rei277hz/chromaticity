@@ -633,6 +633,26 @@ def defer_undo_reconciliation():
     assert not nodes._node_stores
 
 
+def assert_recovery_error_output():
+    for node, combine_type in (
+        (shader_node, "ShaderNodeCombineColor"),
+        (compositor_node, "CompositorNodeCombineColor"),
+    ):
+        assert node.get(nodes._NODE_ERROR) and node.use_custom_color
+        assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+        magenta, = (item for item in node.node_tree.nodes if item.bl_idname == combine_type)
+        assert tuple(magenta.inputs[channel].default_value
+                     for channel in ("Red", "Green", "Blue")) == (1.0, 0.0, 1.0)
+    shader_error = shader_node.node_tree
+    assert any(link.from_socket.name == "Alpha" and link.to_socket.name == "Alpha"
+               for link in shader_error.links)
+    compositor_error = compositor_node.node_tree
+    assert any(link.from_node.bl_idname == "CompositorNodeSeparateColor"
+               and link.from_socket.name == "Alpha"
+               and link.to_node.bl_idname == "CompositorNodeSetAlpha"
+               for link in compositor_error.links)
+
+
 def check_render_recovery_failure():
     gate = nodes._grade_resources.gate
     original_drain = nodes._drain_preparations_in_scope
@@ -645,23 +665,32 @@ def check_render_recovery_failure():
 
     def check_failure_output(ticket):
         assert not ticket._finished.is_set()
-        for node in (shader_node, compositor_node):
-            assert node.get(nodes._NODE_ERROR)
-            assert node.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
-        shader_error = shader_node.node_tree
-        assert any(link.from_socket.name == "Alpha" and link.to_socket.name == "Alpha"
-                   for link in shader_error.links)
-        compositor_error = compositor_node.node_tree
-        assert any(link.from_node.bl_idname == "CompositorNodeSeparateColor"
-                   and link.from_socket.name == "Alpha"
-                   and link.to_node.bl_idname == "CompositorNodeSetAlpha"
-                   for link in compositor_error.links)
+        assert nodes._lifecycle.reset_pending
+        assert_recovery_error_output()
         delivered.append(ticket)
         return original_deliver(ticket)
 
     # A second lifecycle operation may occur before the first can release pins.
     defer_undo_reconciliation()
     defer_undo_reconciliation()
+    assert all(not node.get(nodes._NODE_ERROR) for node in (shader_node, compositor_node))
+    rebuild_registry = nodes._rebuild_output_registry
+    repair_attempts = []
+
+    def fail_registry_rebuild():
+        repair_attempts.append(nodes._lifecycle.reset_pending)
+        raise RuntimeError("injected lifecycle registry repair failure")
+
+    nodes._rebuild_output_registry = fail_registry_rebuild
+    try:
+        retry = nodes._undo_redo_reconcile_tick()
+        assert retry is not None and retry > 0
+        assert repair_attempts == [True]
+        assert nodes._lifecycle.reset_pending
+        assert_recovery_error_output()
+    finally:
+        nodes._rebuild_output_registry = rebuild_registry
+
     gate.finish_render_preflight_failure = check_failure_output
     nodes._drain_preparations_in_scope = fail_recovery
     nodes._render_init(scene)
@@ -688,17 +717,103 @@ def check_render_recovery_failure():
         nodes._render_pre(scene)
         ticket, = recovered
         assert ticket._finished.is_set() and ticket.state.phase == "released", ticket.state
+        assert nodes._lifecycle.reset_pending
     finally:
         nodes._render_finished(scene)
         gate.request_render_preflight = original_request
     frame_nodes, signatures, _ = nodes._animation_snapshot(scene)
     assert nodes._animation_outputs_current(frame_nodes, signatures) == (True, None)
     assert nodes._undo_redo_reconcile_tick() is None
+    assert not nodes._lifecycle.reset_pending
     assert nodes._animation_outputs_current(frame_nodes, signatures) == (True, None)
+
+
+def check_render_recovery_shared_bank():
+    grade = nodes._make_grade()
+    grade.pg_linear.exposure = 0.75
+    off_scene_tree = bpy.data.node_groups.new("Off-scene Grade readers", nodes.SHADER_TREE)
+    visible = nodes.create_node(material.node_tree)
+    off_scene = nodes.create_node(off_scene_tree)
+    gate = nodes._grade_resources.gate
+    request = gate.request_render_preflight
+    tickets = []
+
+    def record_request(*args):
+        ticket = request(*args)
+        tickets.append(ticket)
+        return ticket
+
+    def preflight():
+        nodes._render_init(scene)
+        try:
+            nodes._render_pre(scene)
+        finally:
+            nodes._render_finished(scene)
+        ticket = tickets.pop()
+        assert ticket._finished.is_set(), ticket.state
+        assert nodes._lifecycle.reset_pending
+        return ticket.state
+
+    def off_scene_receipt():
+        kernel = nodes._kernel_for_node(off_scene)
+        banks = tuple(kernel[key] for key in nodes.PARAMETER_BANK_BINDINGS)
+        images = []
+        for bank in banks:
+            for role, image in nodes.parameter_bank_images(bank).items():
+                pixels = np.asarray(image.pixels[:]).reshape(nodes.PARAMETER_ROLE_SHAPES[role])
+                images.append((image.as_pointer(), nodes.parameter_content_signature(pixels)))
+        return (
+            off_scene.node_tree.as_pointer(),
+            nodes._read_parameter_selector(kernel),
+            kernel[nodes.PARAMETER_GENERATION],
+            tuple(images),
+            off_scene.get(nodes._NODE_ERROR),
+            off_scene.get(nodes._NODE_PENDING),
+        )
+
+    try:
+        visible.pg_grade = off_scene.pg_grade = grade
+        failures = nodes._drain_preparations()
+        assert not failures, failures
+        frame_nodes = nodes._scene_grade_nodes(scene, compositor_mode="render")
+        assert visible in frame_nodes and off_scene not in frame_nodes
+        assert nodes._kernel_for_node(visible) == nodes._kernel_for_node(off_scene)
+        receipt = off_scene_receipt()
+        assert receipt[-2:] == (None, None), receipt
+
+        defer_undo_reconciliation()
+        gate.request_render_preflight = record_request
+        state = preflight()
+        assert state.phase == "released", state
+        assert off_scene_receipt() == receipt
+
+        grade.pg_linear.exposure += 0.5
+        state = preflight()
+        assert state.phase == "failed", state
+        assert "bank is shared with nodes outside this preflight" in state.error, state
+        assert visible.get(nodes._NODE_ERROR)
+        assert visible.node_tree.get(nodes._ERROR_KERNEL_KIND) == nodes._KERNEL_SCHEMA
+        assert off_scene_receipt() == receipt
+        assert off_scene.as_pointer() not in nodes._node_stores
+
+        assert nodes._undo_redo_reconcile_tick() is None
+        assert not nodes._lifecycle.reset_pending
+        failures = nodes._drain_preparations()
+        assert not failures, failures
+        frame_nodes, signatures, _ = nodes._animation_snapshot(scene)
+        assert nodes._animation_outputs_current(frame_nodes, signatures) == (True, None)
+        assert nodes._kernel_for_node(visible) == nodes._kernel_for_node(off_scene)
+    finally:
+        gate.request_render_preflight = request
+        material.node_tree.nodes.remove(visible)
+        off_scene_tree.nodes.remove(off_scene)
+        bpy.data.node_groups.remove(off_scene_tree)
+        bpy.data.node_groups.remove(grade)
 
 
 if bpy.app.background:
     check_render_recovery_failure()
+    check_render_recovery_shared_bank()
 
 
 # Key insertion failures must be visible on the affected node, then clear after

@@ -290,6 +290,8 @@ def _fail_bake_output(node, error):
 
 
 def _bake_tick():
+    if _lifecycle.reset_pending:
+        return 0.02
     return _bake.tick()
 
 
@@ -1579,7 +1581,8 @@ def _ensure_timer():
 
 
 # pg-book: technical-report/en#next-policy.node-output
-def _consume_effects(node, effects, preparation=None, record=None, defer_build=False):
+def _consume_effects(node, effects, preparation=None, record=None, defer_build=False,
+                     *, recovery=None):
     if effects.dispose:
         try:
             _apply_node_disposal(node)
@@ -1592,6 +1595,9 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
     except Exception as error:
         failures.append(error)
         if effects.error is None and record is not None:
+            if not _lifecycle.admits(
+                    recovery, node.as_pointer() if recovery is not None else None):
+                return tuple(failures)
             record["state"], failed_effects = node_policy.step(
                 record["state"], node_policy.Event(
                     "installation_result", None, str(error)))
@@ -1601,13 +1607,18 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
                 failures.append(fallback_error)
             return tuple(failures)
 
+    pointer = node.as_pointer() if recovery is not None else None
     if effects.rebuild:
+        if not _lifecycle.admits(recovery, pointer):
+            return tuple(failures)
         _bake.invalidate(node)
         failures.extend(
-            error for failed_nodes, error in _refresh_nodes((node,))
+            error for failed_nodes, error in _refresh_nodes((node,), recovery=recovery)
         )
 
     if effects.prepare_signature is not None:
+        if not _lifecycle.admits(recovery, pointer):
+            return tuple(failures)
         try:
             if preparation is None or _preparation_runtime is None:
                 raise RuntimeError("Grade preparation inputs or runtime are unavailable")
@@ -1628,27 +1639,32 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
         except Exception as error:
             failures.extend(_dispatch(node, node_policy.Event(
                 "preparation_result", error=str(error),
-                preparation_signature=effects.prepare_signature)))
+                preparation_signature=effects.prepare_signature), recovery=recovery))
+            if recovery is not None:
+                failures.append(error)
 
     if effects.build_signature is not None and not defer_build:
+        if not _lifecycle.admits(recovery, pointer):
+            return tuple(failures)
         failures.extend(_fail_installation(
             (record or _record_for(node),), effects.build_signature,
-            RuntimeError("Prepared Grade data is unavailable")))
+            RuntimeError("Prepared Grade data is unavailable"), recovery=recovery))
     return tuple(failures)
 
 
 def _dispatch_transition(node, record, event, preparation=None, defer_build=False,
-                         *, transition=None):
+                         *, transition=None, recovery=None):
     if transition is None:
         transition = node_policy.step(record["state"], event)
     record["state"], effects = transition
-    failures = _consume_effects(node, effects, preparation, record, defer_build=defer_build)
+    failures = _consume_effects(node, effects, preparation, record, defer_build=defer_build,
+                                recovery=recovery)
     return effects, failures
 
 
-def _dispatch(node, event, preparation=None):
+def _dispatch(node, event, preparation=None, *, recovery=None):
     global _reconciling
-    if _lifecycle.reset_pending:
+    if not _lifecycle.admits(recovery, node.as_pointer() if recovery is not None else None):
         return ()
     desired_signature = event.signature if event.kind == "request" else None
     if event.kind == "dispose":
@@ -1662,14 +1678,15 @@ def _dispatch(node, event, preparation=None):
     previous_reconciling = _reconciling
     _reconciling = True
     try:
-        _effects, failures = _dispatch_transition(node, record, event, preparation)
+        _effects, failures = _dispatch_transition(node, record, event, preparation,
+                                                  recovery=recovery)
         return failures
     finally:
         _reconciling = previous_reconciling
 
 
-def _request_node(node, working_space, snapshots=None, *, frame_scene=None):
-    if _lifecycle.reset_pending:
+def _request_node(node, working_space, snapshots=None, *, frame_scene=None, recovery=None):
+    if not _lifecycle.admits(recovery, node.as_pointer() if recovery is not None else None):
         return ()
     if _is_shared_grade_node(node) and node.pg_grade is None:
         _reset_linear(node.pg_linear)
@@ -1729,7 +1746,8 @@ def _request_node(node, working_space, snapshots=None, *, frame_scene=None):
                 pass
     if not current:
         failures.extend(_dispatch(node, node_policy.Event(
-            "installation_result", None, "Installed Grade kernel is missing or stale")))
+            "installation_result", None, "Installed Grade kernel is missing or stale"),
+            recovery=recovery))
     failures.extend(_dispatch(
         node, node_policy.Event(
             "request", signature,
@@ -1737,9 +1755,10 @@ def _request_node(node, working_space, snapshots=None, *, frame_scene=None):
         ),
         (source, preparation_signature, snapshot, working_space, lane,
          lane == "lut" and bool(state.gesture_active)),
+        recovery=recovery,
     ))
     if (getattr(node, "pg_use_bake", False)
-            or _bake.receipt_signature(node) is not None):
+            or _bake.receipt_signature(node) is not None) and recovery is None:
         _bake.reconcile((node,))
     return tuple(failures)
 
@@ -1782,10 +1801,12 @@ def _publication_records(source, lane):
 
 def _handle_preparation_result(source, preparation_signature, prepared, error,
                                quality="full", lane="grade", admitted=False,
-                               playback_session=None):
+                               playback_session=None, *, recovery=None):
     global _reconciling
     transitions = []
     for record in _publication_records(source, lane):
+        if not _lifecycle.admits(recovery, record["node"].as_pointer()):
+            continue
         state = record["state"]
         current = preparation_signature == state.desired_preparation_signature
         playback_preview = _playback_preview(record, playback_session)
@@ -1822,10 +1843,12 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
     try:
         for record, event, transition, failure in transitions:
             node = record["node"]
+            if not _lifecycle.admits(recovery, node.as_pointer()):
+                raise PublicationDeferred("Grade publication recovery was superseded")
             if failure is not None:
                 failures.append(((node,), failure))
             effects, transition_failures = _dispatch_transition(
-                node, record, event, defer_build=True, transition=transition,
+                node, record, event, defer_build=True, transition=transition, recovery=recovery,
             )
             failures.extend(((node,), error) for error in transition_failures)
             if not transition_failures and effects.build_signature is not None:
@@ -1837,14 +1860,14 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
         for (signature, build_quality), records in authorized_builds.items():
             if records[0]["stack"]:
                 failures.extend(_build_and_install(
-                    signature, tuple(records), prepared, build_quality
+                    signature, tuple(records), prepared, build_quality, recovery=recovery
                 ))
             else:
                 grade_records.extend(records)
         if grade_records:
             failures.extend(_publish_grade_parameters(
                 source, tuple(grade_records), prepared, admitted=admitted,
-                playback_session=playback_session))
+                playback_session=playback_session, recovery=recovery))
     finally:
         _reconciling = previous_reconciling
     return tuple(failures)
@@ -2028,15 +2051,28 @@ def _set_parameter_selector(kernel, bank):
 
 
 def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
-                              playback_session=None):
+                              playback_session=None, recovery=None):
     """Stage a fixed inactive role bundle, select it, and deliver its generation."""
     users = tuple(record for record in authorized_records
                   if record.get("source") is source
+                  and _lifecycle.admits(recovery, record["node"].as_pointer())
                   and _node_stores.get(record["node"].as_pointer()) is record)
     if not users:
         return ()
     created, context, failures = [], {}, []
     resource = _grade_resources.resource(users[0]["node"], prepared.space)
+    if recovery is not None and resource.banks is not None:
+        # Shared kernels read the same banks even when their outer nodes have
+        # no runtime records yet after undo or load.
+        for node in _all_grade_nodes():
+            if _lifecycle.admits(recovery, node.as_pointer()):
+                continue
+            kernel = _kernel_for_node(node)
+            if kernel is not None and any(kernel.get(key) in resource.banks
+                                          for key in PARAMETER_BANK_BINDINGS):
+                return _publication_failure(users, RuntimeError(
+                    "Render Grade bank is shared with nodes outside this preflight"
+                ), recovery=recovery)
     settings = Settings(linear=prepared.linear.settings, tone=prepared.tone.settings,
                         color=prepared.color.settings, space=prepared.space)
     values = _snapshot_values(settings)
@@ -2052,7 +2088,8 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
             for record in users):
         # A recovery must install the exact demand. An older playback result
         # cannot repair a corrupt active bank and certify its replacement.
-        return _publication_failure(users, RuntimeError("Grade parameter bank is corrupt"))
+        return _publication_failure(users, RuntimeError("Grade parameter bank is corrupt"),
+                                    recovery=recovery)
     context.update(
         previous_trees=dict(resource.trees),
         repairing=not active_valid,
@@ -2235,7 +2272,8 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
             event_kind = "recovery_result" if context["repairing"] else "installation_result"
             delivery_errors.extend(_dispatch(record["node"], node_policy.Event(
                 event_kind, _signature(record["node"].id_data.bl_idname, values, prepared.space),
-                playback_preview=_playback_preview(record, playback_session))))
+                playback_preview=_playback_preview(record, playback_session)),
+                recovery=recovery))
         if delivery_errors:
             raise ExceptionGroup("Grade installation delivery failed", delivery_errors)
         # Scene invalidation can start a live evaluation. Publish its generation
@@ -2245,7 +2283,8 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
 
     def restore_selector(bank, _errors):
         restoration_errors = []
-        for kernel in context.get("kernels", {}).values():
+        kernels = context["kernels"].values()
+        for kernel in kernels:
             try:
                 _set_parameter_selector(kernel, bank)
                 for key, value in ((PARAMETER_ACTIVE_BANK, old_active),
@@ -2274,9 +2313,19 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
                 _restore_compositor_bindings(context["receipt_before"])
             except Exception as error:
                 restoration_errors.append(error)
+        selected = set()
+        for kernel in kernels:
+            try:
+                selected.add(_read_parameter_selector(kernel))
+            except Exception as error:
+                restoration_errors.append(error)
+        if selected != {bank}:
+            restoration_errors.append(RuntimeError(
+                f"Grade bank selector restoration readback did not match bank {bank}"
+            ))
         if restoration_errors:
             raise ExceptionGroup("Grade bank selector restoration failed", restoration_errors)
-        return {"selected_bank": old_active}
+        return {"selected_bank": selected.pop()}
 
     def fail_closed(_bank, errors):
         error = errors[0] if errors else RuntimeError("Grade bank publication failed")
@@ -2286,9 +2335,11 @@ def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
         for record in affected or users:
             try:
                 pointer = record["node"].as_pointer()
-                if not pointer or _node_stores.get(pointer) is not record:
+                if (not pointer or _node_stores.get(pointer) is not record
+                        or not _lifecycle.admits(recovery, pointer)):
                     continue
-                installation_errors.extend(_fail_installation((record,), None, error))
+                installation_errors.extend(_fail_installation(
+                    (record,), None, error, recovery=recovery))
             except Exception as failure:
                 installation_errors.append(failure)
         if installation_errors:
@@ -2435,10 +2486,12 @@ def _remove_parameter_image(image):
     bpy.data.images.remove(image, do_unlink=False)
 
 
-def _build_and_install(signature, authorized_records, prepared, quality="full"):
+def _build_and_install(signature, authorized_records, prepared, quality="full",
+                       *, recovery=None):
     global _reconciling
     users = tuple(record for record in authorized_records
-                  if _node_stores.get(record["node"].as_pointer()) is record)
+                  if _node_stores.get(record["node"].as_pointer()) is record
+                  and _lifecycle.admits(recovery, record["node"].as_pointer()))
     if not users:
         return ()
     tree_type = users[0]["node"].id_data.bl_idname
@@ -2457,24 +2510,26 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
                           else _kernel(tree_type, prepared, prepared.space, signature))
                 built_kernel = True
             except Exception as error:
-                return _publication_failure(users, error)
+                return _publication_failure(users, error, recovery=recovery)
         failures = []
         compositor_records = []
         compositor_before = {}
         for record in users:
             node = record["node"]
+            if not _lifecycle.admits(recovery, node.as_pointer()):
+                raise PublicationDeferred("Grade installation recovery was superseded")
             previous_bindings = {}
             try:
                 previous = _replace_node_kernel(node, kernel)
                 if stack:
                     previous_bindings = _record_compositor_bindings((record,))
             except Exception as error:
-                failures.extend(_publication_failure((record,), error))
+                failures.extend(_publication_failure((record,), error, recovery=recovery))
                 continue
             if previous != kernel:
                 _retire_kernels((previous,))
             delivery_failures = _dispatch(node, node_policy.Event(
-                "installation_result", signature, quality=quality))
+                "installation_result", signature, quality=quality), recovery=recovery)
             failures.extend(((node,), error) for error in delivery_failures)
             if previous_bindings:
                 if delivery_failures:
@@ -2487,7 +2542,7 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
                 _tag_compositor_outputs(compositor_records)
             except Exception as error:
                 _compositor_receipts.restore(compositor_before)
-                failures.extend(_publication_failure(compositor_records, error))
+                failures.extend(_publication_failure(compositor_records, error, recovery=recovery))
         return tuple(failures)
     finally:
         if built_kernel:
@@ -2499,11 +2554,11 @@ def _build_and_install(signature, authorized_records, prepared, quality="full"):
         _reconciling = previous_reconciling
 
 
-def _fail_installation(users, signature, error, quality="full"):
+def _fail_installation(users, signature, error, quality="full", *, recovery=None):
     failures = []
     for record in users:
         failures.extend(_dispatch(record["node"], node_policy.Event(
-            "installation_result", signature, str(error), quality=quality)))
+            "installation_result", signature, str(error), quality=quality), recovery=recovery))
     return tuple(failures)
 
 
@@ -2513,14 +2568,15 @@ def _queue_preparation_completions(completions):
             _grade_resources.pending[(publication.source, publication.lane)] = publication
 
 
-def _publication_failure(records, error):
-    nodes = tuple(record["node"] for record in records)
-    return ((nodes, error), *_block_nodes(nodes, error))
+def _publication_failure(records, error, *, recovery=None):
+    nodes = tuple(record["node"] for record in records
+                  if _lifecycle.admits(recovery, record["node"].as_pointer()))
+    return ((nodes, error), *_block_nodes(nodes, error, recovery=recovery))
 
 
-def _publish_pending_preparations(*, drain=False, sources=None):
+def _publish_pending_preparations(*, drain=False, sources=None, recovery=None):
     """Consume mailboxes only inside an admitted publication/preflight scope."""
-    if _lifecycle.reset_pending:
+    if not _lifecycle.admits(recovery):
         raise PublicationDeferred("Grade lifecycle reconciliation is pending")
     failures = []
     # One complete source per foreground turn, with no settling delay or rate cap.
@@ -2537,6 +2593,7 @@ def _publish_pending_preparations(*, drain=False, sources=None):
                 publication.source, publication.signature, publication.prepared,
                 publication.error, publication.quality, publication.lane,
                 True, None if drain else publication.playback_session,
+                recovery=recovery,
             ))
         except PublicationDeferred as error:
             if drain:
@@ -2549,7 +2606,8 @@ def _publish_pending_preparations(*, drain=False, sources=None):
         if pending.get(key) is publication:
             del pending[key]
         if terminal_error is not None:
-            failures.extend(_publication_failure(_publication_records(*key), terminal_error))
+            failures.extend(_publication_failure(
+                _publication_records(*key), terminal_error, recovery=recovery))
         if not drain:
             return tuple(failures)
     if deferred is not None:
@@ -2713,10 +2771,11 @@ def _retire_images():
 
 
 def _refresh_nodes(nodes, working_space=None, *, defer_failure_mutations=False,
-                   frame_scene=None):
-    if _lifecycle.reset_pending:
+                   frame_scene=None, recovery=None):
+    if not _lifecycle.admits(recovery):
         return ()
-    nodes = tuple(node for node in nodes if _is_output_node(node))
+    nodes = tuple(node for node in nodes if _is_output_node(node)
+                  and (recovery is None or _lifecycle.admits(recovery, node.as_pointer())))
     if not nodes:
         return ()
 
@@ -2725,26 +2784,29 @@ def _refresh_nodes(nodes, working_space=None, *, defer_failure_mutations=False,
     except Exception as error:
         if defer_failure_mutations:
             return tuple(((node,), error) for node in nodes)
-        return _block_nodes(nodes, error)
+        return _block_nodes(nodes, error, recovery=recovery)
     failures = []
     snapshots = {}
     for node in nodes:
         try:
-            errors = _request_node(node, working_space, snapshots, frame_scene=frame_scene)
+            errors = _request_node(node, working_space, snapshots,
+                                   frame_scene=frame_scene, recovery=recovery)
             failures.extend(((node,), error) for error in errors)
         except Exception as error:
             if defer_failure_mutations:
                 failures.append(((node,), error))
             else:
-                failures.extend(_block_nodes((node,), error))
+                failures.extend(_block_nodes((node,), error, recovery=recovery))
     return tuple(failures)
 
 
-def _block_nodes(nodes, error, *, during_reset=False):
+def _block_nodes(nodes, error, *, during_reset=False, recovery=None):
     failures = []
     message = f"{type(error).__name__}: {error}"[:240]
     for node in nodes:
         try:
+            if recovery is not None and not _lifecycle.admits(recovery, node.as_pointer()):
+                continue
             if during_reset:
                 # Blender may still be replacing IDs. Apply the output policy
                 # without reusing or recreating runtime records.
@@ -2752,7 +2814,8 @@ def _block_nodes(nodes, error, *, during_reset=False):
                     "installation_result", error=message))
                 _apply_output_effect(node, effects, retire=False)
             else:
-                errors = _dispatch(node, node_policy.Event("installation_result", error=message))
+                errors = _dispatch(node, node_policy.Event("installation_result", error=message),
+                                   recovery=recovery)
                 failures.extend(((node,), failure) for failure in errors)
         except Exception as failure:
             failures.append(((node,), failure))
@@ -2862,7 +2925,6 @@ def _dispose_node(node):
 
 def _invalidate_node_stores():
     global _lifecycle_displaced_kernels
-    _lifecycle.reset_pending = True
     if _lifecycle_displaced_kernels is None:
         _lifecycle_displaced_kernels = {}
     _frame_reconcile_scenes.clear()
@@ -2885,11 +2947,13 @@ def _invalidate_node_stores():
 def _reset_node_stores():
     if _grade_resources is not None:
         _grade_resources.gate.reset()
-    _invalidate_node_stores()
+    failures = _lifecycle.begin((_invalidate_node_stores,))
+    if failures:
+        raise ExceptionGroup("Could not reset Grade node stores", failures)
     if _grade_resources is not None:
         _grade_resources.clear()
     _retire_displaced_lifecycle_kernels()
-    _lifecycle.reset_pending = False
+    _lifecycle.reset()
 
 
 def _retire_displaced_lifecycle_kernels():
@@ -3810,7 +3874,7 @@ def _stack_active_entry(node):
 
 
 def _grade_changed(grade):
-    if _frame_change_active:
+    if _frame_change_active or _lifecycle.reset_pending:
         return
     grade_pointer = grade.as_pointer()
     users = []
@@ -3883,7 +3947,7 @@ def _frame_change_pre(scene, *_args):
     _frame_change_active = True
     vectorscope_ui.frame_change_pre(scene)
     _observe_color_frame(scene)
-    if threading.current_thread() is threading.main_thread():
+    if threading.current_thread() is threading.main_thread() and not _lifecycle.reset_pending:
         _clear_frame_color_claims(scene)
 
 
@@ -3987,9 +4051,9 @@ def _frame_reconcile_tick():
     return 0.1
 
 
-def _ensure_all_kernels(working_space=None):
+def _ensure_all_kernels(working_space=None, *, recovery=None):
     global _last_working_space
-    if _lifecycle.reset_pending:
+    if not _lifecycle.admits(recovery):
         return ()
     if not hasattr(bpy.data, "node_groups"):
         return ()
@@ -3998,6 +4062,8 @@ def _ensure_all_kernels(working_space=None):
         working_space = working_space or _working_space()
     except Exception as error:
         _last_working_space = None
+        if recovery is not None:
+            raise
         failures = _block_nodes(nodes, error)
         for failed_nodes, failure in failures:
             names = ", ".join(getattr(node, "name", "Grade") for node in failed_nodes)
@@ -4016,10 +4082,17 @@ def _ensure_all_kernels(working_space=None):
                 failures.extend(((node,), error) for error in _dispatch(
                     node, node_policy.Event(
                         "installation_result", record["state"].desired_signature,
-                        "Grade parameter readers are missing or have inconsistent bindings")))
-        failures.extend(_refresh_nodes(nodes, working_space))
+                        "Grade parameter readers are missing or have inconsistent bindings"),
+                    recovery=recovery))
+        failures.extend(_refresh_nodes(
+            nodes, working_space, defer_failure_mutations=recovery is not None,
+            recovery=recovery))
     except Exception as error:
+        if recovery is not None:
+            raise
         failures.extend(_block_nodes(nodes, error))
+    if recovery is not None and failures:
+        raise ExceptionGroup("Could not reconcile Grade kernels", [error for _, error in failures])
     _last_working_space = working_space
     if _preparation_runtime is not None:
         _ensure_timer()
@@ -4043,6 +4116,8 @@ def _cleanup_conversion_backups():
 def _startup_reconcile_tick():
     if PGShaderGrade not in _registered_classes:
         return None
+    if _lifecycle.reset_pending:
+        return 0.02
     if not hasattr(bpy.data, "node_groups"):
         return 0.1
     with _bake.restore_sources():
@@ -4064,12 +4139,11 @@ def _load_pre(_filepath):
 def _load_post(_filepath):
     try:
         _finish_lifecycle_change()
-        if _undo_redo_reconcile_tick() is not None:
-            _schedule_lifecycle_reconciliation()
     except Exception as error:
         print("Perceptual Grade load repair failed:", error)
     finally:
-        _ensure_gesture_router_timer()
+        if _undo_redo_reconcile_tick() is not None:
+            _schedule_lifecycle_reconciliation()
         _bake.ensure_timer()
 
 
@@ -4098,8 +4172,10 @@ def _finish_lifecycle_change():
 
 @persistent
 def _undo_redo_post(*_args):
-    _finish_lifecycle_change()
-    _schedule_lifecycle_reconciliation()
+    try:
+        _finish_lifecycle_change()
+    finally:
+        _schedule_lifecycle_reconciliation()
 
 
 def _schedule_lifecycle_reconciliation():
@@ -4114,28 +4190,36 @@ def _release_lifecycle_resources():
     _retire_displaced_lifecycle_kernels()
 
 
-def _repair_lifecycle_outputs():
-    with _bake.restore_sources():
-        _cleanup_conversion_backups()
-        _rebuild_output_registry()
-        _clear_frame_color_claims(bpy.context.scene)
-        _ensure_all_kernels()
-    _bake.reconcile()
+def _repair_lifecycle_outputs(recovery):
+    with _grade_resources.gate.commit():
+        with _bake.restore_sources():
+            _cleanup_conversion_backups()
+            _rebuild_output_registry()
+            _clear_frame_color_claims(bpy.context.scene)
+            _ensure_all_kernels(recovery=recovery)
+        if _lifecycle.admits(recovery):
+            _bake.reconcile_in_scope(tuple(_all_grade_nodes()))
+
+
+def _fail_lifecycle_outputs(error, recovery):
+    print("Perceptual Grade lifecycle repair failed:", error)
+    failures = _block_nodes(_all_grade_nodes(), error, recovery=recovery)
+    if failures:
+        raise ExceptionGroup("Could not install Grade recovery error output",
+                             [failure for _, failure in failures])
 
 
 def _undo_redo_reconcile_tick():
     if PGShaderGrade not in _registered_classes:
         return None
     try:
-        if not _lifecycle.reconcile(_release_lifecycle_resources, _repair_lifecycle_outputs):
-            return 0.02
-    except PublicationDeferred:
-        return 0.02
+        return _lifecycle.reconcile(
+            _release_lifecycle_resources, _repair_lifecycle_outputs, _fail_lifecycle_outputs)
     except Exception as error:
-        print("Perceptual Grade lifecycle repair failed:", error)
+        print("Perceptual Grade lifecycle error output failed:", error)
+        return 0.2
     finally:
         _ensure_gesture_router_timer()
-    return None
 
 
 # pg-book: technical-report/en#next-policy.render-preflight
@@ -4179,60 +4263,8 @@ def _service_render_preflight(*, defer=True):
             return
         try:
             with gate.render_preflight(ticket, defer=defer, deliver_failure=False):
-                restoring = _lifecycle.reset_pending
                 try:
-                    if _lifecycle.changing:
-                        raise PublicationDeferred("Blender is replacing Grade scene data")
-                    _lifecycle.reset_pending = False
-                    request = ticket.state
-                    scene = next((candidate for candidate in bpy.data.scenes
-                                  if candidate.as_pointer() == request.scene_identity), None)
-                    if scene is None:
-                        raise RuntimeError("Render scene no longer exists")
-                    if (scene.frame_current != request.frame
-                            or float(scene.frame_subframe).hex() != request.subframe):
-                        raise RuntimeError("Render frame changed before Grade preflight")
-                    # Native animation rendering may advance an evaluated scene
-                    # copy while the original ID still exposes the previous
-                    # frame's RNA values. Re-assert the exact ticket time on
-                    # the main-thread scene before reading animated Grade data.
-                    with (_bake.restore_sources(update_view_layer=False)
-                          if restoring else nullcontext()):
-                        scene.frame_set(request.frame, subframe=float.fromhex(request.subframe))
-                    _bake.reconcile(_scene_grade_nodes(scene, compositor_mode="render"))
-                    nodes, _signatures, signature = _animation_snapshot(scene)
-                    failures = []
-                    first_frame = request.scene_identity not in _render_validated_scenes
-                    failures.extend(_refresh_nodes(
-                        nodes, defer_failure_mutations=True))
-                    failures.extend(_drain_preparations_in_scope(
-                        nodes, defer_failure_mutations=True))
-                    current_nodes, current_signatures, current_signature = (
-                        _animation_snapshot(scene))
-                    if current_signature != signature:
-                        raise RuntimeError(
-                            "Evaluated Grade settings changed during frame preflight")
-                    ready, error = _animation_outputs_current(
-                        current_nodes, current_signatures,
-                        validate_graph=first_frame)
-                    node_ids = {node.as_pointer() for node in current_nodes}
-                    relevant = [failure for failed_nodes, failure in failures
-                                if any(node.as_pointer() in node_ids
-                                       for node in failed_nodes)]
-                    if relevant:
-                        error = str(relevant[-1])
-                        ready = False
-                    if not ready:
-                        raise RuntimeError(error or
-                            "Grade output did not become current for this render frame")
-                    effects = gate.publish_render_preflight(
-                        ticket, scene_identity=scene.as_pointer(),
-                        frame=scene.frame_current,
-                        subframe=float(scene.frame_subframe).hex(),
-                        signature=signature, published_signature=current_signature,
-                    )
-                    if effects.action == "release" and first_frame:
-                        _render_validated_scenes.add(request.scene_identity)
+                    _prepare_render_frame(gate, ticket)
                 except Exception as error:
                     ticket.fail(error)
                     print("Perceptual Grade frame output failed closed:", error)
@@ -4246,6 +4278,55 @@ def _service_render_preflight(*, defer=True):
         else:
             if ticket.failure_authorized:
                 gate.finish_render_preflight_failure(ticket)
+
+
+def _prepare_render_frame(gate, ticket):
+    if _lifecycle.changing:
+        raise PublicationDeferred("Blender is replacing Grade scene data")
+    request = ticket.state
+    scene = next((candidate for candidate in bpy.data.scenes
+                  if candidate.as_pointer() == request.scene_identity), None)
+    if scene is None:
+        raise RuntimeError("Render scene no longer exists")
+    if (scene.frame_current != request.frame
+            or float(scene.frame_subframe).hex() != request.subframe):
+        raise RuntimeError("Render frame changed before Grade preflight")
+    # An evaluated render scene can advance while the original ID still holds
+    # the previous frame's RNA values. Set the ticket time before reading them.
+    with (_bake.restore_sources(update_view_layer=False)
+          if _lifecycle.reset_pending else nullcontext()):
+        scene.frame_set(request.frame, subframe=float.fromhex(request.subframe))
+    if ticket.failure_authorized:
+        return
+    nodes, _signatures, signature = _animation_snapshot(scene)
+    with _lifecycle.render_recovery(node.as_pointer() for node in nodes) as recovery:
+        _bake.reconcile_in_scope(nodes, scoped=recovery is not None)
+        failures = _refresh_nodes(nodes, defer_failure_mutations=True, recovery=recovery)
+        failures += _drain_preparations_in_scope(
+            nodes, defer_failure_mutations=True, recovery=recovery)
+        if not _lifecycle.admits(recovery):
+            raise RuntimeError("Grade lifecycle changed during frame preflight")
+        current_nodes, current_signatures, current_signature = _animation_snapshot(scene)
+        if current_signature != signature:
+            raise RuntimeError("Evaluated Grade settings changed during frame preflight")
+        node_ids = current_signatures.keys()
+        relevant = [failure for failed_nodes, failure in failures
+                    if any(node.as_pointer() in node_ids for node in failed_nodes)]
+        if relevant:
+            raise relevant[-1]
+        ready, error = _animation_outputs_current(
+            current_nodes, current_signatures,
+            validate_graph=recovery is not None
+            or request.scene_identity not in _render_validated_scenes)
+        if not ready:
+            raise RuntimeError(error or "Grade output did not become current for this render frame")
+        effects = gate.publish_render_preflight(
+            ticket, scene_identity=scene.as_pointer(), frame=scene.frame_current,
+            subframe=float(scene.frame_subframe).hex(), signature=signature,
+            published_signature=current_signature,
+        )
+        if effects.action == "release":
+            _render_validated_scenes.add(request.scene_identity)
 
 
 def _revoke_render_output(ticket):
@@ -4362,12 +4443,14 @@ def _drain_preparations(nodes=None):
         return _drain_preparations_in_scope(nodes=nodes)
 
 
-def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
-    if _lifecycle.reset_pending:
+def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False, recovery=None):
+    if not _lifecycle.admits(recovery):
         raise PublicationDeferred("Grade lifecycle reconciliation is pending")
     if _preparation_runtime is None:
         return ()
     failures = []
+    if recovery is not None and nodes is not None:
+        nodes = tuple(node for node in nodes if _lifecycle.admits(recovery, node.as_pointer()))
     records = (tuple(_node_stores.values()) if nodes is None else tuple(
         record for node in nodes
         if (record := _node_stores.get(node.as_pointer())) is not None
@@ -4377,7 +4460,8 @@ def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
     # The async barrier waits only for preparation, never for Blender mutation.
     try:
         _queue_preparation_completions(_preparation_runtime.wait(sources))
-        failures.extend(_publish_pending_preparations(drain=True, sources=sources))
+        failures.extend(_publish_pending_preparations(
+            drain=True, sources=sources, recovery=recovery))
     except Exception as error:
         failed_nodes = tuple(record["node"] for record in records)
         if _preparation_runtime.failure is not None:
@@ -4388,7 +4472,7 @@ def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
         else:
             # Blender need not abort a render when a handler raises. Revoke
             # output before returning to the host.
-            failures.extend(_block_nodes(failed_nodes, error))
+            failures.extend(_block_nodes(failed_nodes, error, recovery=recovery))
     for record in records:
         state = record["state"]
         node = record["node"]
@@ -4403,7 +4487,8 @@ def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False):
                 failures.append(((node,), error))
             else:
                 errors = _dispatch(node, node_policy.Event(
-                    "installation_result", state.desired_signature, str(error)))
+                    "installation_result", state.desired_signature, str(error)),
+                    recovery=recovery)
                 failures.extend(((node,), failure) for failure in errors)
     return tuple(failures)
 

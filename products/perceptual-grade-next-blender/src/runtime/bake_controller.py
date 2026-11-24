@@ -632,14 +632,19 @@ class BakeController:
             )
             self.ensure_timer()
 
-    def reconcile_in_scope(self, nodes, *, inventory=None):
+    def reconcile_in_scope(self, nodes, *, inventory=None, scoped=False):
         selected = {node.as_pointer(): node for node in nodes
                     if bake_routes.is_bake_target(node)}
         if self.pending_invalidations:
+            if scoped:
+                inventory = selected
+                pending = tuple(self.pending_invalidations & selected.keys())
+            else:
+                pending = tuple(self.pending_invalidations)
             if inventory is None:
                 inventory = {node.as_pointer(): node for node in self.nodes()
                              if bake_routes.is_bake_target(node)}
-            for pointer in tuple(self.pending_invalidations):
+            for pointer in pending:
                 node = inventory.get(pointer)
                 if node is not None:
                     self._persist_source_change(node)

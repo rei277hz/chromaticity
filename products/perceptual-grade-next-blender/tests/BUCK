@@ -122,6 +122,7 @@ python_test(
         "runtime/test_grade_preparation.py",
         "runtime/test_grade_transactions.py",
         "runtime/test_helper_runtime.py",
+        "runtime/test_lifecycle.py",
         "runtime/test_lut_helper.py",
         "runtime/test_parameter_publication.py",
         "runtime/test_preparation_runtime.py",

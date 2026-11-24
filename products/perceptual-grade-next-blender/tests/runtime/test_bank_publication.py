@@ -121,6 +121,35 @@ class BankPublicationRuntimeTests(unittest.TestCase):
         self.assertEqual(result, self.result_type("failed_closed", ()))
         self.assertEqual(actions, [("select", 1), ("restore", 0), "fail_closed"])
 
+    def test_failed_selector_readback_preserves_errors_and_fails_closed(self):
+        delivery_error = RuntimeError("Grade image invalidation failed")
+        restoration_error = RuntimeError("Grade bank selector restoration failed")
+
+        def deliver(_bank, _errors):
+            raise delivery_error
+
+        def restore(bank, errors):
+            self.assertEqual(bank, 0)
+            self.assertEqual(errors, (delivery_error,))
+            raise restoration_error
+
+        def fail_closed(bank, errors):
+            self.assertEqual(bank, 0)
+            self.assertEqual(errors, (delivery_error, restoration_error))
+            return {"closed": True}
+
+        result = self.runner(
+            0,
+            {"stage": lambda *_args: {"clean": True},
+             "select": lambda bank, _errors: {"selected_bank": bank},
+             "deliver": deliver, "restore_selector": restore,
+             "fail_closed": fail_closed},
+            admitted=True, active_valid=True,
+        )
+        self.assertEqual(result, self.result_type(
+            "failed_closed", (delivery_error, restoration_error)
+        ))
+
     def test_denied_publication_must_close_and_never_stage(self):
         actions = []
 
