@@ -1,8 +1,8 @@
 # Linux build and test results
 
-- Commit: `6b811cdd01fada37f2ca0c44cd7909b7192f206e`
-- Recorded at: 2026-11-22T20:18:30+00:00
-- Run: https://github.com/rei277hz/chromaticity/actions/runs/45062408896
+- Commit: `2063e92afee22ac6a25d8ef48d937b67303565fb`
+- Recorded at: 2026-11-24T04:18:02+00:00
+- Run: https://github.com/rei277hz/chromaticity/actions/runs/45321869429
 
 Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.
 
@@ -15,9 +15,9 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender:verify_policies` | passed |
 | `//products/perceptual-grade-next-blender:extension` | passed |
 
-## Linux smoke suites: 67/67 passed
+## Linux smoke suites: 67/68 passed
 
-Run outcome: **passed**. Command exit: `0`.
+Run outcome: **failed**. Command exit: `32`.
 
 | Target | Result |
 | --- | --- |
@@ -82,7 +82,8 @@ Run outcome: **passed**. Command exit: `0`.
 | `//products/perceptual-grade-next-blender/tests:bake_workspace_installed` | passed |
 | `//products/perceptual-grade-next-blender/tests:compositor_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:vectorscope` | passed |
-| `//products/perceptual-grade-next-blender/tests:vectorscope_native` | passed |
+| `//products/perceptual-grade-next-blender/tests:vectorscope_native` | failed |
+| `//products/perceptual-grade-next-blender/tests:vectorscope_latency` | passed |
 | `//products/perceptual-grade-next-blender/tests:compositor_carriers` | passed |
 | `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:gesture_drag_gui` | passed |

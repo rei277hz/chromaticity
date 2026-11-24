@@ -2,12 +2,12 @@
   "schema": 1,
   "metadata": {
     "repository": "rei277hz/chromaticity",
-    "commit": "6b811cdd01fada37f2ca0c44cd7909b7192f206e",
-    "run_id": "45062408896",
-    "run_number": 63,
+    "commit": "2063e92afee22ac6a25d8ef48d937b67303565fb",
+    "run_id": "45321869429",
+    "run_number": 65,
     "run_attempt": 1,
-    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/45062408896",
-    "timestamp": "2026-11-22T20:18:30+00:00"
+    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/45321869429",
+    "timestamp": "2026-11-24T04:18:02+00:00"
   },
   "builds": {
     "passed": 2,
@@ -31,10 +31,11 @@
   },
   "tests": {
     "passed": 67,
-    "total": 67,
-    "outcome": "passed",
-    "exit_code": 0,
+    "total": 68,
+    "outcome": "failed",
+    "exit_code": 32,
     "counts": {
+      "failed": 1,
       "passed": 67
     },
     "issues": [],
@@ -285,6 +286,10 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:vectorscope_native",
+        "status": "failed"
+      },
+      {
+        "target": "//products/perceptual-grade-next-blender/tests:vectorscope_latency",
         "status": "passed"
       },
       {
