@@ -1,4 +1,4 @@
-"""Exercise the installed Linear vectorscope through its node-editor toggle."""
+"""Exercise the installed Linear and Tone Gizmo through its node-editor toggle."""
 
 import json
 import os
@@ -55,6 +55,7 @@ class VectorscopeNativeTests(unittest.TestCase):
                 with log.open("w") as output_file:
                     process = subprocess.Popen([
                         str(blender), "--factory-startup", "--disable-autoexec",
+                        "--enable-event-simulate",
                         "--window-geometry", "0", "0", "1280", "960",
                         "--python-exit-code", "1", "--python", str(runner), "--",
                         str(repository), str(report),
@@ -81,22 +82,42 @@ class VectorscopeNativeTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0, details)
             self.assertTrue(data.get("passed"), details)
             self.assertEqual(data.get("initial_shape"), [144, 144], details)
+            self.assertTrue(data.get("mixed_trace_rgb"), details)
+            self.assertTrue(data.get("per_node_drag"), details)
+            self.assertTrue(data.get("shared_drag"), details)
             return data, details
 
     def test_compositor_grade_scope_tracks_edits_and_playback(self):
         data, details = self.run_installed_case("vectorscope_runner.py")
+        self.assertTrue(data.get("additive_trace_pixels"), details)
         self.assertTrue(data.get("direct_image_visible"), details)
         self.assertTrue(data.get("linear_edit_refreshed"), details)
+        self.assertTrue(data.get("linear_gizmo_controls"), details)
+        self.assertTrue(data.get("tone_gizmo_controls"), details)
+        self.assertTrue(data.get("tone_gizmo_drawn"), details)
         self.assertTrue(data.get("image_pixels_refreshed"), details)
         self.assertTrue(data.get("processed_input_visible"), details)
         self.assertGreaterEqual(len(set(data.get("playback_frames", []))), 2, details)
         self.assertTrue(data.get("retained_complete_during_updates"), details)
         self.assertTrue(data.get("latest_frame_published"), details)
+        self.assertTrue(data.get("shared_consumer_input"), details)
+        self.assertTrue(data.get("source_keys_undone"), details)
+        self.assertTrue(data.get("click_unchanged"), details)
+        self.assertTrue(data.get("empty_plot_inert"), details)
+        self.assertTrue(data.get("selection_cancelled"), details)
+        self.assertTrue(data.get("escape_cancelled"), details)
+        self.assertTrue(data.get("frame_change_cancelled"), details)
+        self.assertTrue(data.get("capture_change_cancelled"), details)
+        self.assertTrue(data.get("animated_destination_preserved"), details)
+        self.assertTrue(data.get("autokey_at_press_frame"), details)
 
     def test_shader_grade_scope_captures_active_viewport_input(self):
         data, details = self.run_installed_case("vectorscope_shader_runner.py")
         self.assertTrue(data.get("shader_aov_visible"), details)
         self.assertTrue(data.get("linear_edit_refreshed"), details)
+        self.assertTrue(data.get("uv_edit_refreshed"), details)
+        self.assertTrue(data.get("right_click_cancelled"), details)
+        self.assertTrue(data.get("shared_tone_gizmo"), details)
 
 
 if __name__ == "__main__":

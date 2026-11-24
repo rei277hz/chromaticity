@@ -82,6 +82,23 @@ class GestureDecisionTests(unittest.TestCase):
         self.assertIsNone(effects.undo_window)
         self.assertIsNone(runtime.current_gesture(state, 1))
 
+    def test_discard_pair_cancels_without_overwriting_destination_frame(self):
+        state, _ = runtime.step(runtime.new(), runtime.Event(
+            "press", window_id=1, undo_owner="adapter", color_pair=True,
+            targets=(runtime.Target(10, "before"),)))
+        token = runtime.current_gesture(state, 1)
+        state, _ = runtime.step(state, runtime.Event(
+            "activate", window_id=1, gesture_token=token))
+        state, _ = runtime.step(state, runtime.Event(
+            "edit_color_pair", window_id=1, gesture_token=token,
+            color_values=(0.33, 0.44)))
+        state, effects = runtime.step(state, runtime.Event(
+            "discard_color_pair", window_id=1, gesture_token=token,
+            observed=(runtime.Target(10, "after"),)))
+        self.assertEqual(effects.actions, (runtime.Action("node_release", node_id=10),))
+        self.assertIsNone(effects.undo_window)
+        self.assertIsNone(runtime.current_gesture(state, 1))
+
     def test_native_observation_cannot_finish_color_edit(self):
         state, _ = runtime.step(runtime.new(), runtime.Event("window_seen", window_id=1))
         pending = runtime.pending_observer(state, 1)

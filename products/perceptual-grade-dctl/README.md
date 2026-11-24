@@ -61,19 +61,19 @@ links lead to the corresponding build instructions.
 
 Each variant replaces Cone Tone and Color J/C in the cone chain. Forward
 applies global chroma shaping, then Shadow and Highlight Chroma, then
-saturation-preserving Tone with adjustable H–K Influence. **C Tone Crossover**
+saturation-preserving Tone. **C Tone Crossover**
 sets the input lightness where both tonal chroma adjustments reach zero.
 The pivots and crossovers in the table use normalized saturation
 `s = C / (C + (35/75) * abs(J_A))`.
 
-| Variant | Global chroma controls | Saturation pivot or crossover | Global gain near gray | Shadow and Highlight Chroma fade | Chroma inverse |
-| --- | --- | --- | --- | --- | --- |
-| [Baseline](#integrated-tone-and-color-jc-prototype) (`:jc_tone_fit_prototype`) | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates in stops and approaches unity near gray | Global curve is closed form. Tonal gain uses a scalar solve. |
-| [Linear Gain](#linear-gain-audition) (`:jc_tone_fit_linear_gain_prototype`) | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates the gain multiplier and approaches unity near gray | Closed form throughout chroma |
-| [Unified Chroma](#unified-chroma-audition) (`:jc_tone_fit_unified_chroma_prototype`) | C Muted Gain and C Vivid Gain shape one curve | One adjustable input crossover. Gain there is halfway between the endpoint gains in stops. | Approaches `2^(C Muted Gain)` | Interpolates the gain multiplier and approaches unity near gray | Closed form throughout chroma |
+| Variant and Buck target | Tone Fit and H–K Influence | Global chroma controls | Saturation pivot or crossover | Global gain near gray | Shadow and Highlight Chroma fade | Inverse |
+| --- | --- | --- | --- | --- | --- | --- |
+| [Unified Chroma baseline](#unified-chroma-baseline) (`:jc_tone_fit_unified_chroma_prototype`) | Fit `-2` to `+2`, H–K Influence fixed at `1.0` | C Muted Gain and C Vivid Gain shape one curve | One adjustable input crossover. Gain there is halfway between the endpoint gains in stops. | Approaches `2^(C Muted Gain)` | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
+| [Legacy Log Gain](#integrated-tone-and-color-jc-prototype) (`:jc_tone_fit_prototype`) | Fit `-2` to `+6`, H–K Influence `0` to `1` | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates in stops and approaches unity near gray | Global curve closed form. Tonal gain and Tone use scalar solves. |
+| [Linear Gain](#linear-gain-audition) (`:jc_tone_fit_linear_gain_prototype`) | Fit `-2` to `+6`, H–K Influence `0` to `1` | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
 
 Near-gray gain describes faintly colored pixels at nonzero lightness. Exact
-gray stays neutral. All three use a scalar inverse when Tone is active.
+gray stays neutral.
 [Equations and Resolve audition](JC-OVERLAP-PROTOTYPES.md#integrated-tone-and-jc)
 
 ### Standalone 3A variants
@@ -136,9 +136,9 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_gain_prototypes --
 
 ## Integrated Tone and Color J/C prototype
 
-This prototype combines Cone Tone and Global Shape's chroma controls in one
-DCTL. Use it in place of the separate Cone Tone and Color J/C nodes. Keep XYZ
-Input before it and retain Warp and XYZ Output after it.
+The Legacy Log Gain prototype combines Cone Tone and Global Shape's original
+chroma controls in one DCTL for comparison with Unified Chroma. Place it after
+XYZ Input and before Warp and XYZ Output when auditioning it.
 
 ```sh
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_prototype --show-output
@@ -151,7 +151,7 @@ Build details and Resolve audition steps are in the
 
 This integrated variant gives Shadow and Highlight Chroma a Linear Gain fade
 with a quadratic inverse. C Contrast, C Pivot, C Muted and C Vivid use the same
-curve as the baseline. The target builds English and Simplified Chinese files.
+curve as Legacy Log Gain. The target builds English and Simplified Chinese files.
 
 ```sh
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_linear_gain_prototype --show-output
@@ -159,12 +159,13 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_linear_ga
 
 Tone's inverse still uses a scalar solve. [Linear Gain behavior and Resolve audition](JC-OVERLAP-PROTOTYPES.md#linear-gain-audition)
 
-### Unified Chroma audition
+### Unified Chroma baseline
 
 C Muted Gain and C Vivid Gain shape incoming saturation together. At C
 Saturation Crossover, the applied gain in stops is the average of the two
-settings. This variant pairs the new curve with the integrated Linear Gain
-prototype's Tone and tonal chroma controls. The target builds English and
+settings. The baseline uses the original smooth Tone curve and the Linear Gain
+fade for Shadow and Highlight Chroma. H–K Influence is fixed at `1.0` and
+Remap Fit is limited to `-2` through `+2`. The target builds English and
 Simplified Chinese DCTLs.
 
 ```sh
@@ -172,6 +173,20 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_c
 ```
 
 [Unified curve, inverse, and Resolve audition](JC-OVERLAP-PROTOTYPES.md#unified-chroma-audition)
+
+### Tone curve overlay
+
+Enable **Show Tone Curve** in Unified Chroma to see how the four source
+levels, Black Compression, Remap Fit, and Peak Nits shape the
+neutral tone curve. The lower-left graph plots input J against output J.
+Both axes run from zero to the normalized J of 4000 nits, with 203 nits
+at J = 1. Selecting **Inverse** swaps the plotted input and output.
+
+Hollow rings mark the Shadows, Midtones, White, and Highlights targets.
+Filled dots mark the fitted values. A chevron at the plot edge indicates an
+anchor beyond the axis limit.
+The checkbox is off by default. Turn it off for clean playback and delivery
+because the enabled overlay is drawn into the image.
 
 ## Global Color J/C shaping prototype
 

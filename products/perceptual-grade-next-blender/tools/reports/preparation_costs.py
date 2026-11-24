@@ -17,6 +17,7 @@ import time
 from color_tools.kernel import prepare, prepare_linear, prepare_tone
 from color_tools.kernel.boundary import prepare_boundary
 from color_tools.kernel.color_prepare import _prepare_color_parameters, _prepare_tables, _generate_field
+from color_tools.kernel.layouts import FIELD_CELLS
 from . import full_cases
 from .evaluate import evidence_hashes
 
@@ -100,11 +101,11 @@ def run(output_dir, *, repeats=5):
     for t in groups[0]['textures']:
         lines.append(f"| {t['name']} | {t['cells'] if t['cells'] is not None else 'fixed'} | {t['shape'][1]} × {t['shape'][0]} | {t['bytes']:,} |")
     lines += ['', f"Resident payload: {groups[0]['resident_pixel_bytes']:,} bytes. First boundary load: {first_load:.6f}s.", '',
-              '| Case | Complete preparation median (s) | Tone (s) | Color coefficients (s) | Web parameters (s) | Web toes (s) | Compact Adaptance (s) |',
-              '|---|---:|---:|---:|---:|---:|---:|---:|']
+              '| Case | Complete preparation median (s) | Tone (s) | Web parameters (s) | Web toes (s) | Compact Adaptance (s) |',
+              '|---|---:|---:|---:|---:|---:|']
     for g in groups:
         values = [g['phases']['complete_preparation_seconds']['median'], g['phases']['tone_seconds']['median'],
-                  *[g['fields'][name]['median'] for name in ('Color coefficients','Web parameters','Web toes','Adaptance parameters')]]
+                  *[g['fields'][name]['median'] for name in FIELD_CELLS]]
         lines.append('| '+g['case']+' | '+' | '.join(f'{v:.6f}' for v in values)+' |')
     lines += ['', 'JSON retains all repetitions, extrema, settings and source identities. These are host preparation costs, not drag latency.', '']
     (output_dir/'report.md').write_text('\n'.join(lines))

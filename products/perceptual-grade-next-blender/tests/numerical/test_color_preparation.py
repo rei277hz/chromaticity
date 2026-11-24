@@ -1,4 +1,4 @@
-"""Independent Color preparation, frozen drivers and parameter atlas gates."""
+"""Independent Warp preparation and parameter atlas gates."""
 from dataclasses import asdict, replace
 import json
 import unittest
@@ -6,11 +6,10 @@ import numpy as np
 
 from color_tools.kernel import ColorSettings, WebSettings, ToneSettings, prepare as runtime_prepare
 from color_tools.kernel.color_prepare import (
-    COLOR_TABLE_ERROR_LIMIT, _audit_field, _generate_field, _prepare_tables, drivers, audit_color)
+    COLOR_TABLE_ERROR_LIMIT, _audit_field, _generate_field, _prepare_tables, audit_color)
 from color_tools.kernel.layouts import FIELD_LATTICE, supported_cells
 from color_tools.perceptual_grade_reference.grading import (
-    Color, ColorSettings as ReferenceColor, Tone, ToneSettings as ReferenceTone,
-    drivers as reference_drivers)
+    Color, ColorSettings as ReferenceColor, Tone, ToneSettings as ReferenceTone)
 from tools.perceptual_grade.reports.gate_policy import (
     field_passed, scalar_limits, texture_admission_policy)
 
@@ -22,7 +21,7 @@ def prepare(*args, **kwargs):
 
 
 def oracle(settings, tone=ToneSettings()):
-    return Color(ReferenceColor(**asdict(settings)), Tone(ReferenceTone(**asdict(tone))))
+    return Color(ReferenceColor(**asdict(settings)), Tone(ReferenceTone(peak_nits=tone.peak_nits)))
 
 
 def legacy_toe(prepared):
@@ -76,7 +75,7 @@ class ColorPreparationTests(unittest.TestCase):
     def test_hdr_scalar_diagnostics_still_require_finite_complete_audits(self):
         evaluator = lambda x: np.stack((np.sin(1000*x), np.zeros_like(x),
                                          np.zeros_like(x), np.zeros_like(x)), axis=-1)
-        table = _generate_field('Color coefficients', evaluator, {'lightness': (0,)},
+        table = _generate_field('Adaptance parameters', evaluator, {'log_gains': (0,)},
                                 'linear', 1., cells=2048)
         measured = _audit_field(table, evaluator)
         self.assertFalse(field_passed(measured, ColorSettings()))
@@ -91,8 +90,7 @@ class ColorPreparationTests(unittest.TestCase):
 
     def test_small_toe_grids_are_role_scoped_and_sample_endpoints(self):
         self.assertEqual(supported_cells('Web toes')[:8], tuple(range(256, 2049, 256)))
-        for name in ('Color coefficients', 'Web parameters'):
-            self.assertEqual(supported_cells(name), FIELD_LATTICE)
+        self.assertEqual(supported_cells('Web parameters'), FIELD_LATTICE)
         self.assertEqual(supported_cells('Adaptance parameters'), tuple(sorted((3072, *FIELD_LATTICE))))
         with self.assertRaisesRegex(ValueError, 'Unknown Color field role'):
             supported_cells('Adaptance interior parameters')
@@ -107,7 +105,7 @@ class ColorPreparationTests(unittest.TestCase):
             np.testing.assert_allclose(table.evaluate(probes)[..., 0, :3], evaluator(probes)[:, :3], atol=2e-6)
         with self.assertRaises(ValueError):
             _generate_field('Web parameters', evaluator, {'toe': (0,)}, 'linear', 1., cells=1024)
-        for role in ('Color coefficients', 'Web parameters', 'Web toes'):
+        for role in ('Web parameters', 'Web toes'):
             with self.subTest(role=role), self.assertRaises(ValueError):
                 _generate_field(role, evaluator, {'value': (0,)}, 'linear', 1., cells=3072)
         compact = _generate_field('Adaptance parameters', evaluator, {'value': (0, 1, 2)},
@@ -120,7 +118,7 @@ class ColorPreparationTests(unittest.TestCase):
         from color_tools.kernel.color_prepare import _prepare_color_parameters
         from color_tools.kernel import prepare_tone
         from color_tools.kernel.layouts import FIELD_CELLS
-        settings = ColorSettings(lightness=((1., -2., .5, -.25),)*4,
+        settings = ColorSettings(
             adaptance=((2., -1.),)*4, web=WebSettings(log_chroma=((.1,)*6,)*4))
         tone = prepare_tone(full_fields=True)
         current = _prepare_color_parameters(settings, tone, full_fields=True)
@@ -128,13 +126,10 @@ class ColorPreparationTests(unittest.TestCase):
         self.assertEqual(built.web_table.cells, FIELD_CELLS['Web parameters'])
         self.assertEqual(tuple(built.web_table.pixels.shape), (32, 4097, 4))
         self.assertEqual(built.web_table.pixels.nbytes, 2097664)
-        self.assertEqual(built.coefficient_table.cells, 8192)
-        self.assertEqual(built.coefficient_table.pixels.shape, (2, 8193, 4))
-        self.assertEqual(built.coefficient_table.pixels.nbytes, 262176)
-        self.assertEqual(built.adaptance_table.cells, 32768)
-        self.assertEqual(built.adaptance_table.pixels.shape, (4, 8193, 4))
-        self.assertEqual(built.adaptance_table.pixels.nbytes, 524352)
-        obsolete_cells = {'Color coefficients': 131072, 'Web parameters': 32768,
+        self.assertEqual(built.adaptance_table.cells, 65536)
+        self.assertEqual(built.adaptance_table.pixels.shape, (8, 8193, 4))
+        self.assertEqual(built.adaptance_table.pixels.nbytes, 1048704)
+        obsolete_cells = {'Web parameters': 32768,
                           'Web toes': 1280, 'Adaptance parameters': 16384}
         originals = {table.name: table for table in built.tables}
         def prior_builder(name, *args, **kwargs):
@@ -164,48 +159,6 @@ class ColorPreparationTests(unittest.TestCase):
         self.assertEqual(prepared.tables, ())
         self.assertIsNone(prepared.geometry)
         np.testing.assert_array_equal(prepared.log_gains, 0.)
-
-    def test_frozen_driver_memberships_match_signed_reference(self):
-        rng = np.random.default_rng(20261029)
-        q = rng.normal(size=(2048, 3))*100
-        ja = rng.normal(size=2048)*100
-        q[:3] = ((0, 0, 0), (10, 0, 0), (10, 35, 0))
-        ja[:3] = (0, -10, 75)
-        np.testing.assert_allclose(drivers(q, ja), reference_drivers(q, ja), rtol=2e-15, atol=2e-15)
-        np.testing.assert_array_equal(drivers(q[:2], ja[:2]), 0.)
-        self.assertAlmostEqual(drivers(q[2], ja[2])[0], drivers(q[2], ja[2])[1])
-        np.testing.assert_array_equal(drivers(q, ja), drivers(q, -ja))
-        chromatic_zero = drivers(np.array((1., 4., 0.)), 0.)
-        self.assertEqual(chromatic_zero[0], 0.)
-        self.assertAlmostEqual(chromatic_zero[1], .8)
-
-    def test_color_fit_six_and_ui_amplitudes_keep_complete_scalar_diagnostics(self):
-        lightness = ((30, 100, 20, -20), (50, 200, 20, -20),
-                     (100, 400, 30, -30), (200, 700, 50, -50))
-        chroma = ((4, 16, 4, -4), (4, 16, 2, -2), (4, 16, 1, -1), (4, 16, 1, -1))
-        for fit in (-2., 0., 3., 6.):
-            settings = ColorSettings(lightness=lightness, chroma=chroma,
-                                     lightness_fit=fit, chroma_fit=fit)
-            prepared = prepare(color=settings).color
-            expected = oracle(settings)
-            h = np.r_[np.linspace(0, prepared.high, 20003), -10., 0., prepared.high*100]
-            actual_terms, expected_terms = prepared.terms(h), expected.terms(h)
-            np.testing.assert_allclose(actual_terms, expected_terms, rtol=3e-12, atol=3e-12)
-            table = prepared.coefficient_table
-            self.check_field_audit(table, settings)
-            coordinate = table.coordinate(h)
-            for name, reference in zip(('lightness', 'chroma'), expected_terms):
-                sampled = table.field(name, coordinate)
-                scale = np.array([table.scales[row, channel] for row, channel in table.fields[name]])
-                error = np.max(abs(sampled-reference)/np.maximum(1+abs(reference), scale))
-                print(json.dumps(dict(kind='color_sampled_scalar', field=name, fit=fit,
-                    conditioned_error=float(error), error_limit=COLOR_TABLE_ERROR_LIMIT,
-                    scalar_precision=texture_admission_policy(table.name)['scalar_precision'])), flush=True)
-                self.assertTrue(np.isfinite(sampled).all())
-                if texture_admission_policy(table.name)['scalar_precision'] == 'required':
-                    self.assertLessEqual(error, COLOR_TABLE_ERROR_LIMIT)
-            self.assertFalse(table.pixels.flags.writeable)
-            with self.assertRaises(TypeError): table.fields['new'] = ((0, 0),)
 
     def test_web_geometry_and_parameter_fields_match_reference(self):
         settings = ColorSettings(web=WebSettings(
@@ -265,7 +218,7 @@ class ColorPreparationTests(unittest.TestCase):
         self.assertFalse(hasattr(prepared, 'adaptance_interior_table'))
         self.assertEqual([table.name for table in prepared.tables], ['Adaptance parameters'])
         self.assertEqual(compact.mapping, 'response_compact')
-        self.assertEqual(compact.cells, 32768)
+        self.assertEqual(compact.cells, 65536)
         # Retain the frozen near-pole witness as a raw Compact diagnostic.
         # The fixed layout retains strict extreme-grade final-output gates;
         # this diagnostic does not restore the removed representation.
@@ -293,23 +246,6 @@ class ColorPreparationTests(unittest.TestCase):
         if texture_admission_policy(compact.name)['scalar_precision'] == 'required':
             self.assertLess(error, COLOR_TABLE_ERROR_LIMIT)
         self.assertGreater(abs(np.log(k[-1])-np.log(k[0])), 1e-5)
-
-    def test_signed_coefficient_rounding_floor_has_explicit_conditioning(self):
-        settings = ColorSettings(lightness=((30, -100, 20, -20), (-50, 200, -20, 20),
-                                            (100, -400, 30, -30), (-200, 700, -50, 50)),
-                                 lightness_fit=6)
-        prepared = prepare(color=settings).color
-        x = np.array([.6306918561458589])
-        exact = prepared.terms(x*prepared.high)[0]
-        rounded = prepared.terms(x.astype(np.float32).astype(float)*prepared.high)[0]
-        floor = float(np.max(abs(exact-rounded)/(1+abs(exact))))
-        self.assertGreater(floor, 1e-4)
-        table = prepared.coefficient_table
-        np.testing.assert_array_equal(table.scales[0], (201., 701., 51., 51.))
-        self.check_field_audit(table, settings)
-        self.assertGreater(table.max_pointwise_error, table.max_error)
-        self.assertGreater(table.max_mapper_error, COLOR_TABLE_ERROR_LIMIT)
-        self.assertEqual(table.field_errors.shape, table.scales.shape)
 
     def test_extreme_web_and_valid_near_pole_adaptance_remain_preparable(self):
         rows = np.array([[(-1.)**(i+j) for j in range(6)] for i in range(4)])
@@ -348,16 +284,13 @@ class ColorPreparationTests(unittest.TestCase):
                                                atol=2e-3, rtol=2e-5)
 
     def test_invalid_schema_calibration_and_crossed_handles(self):
-        invalid = (ColorSettings(lightness=((0.,),)*4), ColorSettings(chroma_fit=6.1),
-                   ColorSettings(lightness_fit=-2.1), ColorSettings(global_gain=float('inf')),
+        invalid = (ColorSettings(adaptance=((0.,),)*4),
                    ColorSettings(adaptance_half_saturation=.01),
                    ColorSettings(adaptance=((1e6, 0.),)*4),
                    ColorSettings(web=WebSettings(hue_degrees=((0., -180., 0., 0., 0., 0.),)*4)))
         for settings in invalid:
             with self.subTest(settings=settings), self.assertRaises(ValueError):
                 prepare(color=settings)
-        # The Color fit range does not alter the independently agreed Tone cap.
-        with self.assertRaises(ValueError): prepare(tone=ToneSettings(fit=4), color=ColorSettings(chroma_fit=6))
 
 
 if __name__ == '__main__':

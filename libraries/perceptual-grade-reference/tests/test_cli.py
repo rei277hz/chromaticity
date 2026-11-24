@@ -8,6 +8,7 @@ import unittest
 import numpy as np
 from color_tools.perceptual_grade_reference.model import Model,Settings,LinearSettings
 from color_tools.perceptual_grade_reference.grading import ColorSettings
+from color_tools.perceptual_grade_reference.unified_chroma import UnifiedChromaSettings
 
 
 class CLITests(unittest.TestCase):
@@ -37,6 +38,25 @@ class CLITests(unittest.TestCase):
                         dict(values=[0, 0, 0], tone=dict(fit=float('inf')))):
             with self.subTest(request=request):
                 self.assertNotEqual(self.invoke(request).returncode, 0)
+
+    def test_unified_chroma_controls_round_trip_through_json(self):
+        controls = dict(input_nits=[2.4, 42., 225., 1600.], fit=-2,
+                        black_compression_nits=.2, muted_gain=.1, vivid_gain=-.2)
+        model = Model(Settings(tone_chroma=UnifiedChromaSettings(**controls)))
+        values = [[.12, .16, .19], [.22, .19, .17]]
+        forward = self.invoke(dict(values=values, tone_chroma=controls))
+        self.assertEqual(forward.returncode, 0, forward.stderr)
+        target = json.loads(forward.stdout)['value']
+        np.testing.assert_allclose(target, model.forward(values), rtol=2e-12, atol=1e-14)
+        inverse = self.invoke(dict(operation='inverse', values=target, tone_chroma=controls))
+        self.assertEqual(inverse.returncode, 0, inverse.stderr)
+        output = json.loads(inverse.stdout)
+        self.assertEqual(output['status'], ['root', 'root'])
+        np.testing.assert_allclose(model.forward(output['value']), target, rtol=2e-8, atol=5e-10)
+
+        mixed = self.invoke(dict(values=values, tone_chroma=controls,
+                                 color=dict(global_gain=.25)))
+        self.assertNotEqual(mixed.returncode, 0)
 
     def test_low_high_controls_use_analytic_crossover_in_both_directions(self):
         color = dict(lightness=[[.1, -.1, 0., 0.]]*4, chroma=[[.1, -.05, 0., 0.]]*4)

@@ -1,0 +1,4 @@
+__DEVICE__ float pg_jc_tone_compress(float value, float black) {
+    if (black == 0.0f) return value;
+    return value * ((value + black) / (value + 2.0f * black));
+}

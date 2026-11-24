@@ -18,8 +18,7 @@ from ..kernel.layouts import LAYOUT_SCHEMA
 from ..kernel.color_prepare import _validate_color_schema
 
 
-FIELD_NAMES = ('coefficient_table', 'web_table', 'web_toe_table',
-               'adaptance_table')
+FIELD_NAMES = ('web_table', 'web_toe_table', 'adaptance_table')
 
 
 class _Binding:
@@ -146,7 +145,8 @@ class _PersistentGraph(Graph):
             rho = sum(math.hypot(a,b) for a,b in ((.0582,.1475),(.0258,.0308),(.1347,.0385),(.0289,.0096)))
             ja = 100*(1220/prepared.aw)**prepared.gamma
             c = 1204*(1+rho)/prepared.aw*400*math.hypot(24/11,4/9)
-            height = float(prepared.tone.remap(math.sqrt(ja*ja+66*c)))
+            gain = prepared.tone.maximum_chroma_gain
+            height = float(prepared.tone.remap(math.sqrt(ja*ja+66*c*gain)))
             pixels=prepared.color.adaptance_table.pixels
             self._bound_cache = key, prepared.color.finite_bounds(height), height, {
                 'log_bound':float(abs(pixels[...,:3]).max()),
@@ -240,9 +240,18 @@ class _PersistentGraph(Graph):
         return self.vadd(self.vadd(self.vscale(column(0),self.sub(red,green)),
                                   self.vscale(column(2),self.sub(blue,green))),self.vscale(total,green))
 
-    def tone(self, state):
-        computed = super().tone(state)
-        return self.route_state(lambda p:p.tone.active, computed, state)
+    def tone_chroma_controls(self):
+        gains = tuple(self.parameter('tone.chroma.' + name,
+            lambda p, index=index: p.tone.chroma_parameters[index])
+            for index, name in enumerate(('muted', 'vivid', 'knee')))
+        active = self.parameter('tone.chroma.active', lambda p: float(p.tone.chroma_active))
+        stops = tuple(self.parameter('tone.chroma.' + name,
+            lambda p, index=index: p.tone.chroma_tone[index])
+            for index, name in enumerate(('shadow', 'highlight', 'crossover')))
+        return (*gains, active, *stops)
+
+    def tone_curve(self, state):
+        return self.route_state(lambda p: p.tone.active, super().tone_curve(state), state)
 
     def _color_norm_result(self,a,b):
         direct=self.sqrt(self.madd(a,a,self.mul(b,b)))
@@ -280,36 +289,6 @@ class _PersistentGraph(Graph):
         result,flag=self._color_positive_saturate(exponential)
         safe=lambda p:float(_resolve(upper,p))*math.log(base)<88.
         return self.route(safe,exponential,result),self.route(safe,0.,flag)
-
-    def _color_drivers(self,state):
-        simple=self._legacy(True,super()._color_drivers,state)
-        stable=self._legacy(False,super()._color_drivers,state)
-        return tuple(self.route(self._squares_safe,a,b) for a,b in zip(simple,stable))
-
-    def _color_terms(self,state):
-        table=self.prepared.color.coefficient_table
-        x=self._color_height(table,state.tonal_h);drivers=self._color_drivers(state)
-        light=self.sample_field(table,x,0); chroma=self.sample_field(table,x,1)
-        h=self.route(lambda p:p.color.lightness_active,self.add(state.H,self._color_dot4(light,drivers)),state.H)
-        gain0=self.parameter('global_gain',lambda p:p.color.settings.global_gain)
-        exponent=self.route(lambda p:_active(p.color.settings.chroma),self.add(gain0,self._color_dot4(chroma,drivers)),gain0)
-        upper=self.parameter('chroma_upper',lambda p:p.color.settings.global_gain+max(max(abs(row[0]),abs(row[1]))+math.hypot(*row[2:]) for row in p.color.settings.chroma))
-        gain,fs=self._color_exp(exponent,upper,2.)
-        a,fa=self._color_mul(state.a,gain);b,fb=self._color_mul(state.b,gain)
-        active=lambda p:p.color.chroma_active
-        a,b=self.route(active,a,state.a),self.route(active,b,state.b)
-        flag=self.route(active,self._color_flag(state.saturated,fs,fa,fb),state.saturated)
-        c,fc=self._color_norm_result(a,b);flag=self._color_flag(flag,fc)
-        energy,fe,offset=self._color_carry(state,h,c)
-        nonblack=self.lt(0.,state.tonal_h)
-        changed=replace(state,H=self.safe_select(nonblack,h,state.H),a=self.safe_select(nonblack,a,state.a),
-            b=self.safe_select(nonblack,b,state.b),energy=self.safe_select(nonblack,energy,state.energy),
-            chroma_value=c,offset_value=offset,ja_value=None,
-            saturated=self._color_flag(state.saturated,self.mul(nonblack,self._color_flag(flag,fe))))
-        moved=self.mul(nonblack,self.maximum(self.lt(0.,self.abs(self.sub(h,state.H))),
-            self.lt(0.,self.abs(self.sub(c,state.chroma)))))
-        changed=replace(changed,ja_value=self.select(moved,changed.J_A,state.J_A))
-        return self.route_state(lambda p:p.color.lightness_active or p.color.chroma_active,changed,state)
 
     def _color_web(self,state):
         table=self.prepared.color.web_table;toe_table=self.prepared.color.web_toe_table
@@ -443,8 +422,7 @@ class _PersistentGraph(Graph):
 
     def color(self,appearance,*,guarded=False):
         original=self._color_input(appearance)
-        state=self._color_terms(original)
-        state,scale,flag=self._color_web(state)
+        state,scale,flag=self._color_web(original)
         state=self._color_adaptance(state)
         state=self.route_state(lambda p:p.color.active,state,original)
         if guarded:

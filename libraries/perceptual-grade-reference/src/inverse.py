@@ -166,7 +166,7 @@ def solve(model, xyz, forward=None):
         target = from_xyz(model, y)
         prior = linear_prior(model, y)
         # Exact linear/reset paths still obey the full-forward acceptance test.
-        if not (model.tone.active or model.color.active):
+        if not model.nonlinear_active:
             values = np.array([[float(min(S(BOUND), max(S(-BOUND), S(v)))) for v in prior]])
             reproduced = from_xyz(model, forward(to_xyz(model, values)))
             residual = np.max(np.abs(reproduced-target), axis=-1)/(1+np.max(np.abs(target)))

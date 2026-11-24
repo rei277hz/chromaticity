@@ -19,15 +19,15 @@ import time
 
 import numpy as np
 from color_tools.perceptual_grade_reference import grading, model
-from color_tools.perceptual_grade_reference.responses import State, requested_energy, signed_hk
+from color_tools.perceptual_grade_reference.responses import State, signed_hk
 from color_tools.perceptual_grade_reference.cube_guard import guard as cube_guard
 from color_tools.perceptual_grade_core.model.hk_guard import guard as hk_guard
 from . import cases, full_cases, oracle
 
-STAGES = ('linear_encoder', 'tone', 'color_terms', 'web_parameters', 'web_toes',
-          'web', 'adaptance', 'final_scale', 'hk', 'boundary')
+STAGES = ('linear_encoder', 'tone', 'web_parameters', 'web_toes',
+          'web', 'adaptance', 'hk', 'final_scale', 'boundary')
 DEFAULT_CASES = ('all_active', 'saturation', 'all_active_saturation',
-                 'web_alternating_extremes', 'lightness_fit_6', 'chroma_fit_6',
+                 'web_alternating_extremes',
                  'all_families_max', 'all_families_max_active_tail')
 MODES = ('h', 'a', 'b', 'energy', 'float32')
 
@@ -174,14 +174,13 @@ def _perturb(expected, source, mode, amplitude, sign, *, boundary=False):
     return actual, clipping, dose
 
 
-def compose(reference, encoded, *, stage=None, mode=None, amplitude=0., sign=1):
+def compose(reference, tone, encoded, *, stage=None, mode=None, amplitude=0., sign=1):
     """Compose exact reference stages with one optional post-stage injection.
 
-    Terms reproduce the reference's short term-expression using reference
-    coefficient/driver/energy functions. Web's transform callback preserves its
-    exact pre-Adaptance scale selection, Adaptance, and final-scale ordering.
+    Web's transform callback preserves its pre-Adaptance scale selection
+    and places H-K repair before final Scale.
     """
-    tone, color = reference.tone, reference.color
+    color = reference.color
     source = _state(encoded.q, encoded.ja*abs(encoded.ja))
     captured = {}
 
@@ -200,28 +199,14 @@ def compose(reference, encoded, *, stage=None, mode=None, amplitude=0., sign=1):
     c0 = np.hypot(tone_state.q[:, 1], tone_state.q[:, 2])
     h0 = np.hypot(tone_state.ja, np.sqrt(66*c0))
     e0 = tone_state.energy
-    p = color.settings
-    if any(np.any(value) for value in (p.lightness, p.chroma, p.global_gain)):
-        light, chroma = color.terms(h0)
-        drivers = grading.drivers(tone_state.q, tone_state.ja)
-        gain = np.exp2(p.global_gain+np.sum(chroma*drivers, axis=-1))
-        q = np.column_stack((tone_state.q[:, 0]+np.sum(light*drivers, axis=-1),
-                             tone_state.q[:, 1:]*gain[:, None]))
-        q = np.where((h0 == 0)[:, None], tone_state.q, q)
-        energy = np.where(np.all(q == tone_state.q, axis=-1), e0,
-                          requested_energy(q, tone_state.q, tone_state.ja))
-        terms = _state(q, energy)
-    else:
-        terms = _state(tone_state.q, e0)
-    terms = handoff('color_terms', tone_state, terms)
-    adaptation_output = []
+    repaired = []
     baseline_web_capture = {}
     original_parameters = color.web.parameters
     def capture_web(q, energy):
         baseline_web_capture['state'] = _state(q, energy)
         return q, energy
 
-    color.web.apply(terms.q, terms.energy, h0, transform=capture_web)
+    color.web.apply(tone_state.q, tone_state.energy, h0, transform=capture_web)
     if stage in ('web_parameters', 'web_toes'):
         base_parameters = original_parameters
 
@@ -245,22 +230,22 @@ def compose(reference, encoded, *, stage=None, mode=None, amplitude=0., sign=1):
     def adapt(q, energy):
         web = _state(q, energy)
         if stage == 'web':
-            web = handoff('web', terms, web)
+            web = handoff('web', tone_state, web)
         elif stage in ('web_parameters', 'web_toes'):
-            captured.update(source=terms, expected=baseline_web_capture['state'], actual=web,
+            captured.update(source=tone_state, expected=baseline_web_capture['state'], actual=web,
                             clipped_to_float32_samples=0)
         aq, ae = color.adaptation.apply(web.q, web.energy, h0, c0, e0)
         result = handoff('adaptance', web, _state(aq, ae))
-        adaptation_output.append(result)
-        return result.q, result.energy
+        q, energy = hk_guard(result.q, result.energy, e0)
+        guarded = handoff('hk', result, _state(q, energy))
+        repaired.append(guarded)
+        return guarded.q, guarded.energy
 
     try:
-        q, energy = color.web.apply(terms.q, terms.energy, h0, transform=adapt)
+        q, energy = color.web.apply(tone_state.q, tone_state.energy, h0, transform=adapt)
     finally:
         color.web.parameters = original_parameters
-    raw = handoff('final_scale', adaptation_output[0], _state(q, energy))
-    q, energy = hk_guard(raw.q, raw.energy, e0)
-    guarded = handoff('hk', raw, _state(q, energy))
+    guarded = handoff('final_scale', repaired[0], _state(q, energy))
     boundary = oracle.exact_boundary(reference)
     q, energy, native = cube_guard(boundary, guarded.q, guarded.energy)
     projected = handoff('boundary', guarded, _state(q, energy))
@@ -365,11 +350,13 @@ def run(output_dir, *, samples=256, amplitudes=(1e-5, 1e-3, 1e-2),
     for space in spaces:
         values = full_cases.rgba(space, samples)
         for name, linear, tone, color in corpus:
-            reference = model.Model(model.Settings(linear=model.LinearSettings(**asdict(linear)),
-                tone=grading.ToneSettings(**asdict(tone)), color=grading.ColorSettings(**asdict(color))),
+            lp, tp = oracle.parameters(linear, tone)
+            reference = model.Model(model.Settings(linear=lp,
+                tone=tp, color=grading.ColorSettings(**asdict(color))),
                 space, hk_guard=False)
+            tone_stage = oracle.reference_chroma(tone)
             expected = oracle.evaluate_full(values[:, :3], linear, tone, color, space)
-            baseline = compose(reference, expected['encoded'])
+            baseline = compose(reference, tone_stage, expected['encoded'])
             agreement, _ = _metrics(baseline['rgb'], expected['rgb'])
             if not agreement['finite'] or agreement['max_normalized'] > 1e-10:
                 raise AssertionError(f'Unperturbed decomposition differs from full oracle: {name}/{space}: {agreement}')
@@ -384,7 +371,7 @@ def run(output_dir, *, samples=256, amplitudes=(1e-5, 1e-3, 1e-2),
                     for amplitude, sign in experiments:
                         try:
                             with np.errstate(over='raise', invalid='raise', divide='raise'):
-                                candidate = compose(reference, expected['encoded'], stage=stage, mode=mode,
+                                candidate = compose(reference, tone_stage, expected['encoded'], stage=stage, mode=mode,
                                                     amplitude=amplitude, sign=sign)
                                 row = _row(name, space, values, baseline, expected['rgb'], candidate,
                                            stage, mode, amplitude, sign)

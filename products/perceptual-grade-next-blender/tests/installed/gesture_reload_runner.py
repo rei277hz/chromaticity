@@ -333,7 +333,7 @@ def request_reopen():
 def reopen_with_failed_gesture_restore(path):
     node = current_node()
     window_key = current_window().as_pointer()
-    token = nodes._begin_color_gesture(window_key, node, ("j_a_1", "j_b_1"))
+    token = nodes._begin_color_gesture(window_key, node, ("adaptance_a_1", "adaptance_b_1"))
     assert token is not None
     assert nodes._edit_color_gesture(window_key, token, node, (4.0, -2.0))
     del node

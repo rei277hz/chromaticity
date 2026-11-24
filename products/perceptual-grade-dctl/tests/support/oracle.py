@@ -8,7 +8,8 @@ import numpy as np
 from .dctl import (
     ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES,
     OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
-    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES, controls, filename,
+    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
+    WARP_QUADRATIC_SCALE_PROTOTYPES, controls, filename,
 )
 
 RESOURCES = files("tests.support")
@@ -46,7 +47,7 @@ def ui(stage):
     return controls(source(stage))
 
 
-def run(stage, values, settings=None, *, x=0, y=10):
+def run(stage, values, settings=None, *, x=0, y=10, width=1920, height=1080):
     values = np.asarray(values, dtype=np.float32).reshape(-1, 3)
     settings = settings or {}
     declarations = ui(stage)
@@ -63,9 +64,11 @@ def run(stage, values, settings=None, *, x=0, y=10):
                 raise ValueError(f"{item['name']} requires an integer")
             fields.append(str(int(value)))
     lines = [" ".join(fields)]
-    for pixel in values:
-        coordinates = " ".join(format(channel, ".9g") for channel in pixel)
-        lines.append(f"{coordinates} 1920 1080 {x} {y}")
+    xs = np.broadcast_to(x, (len(values),))
+    ys = np.broadcast_to(y, (len(values),))
+    for pixel, px, py in zip(values, xs, ys):
+        channels = " ".join(format(channel, ".9g") for channel in pixel)
+        lines.append(f"{channels} {width} {height} {px} {py}")
     return invoke(stage, lines, values.shape)
 
 

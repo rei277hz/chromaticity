@@ -200,15 +200,15 @@ def check_per_node_properties(node):
     node.cr_balance = 0.5
     node.fit = 0.25
     node.peak_nits = "2000"
-    node.j_a_1 = 0.25
+    node.muted_gain = 0.25
     node.adaptance_b_2 = -0.125
     node.web_hue_1_0 = 15.0
     snapshot = nodes._settings_for_node(node)
     assert snapshot.linear.exposure == 0.75
     assert snapshot.linear.balance == (-0.5, 0.0)
     assert snapshot.tone.fit == 0.25 and snapshot.tone.peak_nits == 2000.0
-    assert snapshot.tone.input_nits[2] == node.input_midtones
-    assert snapshot.color.lightness[1][2] == 0.25
+    assert snapshot.tone.input_nits[1] == node.input_midtones
+    assert snapshot.tone.muted_gain == 0.25
     assert snapshot.color.adaptance[2][1] == -0.125
     assert snapshot.color.web.hue_degrees[1][0] == 15.0
     copied_grade = nodes._make_grade(node)
@@ -1076,8 +1076,8 @@ assert any(node.bl_idname == "ShaderNodeTexImage"
 color_users = (*shared_shader_nodes, shader_node, compositor_node, shared_compositor_node)
 color_kernels = tuple(node.node_tree.as_pointer() for node in color_users)
 color_images = tuple(image.as_pointer() for image in parameter_images(shader_node))
-shared_grade.pg_color.j_a_1 = 0.125
-shared_grade.pg_color.c_high_2 = -0.0625
+shared_grade.pg_tone.muted_gain = 0.125
+shared_grade.pg_tone.highlight_chroma = -0.0625
 shared_grade.pg_color.adaptance_a_1 = 0.125
 shared_grade.pg_color.web_hue_1_0 = 12.0
 shared_grade.pg_color.web_scale_2_1 = 0.125
@@ -1240,10 +1240,10 @@ corrupt_kernel = independent_node.node_tree
 corrupt_kernel.use_fake_user = True
 role_reader = next(item for item in corrupt_kernel.nodes
                    if item.get(stage2_bindings.PARAMETER_READER)
-                   and item.get(stage2_bindings.PARAMETER_READER_ROLE) == "color")
+                   and item.get(stage2_bindings.PARAMETER_READER_ROLE) == "web")
 role_bank = role_reader[stage2_bindings.PARAMETER_READER_BANK]
 role_reader.image = nodes.parameter_bank_images(
-    corrupt_kernel[nodes.PARAMETER_BANK_BINDINGS[role_bank]])["web"]
+    corrupt_kernel[nodes.PARAMETER_BANK_BINDINGS[role_bank]])["web_toe"]
 assert not nodes._parameter_kernel_valid(corrupt_kernel)
 nodes._node_stores.pop(independent_node.as_pointer())
 assert not nodes._refresh_nodes((independent_node,))
@@ -1272,7 +1272,7 @@ assert nodes._parameter_kernel_valid(shader_kernel)
 # Each bank's receipt remains valid when the pair shares an equal-content
 # role image. Reject the alias even when every reader follows its binding.
 first_bank, second_bank = parameter_banks(independent_node)
-role = "color"
+role = "web"
 binding = stage2_bindings.PARAMETER_ROLE_BINDING + role
 original_image = second_bank[binding]
 shared_image = first_bank[binding]
@@ -1699,7 +1699,7 @@ with _timings.operation("Grade preparation publication isolation"):
 _start_timing_section("Stack builds and gestures")
 stack_grade = nodes._make_grade()
 stack_grade.pg_linear.exposure = 0.5
-stack_grade.pg_color.j_a_1 = 0.125
+stack_grade.pg_tone.muted_gain = 0.125
 stack_grade.pg_color.adaptance_b_2 = -0.0625
 stack_grade.pg_color.web_hue_2_3 = 15.0
 shader_stack = nodes.create_stack_node(shader_tree)
@@ -1742,7 +1742,7 @@ assert nodes._stack_signature(
     nodes._settings_for_node(shader_stack), nodes._working_space()
 ) == shader_stack.node_tree.get(nodes._KERNEL_SIGNATURE)
 stack_settings = nodes._settings_for_node(shader_stack)[0].settings
-assert stack_settings.color.lightness[1][2] == 0.125
+assert stack_settings.tone.muted_gain == 0.125
 assert stack_settings.color.adaptance[2][1] == -0.0625
 assert stack_settings.color.web.hue_degrees[2][3] == 15.0
 assert nodes._stack_signature((stack_settings,), nodes._working_space()) == (

@@ -226,24 +226,24 @@ assert grade.pg_linear.exposure == 0.8125
 reconcile()
 assert_clean_shared_image(users)
 
-# Leave the first settings' receipt on an inactive bundle whose Color pixels
+# Leave the first settings' receipt on an inactive bundle whose Web pixels
 # were edited and packed outside publication. Returning to those settings must
 # rewrite the corrupted role before either reader selects the bank.
 original_exposure = grade.pg_linear.exposure
 inactive_primary = parameter_image(shader)
-inactive_color = nodes.parameter_bank_images(inactive_primary)["color"]
-expected_color = np.asarray(inactive_color.pixels[:], dtype=np.float32)
+inactive_web = nodes.parameter_bank_images(inactive_primary)["web"]
+expected_web = np.asarray(inactive_web.pixels[:], dtype=np.float32)
 old_preparation_signature = inactive_primary[nodes.PARAMETER_SIGNATURE]
-old_content_signature = inactive_color[nodes.PARAMETER_CONTENT_SIGNATURE]
+old_content_signature = inactive_web[nodes.PARAMETER_CONTENT_SIGNATURE]
 grade.pg_linear.exposure += 0.125
 assert not reconcile()
 assert assert_clean_shared_image(users) != inactive_primary
-nodes._write_grade_parameters(inactive_color, expected_color + 0.25)
-assert inactive_color.is_dirty
+nodes._write_grade_parameters(inactive_web, expected_web + 0.25)
+assert inactive_web.is_dirty
 nodes._save_pre(None)
-assert inactive_color.packed_file is not None and not inactive_color.is_dirty
+assert inactive_web.packed_file is not None and not inactive_web.is_dirty
 assert inactive_primary[nodes.PARAMETER_SIGNATURE] == old_preparation_signature
-assert inactive_color[nodes.PARAMETER_CONTENT_SIGNATURE] == old_content_signature
+assert inactive_web[nodes.PARAMETER_CONTENT_SIGNATURE] == old_content_signature
 assert nodes.parameter_bundle_receipt_matches(inactive_primary)
 assert not nodes.parameter_image_matches(inactive_primary)
 
@@ -251,7 +251,7 @@ grade.pg_linear.exposure = original_exposure
 assert not reconcile()
 assert assert_clean_shared_image(users) == inactive_primary
 assert nodes.parameter_image_matches(inactive_primary)
-np.testing.assert_array_equal(inactive_color.pixels[:], expected_color)
+np.testing.assert_array_equal(inactive_web.pixels[:], expected_web)
 
 
 original_invalidation = nodes._invalidate_grade_parameters
@@ -420,13 +420,13 @@ def fail_adaptance_upload(target, pixels):
 
 nodes._write_grade_parameters = fail_adaptance_upload
 try:
-    grade.pg_color.j_a_1 = 0.125
+    grade.pg_tone.muted_gain = 0.125
     grade.pg_color.web_hue_1_0 = 12.0
     grade.pg_color.adaptance_a_1 = 0.125
     reconcile()
 finally:
     nodes._write_grade_parameters = original_writer
-assert bundle_writes[-1] == "adaptance" and "color" in bundle_writes, bundle_writes
+assert bundle_writes[-1] == "adaptance" and "web" in bundle_writes, bundle_writes
 for role, target, pixels, signature in active_snapshots:
     np.testing.assert_array_equal(target.pixels[:], pixels)
     assert not target.is_dirty and target[nodes.PARAMETER_CONTENT_SIGNATURE] == signature, role

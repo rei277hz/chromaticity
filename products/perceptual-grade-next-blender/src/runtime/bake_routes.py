@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ..kernel.color_ui import COLOR_FIELDS
 from ..kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
+from ..kernel.tone_ui import TONE_FIELDS
 from . import bake_graph
 from .bake_images import datablock_key, route_datablock
 from .compositor_effects import compositor_occurrences, matching_compositor_occurrences
@@ -25,7 +26,7 @@ from .shader_scene import shader_scene_inventory
 
 SCHEMA = 1
 # Version the persisted digest independently of the worker route payload.
-FINGERPRINT_SCHEMA = 2
+FINGERPRINT_SCHEMA = 3
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
@@ -59,8 +60,6 @@ POINTWISE = frozenset((
 ))
 LINEAR_FIELDS = ("exposure", "source_x", "source_y", "cr_balance", "yb_balance",
                  "cr_spread", "yb_spread", "cr_heading", "yb_heading")
-TONE_FIELDS = ("input_black", "input_shadows", "input_midtones", "input_white",
-               "input_highlights", "fit", "peak_nits")
 _UI_PROPERTIES = frozenset((
     "rna_type", "id_data", "original", "name", "name_full", "label", "location",
     "width", "width_hidden", "height", "dimensions", "select", "hide",
@@ -594,6 +593,7 @@ class _Walker:
         self.rendered = {}
         self.render_layers = set()
         self.render_observations = []
+        self.input_tree_pointers = set()
         self.coordinate_depth = 0
         self.unknown_compositor_extent = False
         self.allow_dynamic_images = allow_dynamic_images
@@ -612,6 +612,10 @@ class _Walker:
             self.output(link.from_node, link.from_socket, parents)
 
     def _observe(self, node, output, parents, semantic=None):
+        tree = getattr(node, "id_data", None)
+        pointer = getattr(tree, "as_pointer", None)
+        if pointer is not None:
+            self.input_tree_pointers.add(int(pointer()))
         # The enums have no valid item on ordinary single-layer, single-view images.
         exclude = (_IMAGE_LAYER_VIEW if self.allow_dynamic_images
                    and node.bl_idname == "CompositorNodeImage" else ())
@@ -1124,6 +1128,53 @@ def _vectorscope_geometry_observation(obj):
     )
 
 
+def vectorscope_mesh_witness(mesh):
+    """Hash mesh topology, positions, UVs and typed attributes on a mesh update."""
+    from array import array
+
+    digest = hashlib.sha256()
+    digest.update(repr((len(mesh.vertices), len(mesh.edges), len(mesh.loops),
+                        len(mesh.polygons))).encode("ascii"))
+
+    def add_collection(collection, property_name, code, components):
+        values = array(code, [0]) * (len(collection) * components)
+        collection.foreach_get(property_name, values)
+        digest.update(memoryview(values).cast("B"))
+
+    add_collection(mesh.vertices, "co", "f", 3)
+    add_collection(mesh.edges, "vertices", "i", 2)
+    add_collection(mesh.loops, "vertex_index", "i", 1)
+    add_collection(mesh.polygons, "loop_start", "i", 1)
+    add_collection(mesh.polygons, "loop_total", "i", 1)
+    add_collection(mesh.polygons, "material_index", "i", 1)
+
+    for layer in mesh.uv_layers:
+        digest.update(layer.name.encode("utf8"))
+        add_collection(layer.data, "uv", "f", 2)
+
+    properties = {
+        "FLOAT": ("value", "f", 1),
+        "INT": ("value", "i", 1),
+        "FLOAT_VECTOR": ("vector", "f", 3),
+        "FLOAT_COLOR": ("color", "f", 4),
+        "BYTE_COLOR": ("color", "f", 4),
+        "BOOLEAN": ("value", "b", 1),
+        "FLOAT2": ("vector", "f", 2),
+        "INT8": ("value", "b", 1),
+        "INT32_2D": ("value", "i", 2),
+        "QUATERNION": ("value", "f", 4),
+    }
+    for attribute in mesh.attributes:
+        description = properties.get(attribute.data_type)
+        if description is None:
+            raise TypeError(f"Unsupported mesh attribute type {attribute.data_type}")
+        property_name, code, components = description
+        digest.update(repr((attribute.name, attribute.domain,
+                            attribute.data_type, len(attribute.data))).encode("utf8"))
+        add_collection(attribute.data, property_name, code, components)
+    return digest.hexdigest()
+
+
 def _vectorscope_structural_graph(graph, images):
     structure = []
     for item in graph:
@@ -1147,19 +1198,73 @@ def _vectorscope_structural_graph(graph, images):
     return tuple(structure), image_sources
 
 
+def _vectorscope_coverage_invariant(owner, node):
+    """Prove the selected Grade's color cannot change AOV coverage."""
+    tree = getattr(owner, "node_tree", None)
+    owner_kind = str(getattr(getattr(owner, "bl_rna", None), "identifier",
+                             type(owner).__name__))
+    if (owner_kind != "Material"
+            or tree is None or not _same(tree, getattr(node, "id_data", None))):
+        return False
+    color = node.outputs.get("Color")
+    if color is None:
+        return False
+    color_links = tuple(getattr(color, "links", ()))
+    if len(color_links) != 1:
+        return False
+    color_link = color_links[0]
+    shader = getattr(color_link, "to_node", None)
+    shader_input = getattr(color_link, "to_socket", None)
+    kind = getattr(shader, "bl_idname", None)
+    primary_input = {"ShaderNodeEmission": "Color", "ShaderNodeBsdfPrincipled": "Base Color"}.get(kind)
+    if (primary_input is None or getattr(shader, "mute", False)
+            or getattr(shader_input, "name", None) != primary_input):
+        return False
+    if kind == "ShaderNodeBsdfPrincipled":
+        for name, expected in (("Alpha", 1.0), ("Transmission Weight", 0.0)):
+            socket = shader.inputs.get(name)
+            if socket is None or socket.links or socket.default_value != expected:
+                return False
+    if any(getattr(socket, "links", ()) for socket in node.outputs if not _same(socket, color)):
+        return False
+    if len(shader.outputs) != 1:
+        return False
+    surface_links = tuple(getattr(shader.outputs[0], "links", ()))
+    if len(surface_links) != 1:
+        return False
+    output_link = surface_links[0]
+    output = getattr(output_link, "to_node", None)
+    surface_socket = getattr(output_link, "to_socket", None)
+    if (getattr(output, "bl_idname", None) != "ShaderNodeOutputMaterial"
+            or not getattr(output, "is_active_output", True)
+            or getattr(surface_socket, "name", None) != "Surface"):
+        return False
+    for endpoint in tree.nodes:
+        if (getattr(endpoint, "bl_idname", None) == "ShaderNodeOutputMaterial"
+                and getattr(endpoint, "is_active_output", True)):
+            surface = endpoint.inputs.get("Surface")
+            if (surface is None or len(getattr(surface, "links", ())) != 1
+                    or not _same(getattr(surface.links[0], "from_node", None), shader)
+                    or not _same(getattr(surface.links[0], "to_node", None), endpoint)
+                    or getattr(endpoint.inputs.get("Volume"), "links", ())
+                    or getattr(endpoint.inputs.get("Displacement"), "links", ())):
+                return False
+    return True
+
+
 def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None,
-                         upstream_grades=None):
-    """Freeze one per-node Grade input capture and its render-domain identity."""
+                         upstream_grades=None, watch=None):
+    """Freeze one Grade input capture and its render-domain identity."""
     import bpy
 
     tree_type = getattr(getattr(node, "id_data", None), "bl_idname", None)
-    if getattr(node, "bl_idname", None) not in PER_NODE_TYPES:
-        raise RouteBlocked("target", "Vectorscope is available only for per-node Grades")
+    if getattr(node, "bl_idname", None) not in GRADE_TYPES | PER_NODE_TYPES:
+        raise RouteBlocked("target", "Vectorscope requires a Grade node")
     if tree_type not in {"ShaderNodeTree", "CompositorNodeTree"}:
         raise RouteBlocked("target", "Vectorscope requires a Shader or Compositor Grade")
     color = node.inputs.get("Color")
     if color is None or color.type != "RGBA":
-        raise RouteBlocked("input", "Per-node Grade has no Color input")
+        raise RouteBlocked("input", "Grade has no Color input")
 
     context = context or bpy.context
     kind, owner, scene, parents, locator = _owner(bpy, node, context)
@@ -1215,8 +1320,14 @@ def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None
     if alpha is not None:
         walker.input(alpha, parents)
     walker._add_dependency(node.id_data)
+    tree_pointer = getattr(node.id_data, "as_pointer", None)
+    if tree_pointer is not None:
+        walker.input_tree_pointers.add(int(tree_pointer()))
     for parent in parents:
         walker._add_dependency(parent.id_data)
+        parent_pointer = getattr(parent.id_data, "as_pointer", None)
+        if parent_pointer is not None:
+            walker.input_tree_pointers.add(int(parent_pointer()))
     input_graph = tuple(walker.graph)
     input_images = tuple((state, descriptor) for state, descriptor in walker.images.values())
     if not compositor:
@@ -1267,8 +1378,9 @@ def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None
         descriptor for _state, descriptor in walker.images.values()
         if descriptor.get("dynamic")
     )
-    object_value = getattr(context, "object", None)
-    if isinstance(context, Mapping) and context.get("object_key") is not None:
+    object_value = None if compositor else getattr(context, "object", None)
+    if (not compositor and isinstance(context, Mapping)
+            and context.get("object_key") is not None):
         object_value = route_datablock(bpy, bpy.data.objects, context, "object")
     object_key = None
     if object_value is not None and any(_same(object_value, item) for item in scene.objects):
@@ -1287,6 +1399,25 @@ def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None
         existing = {_identity(item) for item in upstream_grades}
         upstream_grades.extend(grade for key, grade in walker.upstream_grades.items()
                                if key not in existing)
+    input_graph_covered = bool(
+        input_graph and input_graph[0][0] == "input"
+        and input_graph[0][3] == "Color" and not walker.visiting
+    )
+    coverage_invariant = bool(
+        not compositor and input_graph_covered
+        and _vectorscope_coverage_invariant(owner, node)
+    )
+    if watch is not None:
+        owner_pointer = getattr(owner, "as_pointer", None)
+        owner_tree_pointer = getattr(getattr(owner, "node_tree", None), "as_pointer", None)
+        watch.update(
+            input_graph_covered=input_graph_covered,
+            coverage_invariant=coverage_invariant,
+            input_tree_pointers=tuple(sorted(walker.input_tree_pointers)),
+            owner_pointer=None if owner_pointer is None else int(owner_pointer()),
+            owner_tree_pointer=(None if owner_tree_pointer is None
+                                else int(owner_tree_pointer())),
+        )
 
     route = dict(
         schema=1, scene=str(scene.name), scene_key=datablock_key(bpy, scene),
@@ -1295,6 +1426,9 @@ def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None
         group_path=tuple(str(item.name) for item in parents), node_name=str(node.name),
         socket_name="Color", root_key=locator.get("root_key"),
         effect_name=locator.get("effect_name"), object_key=object_key,
+        has_render_layers=bool(walker.render_layers),
+        input_graph_covered=input_graph_covered,
+        coverage_invariant=coverage_invariant,
         width=width, height=height, view=view, images=still_images,
         dynamic_images=dynamic_images,
     )
@@ -1307,7 +1441,8 @@ def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None
     route["source_signature"] = _digest(source_observation)
     route["capture_signature"] = _digest((
         "pg-vectorscope-capture-v1", route["source_signature"],
-        route["frame"], route["subframe"], view, scene_observation, input_graph, input_images,
+        route["frame"], route["subframe"], view, scene_observation,
+        coverage_invariant, input_graph, input_images,
     ))
     return route
 

@@ -88,20 +88,14 @@ class Layout:
 
 
 def _check_color_sidebar(nodes, context, owner, *, enabled):
-    panels = ((nodes.PG_PT_color_j, "j"), (nodes.PG_PT_color_c, "c"),
-              (nodes.PG_PT_color_adaptance, "adaptance"),
-              (nodes.PG_PT_color_warp, "warp"))
     sidebar = Layout()
-    for panel, family in panels:
-        assert panel.poll(context)
-        panel.draw(SimpleNamespace(layout=sidebar, color_family=family), context)
+    assert nodes.PG_PT_color_warp.poll(context)
+    nodes.PG_PT_color_warp.draw(SimpleNamespace(layout=sidebar), context)
     assert set(sidebar.properties) == {
         (owner.as_pointer(), field) for field in nodes._COLOR_FIELDS
     }
     assert all(state == enabled for _owner, _name, state in sidebar.property_states)
-    assert sidebar.operator_states == [
-        (nodes.PG_OT_reset_color.bl_idname, enabled) for _panel in panels
-    ]
+    assert sidebar.operator_states == [(nodes.PG_OT_reset_color.bl_idname, enabled)]
 
 
 def check_color_storage(nodes, node):
@@ -118,7 +112,6 @@ def check_color_storage(nodes, node):
         with nodes._suspend(settings):
             for name in custom:
                 setattr(settings, name, 1.0 if name.startswith("web_hue_") else 0.125)
-            settings.j_low_0 = 3.0
             settings.adaptance_half_saturation = 0.5
             settings.web_chroma_0_0 = 0.25
             settings.web_scale_0_0 = 0.5
@@ -137,30 +130,18 @@ def check_color_storage(nodes, node):
     assert nodes._hue_claims(settings, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
     assert nodes._HUE_CLAIMS not in settings and nodes._HUE_CLAIM_FRAME not in settings
 
+    # Resetting one hue row must not detach ownership in another row.
     seed()
     before = values()
-    assert nodes.PG_OT_reset_color.execute(SimpleNamespace(family="ADAPTANCE"), context) == {"FINISHED"}
-    reset_fields = set(nodes._color_family_fields("adaptance"))
-    for name, value in before.items():
-        assert getattr(settings, name) == (nodes._COLOR_DEFAULTS[name] if name in reset_fields else value)
-    assert all(name not in settings for name in custom if name.startswith("adaptance_"))
-    assert nodes._hue_claims(settings, current_frame=False) == claims
-
-    # Resetting one hue row must not detach ownership in another row.
     nodes._reset_color(settings, tuple(f"web_hue_1_{handle}" for handle in range(6)))
     after_claims = nodes._hue_claims(settings, current_frame=False)
     assert after_claims[1] == (None,) * 6 and after_claims[2] == claims[2]
     assert all(getattr(settings, f"web_hue_1_{handle}") == 0.0 for handle in range(6))
     assert settings.web_hue_2_1 == before["web_hue_2_1"]
 
-    with nodes._suspend(settings):
-        settings.adaptance_a_0 = 0.25
-    before = values()
-    assert nodes.PG_OT_reset_color.execute(SimpleNamespace(family="WARP"), context) == {"FINISHED"}
-    reset_fields = set(nodes._color_family_fields("warp"))
-    for name, value in before.items():
-        assert getattr(settings, name) == (nodes._COLOR_DEFAULTS[name] if name in reset_fields else value)
-    assert all(name not in settings for name in custom if name.startswith("web_hue_"))
+    assert nodes.PG_OT_reset_color.execute(None, context) == {"FINISHED"}
+    assert values() == nodes._COLOR_DEFAULTS
+    assert not backing()
     assert nodes._hue_claims(settings, current_frame=False) == nodes.color_authoring.EMPTY_CLAIMS
 
     # A failure after the value writes must restore backing-key presence and
@@ -179,9 +160,15 @@ def check_color_storage(nodes, node):
             adaptance=((0.5, 0.75),) * 4,
             web=replace(raw.color.web, hue_degrees=((2.0,) * 6,) * 4)))
         original_dumps = nodes.json.dumps
+        claim_payload = original_dumps(tuple(tuple(
+            None if claim is None else (claim.origin_handle, claim.restore_offset)
+            for claim in row) for row in claims), separators=(",", ":"))
 
-        def fail_serialization(*_args, **_kwargs):
-            raise RuntimeError("simulated Color claim serialization failure")
+        def fail_serialization(*args, **kwargs):
+            encoded = original_dumps(*args, **kwargs)
+            if encoded == claim_payload:
+                raise RuntimeError("simulated Color claim serialization failure")
+            return encoded
 
         nodes.json.dumps = fail_serialization
         try:
@@ -204,7 +191,8 @@ def check_color_storage(nodes, node):
 def check_grade_ui(nodes, tree):
     previous_active = tree.nodes.active
     node = nodes.create_node(tree)
-    context = SimpleNamespace(pg_node=node, space_data=SimpleNamespace(edit_tree=tree))
+    context = SimpleNamespace(pg_node=node, space_data=SimpleNamespace(edit_tree=tree),
+                              area=None, window=None)
     grade = None
     try:
         tree.nodes.active = node
@@ -328,12 +316,11 @@ def check_grade_ui(nodes, tree):
         _check_color_sidebar(nodes, context, grade.pg_color, enabled=True)
         assert nodes.PG_OT_reset_color.poll(context)
         with nodes._suspend(grade.pg_color):
-            grade.pg_color.j_low_0 = 7.0
-            grade.pg_color.c_high_2 = 3.0
-        reset = SimpleNamespace(family="J")
-        assert nodes.PG_OT_reset_color.execute(reset, context) == {"FINISHED"}
-        assert grade.pg_color.j_low_0 == 0.0
-        assert grade.pg_color.c_high_2 == 3.0
+            grade.pg_color.adaptance_a_0 = 7.0
+            grade.pg_color.web_chroma_2_0 = 3.0
+        assert nodes.PG_OT_reset_color.execute(None, context) == {"FINISHED"}
+        assert grade.pg_color.adaptance_a_0 == 0.0
+        assert grade.pg_color.web_chroma_2_0 == 0.0
         check_color_storage(nodes, node)
 
         assert nodes.PG_OT_unlink_grade.execute(None, context) == {"FINISHED"}
@@ -371,8 +358,7 @@ def check_stack_ui(nodes, tree):
         assert not empty_tone.properties
         assert nodes.PG_PT_color_warp.poll(context)
         empty_color = Layout()
-        nodes.PG_PT_color_warp.draw(
-            SimpleNamespace(layout=empty_color, color_family="warp"), context)
+        nodes.PG_PT_color_warp.draw(SimpleNamespace(layout=empty_color), context)
         assert not empty_color.properties
         buttons = [properties for operator_id, properties in layout.operators
                    if operator_id == nodes.PG_OT_new_stack_grade.bl_idname]
@@ -442,7 +428,8 @@ def check_stack_ui(nodes, tree):
         ]
 
         tree.nodes.active = node
-        sidebar_context = SimpleNamespace(space_data=SimpleNamespace(edit_tree=tree))
+        sidebar_context = SimpleNamespace(space_data=SimpleNamespace(edit_tree=tree),
+                                          area=None, window=None)
         assert nodes.PG_PT_linear.poll(sidebar_context)
         sidebar = Layout()
         nodes.PG_PT_linear.draw(SimpleNamespace(layout=sidebar), sidebar_context)

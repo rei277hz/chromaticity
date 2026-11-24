@@ -7,9 +7,9 @@ Centers adds independent J and C saturation centers at each tonal anchor.
 Linear Gain and Log Gain use the same Broad Overlap weights with two controls
 per anchor, a saturation-preserving J Contrast and a C Gain that fades near gray.
 Global Shape uses continuous lightness and saturation curves with movable pivots.
-Integrated Tone and J/C combines the Tone curve with Global Shape's C controls
-so Tone can be auditioned as the source of lightness contrast. Its Unified
-Chroma variant combines muted and vivid gains in one saturation curve.
+The Unified Chroma baseline combines the Tone curve with a single saturation
+curve for muted and vivid gains. The earlier integrated Log Gain and Linear
+Gain variants are available for comparison.
 
 ## Build and install
 
@@ -31,9 +31,9 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_c
 | Linear Gain | `Perceptual-Grade-3A-Cone-Color-JC-Linear-Gain-Prototype.dctl` |
 | Log Gain | `Perceptual-Grade-3A-Cone-Color-JC-Log-Gain-Prototype.dctl` |
 | Global Shape | `Perceptual-Grade-3A-Cone-Color-JC-Global-Shape-Prototype.dctl` |
-| Integrated Tone and J/C | `Perceptual-Grade-2-3A-Cone-Tone-JC-Prototype.dctl` |
+| Integrated Tone and J/C Legacy Log Gain | `Perceptual-Grade-2-3A-Cone-Tone-JC-Prototype.dctl` |
 | Integrated Tone and J/C Linear Gain | `Perceptual-Grade-2-3A-Cone-Tone-JC-Linear-Gain-Prototype.dctl` |
-| Integrated Tone and J/C Unified Chroma | `Perceptual-Grade-2-3A-Cone-Tone-JC-Unified-Chroma-Prototype.dctl` |
+| Integrated Tone and J/C Unified Chroma baseline | `Perceptual-Grade-2-3A-Cone-Tone-JC-Unified-Chroma-Prototype.dctl` |
 
 The Simplified Chinese filenames end in `-zh-HANS.dctl`. Use the overlap
 and Global Shape prototypes in the Color J/C position. Integrated Tone and J/C
@@ -234,8 +234,8 @@ C Muted/Vivid shaping, and C Contrast.
 ## Integrated Tone and J/C
 
 Place the integrated node after XYZ Input and before Warp and XYZ Output.
-Tone supplies the full J curve. The node pairs its source-nit mapping
-controls with the seven Global Shape C controls.
+Tone supplies the full J curve in all three designs. This table describes
+the Legacy Log Gain controls. Linear Gain shares these controls.
 
 | Control | Default | Behavior |
 | --- | --- | --- |
@@ -276,7 +276,7 @@ root to undo the tonal gain before undoing the C curve. For output chroma
 `Y > 0` and `k > 0`, the equation `2^A * C^2 + (k - Y)*C - k*Y = 0`
 has exactly one positive root because the product of its roots is negative.
 At `k = 0`, the inverse is `C = Y / 2^A`. The C operation is closed form
-in this variant. The baseline interpolates the gain in stops,
+in this variant. Legacy Log Gain interpolates the gain in stops,
 which changes the response between gray and high saturation.
 
 Build the variant with
@@ -285,16 +285,18 @@ Build the variant with
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_linear_gain_prototype --show-output
 ```
 
-On matched skin, muted-to-vivid, and signed HDR ramps, compare the baseline
-and Linear Gain variant with Shadow Chroma and Highlight Chroma first at reset,
+On matched skin, muted-to-vivid, and signed HDR ramps, compare Legacy Log Gain
+and Linear Gain with Shadow Chroma and Highlight Chroma first at reset,
 then at positive and negative stops. Check near-gray fading, the lightness
 crossover, and paired forward/inverse round trips.
 
 ### Unified Chroma audition
 
 Unified Chroma replaces the serial contrast and end-shaping adjustments with
-one curve based on incoming chroma. It uses the integrated Linear Gain
-prototype's Tone, H-K Influence, and lightness-dependent chroma controls.
+one curve based on incoming chroma. The baseline retains the original smooth
+Tone remap with integer Remap Fit from `-2` to `+2` and a default of `0`.
+It applies full H–K Influence (`1.0`) and uses the Linear Gain fade for Shadow
+Chroma and Highlight Chroma.
 
 | Control | Default and range | Behavior |
 | --- | --- | --- |
@@ -343,7 +345,8 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_c
 ```
 
 Compare Unified Chroma and integrated Linear Gain on the same muted-to-vivid
-ramp and skin shot, with matching Tone settings and tonal chroma at reset.
+ramp and skin shot, with matching Tone settings, full H–K Influence, and tonal
+chroma at reset.
 Set Muted Gain to `-1` and sweep Vivid Gain from `0` to `+1`. At `+1`, sweep
 C Saturation Crossover from `0.05` to `0.95`, then swap the endpoint gains
 and confirm that the sweep reverses. Check matching Forward and Inverse nodes
@@ -352,21 +355,24 @@ export. Record the accepted controls and curve in Resolve before implementing
 them in `libraries/perceptual-grade-reference` and then propagating them to
 `products/perceptual-grade-next-blender`.
 
+### Integrated Tone audition decisions
+
 | Design choice | What to compare in Resolve | Flexibility before promotion |
 | --- | --- | --- |
-| H-K Influence | Compare gray and saturated ramps at both endpoints and halfway between them | High. The gain blend can be tuned while keeping the Tone ray fixed. |
+| Tone fit | Sweep Remap Fit from `-2` to `+2` on gray and saturated ramps | The baseline uses the original smooth remap over this Fit range. |
+| H-K Influence | Compare gray and saturated ramps at full influence | Fixed at `1.0` in Unified Chroma. Legacy Log Gain and Linear Gain offer an adjustable blend. |
 | Black Compression | Compare separation near black and the placement of source-nit landmarks | Medium. The compression law can change if it stays invertible and applies to samples and landmarks together. |
 | Tonal chroma gain | Compare log-gain and Linear Gain between gray and their full-stop endpoints | Medium. Endpoint fades stay fixed while the midrange response changes. |
 | Unified saturation gains | Compare Vivid's reach on moderate colors and Muted's effect near gray | High. Slider limits and default crossover can be tuned. |
 | Unified saturation blend | Check the ordered crossover sweep and whether opposite stops hold the intended input saturation | Medium. A different blend needs to preserve positive slopes, the crossover behavior, and the closed-form inverse. |
 | C selector at input tone | Move the Tone landmarks while keeping C Tone Crossover fixed | Low. Changing the selector would change which input colors receive each gain and how the inverse recovers it. |
-| H-K and C interaction | Compare bright color separation at full H-K Influence with the C controls at reset and then active | High. Influence and the C curve provide independent controls for the overlap. |
+| H-K and C interaction | Compare bright color separation at full H-K Influence with the C controls at reset and then active | The C curve shapes incoming chroma before the fixed full H-K Tone gain. |
 
 1. Match the source-nit landmarks, Remap Fit, and Peak Nits in the integrated
    node and a standalone Cone Tone on parallel branches. At zero Black
    Compression, full H-K Influence, and C reset, compare gray and colored HDR
    ramps.
-2. Keep those landmarks and sweep H-K Influence down to zero on skin and
+2. Keep those landmarks and sweep Remap Fit from `-2` to `+2` on skin and
    saturated highlights. Raise Black Compression on a dark ramp to check
    low-end separation and the placement of the source-nit landmarks.
 3. Set Highlight Chroma to `-1` and move the Tone landmarks. Compare where the

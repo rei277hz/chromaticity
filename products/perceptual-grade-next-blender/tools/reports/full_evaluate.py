@@ -138,7 +138,7 @@ def run(output_dir, *, samples=1024, spaces=cases.SPACES, contexts=('shader','co
                 reference='unchanged float64; explicit stage composition; input repair excluded',
                 rgb_limit=1e-4,internal_limit=1e-5,boundary_radius_limit=2e-5,
                 internal_limit_exception='alternating-extreme Web scalar/local/returned-scale gates: 1e-4; see per-table limits',
-                hdr_admitted_fields=['Web toes', 'Color coefficients', 'Adaptance parameters'],
+                hdr_admitted_fields=['Web toes', 'Adaptance parameters'],
                 hdr_admission_report_required=True,
                 expanded_node_limit_exclusive=1000,samples_per_case=samples,
                 node_budget_enforced_during_construction=False,
@@ -167,7 +167,7 @@ def _write_report(report, output_dir):
            f"Numerical acceptance: {'PASS' if report['numerical_passed'] else 'FAIL'}; "
            f"original <1000-node budget: {'PASS' if report['node_budget_passed'] else 'FAIL'}. "
            'Oversized 1D graphs are temporarily allowed to build; combined acceptance still requires both.',
-           'Raw scalar precision remains visible per field. Web toes, Color coefficients and Compact Adaptance use HDR worsening for layout admission; consult their source-bound HDR report. Internal-stage and boundary-radius checks are independent.',
+           'Raw scalar precision remains visible per field. Web toes and Compact Adaptance use HDR worsening for layout admission. The source-bound HDR report records their results. Internal-stage and boundary-radius checks are independent.',
            '', '| Context | Space | Case | RGB normalized error | Expanded nodes | Over budget | Saturated pixels |',
            '|---|---|---|---:|---:|---:|---:|']
     for row in rows:

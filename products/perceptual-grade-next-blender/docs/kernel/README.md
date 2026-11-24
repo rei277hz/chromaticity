@@ -1,6 +1,20 @@
 # Perceptual Grade native nodes
 
-## Current Stage 3 contract — 2026-11-17
+## Original Unified Chroma and Warp
+
+Field layout schema 7 and parameter schema 5 pack Stage 2's Original Unified
+Chroma parameters into the 512 × 1 RGBA32F scalar/Tone image. Stage 3 uses
+three field images for Web parameters, Web toes, and Compact Adaptance. A
+complete bank is 3,179,152 bytes. The two banks use 6,358,304 bytes, excluding
+the shared output-boundary image. The Warp geometry and pre-Scale H–K repair
+use the post-Tone appearance state. The 65,536-cell Compact Adaptance field
+preserves the extreme-grade RGB tolerance with the new Stage 2 math.
+
+The layouts and bank contracts are defined in
+[`src/kernel/layouts.py`](../../src/kernel/layouts.py) and
+[`src/kernel/stage2_parameters.py`](../../src/kernel/stage2_parameters.py).
+
+## Historical schema-6 Stage 3 contract
 
 Next uses **field layout schema 6** and **parameter schema 4**. Adaptance has
 one fixed **32,768-cell** Compact field packed into **8193 × 4 RGBA32F**
@@ -58,7 +72,7 @@ contain 214/238 nodes and 320/356 links. These counts do not measure evaluation
 speed.
 
 The authoritative layouts are in
-[`src/kernel/layouts.py`](../../src/kernel/layouts.py); the five-role bank
+[`src/kernel/layouts.py`](../../src/kernel/layouts.py); the four-role bank
 contract is in
 [`src/kernel/stage2_parameters.py`](../../src/kernel/stage2_parameters.py).
 See the [product README](../../README.md) and
@@ -67,9 +81,7 @@ for current publication and output behavior.
 
 All studies below retain their original source identities, numeric results,
 failure witnesses and receipt paths. References to “current” within those
-historical studies mean the source/layout used in that study, not today's
-schema-6 product. In particular, the schema-5 3,072-cell layout and its
-2,441,792-byte inventory do not describe the current settings bank.
+historical studies mean the source/layout used in that study.
 
 ## Historical schema-5 layout and absolute HDR error — 2026-10-30
 
@@ -334,24 +346,24 @@ Linear supports exposure, source white, reference-convention balance, spread,
 heading and an authoritative XYZ matrix override. The context is D65/203 nits,
 with scene endpoints in Linear Rec.709, Linear Rec.2020 or Bradford-adapted ACEScg.
 The appearance encoder retains signed energy and stable opponent differences.
-Tone uses the user-directed Quintic 256 coefficient field and independent Fit
-range `[-2,2]`. Exact reset Tone bypasses its computation; persistent graphs
-retain the initialized coefficient image and nodes.
+Stage 2 adjusts chroma radially with Original Unified Chroma, then applies the
+original softplus Tone curve with Black Compression and fixed H–K influence of
+1.0. The curve uses the Quintic 256 coefficient field and continuous Fit from
+`-2` to `2`. Exact reset bypasses Stage 2 computation. Persistent graphs retain
+the initialized parameter image and nodes.
 
-Color has four tonal rows of low/high chroma and opponent lightness/chroma
-controls, global chroma gain, the six-handle tonal web, selective Adaptance and
-web final scale. Color Fit remains `[-2,6]`. Selectors are frozen from the original
-post-Tone state: `r=(35/75)*abs(J_A)`, visibility `C²/(C²+4)`, and low/high shares
-`r²/(C²+r²)` and `C²/(C²+r²)`. Signed energy is carried independently, preserving
-negative and cancellation-sensitive states. The [field specification](COLOR_TABLES.md)
-records parameter packing, coordinate maps and independent acceptance gates.
+Stage 3 applies the six-handle tonal Web, selective Adaptance, and Web final
+scale. Its tonal selectors use the post-Tone state. Signed energy is carried
+independently, preserving negative and cancellation-sensitive states. The
+[field specification](COLOR_TABLES.md) records parameter packing and the
+Grade Stack inverse order.
 
-Adaptance uses the fixed 32,768-cell Compact field for all adjustments, including
+Adaptance uses the fixed 65,536-cell Compact field for all adjustments, including
 strong centers. The same four stored functions supply both graph builders:
 three internal response log gains and log normalization. Its bounded
 coordinate map covers the full tonal range and retains the analytic exterior
 tail. Authored center positions and reference calibration equations are
-unchanged. The one semantic row spans four 8193-pixel physical rows, and
+unchanged. The one semantic row spans eight 8193-pixel physical rows, and
 scalar metadata preserves exact-zero support at inactive anchors and spans.
 No Interior texture or gain-dependent texture route remains.
 
@@ -388,10 +400,10 @@ from color_tools.template_build.graph import build_group
 
 prepared = prepare(
     LinearSettings(exposure=.7),
-    ToneSettings(input_nits=(0., 8., 40., 235., 1150.), fit=0),
+    ToneSettings(input_nits=(8., 40., 235., 1150.), fit=0,
+                 muted_gain=.2, vivid_gain=.2),
     'Linear Rec.709',
-    color=ColorSettings(global_gain=.2,
-                        adaptance=((2., -1.), (0., 0.), (0., 0.), (0., 0.))),
+    color=ColorSettings(adaptance=((2., -1.), (0., 0.), (0., 0.), (0., 0.))),
 )
 built = build_group(prepared, 'ShaderNodeTree')  # or 'CompositorNodeTree'
 ```
@@ -441,17 +453,20 @@ not pass through unchanged.
 
 `LinearSettings.balance` uses reference gain `2**(-balance)`. A future adapter
 for the old UI must negate its convention. `matrix` replaces the derived XYZ
-transform and may be singular. `ToneSettings` has five `input_nits`, `fit`,
-`reference_nits` and `peak_nits`.
+transform and may be singular. `ToneSettings` has four `input_nits` for
+Shadows, Midtones, White and Highlights, plus `fit`, `reference_nits` and
+`peak_nits`. Black Compression is a separate reversible control. Stage 2
+applies the Original Unified Chroma radial maps at input `|J_A|` before the
+full H-K Tone curve. Grade Stack inversion solves the scalar Tone curve by
+bisection and uses the closed-form inverses for Black Compression and the two
+chroma maps.
 
 `project_source_white` moves an xy pair to the nearest CAT16-positive point.
 `project_source_white_component(point, axis)` clamps one coordinate while
 holding the other fixed, for independent x/y controls.
 
-`ColorSettings.lightness` and `.chroma` each have four tonal rows and four
-columns ordered low chroma, high chroma, opponent a, opponent b. `.adaptance`
-has four two-component rows. Independent `.lightness_fit`, `.chroma_fit`,
-`.global_gain` and `.adaptance_half_saturation` match the reference schema.
+`ColorSettings` contains Warp settings. `.adaptance` has four two-component
+rows and `.adaptance_half_saturation` sets its saturation crossover.
 `WebSettings.log_chroma`, `.hue_degrees` and `.log_scale` are four-by-six arrays
 in cyclic Rec.709 handle order. Preparation retains the reference's geometry
 validation; it never silently changes settings to make a table pass.
@@ -464,7 +479,7 @@ runtime pixel-grading path. To reuse fixed boundary geometry across edits:
 ```python
 from color_tools.kernel.boundary import prepare_boundary
 geometry = prepare_boundary(prepared.fl, prepared.aw, prepared.gamma)
-prepared = prepare(color=ColorSettings(global_gain=.3), boundary=geometry)
+prepared = prepare(tone=ToneSettings(vivid_gain=.3), boundary=geometry)
 ```
 
 `prepare_boundary` loads the versioned asset generated by

@@ -33,9 +33,7 @@ def _identity(value):
 
 def _key(name, color, tone):
     common = (tone.reference_nits, tone.peak_nits)
-    if name == 'Color coefficients':
-        relevant = (color.lightness, color.chroma, color.lightness_fit, color.chroma_fit)
-    elif name == 'Web parameters':
+    if name == 'Web parameters':
         relevant = asdict(color.web)
     elif name == 'Web toes':
         relevant = (color.web.log_chroma, color.web.log_scale)

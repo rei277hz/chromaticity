@@ -50,7 +50,8 @@ def build_protected_compositor_group(prepared, tree_type):
 class Stage2Tests(unittest.TestCase):
     def test_complete_reset_and_active_trees_preserve_the_product_interface(self):
         bpy.ops.wm.read_factory_settings(use_empty=True)
-        for tone in (ToneSettings(), ToneSettings(input_nits=(0., 5., 45., 230., 1300.))):
+        for tone in (ToneSettings(), ToneSettings(input_nits=(5., 45., 230., 1300.), black_compression_nits=.9,
+                                      muted_gain=-.7, vivid_gain=.8, shadow_chroma=.3)):
             for tree_type in ("ShaderNodeTree", "CompositorNodeTree"):
                 built = build_stage2_group(complete_prepared(tone=tone), tree_type)
                 try:
@@ -62,13 +63,13 @@ class Stage2Tests(unittest.TestCase):
                     self.assertEqual(inputs, expected)
                     self.assertEqual(outputs, expected)
                     self.assertTrue(built.tree["_perceptual_grade_stage2_complete"])
-                    self.assertEqual(len(built.images), 11)
+                    self.assertEqual(len(built.images), 9)
                     self.assertTrue(all(image.packed_file for image in built.images))
                     parameter_images = tuple(
                         image for image in built.images
                         if image.get("_perceptual_grade_parameter_schema")
                     )
-                    self.assertEqual(len(parameter_images), 10)
+                    self.assertEqual(len(parameter_images), 8)
                     self.assertTrue(any(node.label == "AP1 boundary root seed"
                                         for node in built.tree.nodes))
                 finally:
@@ -79,7 +80,8 @@ class Stage2Tests(unittest.TestCase):
         for space, linear, tone in (
             ("Linear Rec.709", LinearSettings(), ToneSettings()),
             ("ACEScg", LinearSettings(exposure=.5),
-             ToneSettings(input_nits=(0., 5., 45., 230., 1300.))),
+             ToneSettings(input_nits=(5., 45., 230., 1300.), black_compression_nits=.9,
+                                      muted_gain=-.7, vivid_gain=.8, shadow_chroma=.3)),
         ):
             prepared = complete_prepared(linear, tone, space)
             expected = oracle.evaluate_full(values[:, :3], linear, tone, ColorSettings(), space)
@@ -128,8 +130,8 @@ class Stage2Tests(unittest.TestCase):
         # and HDR source, comparing both graph adapters with the independent
         # complete-grade oracle.
         for tone in (
-            ToneSettings(input_nits=(2., 2.1, 2.2, 10., 100.), fit=2., peak_nits=4000.),
-            ToneSettings(input_nits=(0., 50., 250., 1000., 10000.), fit=-2., peak_nits=500.),
+            ToneSettings(input_nits=(2.1, 2.2, 10., 100.), black_compression_nits=2., fit=2., peak_nits=4000.),
+            ToneSettings(input_nits=(50., 250., 1000., 10000.), fit=-2., peak_nits=500.),
         ):
             linear = LinearSettings(exposure=6.)
             cases.assert_ui_settings(linear, tone)

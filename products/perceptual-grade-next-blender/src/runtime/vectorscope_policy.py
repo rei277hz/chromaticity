@@ -2,7 +2,7 @@
 
 # pg-book: technical-report/en#next-policy.vectorscope
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from ..policy.vectorscope import publication
@@ -33,6 +33,7 @@ class State:
     queued: tuple = ()
     published: tuple = ()
     failures: tuple = ()
+    waiting: frozenset = frozenset()
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class Effects:
     publish: Optional[Ticket] = None
     retain_samples: Optional[str] = None
     clear: tuple = ()
+    cancel: Optional[Ticket] = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,7 @@ class Event:
     ticket: Optional[Ticket] = None
     success: bool = False
     error: Optional[str] = None
+    ready: bool = True
 
 
 def _by_key(values, key):
@@ -61,7 +64,10 @@ def _by_key(values, key):
 
 
 def _replace(values, value):
-    return tuple(item for item in values if item.key != value.key) + (value,)
+    for index, item in enumerate(values):
+        if item.key == value.key:
+            return values[:index] + (value,) + values[index + 1:]
+    return values + (value,)
 
 
 def _remove(values, key):
@@ -84,12 +90,14 @@ def result_demand(state, ticket):
 def step(state, event):
     """Apply one event and return all authorized external effects."""
     if event.kind == "request":
+        waiting = (state.waiting - {event.key} if event.ready
+                   else state.waiting | {event.key})
         previous = _by_key(state.desired, event.key)
         if (previous is not None
                 and previous.capture_signature == event.capture_signature
                 and previous.analysis_signature == event.analysis_signature
                 and previous.source_signature == event.source_signature):
-            return state, Effects()
+            return replace(state, waiting=waiting), Effects()
         generation = state.generation + 1
         same_source = (previous is not None
                        and previous.source_signature == event.source_signature)
@@ -98,24 +106,43 @@ def step(state, event):
                         previous.source_generation if same_source else generation)
         clear = (event.key,) if previous is not None and not same_source else ()
         desired = _replace(state.desired, demand)
-        queued = _remove(state.queued, event.key)
         published = state.published if same_source else _remove(state.published, event.key)
         failures = _without_failure(state.failures, event.key)
         active = state.active
+        publish = None
         if event.cache_available:
+            queued = _remove(state.queued, event.key)
             published = _replace(published, Display(event.key, generation, generation))
-            return (State(generation, desired, active, queued, published, failures),
-                    Effects(publish=demand, clear=clear))
-        if (active is not None and active.key == event.key
-                and active.source_generation == demand.source_generation
-                and active.capture_signature == demand.capture_signature):
-            return (State(generation, desired, active, queued, published, failures),
-                    Effects(clear=clear))
-        if active is None:
-            return (State(generation, desired, demand, queued, published, failures),
-                    Effects(start=demand, clear=clear))
-        return (State(generation, desired, active, queued + (demand,), published, failures),
-                Effects(clear=clear))
+            publish = demand
+        elif (active is not None and active.key == event.key
+              and active.source_generation == demand.source_generation
+              and active.capture_signature == demand.capture_signature):
+            queued = (state.queued if active in state.queued
+                      else _remove(state.queued, event.key))
+        else:
+            queued = _replace(state.queued, demand)
+        return (State(generation, desired, active, queued, published, failures, waiting),
+                Effects(publish=publish, clear=clear))
+
+    if event.kind == "schedule":
+        if state.active is not None:
+            return state, Effects()
+        ticket = next((item for item in state.queued if item.key not in state.waiting), None)
+        if ticket is None:
+            return state, Effects()
+        return replace(state, active=ticket), Effects(start=ticket)
+
+    if event.kind == "started":
+        ticket = event.ticket
+        if ticket is None or state.active != ticket:
+            return state, Effects()
+        return replace(state, queued=tuple(item for item in state.queued if item != ticket)), Effects()
+
+    if event.kind == "deferred":
+        ticket = event.ticket
+        if ticket is None or state.active != ticket:
+            return state, Effects()
+        return replace(state, active=None), Effects()
 
     if event.kind == "capture_result":
         ticket = event.ticket
@@ -142,36 +169,41 @@ def step(state, event):
             failures = _without_failure(failures, ticket.key) + ((
                 ticket.key, event.error or "Vectorscope capture failed",
             ),)
-        start = state.queued[0] if state.queued else None
-        return State(state.generation, state.desired, start, state.queued[1:],
-                     published, failures), Effects(
-            start=start, publish=publish,
+        queued = tuple(item for item in state.queued if item != ticket)
+        return replace(state, active=None, queued=queued, published=published,
+                       failures=failures), Effects(
+            publish=publish,
             retain_samples=ticket.capture_signature if event.success and desired else None,
         )
 
-    if event.kind == "unavailable":
-        failure = (event.key, event.error or "Vectorscope source is unavailable")
-        if failure in state.failures and _by_key(state.desired, event.key) is None:
-            return state, Effects()
-        return (State(state.generation, _remove(state.desired, event.key), state.active,
-                      _remove(state.queued, event.key), _remove(state.published, event.key),
-                      _without_failure(state.failures, event.key) + (failure,)),
-                Effects(clear=(event.key,)))
-
-    if event.kind == "release":
-        return (State(state.generation, _remove(state.desired, event.key), state.active,
-                      _remove(state.queued, event.key), _remove(state.published, event.key),
-                      _without_failure(state.failures, event.key)), Effects(clear=(event.key,)))
+    if event.kind in {"release", "unavailable"}:
+        key = event.key
+        desired = _remove(state.desired, key)
+        failures = _without_failure(state.failures, key)
+        if event.kind == "unavailable":
+            failure = (key, event.error or "Vectorscope source is unavailable")
+            if failure in state.failures and desired == state.desired:
+                return state, Effects()
+            failures += (failure,)
+        active = state.active
+        cancel = (active if active is not None and active.key == key
+                  and desired != state.desired else None)
+        return replace(state, desired=desired, queued=_remove(state.queued, key),
+                       published=_remove(state.published, key), failures=failures,
+                       waiting=state.waiting - {key}), Effects(clear=(key,), cancel=cancel)
 
     if event.kind == "reset":
         keys = tuple(item.key for item in state.desired)
-        return (State(state.generation, (), state.active),
-                Effects(clear=keys))
+        return State(generation=state.generation, active=state.active), Effects(
+            clear=keys, cancel=state.active,
+        )
 
     raise ValueError("Unknown Vectorscope event: " + str(event.kind))
 
 
 def status(state, key):
+    if key in state.waiting:
+        return "updating", None
     failure = next((item[1] for item in state.failures if item[0] == key), None)
     if failure is not None:
         return "error", failure

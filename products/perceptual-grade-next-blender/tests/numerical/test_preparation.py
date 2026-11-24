@@ -17,11 +17,18 @@ from color_tools.kernel.tables import (
     kernel, readonly, select_table, audit_tone)
 from color_tools.perceptual_grade_reference import model as reference
 from color_tools.perceptual_grade_reference.grading import Tone, ToneSettings as ReferenceTone
+from color_tools.perceptual_grade_reference.unified_chroma import UnifiedChroma, UnifiedChromaSettings
 
 
 def prepare_tone(*args, **kwargs):
     """These development numerical tests explicitly request dense receipts."""
     return audit_tone(runtime_prepare_tone(*args, **kwargs))
+
+
+def reference_tone(settings):
+    return UnifiedChroma(UnifiedChromaSettings(**{
+        name: value for name, value in vars(settings).items() if name != 'reference_nits'
+    })).tone
 
 
 class PreparationTests(unittest.TestCase):
@@ -89,16 +96,16 @@ class PreparationTests(unittest.TestCase):
 
     def test_analytic_tone_and_quintic_256(self):
         cases = [ToneSettings(),
-                 ToneSettings(input_nits=(0., 8., 40., 235., 1150.)),
-                 ToneSettings(input_nits=(.2, .21, 42., 250., 1300.), fit=2.),
-                 ToneSettings(input_nits=(.01, 1., 90., 400., 4000.), fit=-2.),
-                 ToneSettings(input_nits=(0., .01, .1, 203., 10000.), fit=2.),
-                 ToneSettings(input_nits=(0., .01, .1, 10., 100.), fit=2., peak_nits=4000.)]
+                 ToneSettings(input_nits=(8., 40., 235., 1150.)),
+                 ToneSettings(black_compression_nits=.2, input_nits=(.21, 42., 250., 1300.), fit=2.),
+                 ToneSettings(black_compression_nits=.01, input_nits=(1., 90., 400., 4000.), fit=-2.),
+                 ToneSettings(input_nits=(.01, .1, 203., 10000.), fit=2.),
+                 ToneSettings(input_nits=(.01, .1, 10., 100.), fit=2., peak_nits=4000.)]
         sizes = []
         for settings in cases:
             with self.subTest(settings=settings):
                 prepared = prepare_tone(settings)
-                oracle = Tone(ReferenceTone(**vars(settings)))
+                oracle = reference_tone(settings)
                 probes = np.r_[np.linspace(0., 600., 12001), np.geomspace(1e-10, 1e7, 4097),
                                100*oracle.source]
                 expected = oracle.remap(probes)
@@ -119,7 +126,7 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(set(sizes), {256})
 
     def test_quantized_monotonicity_and_shared_joins(self):
-        tone = prepare_tone(ToneSettings(input_nits=(.2, .21, 42., 250., 1300.), fit=2.))
+        tone = prepare_tone(ToneSettings(black_compression_nits=.2, input_nits=(.21, 42., 250., 1300.), fit=2.))
         for cells in (256, 2048):
             table = build_table(tone, cells)
             poly = coefficients(table.jets)
@@ -133,7 +140,7 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(tone.table.cells, 256)
 
     def test_diagnostic_tone_sizes_shrink_storage_without_changing_runtime_layout(self):
-        tone = prepare_tone(ToneSettings(input_nits=(.2, .21, 42., 250., 1300.), fit=2.))
+        tone = prepare_tone(ToneSettings(black_compression_nits=.2, input_nits=(.21, 42., 250., 1300.), fit=2.))
         canonical = build_runtime_table(tone, 256)
         self.assertEqual(canonical.pixels.shape, (1, 512, 4))
         for cells in (256, 128, 64, 32):
@@ -152,13 +159,13 @@ class PreparationTests(unittest.TestCase):
 
     def test_two_hundred_ui_valid_curves_select_a_passing_table(self):
         rng = np.random.default_rng(20261027)
-        lower = np.array((0., .01, .1, 10., 100.))
-        upper = np.array((2., 50., 250., 1000., 10000.))
+        lower = np.array((.01, .1, 10., 100.))
+        upper = np.array((50., 250., 1000., 10000.))
         conversion = Tone(ReferenceTone())
         selected = set()
         checked = 0
         for _ in range(1000):
-            anchors = tuple(lower+(upper-lower)*rng.random(5))
+            anchors = tuple(lower+(upper-lower)*rng.random(4))
             # The UI clamps an edit against both neighbors in neutral J.
             # Filter with the independent oracle before preparation so its
             # minimum-spacing regularization cannot admit crossed anchors.
@@ -167,9 +174,9 @@ class PreparationTests(unittest.TestCase):
             settings = ToneSettings(anchors, int(rng.integers(-2, 3)), 203.,
                                     float(rng.choice((500, 1000, 2000, 4000))))
             prepared = prepare_tone(settings)
-            oracle = Tone(ReferenceTone(**vars(settings)))
+            oracle = reference_tone(settings)
             t = np.linspace(0., 8., 4097, dtype=np.float32)
-            h = 100*(prepared.black+prepared.span*t.astype(float))
+            h = 100*prepared.span*t.astype(float)
             expected = oracle.remap(h)
             z = np.minimum(t/np.float32(prepared.table.domain), np.float32(1))
             actual = np.float32(100)*(np.float32(prepared.slope)*t+prepared.table.evaluate(z))
@@ -189,7 +196,7 @@ class PreparationTests(unittest.TestCase):
             with self.assertRaises(ValueError): prepare_linear(value)
         for value in (ToneSettings(fit=3), ToneSettings(fit=4), ToneSettings(fit=6), ToneSettings(fit=7),
                       ToneSettings(reference_nits=100.),
-                      ToneSettings(input_nits=(0., 1., 2.)), ToneSettings(peak_nits=float('nan'))):
+                      ToneSettings(input_nits=(1., 2.)), ToneSettings(peak_nits=float('nan'))):
             with self.assertRaises(ValueError): prepare_tone(value)
         with self.assertRaises(ValueError): prepare(space='display-sRGB')
 
@@ -197,10 +204,10 @@ class PreparationTests(unittest.TestCase):
         # This cannot be authored through the UI's neighbor-J constraints.
         # The reference regularizes it, but that does not excuse shipping a
         # table that misses the agreed scalar error bound.
-        value = ToneSettings(input_nits=(1.68, 46.64, 58.98, 920.94, 669.76),
+        value = ToneSettings(black_compression_nits=1.68, input_nits=(46.64, 58.98, 920.94, 669.76),
                              fit=2, peak_nits=500.)
         prepared = prepare_tone(value)
-        oracle = Tone(ReferenceTone(**vars(value)))
+        oracle = reference_tone(value)
         np.testing.assert_allclose(prepared.source, oracle.source, atol=1e-14)
         self.assertEqual(prepared.table.cells, 256)
         self.assertLessEqual(prepared.table.max_error, TABLE_ERROR_LIMIT)
@@ -210,7 +217,7 @@ class PreparationTests(unittest.TestCase):
         # to retain the regression that motivated rounding-bin-edge probes:
         # 16-per-cell probes at 512 cells reported 7.86e-6, but bin edges
         # exceed 1e-5. The current 256-cell selector must reject it too.
-        settings = ToneSettings(input_nits=(0., 5., 20., 100., 100.33905282838904),
+        settings = ToneSettings(input_nits=(5., 20., 100., 100.33905282838904),
                                 fit=2., peak_nits=4000.)
         prepared = prepare_tone(settings)
         width = prepared.width/4
@@ -234,7 +241,7 @@ class FixedRuntimePreparationTests(unittest.TestCase):
 
     def test_same_settings_replace_prior_tone_512_and_preserve_current_reuse(self):
         for settings in (Settings(), Settings(tone=ToneSettings(
-                input_nits=(0., 8., 40., 235., 1150.), fit=2.))):
+                input_nits=(8., 40., 235., 1150.), fit=2.))):
             with self.subTest(tone=settings.tone):
                 current = prepare(settings.linear, settings.tone, settings.space,
                                   color=settings.color, full_fields=True)
@@ -255,8 +262,7 @@ class FixedRuntimePreparationTests(unittest.TestCase):
         from color_tools.kernel.layouts import FIELD_CELLS
         baseline = prepare(full_fields=True)
         self.assertIs(prepare_update(Settings(), baseline).color, baseline.color)
-        old_cells = {'coefficient_table': 131072, 'adaptance_table': 16384,
-                     'web_table': 32768, 'web_toe_table': 1280}
+        old_cells = {'adaptance_table': 16384, 'web_table': 32768, 'web_toe_table': 1280}
         for attribute, cells in old_cells.items():
             with self.subTest(attribute=attribute):
                 expected = getattr(baseline.color, attribute)
@@ -273,18 +279,18 @@ class FixedRuntimePreparationTests(unittest.TestCase):
                 self.assertEqual(actual.cells, FIELD_CELLS[expected.name])
                 self.assertIsNot(actual, obsolete)
                 np.testing.assert_array_equal(actual.pixels, expected.pixels)
-                for other in ('coefficient_table', 'adaptance_table', 'web_table', 'web_toe_table'):
+                for other in old_cells:
                     if other != attribute:
                         self.assertIs(getattr(refreshed.color, other), getattr(baseline.color, other))
 
     def test_same_size_prior_schema_fields_are_regenerated(self):
         from color_tools.kernel.layouts import LAYOUT_SCHEMA
         baseline = prepare(full_fields=True)
-        self.assertEqual(LAYOUT_SCHEMA, 6)
-        for attribute in ('coefficient_table', 'adaptance_table', 'web_table', 'web_toe_table'):
+        self.assertEqual(LAYOUT_SCHEMA, 7)
+        for attribute in ('adaptance_table', 'web_table', 'web_toe_table'):
             with self.subTest(attribute=attribute):
                 expected = getattr(baseline.color, attribute)
-                obsolete = replace(expected, schema=3)
+                obsolete = replace(expected, schema=6)
                 prior = replace(baseline, color=replace(baseline.color, **{attribute: obsolete}))
                 refreshed = prepare_update(Settings(), prior)
                 actual = getattr(refreshed.color, attribute)
@@ -303,7 +309,7 @@ class FixedRuntimePreparationTests(unittest.TestCase):
                 prior = replace(baseline, color=old_color)
                 refreshed = prepare_update(Settings(), prior)
                 self.assertIsNot(refreshed.color, old_color)
-                self.assertEqual(refreshed.color.layout_schema, 6)
+                self.assertEqual(refreshed.color.layout_schema, 7)
                 self.assertFalse(hasattr(refreshed.color, 'adaptance_interior_table'))
 
     def test_strong_controls_keep_one_fixed_adaptance_field(self):
@@ -314,10 +320,9 @@ class FixedRuntimePreparationTests(unittest.TestCase):
             current = prepare_update(Settings(color=settings), neutral)
             self.assertGreater(float(np.max(abs(current.color.log_gains))), 1.)
             self.assertFalse(hasattr(current.color, 'adaptance_interior_table'))
-            self.assertEqual(len(current.color.tables), 4)
-            self.assertEqual(current.color.adaptance_table.cells, 32768)
+            self.assertEqual(len(current.color.tables), 3)
+            self.assertEqual(current.color.adaptance_table.cells, 65536)
             self.assertEqual(current.color.adaptance_table.mapping, 'response_compact')
-            self.assertIs(current.color.coefficient_table, neutral.color.coefficient_table)
             self.assertIs(current.color.web_table, neutral.color.web_table)
             self.assertIs(current.color.web_toe_table, neutral.color.web_toe_table)
 
@@ -334,9 +339,9 @@ class FixedRuntimePreparationTests(unittest.TestCase):
             self.assertFalse(neutral.tone.active)
             self.assertFalse(neutral.color.active)
             self.assertIsNotNone(neutral.table)
-            self.assertEqual(len(neutral.color.tables), 4)
-            changed = prepare_update(Settings(tone=ToneSettings(input_nits=(0., 8., 40., 235., 1150.)),
-                color=ColorSettings(global_gain=.2, web=WebSettings(hue_degrees=((1.,)*6,)*4))), neutral)
+            self.assertEqual(len(neutral.color.tables), 3)
+            changed = prepare_update(Settings(tone=ToneSettings(input_nits=(8., 40., 235., 1150.)),
+                color=ColorSettings(web=WebSettings(hue_degrees=((1.,)*6,)*4))), neutral)
         self.assertIsNone(changed.table.max_error)
         self.assertIsNone(changed.table.probe_count)
         for table in changed.color.tables:
@@ -353,12 +358,11 @@ class FixedRuntimePreparationTests(unittest.TestCase):
         self.assertIs(exposure.tone, neutral.tone)
         self.assertIsNot(exposure.linear, neutral.linear)
         self.assertTrue(all(a is b for a, b in zip(exposure.color.tables, neutral.color.tables)))
-        gain = prepare_update(Settings(color=ColorSettings(global_gain=.3)), neutral)
+        gain = prepare_update(Settings(tone=ToneSettings(muted_gain=.3)), neutral)
         self.assertTrue(all(a is b for a, b in zip(gain.color.tables, neutral.color.tables)))
         hue = prepare_update(Settings(color=ColorSettings(web=WebSettings(hue_degrees=((1.,)*6,)*4))), neutral)
         self.assertIsNot(hue.color.web_table, neutral.color.web_table)
         self.assertIs(hue.color.web_toe_table, neutral.color.web_toe_table)
-        self.assertIs(hue.color.coefficient_table, neutral.color.coefficient_table)
         adapted = prepare_update(Settings(color=ColorSettings(adaptance=((1., 0.),)*4)), neutral)
         self.assertIsNot(adapted.color.adaptance_table, neutral.color.adaptance_table)
         self.assertIs(adapted.color.web_table, neutral.color.web_table)

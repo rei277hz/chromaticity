@@ -53,7 +53,7 @@ class Action:
     gesture_token: Optional[int] = None
     node_id: Optional[int] = None
     frame: Optional[float] = None
-    color_values: Optional[tuple[float, float]] = None
+    color_values: Optional[tuple[float, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,8 @@ class Event:
     kind: Literal[
         "window_seen", "window_gone", "observer_install_result", "observer_lost",
         "press", "move", "activate", "finish", "finish_requested", "finish_observed",
-        "handoff_due", "node_disposed", "edit_color_pair", "cancel_color_pair", "reset",
+        "handoff_due", "node_disposed", "edit_color_pair", "cancel_color_pair",
+        "discard_color_pair", "reset",
     ]
     window_id: Optional[int] = None
     token: Optional[int] = None
@@ -82,7 +83,7 @@ class Event:
     success: bool = False
     latest: Literal["none", "move", "finish"] = "none"
     frame: Optional[float] = None
-    color_values: Optional[tuple[float, float]] = None
+    color_values: Optional[tuple[float, ...]] = None
     color_pair: bool = False
 
 
@@ -324,11 +325,10 @@ def finish(state: State, window_id: int, token: Optional[int],
 
 
 def cancel_color(state: State, window_id: int, token: int,
-                 observed: tuple[Target, ...]) -> tuple[State, Effects]:
+                 observed: tuple[Target, ...], *, restore_pair: bool = True) -> tuple[State, Effects]:
     updated, effects = finish(state, window_id, token, observed, confirmed=False)
-    return updated, Effects((
-        Action("restore_color_pair", gesture_token=token), *effects.actions,
-    ))
+    restore = (Action("restore_color_pair", gesture_token=token),) if restore_pair else ()
+    return updated, Effects((*restore, *effects.actions))
 
 
 def dispose_target(state: State, node_id: int) -> tuple[State, Effects]:
@@ -367,7 +367,7 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         return finish(state, window, event.gesture_token, event.observed)
     if event.kind == "finish":
         return finish(state, window, event.gesture_token, event.observed)
-    if event.kind in ("edit_color_pair", "cancel_color_pair"):
+    if event.kind in ("edit_color_pair", "cancel_color_pair", "discard_color_pair"):
         index = gesture_index(state.gestures, window)
         if index is None:
             return state, Effects()
@@ -380,7 +380,10 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
             return state, Effects((Action(
                 "write_color_pair", gesture_token=gesture.token, color_values=event.color_values,
             ),))
-        return cancel_color(state, window, gesture.token, event.observed)
+        return cancel_color(
+            state, window, gesture.token, event.observed,
+            restore_pair=event.kind == "cancel_color_pair",
+        )
     if event.kind == "activate":
         return activate(state, window, event.gesture_token)
     if event.kind in ("press", "move", "finish_requested", "handoff_due"):

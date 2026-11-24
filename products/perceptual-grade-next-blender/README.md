@@ -17,12 +17,15 @@ model. Regular Grade controls remain disabled until a Grade datablock is selecte
 The [Perceptual Grade handbook](../perceptual-grade-book/README.md) follows the
 latest mathematical reference in English and Simplified Chinese, with HTML,
 PDF, and EPUB editions. Its bilingual User Manual describes current Next
-behavior and retains a clearly labeled legacy 1.23.2 ZIP link. Stage 3 supplies
-numeric J, C, Adaptance, and Warp controls; the draggable Warp diagram is deferred.
+behavior and retains a clearly labeled legacy 1.23.2 ZIP link. Stage 2 supplies
+Tone, Black Compression, and Unified Chroma controls. Stage 3 contains Warp and
+selective Adaptance controls; the draggable Warp diagram is deferred.
 Warp hue is displayed as its stored degree offset. All Grade paths follow the
 reference's Adaptance → H–K repair → common positive Scale order.
-The [Gizmo design](docs/GIZMO_DESIGN.md) describes the Linear vectorscope and
-the planned graphical editor for the J and C controls.
+The Tone Gizmo edits its four Tone anchors, Fit, and Peak. Black Compression
+and the Unified Chroma sliders are in the Stage 2 sidebar. Previously saved
+Grades retain their four Tone anchors, Fit, Peak, and Warp settings. Retired
+Input Black and Stage 3 tonal J/C values have no equivalent slider migration.
 
 Adaptance drags use 0.01 increments and tonal soft spans of ±4, ±10, ±20,
 and ±25. Finite requests beyond the physical response domain are limited
@@ -52,10 +55,10 @@ without waiting for Blender's publication timer.
 
 A Grade appends its complete Linear/Tone/Color graph from the bundled native template
 library once per tree type. Working-space-dependent output conversion is bound
-through the parameter image. Each of two fixed banks owns five RGBA32F helper
-images: scalar/Tone parameters, Color coefficients, Web parameters, Web toes,
-and Adaptance parameters. One complete bank is 2,916,976 bytes; the pair uses
-5,833,952 bytes (about 5.56 MiB), excluding the shared boundary image. All Shader and Compositor
+through the parameter image. Each of two fixed banks owns four RGBA32F helper
+images for scalar/Tone parameters, Web parameters, Web toes, and Adaptance
+parameters. One complete bank is 3,179,152 bytes. The pair uses 6,358,304 bytes
+(about 6.06 MiB), excluding the shared boundary image. All Shader and Compositor
 nodes using one Grade share these banks. Every role of the inactive bank is
 staged and checked in one admitted publication scope before the shared selector
 switches. An unchanged role can reuse a candidate image with the matching clean
@@ -68,13 +71,14 @@ contain the Tone scalars and domain; slots 262–264 contain the output conversi
 matrix rows. Further slots carry Stage 3 flags, scalars, and field domains;
 two texels hold the tonal anchors and authored Adaptance-row activity flags.
 These preserve exact-zero cardinal support across atlas interpolation without
-tolerance-based suppression. Parameter schema 4 retains the 512×1 scalar image;
-the other role images carry the prepared coefficient and web data. Fixed texture
+tolerance-based suppression. Parameter schema 5 retains the 512×1 scalar image
+and packs the Unified Chroma controls into two texels. The other role images
+carry the prepared Warp data. Fixed texture
 samples read these values instead of baking them into socket defaults. The
-Adaptance field always uses 32,768 cells in an 8193×4 RGBA32F image
-(524,352 bytes per bank); runtime never selects its resolution from settings.
-This replaces the earlier 3,072-cell field to satisfy the retained extreme-grade
-RGB gate near exact-zero cardinal support. Field layout schema is 6.
+Adaptance field uses 65,536 cells in an 8193×8 RGBA32F image
+(1,048,704 bytes per bank). This fixed resolution meets the extreme-grade
+RGB gate near exact-zero cardinal support with Original Unified Chroma.
+Field layout schema is 7.
 The boundary texture and viewing constants remain shared across working spaces.
 Publication packs a complete inactive bank before changing the marked selector.
 A failed transaction restores the previous selector and metadata; any failure to

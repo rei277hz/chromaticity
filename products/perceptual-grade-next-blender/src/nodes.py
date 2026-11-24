@@ -30,6 +30,7 @@ from .kernel import (
     ToneSettings,
     WebSettings,
     prepare_linear,
+    project_source_white,
     project_source_white_component,
 )
 from .kernel.node_templates import (
@@ -62,12 +63,11 @@ from .lut_helper import StackHelperBackend
 from .kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
 from .kernel.settings import D65, SPACES, StackEntrySettings, split_stack_entries, stack_directions
 from .kernel.tone_ui import (
-    TONE_DEFAULTS, TONE_FIELDS, TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS,
-    clamp_tone_anchor,
+    TONE_CHROMA_FIELDS, TONE_CHROMA_LIMITS, TONE_DEFAULTS, TONE_FIELDS,
+    TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS, clamp_tone_anchor,
 )
 from .kernel.color_ui import (
-    COLOR_DEFAULTS as _COLOR_DEFAULTS, COLOR_DRIVERS as _COLOR_DRIVERS,
-    COLOR_FIELDS as _COLOR_FIELDS,
+    COLOR_DEFAULTS as _COLOR_DEFAULTS, COLOR_FIELDS as _COLOR_FIELDS,
 )
 from .kernel.color_resolution import COLOR_RESOLUTION_SCHEMA, resolve_settings
 from .policy import node as node_policy
@@ -150,7 +150,7 @@ _playback_sessions = {}
 _playback_serial = count(1)
 _frame_color_keys = {}
 _frame_color_invalidations = set()
-_KERNEL_SCHEMA = 6
+_KERNEL_SCHEMA = 7
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
 _KERNEL_QUALITY = "_perceptual_grade_quality"
@@ -191,13 +191,12 @@ _LINEAR_DEFAULTS = {
 
 _TONE_FIELDS = TONE_FIELDS
 _ANIMATABLE_TONE_FIELDS = tuple(name for name in _TONE_FIELDS if name != "peak_nits")
+_GIZMO_TONE_FIELDS = (*TONE_LEVEL_FIELDS, "fit")
 _COLOR_TONES = ("shadows", "midtones", "white", "highlights")
 _WEB_HANDLES = ("red", "yellow", "green", "cyan", "blue", "magenta")
 _ANIMATABLE_COLOR_FIELDS = _COLOR_FIELDS
 _COLOR_CUSTOM_FIELDS = frozenset(name for name in _COLOR_FIELDS
                                 if name.startswith(("web_hue_", "adaptance_a_", "adaptance_b_")))
-_J_LOW_LIMITS = (30.0, 50.0, 100.0, 200.0)
-_J_HIGH_LIMITS = (100.0, 200.0, 400.0, 700.0)
 
 
 def _is_grade_node(node):
@@ -730,6 +729,26 @@ def _linear_settings(settings):
     )
 
 
+def _linear_owner_for_node(node):
+    if _is_shared_grade_node(node):
+        return node.pg_grade
+    return node if _is_per_node_grade_node(node) else None
+
+
+def _scope_linear_settings(node):
+    owner = _linear_owner_for_node(node)
+    if owner is None:
+        raise ValueError("Select a Grade datablock to use the vectorscope")
+    return _linear_settings(_linear_controls(owner))
+
+
+def _scope_tone_settings(node):
+    owner = _linear_owner_for_node(node)
+    if owner is None:
+        raise ValueError("Select a Grade datablock to use the Tone Gizmo")
+    return _tone_settings(_tone_controls(owner))
+
+
 def _kernel_signature(tree_type, settings, working_space):
     if isinstance(settings, Settings):
         return _signature(tree_type, _snapshot_values(settings), working_space)
@@ -757,7 +776,10 @@ def _tone_settings(settings):
         # Use the same binary32 round-trip as Blender's RNA storage.
         native_default = struct.unpack("f", struct.pack("f", default))[0]
         values.append(default if value == native_default else value)
-    return ToneSettings(tuple(values), float(settings.fit), 203., float(settings.peak_nits))
+    return ToneSettings(
+        input_nits=tuple(values), fit=float(settings.fit), peak_nits=int(settings.peak_nits),
+        **{name: float(getattr(settings, name)) for name in TONE_CHROMA_FIELDS},
+    )
 
 
 def _raw_grade_settings(owner, working_space):
@@ -776,12 +798,7 @@ def _color_settings(settings):
                            for column in columns) for tone in range(4))
 
     return ColorSettings(
-        lightness=rows("j", _COLOR_DRIVERS),
-        chroma=rows("c", _COLOR_DRIVERS),
         adaptance=rows("adaptance", ("a", "b")),
-        lightness_fit=float(settings.lightness_fit),
-        chroma_fit=float(settings.chroma_fit),
-        global_gain=float(settings.global_gain),
         adaptance_half_saturation=float(settings.adaptance_half_saturation),
         web=WebSettings(**{
             field: tuple(tuple(float(getattr(settings, f"web_{family}_{tone}_{handle}"))
@@ -798,14 +815,14 @@ def _snapshot_values(settings):
     linear = settings.linear
     tone = settings.tone
     color = settings.color
-    color_rows = (*color.lightness, *color.chroma, *color.adaptance,
+    color_rows = (*color.adaptance,
                   *color.web.log_chroma, *color.web.hue_degrees, *color.web.log_scale)
     return tuple(float(value).hex() for value in (
         linear.exposure, *linear.source_xy,
         -linear.balance[0], -linear.balance[1],
         *linear.spread, *linear.heading,
         *tone.input_nits, tone.fit, tone.reference_nits, tone.peak_nits,
-        color.lightness_fit, color.chroma_fit, color.global_gain,
+        *(getattr(tone, name) for name in TONE_CHROMA_FIELDS),
         color.adaptance_half_saturation,
         *(value for row in color_rows for value in row),
     ))
@@ -3319,6 +3336,15 @@ class _ColorGesture:
     entry_identity: str | int | None
     baseline: tuple[tuple[str, float | None], ...]
 
+    @property
+    def stage(self):
+        field = self.baseline[0][0]
+        if field in _LINEAR_FIELDS:
+            return "linear"
+        if field in _ANIMATABLE_TONE_FIELDS:
+            return "tone"
+        return "color"
+
 
 def _color_gesture_entry(node):
     entry = _stack_active_entry(node) if _is_stack_node(node) else None
@@ -3326,24 +3352,41 @@ def _color_gesture_entry(node):
 
 
 def _begin_color_gesture(window_key, node, fields):
-    """Bind one Contributions or Opponent a/b handle to its settings owner."""
+    """Bind one Adaptance a/b pair to its settings owner."""
     if fields not in {
-        pair for tone in range(len(_COLOR_TONES)) for pair in (
-            (f"j_low_{tone}", f"c_low_{tone}"),
-            (f"j_high_{tone}", f"c_high_{tone}"),
-            (f"j_a_{tone}", f"j_b_{tone}"),
-            (f"c_a_{tone}", f"c_b_{tone}"),
-        )
+        (f"adaptance_a_{tone}", f"adaptance_b_{tone}")
+        for tone in range(len(_COLOR_TONES))
     }:
-        raise ValueError("Invalid Color gesture fields")
-    if not _is_output_node(node) or _gesture_token(window_key) in _color_gestures:
+        raise ValueError("Invalid Warp gesture fields")
+    if not _is_output_node(node):
         return None
     owner, settings = _color_settings_for_node(node)
-    if owner is None or any(gesture.owner == owner for gesture in _color_gestures.values()):
+    return _begin_pair_gesture(window_key, node, owner, settings, fields)
+
+
+def _begin_gizmo_gesture(window_key, node, fields):
+    """Bind one supported Gizmo control to the current Grade owner."""
+    if fields in {("source_x", "source_y"), ("exposure",),
+                  ("cr_balance",), ("yb_balance",),
+                  ("cr_spread", "cr_heading"), ("yb_spread", "yb_heading")}:
+        get_controls = _linear_controls
+    elif len(fields) == 1 and fields[0] in _GIZMO_TONE_FIELDS:
+        get_controls = _tone_controls
+    else:
+        raise ValueError("Invalid Gizmo gesture fields")
+    owner = _linear_owner_for_node(node)
+    if owner is None:
+        return None
+    return _begin_pair_gesture(window_key, node, owner, get_controls(owner), fields)
+
+
+def _begin_pair_gesture(window_key, node, owner, settings, fields):
+    if (owner is None or _gesture_token(window_key) in _color_gestures
+            or any(gesture.owner == owner for gesture in _color_gestures.values())):
         return None
     entry = _color_gesture_entry(node)
     baseline = tuple((name, float(getattr(settings, name))
-                      if settings.is_property_set(name) else None) for name in fields)
+                      if _color_property_is_set(settings, name) else None) for name in fields)
     token = _press_gesture(window_key, node, (0, 0), bpy.context.scene, fields=fields)
     if token is not None:
         _color_gestures[token] = _ColorGesture(
@@ -3357,17 +3400,20 @@ def _color_gesture_matches(gesture, node):
     try:
         if node is None or _gesture_node(gesture.node_id) != node:
             return False
+        if gesture.stage in {"linear", "tone"}:
+            return _linear_owner_for_node(node) == gesture.owner
         owner, _settings = _color_settings_for_node(node)
         return owner == gesture.owner and _color_gesture_entry(node) == gesture.entry_identity
     except (AttributeError, ReferenceError, RuntimeError):
         return False
 
 
-def _cancel_color_gesture(window_key, token):
+def _cancel_color_gesture(window_key, token, restore=True):
     """Restore the press-time pair for Escape, right click, or a lost owner."""
     if token in _color_gestures:
+        event = "cancel_color_pair" if restore else "discard_color_pair"
         _dispatch_gesture(gesture_policy.Event(
-            "cancel_color_pair", window_id=window_key, gesture_token=token,
+            event, window_id=window_key, gesture_token=token,
             observed=_gesture_observations(window_key),
         ))
 
@@ -3393,16 +3439,37 @@ def _color_gesture_is_current(window_key, token, node):
     return False
 
 
-def _edit_color_gesture(window_key, token, node, values):
+def _edit_gizmo_gesture(window_key, token, node, values):
     if not _color_gesture_is_current(window_key, token, node):
         return False
-    x, y = map(float, values)
-    if not (math.isfinite(x) and math.isfinite(y)):
-        raise ValueError("Color gesture values must be finite")
+    gesture = _color_gestures[token]
+    values = tuple(map(float, values))
+    if len(values) != len(gesture.baseline) or not all(map(math.isfinite, values)):
+        raise ValueError("Gesture values must match its settings fields and be finite")
+    if gesture.stage != "color":
+        fields = tuple(name for name, _value in gesture.baseline)
+        controls = (_linear_controls if gesture.stage == "linear" else _tone_controls)(
+            gesture.owner,
+        )
+        if fields == ("source_x", "source_y"):
+            values = project_source_white(values)
+        elif fields[0] in TONE_LEVEL_FIELDS:
+            values = (clamp_tone_anchor(
+                _tone_settings(controls), TONE_LEVEL_FIELDS.index(fields[0]), values[0],
+            ),)
+        else:
+            limits = tuple(controls.bl_rna.properties[name] for name in fields)
+            values = tuple(max(prop.hard_min, min(prop.hard_max, value))
+                           for prop, value in zip(limits, values))
+        values = tuple(float(np.float32(value)) for value in values)
     _dispatch_gesture(gesture_policy.Event(
-        "edit_color_pair", window_id=window_key, gesture_token=token, color_values=(x, y),
+        "edit_color_pair", window_id=window_key, gesture_token=token, color_values=values,
     ))
     return True
+
+
+def _edit_color_gesture(window_key, token, node, values):
+    return _edit_gizmo_gesture(window_key, token, node, values)
 
 
 def _end_color_gesture(window_key, token, node):
@@ -3414,22 +3481,46 @@ def _end_color_gesture(window_key, token, node):
 
 def _write_color_gesture(gesture, values):
     try:
-        settings = _color_controls(gesture.owner)
+        controls, changed = {
+            "linear": (_linear_controls, _linear_changed),
+            "tone": (_tone_controls, _tone_changed),
+            "color": (_color_controls, _color_changed),
+        }[gesture.stage]
+        settings = controls(gesture.owner)
     except ReferenceError:
         # A deleted owner has no surviving settings to restore.
         return
-    writes = (gesture.baseline if values is None else
-              tuple((name, value) for (name, _baseline), value in zip(gesture.baseline, values)
-                    if value != float(getattr(settings, name))))
+    if values is None:
+        writes = gesture.baseline
+    else:
+        writes = tuple((name, value) for (name, _baseline), value
+                       in zip(gesture.baseline, values, strict=True))
+    previous = tuple((name, float(getattr(settings, name))
+                      if _color_property_is_set(settings, name) else None)
+                     for name, _value in writes)
+    if values is None:
+        writes = tuple((name, value) for (name, value), (_name, prior)
+                       in zip(writes, previous) if value != prior)
+    else:
+        writes = tuple((name, value) for name, value in writes
+                       if value != float(getattr(settings, name)))
     if not writes:
         return
-    with _suspend(settings):
-        for name, value in writes:
+
+    def assign(items):
+        for name, value in items:
             if value is None:
                 _unset_color_property(settings, name)
             else:
                 setattr(settings, name, value)
-    _color_changed(settings, bpy.context)
+
+    with _suspend(settings):
+        try:
+            assign(writes)
+        except (AttributeError, ReferenceError, RuntimeError, ValueError):
+            assign(previous)
+            raise
+    changed(settings, bpy.context)
 
 
 def _push_gesture_undo(window_key):
@@ -3624,6 +3715,8 @@ class PG_OT_gesture_router(bpy.types.Operator):
             return {"PASS_THROUGH"}
         if admission == "stale":
             return {"CANCELLED", "PASS_THROUGH"}
+        if vectorscope_ui.pointer_event(context.window, event):
+            return {"RUNNING_MODAL"}
         if (event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
                 or (event.type.endswith("MOUSE") and event.value == "PRESS")):
             vectorscope_ui.remember_viewport(context.window, event.mouse_x, event.mouse_y)
@@ -3788,6 +3881,7 @@ def _all_grade_nodes():
 def _frame_change_pre(scene, *_args):
     global _frame_change_active
     _frame_change_active = True
+    vectorscope_ui.frame_change_pre(scene)
     _observe_color_frame(scene)
     if threading.current_thread() is threading.main_thread():
         _clear_frame_color_claims(scene)
@@ -4336,23 +4430,39 @@ def _depsgraph_update_post(_scene, _depsgraph=None):
     if _depsgraph is not None:
         try:
             for update in _depsgraph.updates:
-                identifier = update.id
-                if isinstance(identifier, bpy.types.Image):
-                    changed_ids.append(identifier)
-                elif isinstance(identifier, bpy.types.Object):
-                    transform = getattr(update, "is_updated_transform", None)
-                    if transform is None or transform:
+                try:
+                    identifier = update.id
+                    include_scope = isinstance(identifier, scope_types)
+                    if isinstance(identifier, bpy.types.Image):
                         changed_ids.append(identifier)
-                elif isinstance(identifier, bpy.types.Mesh):
-                    geometry = getattr(update, "is_updated_geometry", None)
-                    if geometry is None or geometry:
-                        changed_ids.append(identifier)
-                if isinstance(identifier, scope_types):
-                    original = getattr(identifier, "original", None)
-                    scope_ids.append(identifier if original is None else original)
+                    elif isinstance(identifier, bpy.types.Object):
+                        transform = getattr(update, "is_updated_transform", None)
+                        geometry = getattr(update, "is_updated_geometry", None)
+                        if transform is None or transform:
+                            changed_ids.append(identifier)
+                        include_scope = (transform is None or bool(transform)
+                                         or geometry is None
+                                         or geometry and (
+                                             identifier.type != "MESH"
+                                             or bool(identifier.modifiers)
+                                             or identifier.data is None
+                                             or getattr(identifier.data, "shape_keys", None) is not None
+                                             or identifier.mode == "EDIT"))
+                    elif isinstance(identifier, bpy.types.Mesh):
+                        geometry = getattr(update, "is_updated_geometry", None)
+                        if geometry is None or geometry:
+                            changed_ids.append(identifier)
+                        include_scope = geometry is None or bool(geometry)
+                    if include_scope:
+                        original = getattr(identifier, "original", None)
+                        scope_ids.append(identifier if original is None else original)
+                except (AttributeError, ReferenceError, RuntimeError, TypeError):
+                    # Depsgraph wrappers can become invalid during iteration.
+                    # Preserve independent observations from the rest of the batch.
+                    continue
         except (AttributeError, ReferenceError, RuntimeError, TypeError):
-            changed_ids = []
-            scope_ids = []
+            # An iterator failure must not discard notifications already read.
+            pass
     if changed_ids and not _bake.restoring:
         _bake.mark_sources(changed_ids)
     if scope_ids and not _bake.restoring:
@@ -4376,6 +4486,8 @@ def _linear_changed(settings, _context):
     if holder is None:
         return
     if holder.bl_idname == PGGradeData.bl_idname:
+        if not _frame_change_active:
+            vectorscope_ui.linear_changed(holder)
         _grade_changed(holder)
         return
 
@@ -4399,9 +4511,13 @@ def _tone_changed(settings, _context):
     if holder is None:
         return
     if holder.bl_idname == PGGradeData.bl_idname:
+        if not _frame_change_active:
+            vectorscope_ui.tone_changed(holder)
         _grade_changed(holder)
         return
     if _is_per_node_grade_node(holder):
+        if not _frame_change_active:
+            vectorscope_ui.tone_changed(holder)
         _per_node_grade_changed(holder)
         return
     if _is_shared_grade_node(holder) and holder.pg_grade is None:
@@ -4483,6 +4599,7 @@ def _selection_changed(node, _context):
         return
     _cancel_stale_color_gestures(node)
     _index_output_node(node)
+    vectorscope_ui.linear_changed(node)
     if node.pg_grade is None:
         _reset_linear(node.pg_linear)
         _reset_tone(node.pg_tone)
@@ -4508,6 +4625,7 @@ def _assign_values(node, values):
     with _suspend(settings):
         for name, value in values.items():
             setattr(settings, name, value)
+    vectorscope_ui.linear_changed(node.pg_grade)
     _grade_changed(node.pg_grade)
 
 
@@ -4571,15 +4689,21 @@ def _linear_setting_properties(*, animatable):
     }
 
 
+def _tone_peak_items():
+    return [(str(peak), localization.native(f"tone.peak.{peak}"), "")
+            for peak in TONE_PEAKS]
+
+
 def _tone_setting_properties(*, animatable):
-    return {
+    fields = {
         name: _float_setting(
             "property." + name, TONE_DEFAULTS[name], *TONE_LIMITS[index],
-            3 if index < 2 else 2 if index < 4 else 1,
+            3 if index < 2 else 2,
             _tone_anchor_changed(index), animatable=animatable,
         )
         for index, name in enumerate(TONE_LEVEL_FIELDS)
-    } | {
+    }
+    fields.update({
         "fit": _float_setting("property.fit", 0.0, -2.0, 2.0, 2,
                               _tone_changed, animatable=animatable),
         "peak_nits": EnumProperty(
@@ -4587,45 +4711,21 @@ def _tone_setting_properties(*, animatable):
             translation_context=localization.CONTEXT,
             description=localization.native("tooltip.peak"),
             default="1000",
-            items=[(str(peak), localization.native(f"tone.peak.{peak}"), "")
-                   for peak in TONE_PEAKS],
+            items=_tone_peak_items(),
             options=set(), update=_peak_changed,
         ),
-    }
+    })
+    for name in TONE_CHROMA_FIELDS:
+        minimum, maximum = TONE_CHROMA_LIMITS[name]
+        fields[name] = _float_setting(
+            "property." + name, TONE_DEFAULTS[name], minimum, maximum, 3,
+            _tone_changed, animatable=animatable,
+        )
+    return fields
 
 
 def _color_setting_properties(*, animatable):
     fields = {}
-    for family in ("j", "c"):
-        for tone in range(4):
-            for driver in _COLOR_DRIVERS:
-                if family == "j":
-                    limit = ((20.0, 20.0, 30.0, 50.0)[tone]
-                             if driver in {"a", "b"} else
-                             (_J_LOW_LIMITS if driver == "low" else _J_HIGH_LIMITS)[tone])
-                else:
-                    limit = (16.0 if driver == "high" else
-                             (4.0, 2.0, 1.0, 1.0)[tone]
-                             if driver in {"a", "b"} else 4.0)
-                name = f"{family}_{driver}_{tone}"
-                fields[name] = _float_setting(
-                    "property." + family + "_" + driver, 0.0, -limit, limit,
-                    1 if family == "j" else 2, _color_changed, animatable=animatable,
-                    description_id=f"tooltip.{family}_{driver}",
-                )
-    for name, label, tooltip in (("lightness_fit", "j_fit", "tooltip.j_fit"),
-                                 ("chroma_fit", "c_fit", "tooltip.c_fit")):
-        options = {"ANIMATABLE"} if animatable else set()
-        fields[name] = IntProperty(
-            name=localization.native("property." + label),
-            translation_context=localization.CONTEXT,
-            description=localization.native(tooltip), default=0, min=-2, max=6,
-            options=options, update=_color_changed,
-        )
-    fields["global_gain"] = _float_setting(
-        "property.global_gain", 0.0, -3.0, 3.0, 2,
-        _color_changed, animatable=animatable,
-    )
     fields["adaptance_half_saturation"] = _float_setting(
         "property.adaptance_half_saturation", 0.25, 0.05, 1.0, 2,
         _color_changed, animatable=animatable,
@@ -4777,11 +4877,16 @@ def _draw_tone_settings(node, layout):
         return
     column = layout.column()
     column.enabled = enabled
+    column.prop(settings, "black_compression_nits", slider=True)
     for field in TONE_LEVEL_FIELDS:
         column.prop(settings, field, slider=True)
     column.prop(settings, "fit", slider=True)
     column.prop(settings, "peak_nits")
     column.label(text=localization.tr("label.reference"))
+    column.separator()
+    for field in TONE_CHROMA_FIELDS:
+        if field != "black_compression_nits":
+            column.prop(settings, field, slider=True)
     column.operator(PG_OT_reset_tone.bl_idname, icon="LOOP_BACK")
 
 
@@ -4795,22 +4900,7 @@ def _color_settings_for_node(node):
     return (node, _color_controls(node))
 
 
-def _color_family_fields(family):
-    if family in {"j", "c"}:
-        return tuple(f"{family}_{driver}_{tone}"
-                     for tone in range(4) for driver in _COLOR_DRIVERS) + (
-                         "lightness_fit" if family == "j" else "chroma_fit",
-                     ) + (("global_gain",) if family == "c" else ())
-    if family == "adaptance":
-        return ("adaptance_half_saturation",) + tuple(
-            f"adaptance_{axis}_{tone}" for tone in range(4) for axis in ("a", "b")
-        )
-    return tuple(f"web_{kind}_{tone}_{handle}"
-                 for tone in range(4) for handle in range(6)
-                 for kind in ("chroma", "hue", "scale"))
-
-
-def _draw_color_family(node, layout, family):
+def _draw_warp_settings(node, layout):
     layout.context_pointer_set("pg_stack_node" if _is_stack_node(node) else "pg_node", node)
     owner, settings = _color_settings_for_node(node)
     if settings is None:
@@ -4818,49 +4908,36 @@ def _draw_color_family(node, layout, family):
     column = layout.column()
     column.enabled = _is_per_node_grade_node(node) or owner is not None
     raw = resolved = None
-    if owner is not None and family in {"adaptance", "warp"}:
-        raw = _raw_grade_settings(owner, "Linear Rec.709")
-        resolved = resolve_settings(raw)
-    if family in {"j", "c"}:
-        for tone, tone_name in enumerate(_COLOR_TONES):
-            box = column.box()
-            box.label(text=localization.tr("tone." + tone_name))
-            for driver in _COLOR_DRIVERS:
-                box.prop(settings, f"{family}_{driver}_{tone}",
-                         text=localization.tr("property." + driver), slider=True)
-        fit = "lightness_fit" if family == "j" else "chroma_fit"
-        column.prop(settings, fit, slider=True)
-        if family == "c":
-            column.prop(settings, "global_gain", slider=True)
-    elif family == "adaptance":
-        column.prop(settings, "adaptance_half_saturation", slider=True)
-        for tone, tone_name in enumerate(_COLOR_TONES):
-            box = column.box()
-            box.label(text=localization.tr("tone." + tone_name))
+    if owner is not None:
+        raw_settings = _raw_grade_settings(owner, "Linear Rec.709")
+        raw, resolved = raw_settings.color, resolve_settings(raw_settings).color
+    column.label(text=localization.tr("panel.color_adaptance"))
+    column.prop(settings, "adaptance_half_saturation", slider=True)
+    for tone, tone_name in enumerate(_COLOR_TONES):
+        box = column.box()
+        box.label(text=localization.tr("tone." + tone_name))
+        row = box.row(align=True)
+        row.prop(settings, f"adaptance_a_{tone}", text="a", slider=True)
+        row.prop(settings, f"adaptance_b_{tone}", text="b", slider=True)
+        if raw is not None and raw.adaptance[tone] != resolved.adaptance[tone]:
+            _draw_color_notice(row, "label.color_limited", "tooltip.adaptance_limited")
+    column.separator()
+    for tone, tone_name in enumerate(_COLOR_TONES):
+        box = column.box()
+        box.label(text=localization.tr("tone." + tone_name))
+        header = box.row(align=True)
+        header.label(text="")
+        for kind in ("chroma", "hue", "scale"):
+            header.label(text=localization.tr("property.web_" + kind))
+        for handle, handle_name in enumerate(_WEB_HANDLES):
             row = box.row(align=True)
-            row.prop(settings, f"adaptance_a_{tone}", text="a", slider=True)
-            row.prop(settings, f"adaptance_b_{tone}", text="b", slider=True)
-            if raw is not None and raw.color.adaptance[tone] != resolved.color.adaptance[tone]:
-                _draw_color_notice(row, "label.color_limited", "tooltip.adaptance_limited")
-    else:
-        for tone, tone_name in enumerate(_COLOR_TONES):
-            box = column.box()
-            box.label(text=localization.tr("tone." + tone_name))
-            header = box.row(align=True)
-            header.label(text="")
+            row.label(text=localization.tr("handle." + handle_name))
             for kind in ("chroma", "hue", "scale"):
-                header.label(text=localization.tr("property.web_" + kind))
-            for handle, handle_name in enumerate(_WEB_HANDLES):
-                row = box.row(align=True)
-                row.label(text=localization.tr("handle." + handle_name))
-                for kind in ("chroma", "hue", "scale"):
-                    row.prop(settings, f"web_{kind}_{tone}_{handle}", text="", slider=True)
-                    if kind == "hue":
-                        if (raw is not None and raw.color.web.hue_degrees[tone][handle]
-                                != resolved.color.web.hue_degrees[tone][handle]):
-                            _draw_color_notice(row, "label.color_limited", "tooltip.hue_limited")
-    op = column.operator(PG_OT_reset_color.bl_idname, icon="LOOP_BACK")
-    op.family = family.upper()
+                row.prop(settings, f"web_{kind}_{tone}_{handle}", text="", slider=True)
+                if (kind == "hue" and raw is not None and raw.web.hue_degrees[tone][handle]
+                        != resolved.web.hue_degrees[tone][handle]):
+                    _draw_color_notice(row, "label.color_limited", "tooltip.hue_limited")
+    column.operator(PG_OT_reset_color.bl_idname, icon="LOOP_BACK")
 
 
 def _draw_color_notice(layout, label, tooltip):
@@ -5373,15 +5450,66 @@ class PG_OT_reset_tone(bpy.types.Operator):
         if node is None:
             return {"CANCELLED"}
         if _is_per_node_grade_node(node):
-            _reset_tone(_tone_controls(node))
-            _per_node_grade_changed(node)
+            settings = _tone_controls(node)
+            _reset_tone(settings)
+            _tone_changed(settings, context)
             return {"FINISHED"}
         grade = _stack_active_grade(node) if _is_stack_node(node) else node.pg_grade
         if grade is None:
             return {"CANCELLED"}
         _reset_tone(grade.pg_tone)
-        _grade_changed(grade)
+        _tone_changed(grade.pg_tone, context)
         return {"FINISHED"}
+
+
+class PG_OT_gizmo_set_peak(bpy.types.Operator):
+    bl_idname = "perceptual_grade.gizmo_set_peak"
+    bl_label = localization.native("property.peak")
+    bl_description = localization.native("tooltip.peak")
+    bl_translation_context = localization.CONTEXT
+    bl_options = {"INTERNAL", "UNDO"}
+
+    peak_nits: EnumProperty(items=_tone_peak_items(), options={"SKIP_SAVE"})
+    node_pointer: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+    owner_pointer: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+
+    def execute(self, context):
+        node = _node_from_context(context)
+        owner = _linear_owner_for_node(node)
+        if (owner is None or not node.select
+                or str(node.as_pointer()) != self.node_pointer
+                or str(owner.as_pointer()) != self.owner_pointer):
+            return {"CANCELLED"}
+        settings = _tone_controls(owner)
+        if settings.peak_nits == self.peak_nits:
+            return {"CANCELLED"}
+        settings.peak_nits = self.peak_nits
+        if context.area is not None:
+            context.area.tag_redraw()
+        return {"FINISHED"}
+
+
+def _show_gizmo_peak_menu(context, node):
+    owner = _linear_owner_for_node(node)
+    if owner is None:
+        return
+    node_pointer = str(node.as_pointer())
+    owner_pointer = str(owner.as_pointer())
+    selected = _tone_controls(owner).peak_nits
+
+    def draw(menu, _context):
+        for peak in TONE_PEAKS:
+            value = str(peak)
+            icon = "RADIOBUT_ON" if value == selected else "RADIOBUT_OFF"
+            operator = menu.layout.operator(
+                PG_OT_gizmo_set_peak.bl_idname, icon=icon,
+                text=localization.tr(f"tone.peak.{value}"),
+            )
+            operator.peak_nits = value
+            operator.node_pointer = node_pointer
+            operator.owner_pointer = owner_pointer
+
+    context.window_manager.popup_menu(draw, title=localization.tr("property.peak"))
 
 
 class PG_OT_color_notice(bpy.types.Operator):
@@ -5406,14 +5534,6 @@ class PG_OT_reset_color(bpy.types.Operator):
     bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
-    family: EnumProperty(
-        options={"HIDDEN", "SKIP_SAVE"},
-        items=(("J", localization.native("panel.color_j"), ""),
-               ("C", localization.native("panel.color_c"), ""),
-               ("ADAPTANCE", localization.native("panel.color_adaptance"), ""),
-               ("WARP", localization.native("panel.color_warp"), "")),
-    )
-
     @classmethod
     def poll(cls, context):
         node = _output_node_from_context(context)
@@ -5429,7 +5549,7 @@ class PG_OT_reset_color(bpy.types.Operator):
         owner, settings = _color_settings_for_node(node)
         if settings is None or owner is None:
             return {"CANCELLED"}
-        _reset_color(settings, _color_family_fields(self.family.lower()))
+        _reset_color(settings)
         if _is_per_node_grade_node(node):
             _per_node_grade_changed(node)
         else:
@@ -5742,8 +5862,7 @@ class PG_PT_linear(bpy.types.Panel):
         layout.prop(settings, "cr_heading", slider=True)
         layout.prop(settings, "yb_heading", slider=True)
         layout.operator(PG_OT_reset_directions.bl_idname, icon="LOOP_BACK")
-        if _is_per_node_grade_node(node):
-            vectorscope_ui.draw_toggle(layout, context, node)
+        vectorscope_ui.draw_toggle(layout, context, node)
 
 
 class PG_PT_tone(bpy.types.Panel):
@@ -5764,7 +5883,9 @@ class PG_PT_tone(bpy.types.Panel):
             _draw_tone_settings(node, self.layout)
 
 
-class _PGColorPanel:
+class PG_PT_color_warp(bpy.types.Panel):
+    bl_idname = "PG_PT_color_warp"
+    bl_label = localization.native("panel.color_warp")
     bl_space_type = "NODE_EDITOR"
     bl_region_type = "UI"
     bl_category = localization.native("panel.category")
@@ -5778,31 +5899,7 @@ class _PGColorPanel:
     def draw(self, context):
         node = _output_node_from_context(context)
         if _is_output_node(node):
-            _draw_color_family(node, self.layout, self.color_family)
-
-
-class PG_PT_color_j(_PGColorPanel, bpy.types.Panel):
-    bl_idname = "PG_PT_color_j"
-    bl_label = localization.native("panel.color_j")
-    color_family = "j"
-
-
-class PG_PT_color_c(_PGColorPanel, bpy.types.Panel):
-    bl_idname = "PG_PT_color_c"
-    bl_label = localization.native("panel.color_c")
-    color_family = "c"
-
-
-class PG_PT_color_adaptance(_PGColorPanel, bpy.types.Panel):
-    bl_idname = "PG_PT_color_adaptance"
-    bl_label = localization.native("panel.color_adaptance")
-    color_family = "adaptance"
-
-
-class PG_PT_color_warp(_PGColorPanel, bpy.types.Panel):
-    bl_idname = "PG_PT_color_warp"
-    bl_label = localization.native("panel.color_warp")
-    color_family = "warp"
+            _draw_warp_settings(node, self.layout)
 
 
 def convert_grade_node(node, target_kind):
@@ -6208,6 +6305,7 @@ def register():
         PG_OT_match_white,
         PG_OT_reset_directions,
         PG_OT_reset_tone,
+        PG_OT_gizmo_set_peak,
         PG_OT_color_notice,
         PG_OT_reset_color,
         PG_OT_add_grade,
@@ -6218,9 +6316,6 @@ def register():
         PG_OT_gesture_router,
         PG_PT_linear,
         PG_PT_tone,
-        PG_PT_color_j,
-        PG_PT_color_c,
-        PG_PT_color_adaptance,
         PG_PT_color_warp,
     )
     try:
@@ -6257,9 +6352,12 @@ def register():
                 _registered_menus.append(record)
         _register_handlers()
         vectorscope_ui.register(lambda: ScopeRuntime(
-            bpy, _bake.manager._snapshot, _linear_settings, _working_space,
+            bpy, _bake.manager._snapshot, _scope_linear_settings, _working_space,
             gate=_bake.gate, upstream_ready=_scope_upstream_ready,
-        ))
+        ), begin=_begin_gizmo_gesture, edit=_edit_gizmo_gesture,
+            finish=_end_color_gesture, cancel=_cancel_color_gesture,
+            linear_settings=_scope_linear_settings, tone_settings=_scope_tone_settings,
+            peak_menu=_show_gizmo_peak_menu)
         if not bpy.app.timers.is_registered(_startup_reconcile_tick):
             bpy.app.timers.register(_startup_reconcile_tick, first_interval=0.1)
         _ensure_gesture_router_timer()

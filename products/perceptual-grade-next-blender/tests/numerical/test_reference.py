@@ -43,8 +43,7 @@ class ReferenceTests(unittest.TestCase):
     def test_scalar_tone_against_reference_and_selected_quantization(self):
         for name,linear,tone in cases.grades():
             prepared=prepare(linear,tone)
-            _,tp=oracle.parameters(linear,tone)
-            reference=grading.Tone(tp)
+            reference=oracle.reference_chroma(tone).tone
             h=np.r_[0.,np.geomspace(1e-8,1e7,15000),100*reference.source,
                     np.nextafter(100*reference.source,np.inf)]
             expected=reference.remap(h)
@@ -63,8 +62,8 @@ class ReferenceTests(unittest.TestCase):
                 z=np.minimum(t/np.float32(prepared.table.domain),np.float32(1))
                 table_value=100*(np.float32(prepared.tone.slope)*t+prepared.table.evaluate(z))
                 self.assertLessEqual(float(np.max(abs(table_value-truth)/np.maximum(1,abs(truth)))),1e-5)
-        smooth=prepare(tone=ToneSettings(input_nits=(0.,8.,40.,235.,1150.)))
-        sharp=prepare(tone=ToneSettings(input_nits=(.2,.21,42.,250.,1300.),fit=2.))
+        smooth=prepare(tone=ToneSettings(input_nits=(8., 40., 235., 1150.)))
+        sharp=prepare(tone=ToneSettings(input_nits=(.21, 42., 250., 1300.), black_compression_nits=.2,fit=2.))
         self.assertEqual(smooth.table.cells,256)
         self.assertEqual(sharp.table.cells,256)
         self.assertLessEqual(build_table(sharp.tone,256).max_error,1e-5)

@@ -1340,7 +1340,11 @@ python_test(
 
 python_test(
     name = "vectorscope",
-    srcs = ["runtime/test_vectorscope.py"],
+    srcs = [
+        "runtime/test_gizmo_geometry.py",
+        "runtime/test_vectorscope.py",
+        "runtime/test_vectorscope_capture.py",
+    ],
     base_module = "tests.perceptual_grade_blender",
     resources = {
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
@@ -1366,6 +1370,7 @@ python_test(
             "blender": "//third_party:blender_native",
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
             "vectorscope_runner.py": "installed/vectorscope_runner.py",
+            "vectorscope_drag_checks.py": "installed/vectorscope_drag_checks.py",
             "vectorscope_shader_runner.py": "installed/vectorscope_shader_runner.py",
             "xvfb": "//third_party:xvfb_software_linux",
         },
@@ -1373,9 +1378,24 @@ python_test(
             "blender": "//third_party:blender_native",
             "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
             "vectorscope_runner.py": "installed/vectorscope_runner.py",
+            "vectorscope_drag_checks.py": "installed/vectorscope_drag_checks.py",
             "vectorscope_shader_runner.py": "installed/vectorscope_shader_runner.py",
         },
     }),
+)
+
+python_test(
+    name = "vectorscope_latency",
+    srcs = ["tools/test_vectorscope_latency.py"],
+    base_module = "tests.perceptual_grade_blender",
+    labels = ["gpu"],
+    resources = {
+        "vectorscope-latency.json": "//products/perceptual-grade-next-blender/tools/reports:vectorscope_latency_report[json]",
+    },
+    target_compatible_with = [
+        "prelude//os:linux",
+        "prelude//cpu:x86_64",
+    ],
 )
 
 # Installed compatibility coverage on Blender 5.2.4.

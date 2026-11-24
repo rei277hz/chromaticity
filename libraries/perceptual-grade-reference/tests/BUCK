@@ -22,8 +22,16 @@ python_test(
         "pole_spindle",
         "piecewise_spindle",
         "boundary_curves",
+        "unified_chroma",
     ]
 ]
+
+python_test(
+    name = "unified_chroma_dctl",
+    srcs = ["test_unified_chroma_dctl.py"],
+    base_module = "tests.reference",
+    deps = ["//products/perceptual-grade-dctl/tests:support"],
+)
 
 python_library(
     name = "legacy_capacity_support",

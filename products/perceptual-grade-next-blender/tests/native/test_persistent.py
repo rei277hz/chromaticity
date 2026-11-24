@@ -113,7 +113,10 @@ class PersistentTests(unittest.TestCase):
                     self.assertIn(slots['tone'],active_reachable)
                     self.assertTrue(active_reachable.isdisjoint(
                         pointer for name,pointer in slots.items() if name!='tone'))
-                    built.apply(self.reset,expected_revision=1)
+                    chroma_only=Settings(tone=replace(Settings().tone,vivid_gain=1.))
+                    built.apply(prepare_update(chroma_only,built.prepared),expected_revision=1)
+                    self.assertTrue(self.reachable_images(built.tree).isdisjoint(slots.values()))
+                    built.apply(self.reset,expected_revision=2)
                     self.assertEqual(self.reachable_images(built.tree),reset_reachable)
                     self.assertEqual(self.identities(built),identity)
                 finally:
@@ -135,7 +138,7 @@ class PersistentTests(unittest.TestCase):
                 built=fixture.built;identity=self.identities(built)
                 try:
                     self.assertEqual(set(built._graph.image_slots),
-                        {'tone','coefficient_table','web_table','web_toe_table','adaptance_table'})
+                        {'tone','web_table','web_toe_table','adaptance_table'})
                     sequence=selected+[selected[0]]
                     for name,linear,tone,color in sequence:
                         with self.subTest(space=space,context=context,case=name):

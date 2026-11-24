@@ -157,14 +157,14 @@ def configure(name):
     if name == "tone":
         grade.pg_tone.fit = .5
     elif name == "anchors":
-        for field, value in zip(nodes.TONE_LEVEL_FIELDS, (.2, 8., 40., 235., 1150.)):
+        for field, value in zip(nodes.TONE_LEVEL_FIELDS, (8., 40., 235., 1150.)):
             setattr(grade.pg_tone, field, value)
         grade.pg_tone.fit = 2.
     elif name == "color":
         grade.pg_tone.fit = .25
-        grade.pg_color.j_a_1 = .0625
-        grade.pg_color.c_high_2 = -.0625
-        grade.pg_color.global_gain = .03125
+        grade.pg_tone.muted_gain = .0625
+        grade.pg_tone.highlight_chroma = -.0625
+        grade.pg_tone.vivid_gain = .03125
         grade.pg_color.adaptance_a_1 = .0625
         grade.pg_color.adaptance_b_2 = -.03125
         grade.pg_color.web_hue_1_0 = 12.

@@ -3,7 +3,7 @@ import numpy as np
 from .model import Model
 from .grading import ColorSettings
 from .stack import Stack,FROM_NATIVE,matrix_native
-from .bake import Kernel
+from .bake import Kernel, Inverse
 from ..perceptual_grade_core.model.boundary_polynomial import PolynomialTable
 from ..perceptual_grade_core.model.stack_kernel import StackKernel
 from ..perceptual_grade_core.model.tone_table import ToneTable
@@ -25,10 +25,23 @@ class BakeStack(StackKernel,Stack):
         model=self.models[0] if self.models else Model(hk_guard=hk_guard)
         data=model.boundary.cache
         self.table=PolynomialTable(data) if table is None else table
-        kernels=tuple(Kernel(data,m.tone,m.color,self.table,hk_guard=self.hk_guard) for m in self.models)
+        kernels=tuple(Kernel(data,m.tone,m.color,self.table,hk_guard=self.hk_guard,
+                             tone_chroma=m.tone_chroma) for m in self.models)
         StackKernel.__init__(self,kernels,[matrix_native(m) for m in self.models],self.inverses,
-            self.directions,FROM_NATIVE,model.acescg_y,
-            [(m.settings.tone,m.settings.color,self.hk_guard) for m in self.models],tone_factory=ToneTable)
+            self.directions,FROM_NATIVE,model.acescg_y,[m.nonlinear_key for m in self.models],
+            tone_factory=ToneTable)
+        # The reference kernel includes the integrated Unified Chroma stage.
+        # Use its inverse around the shared accelerated solver, while leaving
+        # legacy kernels on the portable inverse implementation.
+        solvers=[]
+        for kernel, solver in zip(self.kernels, self.solvers):
+            if kernel.tone_chroma is None:
+                solvers.append(solver)
+                continue
+            replacement=Inverse(kernel, FROM_NATIVE, model.acescg_y)
+            replacement.tone_table=solver.tone_table
+            solvers.append(replacement)
+        self.solvers=tuple(solvers)
 
     def prepare_gpu(self):
         if self.program is None:

@@ -19,6 +19,70 @@ uses the optional reference-owned Blender adapter. Host GPU imports are lazy.
 The reference owns the CPU kernel and forward/inverse/boundary shader builders.
 CPU evaluation and the CLI do not load a host or discover another product.
 
+## Original Unified Chroma
+
+The reference adopts the Original Unified Chroma 2–3A baseline evaluated in
+the DCTL prototype. `Model`, the JSON CLI, analytic `Stack`, and CPU and GPU
+`BakeStack` use it by default. Next Blender is the downstream integration
+step. [DCTL audition and design](../../../products/perceptual-grade-dctl/JC-OVERLAP-PROTOTYPES.md#unified-chroma-audition)
+
+Use `Settings(tone_chroma=UnifiedChromaSettings(...))` in Python or a
+`"tone_chroma"` object with the same fields in JSON. For direct stage
+evaluation, import `UnifiedChroma` and `UnifiedChromaSettings` from
+`color_tools.perceptual_grade_reference.unified_chroma`. Both
+`UnifiedChroma(settings).forward(points)` and `.inverse(points)` accept
+finite `(..., 3)` arrays of signed `(J_A, a, b)`. The public stage has no
+RGB adapters.
+
+| Field | Default | Domain |
+| --- | --- | --- |
+| `input_nits` | `(3.148082606120999, 36.54, 203, 1000)` | Four finite source anchors in Shadows, Midtones, White, Highlights order |
+| `black_compression_nits` | `0` | `[0, 2]` |
+| `peak_nits` | `1000` | `500`, `1000`, `2000`, or `4000` |
+| `fit` | `0` | Integers from `-2` through `2` |
+| `muted_gain`, `vivid_gain` | `0` | `[-2, 2]` stops |
+| `saturation_crossover` | `0.5` | `[0.05, 0.95]` |
+| `shadow_chroma`, `highlight_chroma` | `0` | `[-2, 2]` stops |
+| `tone_crossover` | `45` | `[10, 160]` in `abs(J_A)` units |
+
+Source anchors use the D65 / 203-nit neutral conversion with a minimum
+spacing of `0.001` in normalized J. The Tone curve maps the input Highlight
+anchor to the selected peak. H–K influence is fixed at `1.0`. Nondefault
+legacy Tone or driver settings select the legacy path. Combining them with
+explicit `tone_chroma` settings raises an error. The `color` settings for
+Warp and Adaptance work with either path.
+
+For a chroma map with positive endpoint gains L and H, define
+`R(C; L, H, k) = C*(L*k + H*C)/(k + C)`. At `k = 0` it maps to `H*C`.
+At input `j = abs(J_A)`, set `B = (35/75)*j`. The Muted/Vivid map uses
+`L = 2^muted_gain`, `H = 2^vivid_gain`, and
+`k = B*p/(1-p)*sqrt(H/L)` with saturation crossover `p`. The second map
+uses `L = 1`, `k = B/9`, and `H = 2^amount`. The amount is the Shadow
+or Highlight setting multiplied by cubic smoothstep of the clamped
+distance `abs(j/tone_crossover - 1)` from the crossover. Both maps scale
+`(a,b)` along its original direction and use the original lightness.
+
+Tone takes the resulting height `h = sqrt(J_A^2 + 66*C)`. For black
+parameter `b` converted to normalized J, it compresses `x = h/100` by
+`x*(x+b)/(x+2*b)` with identity at `b = 0`. The original softplus
+remap uses this compressed height and the correspondingly compressed
+source anchors. Tone reaches the mapped height by scaling the entire
+signed appearance ray by one positive factor.
+
+Inverse solves the monotone softplus remap for its normalized input. Black
+Compression, the H–K ray scale, and both chroma edits then invert by
+quadratic roots. BakeStack uses the existing float32 `ToneTable` to
+approximate the softplus inverse with its preparation tolerance of
+`2e-5` relative in normalized curve input. It applies the same quadratic
+steps, then checks candidates with the complete guarded forward grade.
+Warp and Adaptance can require a separate candidate search. Model and
+Stack RGB inverses report their complete forward residual.
+
+The Lean theorem gives one exact-real preimage for every signed appearance
+triple under the integrated stage. The theorem covers black, gray, and
+chromatic points at zero lightness, and stops at the handoff to Warp.
+[Proof scope](../proofs/README.md)
+
 ## Current Warp ordering (2026-11-11)
 
 The reference evaluates J/C edits → Warp hue/chroma → selective Adaptance →
@@ -2091,6 +2155,7 @@ separately.
 | Cardinal tone weights and actual hue sectors | `web_blend_anchors`, `web_s5_clamped_c2`, `web_hue_sector_slope_positive`, `web_hue_join_c2` |
 | Web scale and fixed-tone geometry | `web_signed_saturation_scale`, `web_staged_jacobian_positive`, `web_full_neutral_derivative` |
 | Tone and retained production drivers | `kernel_strictMono`, `tone_strictMono`, `drivers_complement` |
+| Original Unified Chroma and integrated inverse | `unified_radial_strict_mono`, `unified_radial_quadratic`, `unified_radial_inverse_exists`, `unified_radial_stable_inverse`, `unified_black_inverse_exists`, `unified_fitted_inverse_exists`, `unified_tone_curve_inverse_exists`, `unified_chroma_radius_inverse_exists`, `unified_ray_height_unique`, `unified_ray_gain`, `unified_chroma_tone_inverse_exists_unique` |
 | Retained production 0.4U crossover and driver regions | `membership_bounds`, `membership_scale`, `membership_abs_crossover`, `drivers_crossover`, `capacity_low_driver_gt_high_iff`, `driver_neutral`, `driver_bounds` |
 | Retained production quadratic response and hue-independent neutral derivative | `driver_neutral_quadratic_bound`, `capacity_drivers_neutral_derivative` |
 | Actual-cube projection | `cube_guard_identity`, `cube_guard_idempotent`, `cube_guard_preserves_ja_hue`, `cube_guard_chroma_nonincrease`, `cube_guard_containment` |

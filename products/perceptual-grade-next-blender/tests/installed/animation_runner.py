@@ -153,31 +153,31 @@ with nodes._suspend(shader_node):
     for handle in range(6):
         setattr(shader_node, f"web_hue_2_{handle}", 0.0)
 
-fields = ("j_low_0", "c_low_0")
+fields = ("adaptance_a_0", "adaptance_b_0")
 keyframe_frame = scene.frame_current
 scene.tool_settings.use_keyframe_insert_auto = True
 gesture_token = nodes._begin_color_gesture(window_key, shader_node, fields)
 assert gesture_token is not None
-assert nodes._edit_color_gesture(window_key, gesture_token, shader_node, (3.0, 0.0))
+assert nodes._edit_color_gesture(window_key, gesture_token, shader_node, (0.75, 0.0))
 assert nodes._end_color_gesture(window_key, gesture_token, shader_node)
 pair_paths = tuple(shader_node.path_from_id(name) for name in fields)
 pair_curves = tuple(item for item in curves if item.data_path in pair_paths)
 assert tuple(item.data_path for item in pair_curves) == pair_paths[:1]
-assert tuple(pair_curves[0].keyframe_points[0].co) == (keyframe_frame, 3.0)
+assert tuple(pair_curves[0].keyframe_points[0].co) == (keyframe_frame, 0.75)
 
 gesture_token = nodes._begin_color_gesture(window_key, shader_node, fields)
 assert gesture_token is not None
-assert nodes._edit_color_gesture(window_key, gesture_token, shader_node, (6.0, 0.5))
+assert nodes._edit_color_gesture(window_key, gesture_token, shader_node, (1.25, 0.5))
 nodes._cancel_color_gesture(window_key, gesture_token)
-assert not nodes._edit_color_gesture(window_key, gesture_token, shader_node, (7.0, 1.0))
+assert not nodes._edit_color_gesture(window_key, gesture_token, shader_node, (1.5, 1.0))
 assert not nodes._end_color_gesture(window_key, gesture_token, shader_node)
 assert gesture_token not in nodes._gesture_keyframe_baselines
-assert (shader_node.j_low_0, shader_node.c_low_0) == (3.0, 0.0)
-assert not shader_node.is_property_set("c_low_0")
+assert (shader_node.adaptance_a_0, shader_node.adaptance_b_0) == (0.75, 0.0)
+assert not nodes._color_property_is_set(shader_node, "adaptance_b_0")
 assert tuple(item.data_path for item in curves if item.data_path in pair_paths) == pair_paths[:1]
-assert tuple(pair_curves[0].keyframe_points[0].co) == (keyframe_frame, 3.0)
+assert tuple(pair_curves[0].keyframe_points[0].co) == (keyframe_frame, 0.75)
 curves.remove(pair_curves[0])
-shader_node.property_unset("j_low_0")
+nodes._unset_color_property(shader_node, "adaptance_a_0")
 scene.tool_settings.use_keyframe_insert_auto = False
 
 stack = nodes.create_stack_node(material.node_tree)
@@ -185,18 +185,18 @@ first_grade = nodes._make_grade()
 second_grade = nodes._make_grade()
 for grade in (first_grade, first_grade, second_grade):
     stack.pg_stack_entries.add().grade = grade
-first_grade.pg_color.j_low_0 = -2.0
+first_grade.pg_color.adaptance_a_0 = -1.0
 for next_index in (1, 2):
     stack.pg_active_index = 0
     gesture_token = nodes._begin_color_gesture(window_key, stack, fields)
     assert gesture_token is not None
-    assert nodes._edit_color_gesture(window_key, gesture_token, stack, (4.0, 1.0))
-    assert (first_grade.pg_color.j_low_0, first_grade.pg_color.c_low_0) == (4.0, 1.0)
+    assert nodes._edit_color_gesture(window_key, gesture_token, stack, (1.0, 0.5))
+    assert (first_grade.pg_color.adaptance_a_0, first_grade.pg_color.adaptance_b_0) == (1.0, 0.5)
     stack.pg_active_index = next_index
     assert nodes._gesture_token(window_key) is None
-    assert not nodes._edit_color_gesture(window_key, gesture_token, stack, (5.0, 2.0))
-    assert (first_grade.pg_color.j_low_0, first_grade.pg_color.c_low_0) == (-2.0, 0.0)
-    assert (second_grade.pg_color.j_low_0, second_grade.pg_color.c_low_0) == (0.0, 0.0)
+    assert not nodes._edit_color_gesture(window_key, gesture_token, stack, (1.5, 1.0))
+    assert (first_grade.pg_color.adaptance_a_0, first_grade.pg_color.adaptance_b_0) == (-1.0, 0.0)
+    assert (second_grade.pg_color.adaptance_a_0, second_grade.pg_color.adaptance_b_0) == (0.0, 0.0)
 material.node_tree.nodes.remove(stack)
 for grade in (first_grade, second_grade):
     bpy.data.node_groups.remove(grade)

@@ -12,6 +12,7 @@ from color_tools.perceptual_grade_reference.grading import ColorSettings, ToneSe
 from color_tools.perceptual_grade_reference.model import Model, Settings
 from color_tools.perceptual_grade_reference.responses import hk_energy
 from color_tools.perceptual_grade_reference.stack_bake import BakeStack
+from color_tools.perceptual_grade_reference.unified_chroma import UnifiedChromaSettings
 from .gpu_support import initialize
 
 
@@ -127,6 +128,42 @@ class WarpGPUComputeTests(unittest.TestCase):
         expected = stack.bake_native(self.points)
         actual = stack.bake_native(self.points, "GPU", program=self.program)
         self.assert_normalized_close(actual, expected, 3e-3)
+
+    def test_unified_chroma_forward_and_inverse(self):
+        points = np.array([[.12, .18, .19], [.31, .27, .23], [.1, .1, .1], [0., 0., 0.]], dtype="f4")
+        chroma = UnifiedChromaSettings(muted_gain=-.3, vivid_gain=.4, shadow_chroma=.2)
+        tone = replace(chroma, input_nits=(2., 44., 200., 1100.), black_compression_nits=.7, fit=-2)
+        cases = [
+            Settings(tone_chroma=chroma),
+            Settings(tone_chroma=tone),
+            Settings(tone_chroma=tone, color=ColorSettings(
+                web=WebSettings(log_scale=((.05,) * 6,) * 4),
+                adaptance=((.02, -.01),) * 4)),
+        ]
+        forward = ForwardProgram(self.base.kernels[0])
+        for setting in cases:
+            with self.subTest(setting=setting):
+                stack = self.stack([setting], ["INVERSE"])
+                solver = stack.solvers[0]
+                k = solver.kernel
+                self.program.set_inverse(solver)
+                forward.set_kernel(k)
+                target_rgb = k.evaluate(points)
+                target_state = k.grade(k.tone_state(k.enter(points)))
+                self.assert_normalized_close(forward.evaluate(points, 2)[:, :3], target_rgb)
+                self.assert_normalized_close(self.program.evaluate(points, 3), target_state)
+                for appearance, target in enumerate((target_rgb, target_state)):
+                    actual = self.program.evaluate(target, appearance)
+                    expected = solver.evaluate(target, bool(appearance))
+                    self.assert_normalized_close(actual[:, :3], expected[:, :3], 2e-3)
+                    measured = np.max(abs(solver.residual(actual[:, :3], target, bool(appearance))), axis=-1)
+                    np.testing.assert_allclose(actual[:, 3], measured, rtol=2e-2, atol=3e-5)
+
+        first, second = cases[:2]
+        stack = self.stack([first, second], ["FORWARD", "INVERSE"])
+        self.assertFalse(stack.matching(0, 1))
+        actual = stack.bake_native(points, "GPU", program=self.program)
+        self.assert_normalized_close(actual, stack.bake_native(points), 2e-3)
 
     def test_default_adapter_and_factory_failures_are_visible(self):
         stack = self.stack([Settings()])

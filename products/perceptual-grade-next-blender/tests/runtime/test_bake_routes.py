@@ -95,8 +95,12 @@ def settings():
         pg_linear=SimpleNamespace(exposure=0., source_x=.3127, source_y=.329,
                                   cr_balance=0., yb_balance=0., cr_spread=0.,
                                   yb_spread=0., cr_heading=0., yb_heading=0.),
-        pg_tone=SimpleNamespace(input_black=0., input_shadows=1., input_midtones=36.54,
-                                input_white=203., input_highlights=1000., fit=0., peak_nits="1000"))
+        pg_tone=SimpleNamespace(input_shadows=1., input_midtones=36.54,
+                                input_white=203., input_highlights=1000.,
+                                black_compression_nits=0., muted_gain=0., vivid_gain=0.,
+                                saturation_crossover=.5, shadow_chroma=0.,
+                                highlight_chroma=0., tone_crossover=45., fit=0.,
+                                peak_nits="1000"))
 
 
 class BakeRouteTests(unittest.TestCase):
@@ -364,8 +368,7 @@ class BakeRouteTests(unittest.TestCase):
                                           self.color_ui.COLOR_FIELDS)
 
     def test_upstream_and_stack_color_edits_change_bake_identity(self):
-        names = ("j_a_1", "c_high_2", "lightness_fit", "chroma_fit", "global_gain",
-                 "adaptance_half_saturation", "adaptance_b_3",
+        names = ("adaptance_half_saturation", "adaptance_b_3",
                  "web_chroma_0_0", "web_hue_1_2", "web_scale_3_5")
         for kind in ("PGShaderGrade", "PGShaderGradePerNode", "PGShaderGradeStack"):
             with self.subTest(upstream=kind):
@@ -1044,6 +1047,53 @@ class BakeRouteTests(unittest.TestCase):
         after = self.module.describe_vectorscope(target, context)
         self.assertEqual(before["source_signature"], after["source_signature"])
         self.assertNotEqual(before["capture_signature"], after["capture_signature"])
+
+    def test_vectorscope_compositor_omits_active_context_object_dependency(self):
+        tree = Tree("Compositor", "CompositorNodeTree")
+        self.scene.compositing_node_group = tree
+        self.scene.view_layers = Collection((ID("View Layer"),))
+        shared_target = self.make_grade(tree)
+        target = self.make_grade(tree, name="Per-Node Grade", kind="PGCompositorGradePerNode")
+        context_object = ID("Active Object", type="MESH", data=ID("Active Mesh"))
+        self.scene.objects.append(context_object)
+        self.host.data.objects.append(context_object)
+        source = Node(tree, "CompositorNodeRGB", outputs=(("Image", None),))
+        link(source, "Image", shared_target, "Color")
+        link(source, "Image", target, "Color")
+        context = SimpleNamespace(
+            scene=self.scene, object=context_object,
+            view_layer=self.scene.view_layers[0],
+            space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()),
+        )
+        for grade in (shared_target, target):
+            with self.subTest(kind=grade.bl_idname):
+                grade.inputs.get("Color").type = "RGBA"
+                dependencies = []
+                route = self.module.describe_vectorscope(
+                    grade, context, dependencies=dependencies,
+                )
+                self.assertIsNone(route["object_key"])
+                self.assertNotIn(context_object.as_pointer(),
+                                 {item.as_pointer() for item in dependencies})
+
+    def test_vectorscope_shader_coverage_proves_opaque_principled_base_color(self):
+        self.material.bl_rna = SimpleNamespace(identifier="Material")
+        shader = Node(
+            self.tree, "ShaderNodeBsdfPrincipled",
+            inputs=(("Base Color", None), ("Alpha", 1.0), ("Transmission Weight", 0.0)),
+            outputs=(("BSDF", None),),
+            bl_rna=SimpleNamespace(properties=()),
+        )
+        output = Node(
+            self.tree, "ShaderNodeOutputMaterial", inputs=(("Surface", None),),
+            outputs=(), is_active_output=True,
+        )
+        link(self.grade, "Color", shader, "Base Color")
+        link(shader, "BSDF", output, "Surface")
+        self.assertTrue(self.module._vectorscope_coverage_invariant(self.material, self.grade))
+
+        shader.inputs.get("Alpha").default_value = 0.5
+        self.assertFalse(self.module._vectorscope_coverage_invariant(self.material, self.grade))
 
     def test_saved_compositor_bake_resolves_original_effect_after_selection(self):
         tree = Tree("Bake Graph", "CompositorNodeTree")

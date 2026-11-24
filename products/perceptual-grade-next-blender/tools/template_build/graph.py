@@ -680,27 +680,72 @@ class Graph(ColorGraph):
         right = self.vector((blend, self.mul(self.mul(u3, v), self.madd(3, u, -4)), self.mul(.5, self.mul(u3, v2))))
         return self.add(self.dot(self._sample(cell), left), self.dot(self._sample(self.add(cell, 1)), right))
 
-    def remap(self, magnitude, *, force=False):
-        tone = self.prepared.tone if self.parameters is None else self.parameters.tone
-        if not tone.active and not force:
-            return magnitude
-        t = self.maximum(0, self.div(self.sub(self.mul(.01, magnitude), tone.black), tone.span))
+    @property
+    def tone_parameters(self):
+        return self.prepared.tone if self.parameters is None else self.parameters.tone
+
+    def tone_chroma_controls(self):
+        tone = self.tone_parameters
+        return (*tone.chroma_parameters, tone.chroma_active, *tone.chroma_tone)
+
+    def tone_position(self, magnitude):
+        tone = self.tone_parameters
+        x = self.mul(.01, magnitude)
+        # x * (x + black) / (x + 2 * black), including exact reset.
+        weight = self.div(tone.black, self.madd(2., tone.black, x))
+        return self.div(self.mul(x, self.sub(1., weight)), tone.span)
+
+    def remap_normalized(self, t):
+        tone = self.tone_parameters
         # A uniform source-position grid keeps the accepted Fit range within
         # the scalar error gate. Beyond the prepared domain, lookup clamps to
         # the analytic residual asymptote while the linear tail keeps growing.
         domain = self.prepared.table.domain if self.parameters is None else self.parameters.domain
         z = self.div(t, domain)
         value = self.madd(tone.slope, t, self.lookup(z))
-        value = self.select(self.op("COMPARE", t, 1, 0), tone.high, value)
-        return self.mul(100, value)
+        return self.select(self.op("COMPARE", t, 1, 0), tone.high, value)
+
+    def remap(self, magnitude, *, force=False):
+        active = self.tone_parameters.active
+        if isinstance(active, Real) and not active:
+            return magnitude
+        mapped = self.mul(100., self.remap_normalized(self.tone_position(magnitude)))
+        return self.select(active, mapped, magnitude)
+
+    def tone_chroma(self, state):
+        low, high, knee, enabled, shadow, highlight, crossover = self.tone_chroma_controls()
+        if isinstance(enabled, Real) and not enabled:
+            return state
+        lightness = self.abs(state.J_A)
+        base = self.mul(35. / 75., lightness)
+        offset = self.sub(self.div(lightness, crossover), 1.)
+        t = self.minimum(1., self.abs(offset))
+        stops = self.select(self.lt(offset, 0.), shadow, highlight)
+        amount = self.mul(stops, self.mul(self.mul(t, t), self.madd(-2., t, 3.)))
+        tonal = self.power(2., amount)
+
+        def radial_gain(c, k, l, h):
+            weight = self.select(self.lt(0., k), self.div(c, self.add(c, k)), 1.)
+            return self.madd(self.sub(h, l), weight, l)
+
+        first = radial_gain(state.chroma, self.mul(base, knee), low, high)
+        second = radial_gain(self.mul(state.chroma, first), self.mul(base, 1. / 9.), 1., tonal)
+        gain = self.select(enabled, self.mul(first, second), 1.)
+        return AppearanceSockets(self, state.J_A, self.mul(state.raw_a, gain),
+                                 self.mul(state.raw_b, gain), state.achromatic,
+                                 state.factor, self.mul(state.chroma, gain))
 
     def tone(self, state, *, force=False):
         if state.graph is not self:
             raise ValueError("Appearance sockets belong to another Graph")
-        if not self.prepared.tone.active and not force:
+        return self.tone_curve(self.tone_chroma(state))
+
+    def tone_curve(self, state):
+        active = self.tone_parameters.active
+        if isinstance(active, Real) and not active:
             return state
         h = state.magnitude
-        target = self.remap(h, force=force)
+        target = self.mul(100., self.remap_normalized(self.tone_position(h)))
         ratio = self.div(target, h)
         scale = self.maximum(1, ratio)
         rs = self.div(ratio, scale)
@@ -710,6 +755,7 @@ class Graph(ColorGraph):
         xn, yn = self.div(x, maximum), self.div(y, maximum)
         norm = self.mul(maximum, self.sqrt(self.madd(xn, xn, self.mul(yn, yn))))
         gain = self.mul(self.div(rs, self.add(norm, y)), ratio)
+        gain = self.select(active, gain, 1.)
         return AppearanceSockets(self, self.mul(state.J_A, gain), self.mul(state.raw_a, gain), self.mul(state.raw_b, gain),
                                  self.mul(state.achromatic, self.power(gain, 1 / self.prepared.gamma)), state.factor, self.mul(state.chroma, gain))
 
@@ -826,7 +872,7 @@ def build_group(prepared, tree_type="ShaderNodeTree", *, name="Perceptual Grade 
             else:
                 raw = graph.decode_coordinates(state.J_A, state.a, state.b)
                 decoded = DecodeSockets(raw.color, raw.valid, raw.pole_margin, state.saturated)
-        elif prepared.tone.active:
+        elif prepared.tone.active or prepared.tone.chroma_active:
             state = graph.encode_cones(graph.matrix(source.outputs["Color"], prepared.linear_to_cones))
             decoded = graph.decode(graph.tone(state))
         else:

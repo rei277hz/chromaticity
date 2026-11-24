@@ -27,9 +27,12 @@ def evaluate_stack_ap1(rgb, settings, space, *, skip_hk_at=None, project_output=
     """Compose reference Grades in AP1 and optionally project the final output."""
     value = np.asarray(rgb, dtype=np.float64)
     for index, item in enumerate(settings):
-        linear, tone = oracle.parameters(item.linear, item.tone)
+        linear, _ = oracle.parameters(item.linear, item.tone)
         color = grading.ColorSettings(**asdict(item.color))
-        reference = model.Model(model.Settings(linear=linear, tone=tone, color=color),
+        reference = model.Model(model.Settings(
+            linear=linear, color=color,
+            tone_chroma=oracle.reference_chroma(item.tone).settings,
+        ),
                                 space, hk_guard=index != skip_hk_at)
         boundary = oracle.exact_boundary(reference)
         to_scene = reference.xyz_to_rgb @ reference.cones_to_xyz @ np.linalg.inv(boundary.matrix)
@@ -98,9 +101,11 @@ class LUTGPUComputeTests(unittest.TestCase):
     def test_ordered_tone_grades_match_independent_reference_and_actual_edges(self):
         settings = (
             Settings(linear=LinearSettings(exposure=.4, balance=(.1, -.1)),
-                     tone=ToneSettings(input_nits=(0., 6., 42., 235., 1150.), fit=.5)),
+                     tone=ToneSettings(input_nits=(6., 42., 235., 1150.), fit=.5,
+                                       muted_gain=-.4, vivid_gain=.35, shadow_chroma=.25)),
             Settings(linear=LinearSettings(exposure=-.15),
-                     tone=ToneSettings(input_nits=(0., 4., 32., 190., 950.), fit=-.25)),
+                     tone=ToneSettings(input_nits=(4., 32., 190., 950.), fit=-.25,
+                                       black_compression_nits=.4)),
         )
         receipts, _ = self.bake(settings, progressive=True)
         full, preview = receipts["full"].cube, receipts["preview"].cube
@@ -121,7 +126,9 @@ class LUTGPUComputeTests(unittest.TestCase):
     def test_gpu_vertices_match_shader_and_compositor_grade_graphs_in_scene_basis(self):
         settings = (Settings(
             linear=LinearSettings(exposure=.25, source_xy=(.31, .34)),
-            tone=ToneSettings(input_nits=(0., 5., 38., 225., 1200.), fit=.25),
+            tone=ToneSettings(input_nits=(5., 38., 225., 1200.), fit=.25,
+                              black_compression_nits=.65, muted_gain=-.5, vivid_gain=.7,
+                              saturation_crossover=.36, shadow_chroma=.5, highlight_chroma=-.4),
             color=guard_before_scale_grade(),
         ),)
         receipts, prepared = self.bake(settings, space="Linear Rec.2020")
@@ -152,12 +159,15 @@ class LUTGPUComputeTests(unittest.TestCase):
             np.testing.assert_allclose(actual["alpha"], values[:, 3], rtol=0, atol=1e-6)
 
     def test_ordered_color_grades_guard_before_scale_in_both_resolutions(self):
+        warp = guard_before_scale_grade()
+        warp = replace(warp, web=replace(warp.web, log_chroma=((2.,) * 6,) * 4,
+                                         log_scale=((.5,) * 6,) * 4))
         settings = (
             Settings(linear=LinearSettings(exposure=-6.),
-                     color=ColorSettings(global_gain=3.)),
-            Settings(color=guard_before_scale_grade()),
+                     tone=ToneSettings(muted_gain=2., vivid_gain=2., shadow_chroma=2.),
+                     color=warp),
+            Settings(color=warp),
         )
-        receipts, _ = self.bake(settings, progressive=True)
         ids = np.array(((0, 0, 0), (40, 0, 0), (0, 40, 0), (0, 0, 40),
                         (16, 16, 16), (32, 32, 32), (64, 64, 64)))
         source = lut.axis()[ids]
@@ -165,6 +175,7 @@ class LUTGPUComputeTests(unittest.TestCase):
         for index in range(len(settings)):
             skipped = evaluate_stack_ap1(source, settings, "ACEScg", skip_hk_at=index)
             self.assertFalse(np.allclose(expected, skipped), f"H-K repair at entry {index + 1}")
+        receipts, _ = self.bake(settings, progressive=True)
         for quality, indices in (("preview", ids//2), ("full", ids)):
             with self.subTest(quality=quality):
                 actual = receipts[quality].cube.values[tuple(indices.T)]
@@ -204,7 +215,8 @@ class LUTGPUComputeTests(unittest.TestCase):
         first = Settings(tone=ToneSettings(
             input_nits=tuple(.5 * value for value in ToneSettings().input_nits), fit=.5,
         ))
-        second = Settings(tone=ToneSettings(input_nits=(0., 9., 60., 290., 1400.), fit=-.25))
+        second = Settings(tone=ToneSettings(input_nits=(9., 60., 290., 1400.), fit=-.25,
+                                             black_compression_nits=.65))
         ids = np.array((12, 24, 32, 40, 48, 56, 64))
         target = lut.axis()[ids]
         white = np.full((1, 3), lut.MAXIMUM)
@@ -263,10 +275,29 @@ class LUTGPUComputeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "singular Linear"):
             self.bake((singular,), directions=("INVERSE",))
 
+    def test_tone_chroma_round_trip_recovers_signed_chromatic_intermediates(self):
+        grade = Settings(
+            linear=LinearSettings(matrix=tuple(map(tuple, -np.eye(3)))),
+            tone=ToneSettings(input_nits=(5., 38., 225., 1200.), fit=1.5,
+                              black_compression_nits=.8, muted_gain=-.6, vivid_gain=.4,
+                              saturation_crossover=.35, shadow_chroma=.35,
+                              highlight_chroma=-.2, tone_crossover=48.),
+        )
+        ids = np.array(((0, 0, 0), (24, 24, 26), (32, 34, 30),
+                        (42, 40, 42), (50, 52, 52)))
+        points = lut.axis()[ids]
+        intermediate = evaluate_stack_ap1(points, (grade,), "ACEScg", project_output=False)
+        self.assertTrue((intermediate[1:] < 0.).all())
+        receipts, _ = self.bake((grade, grade), directions=("FORWARD", "INVERSE"))
+        actual = receipts["full"].cube.values[tuple(ids.T)]
+        np.testing.assert_allclose(actual, points, rtol=2e-4, atol=3e-5)
+
     def test_inverse_authored_color_reproduces_chromatic_rgb_targets(self):
         grade = Settings(linear=LinearSettings(exposure=-2.),
-                         tone=ToneSettings(input_nits=(0., 5., 38., 225., 1200.)),
-                         color=ColorSettings(global_gain=.35,
+                         tone=ToneSettings(input_nits=(5., 38., 225., 1200.),
+                                           black_compression_nits=.8, muted_gain=-.6, vivid_gain=.4,
+                                           shadow_chroma=.35, highlight_chroma=-.2),
+                         color=ColorSettings(
                              web=WebSettings(hue_degrees=((1., -2., 3., 1., -1., 2.),) * 4)))
         ids = np.array(((28, 31, 29), (40, 37, 41), (47, 50, 48), (54, 52, 50),
                         (64, 64, 64)))
@@ -283,7 +314,7 @@ class LUTGPUComputeTests(unittest.TestCase):
     def test_unreachable_inverse_targets_report_approximation_at_both_resolutions(self):
         # Strong compression leaves saturated AP1 targets outside the maximum
         # chroma reachable from finite cone responses.
-        grade = Settings(color=ColorSettings(global_gain=-25.))
+        grade = Settings(color=ColorSettings(web=WebSettings(log_chroma=((-16.,)*6,)*4)))
         receipts, _ = self.bake((grade,), directions=("INVERSE",), progressive=True)
         for quality, result in receipts.items():
             with self.subTest(quality=quality):

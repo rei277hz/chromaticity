@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import runpy
 import sys
 import time
 import traceback
@@ -21,12 +22,23 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_vectorscope.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
+vectorscope = importlib.import_module(extension.__name__ + ".vectorscope")
 vectorscope_ui = importlib.import_module(extension.__name__ + ".vectorscope_ui")
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append
 ) is extension, errors
 assert not errors and not bpy.app.background, errors
+bpy.context.preferences.edit.use_global_undo = True
+# A saved preferences file suppresses the first-run Quick Setup popup.
+bpy.ops.wm.save_userpref()
+drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
+select = drag_checks["select"]
+keyframes = drag_checks["keyframes"]
+encoded_rgb = drag_checks["encoded_rgb"]
+chroma_bin = drag_checks["chroma_bin"]
+complete_trace = drag_checks["complete_trace"]
+assert_solid_trace = drag_checks["assert_solid_trace"]
 
 WIDTH, HEIGHT = 96, 64
 TREE_NAME = "Vectorscope compositor fixture"
@@ -64,13 +76,7 @@ def paint(color):
 
 
 def scope_bin(color, exposure=0.0):
-    linear = np.asarray(color[:3]) * (2.0 ** exposure)
-    code = np.where(linear < 0.018, 4.5 * linear,
-                    1.099 * linear ** 0.45 - 0.099)
-    luma = np.dot(code, (0.2126, 0.7152, 0.0722))
-    cr = (code[0] - luma) / 1.5748
-    cb = (code[2] - luma) / 1.8556
-    return tuple(int((component + 0.65) * 144 / 1.3) for component in (cr, cb))
+    return chroma_bin(encoded_rgb(color, exposure))
 
 
 def paint_grid():
@@ -141,6 +147,17 @@ space.pin = True
 space.node_tree = tree
 space.show_region_ui = True
 region = next(item for item in area.regions if item.type == "WINDOW")
+pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui, window, area, region)
+draw_tone = vectorscope_ui._draw_tone
+
+
+def track_tone_draw(box, state, key, linear, tone):
+    draw_tone(box, state, key, linear, tone)
+    if state is not None and state.status == "current" and state.waveforms is not None:
+        report["tone_gizmo_drawn"] = True
+
+
+vectorscope_ui._draw_tone = track_tone_draw
 
 
 def checkpoint(step):
@@ -188,11 +205,9 @@ def wait_for(predicate, step, timeout=90.0):
 def snapshot():
     value = state()
     assert value is not None, "The selected Grade has no vectorscope display state"
-    brightness = np.asarray(value.brightness)
-    assert brightness.shape == (144, 144), brightness.shape
-    assert np.isfinite(brightness).all(), "The vectorscope contains nonfinite density"
+    trace = complete_trace(value)
     assert value.status != "error", value.error
-    return value, brightness.copy()
+    return value, trace[..., 3].copy()
 
 
 def current(color, exposure=0.0):
@@ -227,26 +242,321 @@ def cleanup():
         bpy.app.handlers.frame_change_post.remove(image_frame)
 
 
+def exercise_mixed_trace(previous):
+    # Add the same code value to every channel for the second color so both
+    # colors contribute to the same chroma bin with unequal alpha.
+    code = np.array(((0.43, 0.18, 0.27), (0.63, 0.38, 0.47)))
+    linear = ((code + 0.099) / 1.099) ** (1 / 0.45)
+    pixels = np.array(((*linear[0], 1.0), (*linear[1], 0.25), (*GREEN[:3], 0.0)),
+                      dtype=np.float32)
+    image.pixels.foreach_set(np.tile(pixels.reshape(-1), WIDTH * HEIGHT // len(pixels)))
+    image.update()
+    image.update_tag()
+    yield from wait_for(lambda: changed(previous), "Mixed RGBA input did not refresh the scope")
+    trace = complete_trace(state())
+    active = trace[..., 3] > 0
+    actual = trace[active, :3]
+    expected = np.broadcast_to(np.average(code, axis=0, weights=(1.0, 0.25)), actual.shape)
+    assert np.count_nonzero(active) > 1, "Mixed trace is missing its Gaussian density"
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-5)
+    report["mixed_trace_rgb"] = True
+
+
+def check_additive_trace_pixels():
+    import gpu
+    from mathutils import Matrix
+
+    background = 0.023
+    mass = np.array([[0.0, 1.0, 1.0, 998.0]])
+    measured_rgb = np.array([[0.0, 0.0, 0.0],
+                             [0.3, 0.12, 0.06],
+                             [0.6, 0.24, 0.12],
+                             [0.95, 0.95, 0.95]])
+    trace = vectorscope.trace_rgba(mass, mass[..., None] * measured_rgb)
+    original = trace.copy()
+    assert not trace.flags.writeable
+    width, height = 32, 8
+    saved_blend = gpu.state.blend_get()
+    saved_depth = gpu.state.depth_test_get()
+    saved_viewport = gpu.state.viewport_get()
+    saved_scissor = gpu.state.scissor_get()
+    key = object()
+    offscreen = gpu.types.GPUOffScreen(width, height, format="RGBA32F")
+    try:
+        with offscreen.bind(), gpu.matrix.push_pop(), gpu.matrix.push_pop_projection():
+            gpu.matrix.load_identity()
+            gpu.matrix.load_projection_matrix(Matrix.Identity(4))
+            gpu.state.viewport_set(0, 0, width, height)
+            gpu.state.scissor_set(0, 0, width, height)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("ALPHA")
+            framebuffer = gpu.state.active_framebuffer_get()
+            framebuffer.clear(color=(background, background, background, 1.0))
+            vectorscope_ui._draw_trace((-1, -1, 2, 2), trace, key)
+            assert gpu.state.blend_get() == "ALPHA"
+            pixels = np.asarray(framebuffer.read_color(0, 0, width, height, 4, 0, "FLOAT"))
+            actual = pixels.reshape(height, width, 4)[height // 2, (4, 12, 20, 28), :3]
+    finally:
+        gpu.state.blend_set(saved_blend)
+        gpu.state.depth_test_set(saved_depth)
+        gpu.state.viewport_set(*saved_viewport)
+        gpu.state.scissor_set(*saved_scissor)
+        vectorscope_ui._TEXTURES.pop(key, None)
+        offscreen.free()
+
+    log_density = np.log1p(65535 * mass[0] / mass.sum()) / np.log(65536)
+    density = (1.0 - np.exp(-log_density)) / (1.0 - np.exp(-1.0))
+    expected = background + measured_rgb * density[:, None]
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=5e-4)
+    previous = background + measured_rgb * log_density[:, None]
+    assert np.all(actual[1:3] > previous[1:3] + 5e-4)
+    np.testing.assert_allclose(actual[1] - background, (actual[2] - background) / 2,
+                               rtol=0, atol=5e-4)
+    np.testing.assert_array_equal(trace, original)
+    report["additive_trace_pixels"] = True
+
+
+def exercise_gizmo_controls():
+    baseline = pointer.settings(grade)
+    exposed = yield from pointer.drag_control("exposure", grade, (0, 25), cancel=True)
+    assert exposed.linear.exposure > baseline.linear.exposure
+    balanced = yield from pointer.drag_control("cr_balance", grade, (0, 25), cancel=True)
+    assert balanced.linear.balance[0] < baseline.linear.balance[0]
+    balanced = yield from pointer.drag_control("yb_balance", grade, (25, 0), cancel=True)
+    assert balanced.linear.balance[1] < baseline.linear.balance[1]
+    for axis, index in (("cr", 0), ("yb", 1)):
+        directed = yield from pointer.drag_control(axis, grade, (13, 19), cancel=True)
+        assert directed.linear.spread[index] != baseline.linear.spread[index]
+        assert directed.linear.heading[index] != baseline.linear.heading[index]
+        assert directed.linear.spread[1 - index] == baseline.linear.spread[1 - index]
+        assert directed.linear.heading[1 - index] == baseline.linear.heading[1 - index]
+    report["linear_gizmo_controls"] = True
+
+    yield from pointer.click_control("tone_tab", grade)
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.status == "current"
+        and value.waveforms is not None,
+        "Tone Gizmo did not publish waveforms",
+    )
+    before = state().waveforms
+    assert before.before.any() and before.after.any()
+    yield from wait_for(lambda: report.get("tone_gizmo_drawn"), "Tone Gizmo failed to draw", 5.)
+    adjusted = yield from pointer.drag_control("curve", grade, (20, 0), cancel=True)
+    assert adjusted.tone.input_nits[3] > baseline.tone.input_nits[3]
+    assert adjusted.tone.input_nits[:3] == baseline.tone.input_nits[:3]
+    adjusted = yield from pointer.drag_control("fit", grade, (35, 0), cancel=True)
+    assert adjusted.tone.fit > baseline.tone.fit
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(
+            peak_nits="2000", node_pointer=str(grade.as_pointer()),
+            owner_pointer=str(grade.as_pointer()),
+        ) == {"FINISHED"}
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.status == "current"
+        and value.waveforms is not None and value.waveforms is not before,
+        "Peak edit did not update Tone waveforms",
+    )
+    assert pointer.settings(grade).tone.peak_nits == 2000
+    grade.peak_nits = "1000"
+    yield from pointer.click_control("linear_tab", grade)
+    yield from wait_for(lambda: current(RED), "Linear trace did not return from Tone")
+    assert report.get("helper_jobs", 0) == 0
+    report["tone_gizmo_controls"] = True
+
+
+def exercise_drags():
+    cleanup()
+    tree.links.new(source.outputs["Image"], grade.inputs["Color"])
+    paint(RED)
+    yield from wait_for(lambda: current(RED), "Restore direct Image for gestures")
+
+    baseline = pointer.settings(grade)
+    yield from pointer.inert_drag()
+    assert pointer.settings(grade) == baseline
+    report["click_unchanged"] = True
+    paint((*RED[:3], 0.0))
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.status == "current"
+        and value.brightness is not None and not np.any(value.brightness),
+        "Transparent Image did not produce an empty vectorscope",
+    )
+    yield from pointer.inert_drag((25, 25))
+    assert pointer.settings(grade) == baseline
+    report["empty_plot_inert"] = True
+    paint(RED)
+    yield from wait_for(lambda: current(RED), "Restore opaque Image for gestures")
+
+    shared = nodes._make_grade()
+    first = nodes.create_node(tree)
+    second = nodes.create_node(tree)
+    first.pg_grade = second.pg_grade = shared
+    tree.links.new(source.outputs["Image"], first.inputs["Color"])
+    second_source = tree.nodes.new("CompositorNodeImage")
+    second_image = bpy.data.images.new(
+        "Second vectorscope source", width=WIDTH, height=HEIGHT, alpha=True, float_buffer=True,
+    )
+    second_image.colorspace_settings.name = "Non-Color"
+    second_image.alpha_mode = "CHANNEL_PACKED"
+    second_image.pixels.foreach_set(np.tile(np.asarray(BLUE, dtype=np.float32), WIDTH * HEIGHT))
+    second_image.update()
+    second_source.image = second_image
+    tree.links.new(second_source.outputs["Image"], second.inputs["Color"])
+    select(tree, second)
+    yield from wait_for(lambda: current(BLUE), "Second shared Grade did not plot its blue input")
+    _, peer_initial = snapshot()
+    select(tree, first)
+    yield from wait_for(lambda: current(RED), "First shared Grade did not plot its red input")
+    yield from pointer.drag(first, (24, 20), cancel=lambda: select(tree, second))
+    report["selection_cancelled"] = True
+    yield from wait_for(lambda: current(BLUE), "Selection change did not restore the shared Grade")
+    select(tree, first)
+    yield from wait_for(lambda: current(RED), "First shared Grade did not restore its trace")
+    jobs = report.get("helper_jobs", 0)
+    xy = yield from pointer.drag(first, (24, 20))
+    first_peak = pointer.peak()
+    assert (shared.pg_linear.source_x, shared.pg_linear.source_y) == xy
+    assert report.get("helper_jobs", 0) == jobs, "Shared Linear drag recaptured the direct Image"
+    assert first.pg_grade == second.pg_grade
+    select(tree, second)
+    yield from wait_for(lambda: changed(peer_initial), "Second shared consumer did not receive the edit")
+    assert pointer.peak() != first_peak, "Two shared consumers reused the same trace"
+    report["shared_drag"] = True
+    report["shared_consumer_input"] = True
+
+    select(tree, grade)
+    scene.frame_set(27, subframe=.25)
+    scene.tool_settings.use_keyframe_insert_auto = True
+    yield from wait_for(lambda: current(RED), "Per-node plot did not recover after shared edits")
+    yield from pointer.drag(grade, (24, 20), cancel="ESC")
+    report["escape_cancelled"] = True
+    yield from wait_for(lambda: current(RED), "Escape did not restore the per-node trace")
+    yield from pointer.drag(
+        grade, (24, 20), cancel=lambda: scene.frame_set(scene.frame_current + 1),
+    )
+    assert not keyframes(tree), "Cancelled vectorscope gestures inserted keys"
+    report["frame_change_cancelled"] = True
+    scene.frame_set(27, subframe=.25)
+    yield from wait_for(lambda: current(RED), "Per-node plot did not recover after frame change")
+    pixel_cancel_before = pointer.settings(grade)
+    yield from pointer.drag(
+        grade, (24, 20), cancel=lambda: paint(GREEN),
+    )
+    yield from wait_for(
+        lambda: current(GREEN),
+        "Changing captured pixels did not cancel the drag and refresh the vectorscope",
+    )
+    assert pointer.settings(grade) == pixel_cancel_before
+    assert not keyframes(tree), "A capture-change cancellation inserted Auto Key curves"
+    report["capture_change_cancelled"] = True
+    paint(RED)
+    yield from wait_for(lambda: current(RED), "Per-node plot did not recover after pixel change")
+
+    yield from exercise_animated_frame_cancel()
+    tree.animation_data_clear()
+    grade.property_unset("source_x")
+    grade.property_unset("source_y")
+    scene.frame_set(27, subframe=.25)
+    yield from wait_for(lambda: current(RED), "Per-node plot did not recover after animation test")
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.ed.undo_push(message="Before vectorscope drag") == {"FINISHED"}
+    scene.tool_settings.use_keyframe_insert_auto = True
+    press_frame = scene.frame_current + scene.frame_subframe
+    xy = yield from pointer.drag(grade, (24, 20))
+    assert all(a != b for a, b in zip(xy, baseline.linear.source_xy)), xy
+    assert keyframes(tree) == {
+        grade.path_from_id("source_x"): ((press_frame, xy[0]),),
+        grade.path_from_id("source_y"): ((press_frame, xy[1]),),
+    }
+    report["autokey_at_press_frame"] = True
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.ed.undo() == {"FINISHED"}
+    restored_tree = bpy.data.node_groups[TREE_NAME]
+    assert pointer.settings(restored_tree.nodes[NODE_NAME]) == baseline
+    assert not keyframes(restored_tree), "Undo left Auto Key curves from the drag"
+    report["per_node_drag"] = True
+    report["source_keys_undone"] = True
+
+
+def exercise_animated_frame_cancel():
+    initial, destination = (0.30, 0.34), (0.32, 0.31)
+    for frame, (source_x, source_y) in ((27, initial), (28, destination)):
+        scene.frame_set(frame)
+        grade.source_x, grade.source_y = source_x, source_y
+        assert grade.keyframe_insert(data_path="source_x", frame=frame)
+        assert grade.keyframe_insert(data_path="source_y", frame=frame)
+    animated_keys = keyframes(tree)
+    scene.frame_set(27)
+    yield from wait_for(
+        lambda: pointer.peak() is not None,
+        "Animated frame 27 did not produce a current vectorscope",
+    )
+    window_key = window.as_pointer()
+    animated_start = (grade.source_x, grade.source_y)
+    assert np.allclose(animated_start, initial, rtol=0, atol=1e-6), animated_start
+    pushed_undo = []
+    push_undo = nodes._push_gesture_undo
+
+    def record_undo(key):
+        pushed_undo.append(key)
+        return push_undo(key)
+
+    nodes._push_gesture_undo = record_undo
+    try:
+        yield from pointer.press()
+        pointer.event("MOUSEMOVE", "NOTHING", (24, 20))
+        yield from wait_for(
+            lambda: nodes._gesture_token(window_key) is not None
+            and (grade.source_x, grade.source_y) != animated_start,
+            "Animated source-white drag did not activate before the frame switch",
+        )
+        scene.frame_set(28)
+        yield from wait_for(
+            lambda: nodes._gesture_token(window_key) is None and pointer.peak() is not None,
+            "Frame change did not cancel the drag and refresh the scope",
+        )
+        assert window_key not in vectorscope_ui._DRAGS
+        pointer.event("LEFTMOUSE", "RELEASE", (24, 20))
+        yield .1
+        animated_end = (grade.source_x, grade.source_y)
+        assert np.allclose(animated_end, destination, rtol=0, atol=1e-6), animated_end
+        assert keyframes(tree) == animated_keys, (
+            "Frame-change cancellation changed existing Auto Key curves",
+            animated_keys, keyframes(tree),
+        )
+        assert pushed_undo == [], pushed_undo
+        report["animated_destination_preserved"] = True
+    finally:
+        nodes._push_gesture_undo = push_undo
+
+
 def scenario():
     checkpoint("enable vectorscope")
     with bpy.context.temp_override(window=window, area=area, region=region):
         assert bpy.ops.perceptual_grade.toggle_vectorscope() == {"FINISHED"}
 
     yield from wait_for(lambda: current(RED), "Direct Image input did not plot red")
-    _, initial = snapshot()
+    initial_state, initial = snapshot()
+    assert_solid_trace(initial_state, RED)
+    checkpoint("draw additive trace into framebuffer")
+    check_additive_trace_pixels()
     assert np.sum(initial) > 0.0, "The direct Image input produced an empty plot"
     report["initial_shape"] = list(initial.shape)
     report["direct_image_visible"] = True
     report["direct_sampling_avoids_helper"] = report.get("helper_jobs", 0) == 0
     assert report["direct_sampling_avoids_helper"], "Direct Image sampling started a helper job"
 
+    checkpoint("native Linear and Tone Gizmo controls")
+    yield from exercise_gizmo_controls()
+
     grade.exposure = 1.0
     yield from wait_for(lambda: current(RED, 1.0), "Linear exposure did not move the red peak")
-    _, exposed = snapshot()
+    exposed_state, exposed = snapshot()
+    assert_solid_trace(exposed_state, RED, 1.0)
     report["linear_edit_refreshed"] = not np.array_equal(initial, exposed)
     assert report["linear_edit_refreshed"]
     grade.exposure = 0.0
     yield from wait_for(lambda: current(RED), "Restoring exposure did not refresh the plot")
+    yield from exercise_mixed_trace(initial)
 
     paint(GREEN)
     yield from wait_for(lambda: current(GREEN), "Image pixel edit did not move the peak to green")
@@ -272,6 +582,15 @@ def scenario():
     assert report["processed_input_visible"], "Transform should interpolate the image edges"
     report["processed_input_uses_helper"] = report.get("helper_jobs", 0) > 0
     assert report["processed_input_uses_helper"], "Processed input skipped evaluation capture"
+    helper_jobs = report["helper_jobs"]
+    grade.exposure = 1.0
+    yield from wait_for(lambda: changed(processed), "Processed input Linear edit did not refresh")
+    assert report["helper_jobs"] == helper_jobs, "Processed input Linear edit started a capture"
+    _, exposed = snapshot()
+    transform.inputs["Scale"].default_value = 0.53
+    yield from wait_for(lambda: changed(exposed), "Upstream Color edit did not refresh the plot")
+    assert report["helper_jobs"] > helper_jobs, "Upstream Color edit reused stale samples"
+    grade.exposure = 0.0
 
     bpy.app.handlers.frame_change_post.append(image_frame)
     checkpoint("playback refresh")
@@ -294,7 +613,10 @@ def scenario():
     yield from wait_for(lambda: current(expected),
                         "Playback did not publish the latest stopped-frame plot")
     report["latest_frame_published"] = True
+    assert_solid_trace(state(), expected)
     report["stopped_frame"] = stopped_frame
+    checkpoint("native compositor gestures")
+    yield from exercise_drags()
 
 
 sequence = scenario()
@@ -312,8 +634,7 @@ def request_quit():
 def advance():
     try:
         assert time.monotonic() - started < 285.0, "Vectorscope acceptance exceeded its budget"
-        next(sequence)
-        return 0.02
+        return next(sequence)
     except StopIteration:
         cleanup()
         report["passed"] = True

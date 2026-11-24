@@ -1,4 +1,4 @@
-"""Bounded inverse search over signed pre-Tone appearance coordinates."""
+"""Invert Tone and Chroma after a bounded search over Warp inputs."""
 
 
 INVERSE_SOURCE = r"""
@@ -23,25 +23,62 @@ vec4 stack_state(vec3 coordinates) {
     return vec4(height, coordinates.yz, ja * abs(ja));
 }
 
-vec3 stack_inverse_tone_seed(vec4 target) {
-    float ja = stack_ja(target);
-    vec2 ab = target.yz;
-    float chroma_term = 66.0 * length(ab);
-    float desired = sqrt(ja * ja + chroma_term);
-    if (desired == 0.0) return vec3(0.0);
-    // Recover the source magnitude before solving the coupled Color stages.
-    // The bound covers the fully saturated CAT16 response cube.
-    float low = 0.0;
-    float high = stack_max_magnitude;
-    for (int i = 0; i < 25; ++i) {
-        float middle = 0.5 * (low + high);
-        if (stack_tone_magnitude(middle) < desired) low = middle;
-        else high = middle;
+float stack_inverse_radial_gain(float y, float knee, float low, float high) {
+    if (knee == 0.0 || low == high) return 1.0 / high;
+    float scale = max(y, knee);
+    y /= scale;
+    knee /= scale;
+    float d = low * knee - y;
+    float root = length(vec2(d, 2.0 * sqrt(high * knee) * sqrt(y)));
+    return d >= 0.0 ? 2.0 * knee / (root + d) : (root - d) / (2.0 * high * y);
+}
+
+vec3 stack_undo_tone(vec3 point) {
+    vec4 gains = texelFetch(grade_parameters, ivec2(stack_chroma_gain_slot, grade_index), 0);
+    vec4 controls = texelFetch(grade_parameters, ivec2(stack_chroma_tone_slot, grade_index), 0);
+    float chroma = length(point.yz);
+    float chroma_term = 66.0 * chroma;
+    float desired = length(vec2(point.x, sqrt(chroma_term)));
+    if (desired == 0.0) return point;
+    if (controls.w != 0.0) {
+        vec4 tone = texelFetch(grade_parameters, ivec2(stack_tone_scalars_slot, grade_index), 0);
+        float y = desired * 0.01;
+        float position = 1.0;
+        if (desired != 100.0 * tone.w) {
+            // The positive linear slope bounds the inverse of the packed curve.
+            float low = 0.0;
+            float high = y / tone.z;
+            for (int i = 0; i < 32; ++i) {
+                float middle = low + 0.5 * (high - low);
+                if (middle == low || middle == high) break;
+                if (stack_tone_normalized(middle) < y) low = middle;
+                else high = middle;
+            }
+            position = low + 0.5 * (high - low);
+        }
+        float compressed = position * tone.y;
+        float source = 100.0 * compressed * stack_inverse_radial_gain(compressed, 2.0 * tone.x, 0.5, 1.0);
+        if (chroma == 0.0) {
+            point.x = sign(point.x) * source;
+        } else {
+            float ratio = source / desired;
+            float c = chroma_term / desired / desired;
+            float j = point.x / desired;
+            point *= safe_divide(2.0 * ratio * ratio, length(vec2(c, 2.0 * j * ratio)) + c);
+        }
     }
-    float source = 0.5 * (low + high);
-    float gain = safe_divide(2.0 * source * source,
-        length(vec2(chroma_term, 2.0 * ja * source)) + chroma_term);
-    return gain * vec3(ja, ab);
+    if (gains.w != 0.0 && chroma != 0.0) {
+        float j = abs(point.x);
+        float base = (35.0 / 75.0) * j;
+        float offset = j / controls.z - 1.0;
+        float t = min(abs(offset), 1.0);
+        float tonal = exp2((offset < 0.0 ? controls.x : controls.y) * t * t * (3.0 - 2.0 * t));
+        chroma = length(point.yz);
+        float gain = stack_inverse_radial_gain(chroma, base / 9.0, 1.0, tonal);
+        gain *= stack_inverse_radial_gain(chroma * gain, base * gains.z, gains.x, gains.y);
+        point.yz *= gain;
+    }
+    return point;
 }
 
 vec4 stack_features(vec4 state) {
@@ -49,7 +86,7 @@ vec4 stack_features(vec4 state) {
 }
 
 vec4 stack_inverse_residual(vec3 variables, vec3 scale, vec4 target, vec4 weights) {
-    vec4 actual = stack_grade(stack_state(variables * scale));
+    vec4 actual = stack_warp(stack_state(variables * scale));
     if (!stack_finite(actual)) return vec4(1e12);
     return clamp((stack_features(actual) - target) * weights, -1e12, 1e12);
 }
@@ -72,9 +109,11 @@ vec3 stack_normal_step(vec4 j[3], vec4 residual, float damping) {
 vec3 stack_inverse_fit(vec3 seed, vec4 target, vec4 weights) {
     vec3 scale = max(vec3(abs(seed.x), length(seed.yz), length(seed.yz)),
                      vec3(0.25));
-    // Bound the trial coordinates independently of requested settings.
-    // The forward evaluator can still carry signed energy and opponents.
-    vec3 bound = stack_inverse_bound / scale;
+    // Chroma can expand before Tone. The largest reachable H-K height bounds
+    // both the achromatic coordinate and chroma at the input to Warp.
+    float height = stack_tone_magnitude(stack_max_magnitude);
+    float c = height * height / 66.0;
+    vec3 bound = vec3(height, c, c) / scale;
     vec3 x = clamp(seed / scale, -bound, bound);
     vec4 r = stack_inverse_residual(x, scale, target, weights);
     float score = dot(r, r);
@@ -150,19 +189,17 @@ vec4 stack_inverse(vec4 target, bool target_is_appearance, out float residual) {
     vec4 wanted = target_is_appearance ? target : stack_target(target.xyz);
     if (!stack_finite(wanted)) return vec4(residual);
     vec4 best = vec4(0.0);
-    vec3 seed = vec3(stack_ja(wanted), wanted.yz);
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        if (attempt == 1) seed = stack_inverse_tone_seed(wanted);
-        else if (attempt == 2) {
-            vec4 features = stack_features(wanted);
-            vec4 weights = 1.0 / (1.0 + abs(features));
-            seed = stack_inverse_fit(seed, features, weights);
-        } else if (attempt == 3) {
-            if (residual <= 1.0) break;
-            seed = vec3(0.0);
-        }
-        stack_choose_inverse(stack_state(seed), target, target_is_appearance, best, residual);
-        if (residual <= 0.02) break;
+    vec3 post_tone = vec3(stack_ja(wanted), wanted.yz);
+    stack_choose_inverse(stack_state(stack_undo_tone(post_tone)), target, target_is_appearance, best, residual);
+    if (residual > 0.02) {
+        vec4 features = stack_features(wanted);
+        vec4 weights = 1.0 / (1.0 + abs(features));
+        vec3 fitted = stack_inverse_fit(post_tone, features, weights);
+        stack_choose_inverse(stack_state(stack_undo_tone(fitted)), target, target_is_appearance, best, residual);
+    }
+    if (residual > 1.0) {
+        stack_choose_inverse(stack_state(post_tone), target, target_is_appearance, best, residual);
+        stack_choose_inverse(vec4(0.0), target, target_is_appearance, best, residual);
     }
     return best;
 }

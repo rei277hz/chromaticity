@@ -4,11 +4,6 @@ typedef struct {
     float span;
 } PGJCToneCurve;
 
-__DEVICE__ float pg_jc_tone_compress(float value, float black) {
-    if (black == 0.0f) return value;
-    return value * ((value + black) / (value + 2.0f * black));
-}
-
 __DEVICE__ PGJCToneCurve pg_jc_tone_curve(PGFour source, PGFour target, float black, int fit) {
     PGJCToneCurve curve;
     curve.black = black;
@@ -20,9 +15,13 @@ __DEVICE__ PGJCToneCurve pg_jc_tone_curve(PGFour source, PGFour target, float bl
     return curve;
 }
 
+__DEVICE__ float pg_jc_tone_forward(float j, PGJCToneCurve curve) {
+    float t = pg_jc_tone_compress(j, curve.black) / curve.span;
+    return pg_tone_remap(t, curve.fit);
+}
+
 __DEVICE__ float pg_jc_tone_height(float height, PGJCToneCurve curve) {
-    float t = pg_jc_tone_compress(height * .01f, curve.black) / curve.span;
-    return 100.0f * pg_tone_remap(t, curve.fit);
+    return 100.0f * pg_jc_tone_forward(height * .01f, curve);
 }
 
 __DEVICE__ float pg_jc_tone_kernel_slope_at_zero(float left, float right, float width) {
@@ -96,13 +95,13 @@ __DEVICE__ PGValue pg_cone_tone_fit(float3 wire, float blackNits, PGFour levels,
                                     float shadow, float highlight, float crossover, int invert, int chromaMode) {
     if (!pg_cone_valid(wire) || !(blackNits >= 0.0f && blackNits <= 2.0f) ||
         !pg_tone_input_valid(levels, fit, peakIndex) || !(influence >= 0.0f && influence <= 1.0f) ||
+        (chromaMode == PG_JC_CHROMA_UNIFIED && fit > 2) ||
         !pg_jc_global_chroma_valid(saturation, shadow, highlight, crossover, chromaMode) || (invert != 0 && invert != 1))
         return pg_value(color_zero3(), 0);
 
     PGFour source = pg_tone_input_anchors(levels, 0.0f);
     PGFour target = pg_tone_anchors(peakIndex);
-    int adjustJ = blackNits > 0.0f ||
-        !(pg_tone_default_levels(levels, peakIndex) || pg_four_equal(source, target));
+    int adjustJ = pg_jc_tone_active(blackNits, levels, peakIndex, source, target);
     int adjustC = pg_jc_global_curve_active(saturation) || shadow != 0.0f || highlight != 0.0f;
     if (!adjustJ && !adjustC) return pg_value(wire, 1);
     float3 input = pg_cone_chart(wire);

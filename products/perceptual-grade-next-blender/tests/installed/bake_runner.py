@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import bpy
 import numpy as np
@@ -587,7 +588,7 @@ previous_image = shader.pg_bake_image
 del previous_image[nodes.bake_controller.BAKE_SOURCE_VERIFICATION]
 previous_receipt = nodes._bake.receipt_signature(shader)
 previous_pixels = np.asarray(previous_image.pixels[:], dtype=np.float32).copy()
-previous_gain = grade_data.pg_color.global_gain
+previous_gain = grade_data.pg_tone.vivid_gain
 original_activate = nodes._bake._activate
 activation_failures = []
 
@@ -599,7 +600,7 @@ def fail_after_bake_activation(entry, result):
 
 
 try:
-    grade_data.pg_color.global_gain = previous_gain + 0.125
+    grade_data.pg_tone.vivid_gain = previous_gain + 0.125
     nodes._bake._activate = fail_after_bake_activation
     operator = SimpleNamespace(cancel=False, node_pointer="", tree_pointer="")
     assert nodes.PG_OT_bake.execute(operator, image_context) == {"FINISHED"}
@@ -608,7 +609,7 @@ try:
     assert activation_failures == ["injected"]
 finally:
     nodes._bake._activate = original_activate
-    grade_data.pg_color.global_gain = previous_gain
+    grade_data.pg_tone.vivid_gain = previous_gain
 
 assert_shader_uses_image(shader, previous_image)
 np.testing.assert_array_equal(
@@ -793,6 +794,12 @@ assert shader.pg_use_bake
 # Unchanged baked outputs use a cheap observation, including unrelated native
 # dependency updates. A relevant source event marks the Image as stale even
 # when this test leaves its pixels unchanged.
+class RemovedDependencyUpdate:
+    @property
+    def id(self):
+        raise ReferenceError("Depsgraph ID was removed")
+
+
 nodes._bake._remember_observation(shader)
 source_receipt = nodes._bake.receipt_signature(shader)
 source_bake = shader.pg_bake_image
@@ -806,8 +813,13 @@ try:
     nodes._bake.reconcile((shader,))
     assert_shader_uses_image(shader, source_bake)
     assert_bake_controls(shader, image_context)
-    nodes._depsgraph_update_post(scene, SimpleNamespace(
-        updates=(SimpleNamespace(id=source_image),)))
+    with patch.object(nodes.vectorscope_ui, "invalidate") as scope_invalidate:
+        nodes._depsgraph_update_post(scene, SimpleNamespace(updates=(
+            SimpleNamespace(id=unrelated_image),
+            RemovedDependencyUpdate(),
+            SimpleNamespace(id=source_image),
+        )))
+        scope_invalidate.assert_called_once_with(scene, [unrelated_image, source_image])
     nodes._bake.reconcile((shader,))
     assert_shader_uses_image(shader, source_bake)
     assert nodes._bake.receipt_signature(shader) == source_receipt
@@ -920,7 +932,7 @@ old_live = nodes.bake_graph.live_tree(shared.node_tree)
 old_signature = old_live.get(nodes._KERNEL_SIGNATURE)
 old_wrapper = shared.node_tree
 old_receipt = nodes._bake.receipt_signature(shared)
-grade_data.pg_color.global_gain = 0.375
+grade_data.pg_tone.vivid_gain = 0.375
 assert_shader_uses_image(shared, shared_image)
 assert_bake_controls(shared, shared_context, "status.bake_stale_inputs")
 wait_ready(shared)

@@ -7,10 +7,28 @@ from dataclasses import asdict
 import numpy as np
 from color_tools.perceptual_grade_reference import model, grading, appearance
 from color_tools.perceptual_grade_reference.responses import INVERSE, GAMMA, eccentricity
+from color_tools.perceptual_grade_reference.unified_chroma import UnifiedChroma, UnifiedChromaSettings
 
 
 def parameters(linear, tone):
-    return model.LinearSettings(**asdict(linear)), grading.ToneSettings(**asdict(tone))
+    """Return linear settings and the post-Tone viewing context for Warp."""
+    return (model.LinearSettings(**asdict(linear)),
+            grading.ToneSettings(reference_nits=tone.reference_nits, peak_nits=tone.peak_nits))
+
+
+def reference_chroma(tone):
+    """Use reference 3A equations at Blender's continuous Fit setting."""
+    settings = asdict(tone)
+    settings.pop('reference_nits')
+    settings['fit'] = round(tone.fit)
+    reference = UnifiedChroma(UnifiedChromaSettings(**settings))
+    if settings['fit'] != tone.fit:
+        curve = reference.tone
+        curve.width = grading.fit_width(tone.fit)
+        norms = np.array([grading.kernel(1., left, right, float(curve.width))
+                          for left, right in zip(curve.knots[:-1], curve.knots[1:])])
+        curve._slope_upper_bound = curve.slope + np.sum(curve.residual/norms)
+    return reference
 
 
 def adapters(space):
@@ -22,7 +40,7 @@ def adapters(space):
 
 
 def evaluate(rgb, linear, tone, space):
-    lp, tp = parameters(linear, tone)
+    lp, _ = parameters(linear, tone)
     white, before, after = adapters(space)
     correction = model.linear_matrix(lp, white)
     rgb = np.asarray(rgb, dtype=np.float64)
@@ -31,7 +49,7 @@ def evaluate(rgb, linear, tone, space):
     xyz = xyz @ correction.T
     first = xyz @ after.T
     encoded = appearance.encode(xyz, white, 203.)
-    mapped = grading.Tone(tp).apply(encoded)
+    mapped = reference_chroma(tone).apply(encoded)
     fl, aw = appearance.response_constants(203.)
     hue = np.arctan2(mapped.q[...,2], mapped.q[...,1])
     ab = mapped.q[...,1:]*(aw/(1204*eccentricity(hue)))[...,None]
@@ -80,9 +98,11 @@ def evaluate_full(rgb, linear, tone, color, space):
     then applies only the independent RGB cube containment at export.
     """
     from color_tools.perceptual_grade_reference.cube_guard import guard as cube_guard
-    lp, tp = parameters(linear, tone)
+    lp, _ = parameters(linear, tone)
     cp = grading.ColorSettings(**asdict(color))
-    reference = model.Model(model.Settings(linear=lp, tone=tp, color=cp), space)
+    reference = model.Model(model.Settings(
+        linear=lp, color=cp, tone_chroma=reference_chroma(tone).settings,
+    ), space)
     before = evaluate(rgb, linear, tone, space)
     toned = before['tone']
     graded = reference.color.apply_state(toned)

@@ -1,6 +1,27 @@
 # Native Color parameter fields
 
-## Current Stage 3 contract — 2026-11-17
+## Current Stage 2/3 contract — 2026-11-24
+
+Next uses field layout schema 7 and parameter schema 5. Stage 2 owns Original
+Unified Chroma before the full H-K Tone curve. Its controls include Black
+Compression, Muted/Vivid, Saturation Crossover, Shadow/Highlight Chroma, and
+Tone Crossover. H-K influence remains fixed at 1.0. Stage 3 retains Warp and
+Adaptance, without tonal J/C or opponent a/b controls. The Tone Gizmo edits
+only the four Tone anchors, Fit, and Peak.
+
+The 512 x 1 scalar/Tone image packs two texels of Unified Chroma controls. The
+other three role images contain Web parameters (4097 x 32), Web toes
+(1537 x 1), and Compact Adaptance (8193 x 8). A complete four-role bank is
+3,179,152 bytes. Two banks use 6,358,304 bytes, excluding the shared boundary.
+The Stack uses composition schema 3 and inverse schema 2. Its inverse solves
+Warp, bisects the packed Tone curve, and analytically inverts Black Compression
+and the Unified Chroma radial maps.
+
+See [`src/kernel/layouts.py`](../../src/kernel/layouts.py) and
+[`src/kernel/stage2_parameters.py`](../../src/kernel/stage2_parameters.py)
+for the current field layouts and four-role bank contract.
+
+## Historical schema-6 contract — 2026-11-17
 
 Next uses **field layout schema 6** and **parameter schema 4**. Adaptance has
 one fixed **32,768-cell** Compact field packed into **8193 × 4 RGBA32F**
@@ -58,7 +79,7 @@ contain 214/238 nodes and 320/356 links. These counts do not measure evaluation
 speed.
 
 The authoritative layouts are in
-[`src/kernel/layouts.py`](../../src/kernel/layouts.py); the five-role bank
+[`src/kernel/layouts.py`](../../src/kernel/layouts.py); the four-role bank
 contract is in
 [`src/kernel/stage2_parameters.py`](../../src/kernel/stage2_parameters.py).
 See the [product README](../../README.md) and
@@ -224,7 +245,7 @@ and [EVIDENCE.md](EVIDENCE.md) retain exact source-bound metrics, failure
 witnesses, full current inventory and prepared-edit phases. Older large-field
 sensitivity denominators remain historical.
 
-## Current layouts and admission
+## Historical schema-6 layouts and admission
 
 The schema-6 Compact-only implementation uses Tone **256**,
 Color coefficients **8,192**, Web parameters **4,096**, Web toes **1,536**

@@ -88,7 +88,8 @@ def apply_tone_fit(stage, wire, tone, controls):
     if compression > 0.:
         origin_gain *= .5
 
-    influence = controls.get("hkInfluence", 1.)
+    unified = stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES
+    influence = 1. if unified else controls.get("hkInfluence", 1.)
 
     def tone_ray(scale, ja, hk_chroma):
         if not tone_active:
@@ -107,7 +108,7 @@ def apply_tone_fit(stage, wire, tone, controls):
         return (1. - influence) * j_gain + influence * hk_gain
 
     def map_chroma(height, chroma):
-        if stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES:
+        if unified:
             return jc_global_shape.unified_chroma_map(height, chroma, controls)
         return jc_global_shape.chroma_map(height, chroma, controls, linear_gain=stage in TONE_FIT_LINEAR_GAIN_PROTOTYPES)
 

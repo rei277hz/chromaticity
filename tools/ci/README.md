@@ -53,8 +53,9 @@ python3 tools/ci/check_targets.py
 runs the selected test suites from next-blender. These cover policy decisions, runtime
 preparation, numerical and GPU behavior, packaging and installation, and native
 Blender acceptance. The native suites include render preflight, continuous
-slider dragging, undo, image saving, and Stack preparation. Report-generation
-and experimental candidate suites are not selected.
+slider dragging, undo, image saving, and Stack preparation. The vectorscope
+latency report is selected as evidence for its product-scoped test. Other
+report-generation and experimental candidate suites are not selected.
 
 Every selected label belongs to `products/perceptual-grade-next-blender`.
 The dependency-graph guard rejects tests and proofs outside that product,

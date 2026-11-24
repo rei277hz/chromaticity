@@ -2,7 +2,7 @@
 
 This module describes acceptance policies used by development audits and
 tests. Raw scalar/local precision thresholds retain the exact alternating
-extreme Web exception. Layout admission for Web toes, Color coefficients and
+extreme Web exception. Layout admission for Web toes and
 compact Adaptance uses the authorized HDR worsening budget, while retaining
 raw precision results as diagnostics.
 """
@@ -16,7 +16,7 @@ ALTERNATING_WEB_LIMIT = 1e-4
 DEFAULT_WEB_LOCAL_LIMIT = 1e-5
 WEB_TOE_HDR_WORSENING_LIMIT = 0.05
 FIELD_HDR_WORSENING_LIMIT = 0.05
-HDR_ADMITTED_FIELDS = frozenset(('Web toes', 'Color coefficients', 'Adaptance parameters'))
+HDR_ADMITTED_FIELDS = frozenset(('Web toes', 'Adaptance parameters'))
 
 
 def texture_admission_policy(role):
@@ -29,7 +29,7 @@ def texture_admission_policy(role):
         return dict(basis='hdr_toe_worsening',
                     max_worsening_codes=WEB_TOE_HDR_WORSENING_LIMIT,
                     scalar_precision='diagnostic', local_precision='diagnostic')
-    if role in ('Color coefficients', 'Adaptance parameters'):
+    if role == 'Adaptance parameters':
         return dict(basis='hdr_worsening', max_worsening_codes=FIELD_HDR_WORSENING_LIMIT,
                     scalar_precision='diagnostic', local_precision='diagnostic')
     return dict(basis='scalar_and_local', scalar_precision='required',
@@ -53,12 +53,7 @@ def is_alternating_extreme_web(settings):
     # same Web handles relax precision for a compound Color configuration.
     if web is not settings:
         try:
-            if (np.any(np.asarray(settings.lightness, dtype=float) != 0.)
-                    or np.any(np.asarray(settings.chroma, dtype=float) != 0.)
-                    or np.any(np.asarray(settings.adaptance, dtype=float) != 0.)
-                    or float(settings.global_gain) != 0.
-                    or float(settings.lightness_fit) != 0.
-                    or float(settings.chroma_fit) != 0.
+            if (np.any(np.asarray(settings.adaptance, dtype=float) != 0.)
                     or float(settings.adaptance_half_saturation) != .25):
                 return False
         except (AttributeError, TypeError, ValueError):
