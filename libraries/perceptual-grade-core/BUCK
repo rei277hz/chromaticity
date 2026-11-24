@@ -241,6 +241,105 @@ generate(
     visibility = ["PUBLIC"],
 )
 
+python_tool(
+    name = "rec709_reduction_limit_tool",
+    srcs = {"pg_core_tools/rec709_reduction_limit.py": "tools/rec709_reduction_limit.py"},
+    main_module = "pg_core_tools.rec709_reduction_limit",
+    deps = ["//libraries/color-core:runtime"],
+)
+
+generate(
+    name = "rec709_reduction_limit",
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":rec709_reduction_limit_tool",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "rec709_fixed_jhk_boundary_tool",
+    srcs = {
+        "pg_core_tools/rec709_fixed_jhk_boundary.py": "tools/rec709_fixed_jhk_boundary.py",
+        "pg_core_tools/rec709_fixed_jhk_decode.py": "tools/rec709_fixed_jhk_decode.py",
+    },
+    main_module = "pg_core_tools.rec709_fixed_jhk_boundary",
+    deps = [
+        "//libraries/color-core:runtime",
+        "//libraries/perceptual-grade-reference:appearance_certificate",
+    ],
+)
+
+generate(
+    name = "rec709_fixed_jhk_boundary",
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":rec709_fixed_jhk_boundary_tool",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "rec709_fixed_jhk_limit_tool",
+    srcs = {"pg_core_tools/rec709_fixed_jhk_limit.py": "tools/rec709_fixed_jhk_limit.py"},
+    main_module = "pg_core_tools.rec709_fixed_jhk_limit",
+    deps = [":rec709_fixed_jhk_boundary_tool_sources"],
+)
+
+generate(
+    name = "rec709_fixed_jhk_limit",
+    outputs = {
+        "report": "report.json",
+        "summary": "summary.md",
+    },
+    tool = ":rec709_fixed_jhk_limit_tool",
+    visibility = ["PUBLIC"],
+)
+
+python_tool(
+    name = "rec709_fixed_jhk_ramp_tool",
+    srcs = {
+        "pg_core_tools/rec709_fixed_jhk_ramp.py": "tools/rec709_fixed_jhk_ramp.py",
+        "pg_core_tools/rec709_ramp_gamut.py": "tools/rec709_ramp_gamut.py",
+        "pg_core_tools/rec709_ramp_images.py": "tools/rec709_ramp_images.py",
+    },
+    main_module = "pg_core_tools.rec709_fixed_jhk_ramp",
+    deps = [
+        ":rec709_fixed_jhk_boundary_tool_sources",
+        "//third_party:imageio-ffmpeg",
+        "//third_party:pillow",
+    ],
+)
+
+generate(
+    name = "rec709_fixed_jhk_ramp",
+    args = ["--limit-report", "$(location :rec709_fixed_jhk_limit[report])"],
+    outputs = {
+        "texture": "texture.exr",
+        "preview": "preview.png",
+        "report": "report.json",
+    },
+    tool = ":rec709_fixed_jhk_ramp_tool",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "rec709_fixed_jhk_saturation_preview",
+    args = [
+        "--saturation-preview",
+        "--limit-report",
+        "$(location :rec709_fixed_jhk_limit[report])",
+    ],
+    outputs = {
+        "preview": "preview.png",
+        "report": "report.json",
+    },
+    tool = ":rec709_fixed_jhk_ramp_tool",
+    visibility = ["PUBLIC"],
+)
+
 python_library(
     name = "locale_compiler",
     srcs = {"compile_locales.py": "tools/compile_locales.py"},
