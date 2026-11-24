@@ -97,6 +97,8 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("hover_retry_acknowledged"), details)
         self.assertTrue(data.get("tone_gizmo_controls"), details)
         self.assertTrue(data.get("tone_gizmo_drawn"), details)
+        self.assertTrue(data.get("appearance_tone_warp_and_endpoints"), details)
+        self.assertGreater(data.get("appearance_jobs", 0), 0, details)
         self.assertTrue(data.get("image_pixels_refreshed"), details)
         self.assertTrue(data.get("processed_input_visible"), details)
         self.assertGreaterEqual(len(set(data.get("playback_frames", []))), 2, details)
@@ -120,6 +122,7 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("uv_edit_refreshed"), details)
         self.assertTrue(data.get("right_click_cancelled"), details)
         self.assertTrue(data.get("shared_tone_gizmo"), details)
+        self.assertTrue(data.get("appearance_tone_and_warp"), details)
 
 
 if __name__ == "__main__":

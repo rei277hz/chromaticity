@@ -1253,10 +1253,12 @@ def _vectorscope_coverage_invariant(owner, node):
 
 
 def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None,
-                         upstream_grades=None, watch=None):
-    """Freeze one Grade input capture and its render-domain identity."""
+                         upstream_grades=None, watch=None, scope_capture="input"):
+    """Freeze a Grade scope capture and its render-domain identity."""
     import bpy
 
+    if scope_capture not in {"input", "appearance"}:
+        raise ValueError("Vectorscope capture kind is not supported")
     tree_type = getattr(getattr(node, "id_data", None), "bl_idname", None)
     if getattr(node, "bl_idname", None) not in GRADE_TYPES | PER_NODE_TYPES:
         raise RouteBlocked("target", "Vectorscope requires a Grade node")
@@ -1432,6 +1434,8 @@ def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None
         width=width, height=height, view=view, images=still_images,
         dynamic_images=dynamic_images,
     )
+    if scope_capture == "appearance":
+        route["scope_capture"] = scope_capture
     structural_graph, image_sources = _vectorscope_structural_graph(input_graph, input_images)
     source_observation = (
         "pg-vectorscope-source-v1", kind, route["owner_key"], route["root_key"],
@@ -1441,6 +1445,7 @@ def describe_vectorscope(node, context=None, viewport=None, *, dependencies=None
     route["source_signature"] = _digest(source_observation)
     route["capture_signature"] = _digest((
         "pg-vectorscope-capture-v1", route["source_signature"],
+        route.get("scope_capture", "input"),
         route["frame"], route["subframe"], view, scene_observation,
         coverage_invariant, input_graph, input_images,
     ))

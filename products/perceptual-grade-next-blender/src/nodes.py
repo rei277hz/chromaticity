@@ -4532,9 +4532,13 @@ def _color_changed(settings, _context):
     if holder is None:
         return
     if holder.bl_idname == PGGradeData.bl_idname:
+        if not _frame_change_active:
+            vectorscope_ui.appearance_changed(holder)
         _grade_changed(holder)
         return
     if _is_per_node_grade_node(holder):
+        if not _frame_change_active:
+            vectorscope_ui.appearance_changed(holder)
         _per_node_grade_changed(holder)
         return
     if _is_shared_grade_node(holder) and holder.pg_grade is None:
@@ -4973,6 +4977,7 @@ def _bake_image_changed(node, context):
 
 def _bake_use_changed(node, context):
     _bake.use_changed(node, context)
+    vectorscope_ui.appearance_changed(node)
 
 
 def _bake_dimension_changed(node, context):
@@ -6354,6 +6359,7 @@ def register():
         vectorscope_ui.register(lambda: ScopeRuntime(
             bpy, _bake.manager._snapshot, _scope_linear_settings, _working_space,
             gate=_bake.gate, upstream_ready=_scope_upstream_ready,
+            grade_signature=_settings_signature_for,
         ), begin=_begin_gizmo_gesture, edit=_edit_gizmo_gesture,
             finish=_end_color_gesture, cancel=_cancel_color_gesture,
             linear_settings=_scope_linear_settings, tone_settings=_scope_tone_settings,

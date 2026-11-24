@@ -9,7 +9,7 @@ import threading
 import bpy
 import numpy as np
 
-from . import gizmo_geometry as geometry, localization
+from . import appearance_scope, gizmo_geometry as geometry, localization
 from .kernel.prepare import nits_to_j, prepare_tone
 from .kernel.settings import LinearSettings
 from .kernel.tone_ui import TONE_LEVEL_FIELDS, TONE_LIMITS, _j_to_nits
@@ -58,6 +58,9 @@ class DisplayState:
     status: str
     error: str | None
     waveforms: ToneWaveforms | None = None
+    appearance: appearance_scope.AppearanceScope | None = None
+    appearance_status: str | None = None
+    appearance_error: str | None = None
 
     @property
     def brightness(self):
@@ -254,6 +257,7 @@ def _release(key):
     _TEXTURES.pop(key, None)
     _TEXTURES.pop((key, "before"), None)
     _TEXTURES.pop((key, "after"), None)
+    _TEXTURES.pop((key, "appearance"), None)
     if _runtime is not None:
         _runtime.release(key)
 
@@ -481,6 +485,9 @@ def _release_button(drag, area, region, click, node):
         _gesture.peak_menu(bpy.context, node)
     else:
         _STAGE[drag.key] = "LINEAR" if drag.mode == "linear_tab" else "TONE"
+        if _STAGE[drag.key] == "LINEAR":
+            _runtime.release_appearance(drag.key)
+            _TEXTURES.pop((drag.key, "appearance"), None)
     area.tag_redraw()
 
 
@@ -540,11 +547,12 @@ def _observe(key, window, area, region, node):
         _release(key)
         previous = None
     with _REVISION_LOCK:
-        revision = _REVISIONS.setdefault(key, 0)
+        revision = _REVISIONS.setdefault(key, (0, 0))
     with bpy.context.temp_override(window=window, area=area, region=region):
         context = bpy.context
         frame = _frame_key(context.scene)
         stage = _stage(key)
+        viewport = None
         try:
             viewport = (_viewport_descriptor(window, context)
                         if node.id_data.bl_idname == "ShaderNodeTree" else None)
@@ -554,6 +562,17 @@ def _observe(key, window, area, region, node):
                      else DisplayState(plot, status, error))
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
             state = DisplayState(*_runtime.unavailable(key, error))
+        if stage == "TONE":
+            try:
+                appearance, appearance_status, appearance_error = _runtime.observe_appearance(
+                    key, context, node, viewport,
+                )
+            except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
+                appearance, appearance_status, appearance_error = None, "unavailable", str(error)
+            state = replace(state, appearance=appearance, appearance_status=appearance_status,
+                            appearance_error=appearance_error)
+    if state.appearance is None:
+        _TEXTURES.pop((key, "appearance"), None)
     _PLOTS[key] = binding, frame, state, revision, stage
     drag = _DRAGS.get(key[0])
     if (drag is not None and drag.key == key
@@ -563,7 +582,10 @@ def _observe(key, window, area, region, node):
     if (previous is None or previous[3:] != (revision, stage)
             or previous[2].rgba is not state.rgba
             or previous[2].waveforms is not state.waveforms
-            or previous[2].status != state.status or previous[2].error != state.error):
+            or previous[2].status != state.status or previous[2].error != state.error
+            or previous[2].appearance is not state.appearance
+            or previous[2].appearance_status != state.appearance_status
+            or previous[2].appearance_error != state.appearance_error):
         area.tag_redraw()
 
 
@@ -615,9 +637,15 @@ def display_state(context):
     if frame[0] != active_frame[0] or stage != _stage(key):
         return None
     with _REVISION_LOCK:
-        invalidated = revision != _REVISIONS.get(key)
-    if state.status == "current" and (frame != active_frame or invalidated):
-        return replace(state, status="updating", error=None)
+        plot_revision, appearance_revision = _REVISIONS.get(key, revision)
+    frame_changed = frame != active_frame
+    if state.status == "current" and (frame_changed or plot_revision != revision[0]):
+        state = replace(state, status="updating", error=None)
+    if stage == "TONE" and getattr(node, "pg_use_bake", False):
+        state = replace(state, appearance=None, appearance_status="bake", appearance_error=None)
+    elif (state.appearance_status == "current"
+            and (frame_changed or appearance_revision != revision[1])):
+        state = replace(state, appearance_status="updating", appearance_error=None)
     return state
 
 
@@ -651,7 +679,7 @@ def _remember_batch(key, batch):
         _BATCHES.pop(next(iter(_BATCHES)))
 
 
-def _draw_trace(rect, data, key, *, color=None):
+def _draw_trace(rect, data, key, *, color=None, additive=True):
     import gpu
     from gpu_extras.batch import batch_for_shader
     cached = _TEXTURES.get(key)
@@ -683,7 +711,7 @@ def _draw_trace(rect, data, key, *, color=None):
     blend = gpu.state.blend_get()
     try:
         # Additive blending applies the trace density once to measured RGB.
-        gpu.state.blend_set("ADDITIVE" if color is None else "ALPHA")
+        gpu.state.blend_set("ADDITIVE" if additive and color is None else "ALPHA")
         batch.draw(shader)
     finally:
         gpu.state.blend_set(blend)
@@ -694,7 +722,7 @@ _CIRCLE = tuple((math.cos(i * math.tau / 96), math.sin(i * math.tau / 96))
 _SKIN_ANGLE = math.radians(123.0)
 
 
-def _text(label, x, y, size, color, width):
+def _text(label, x, y, size, color, width, *, align=0.):
     import blf
     blf.size(0, max(1, round(size)))
     if blf.dimensions(0, label)[0] > width:
@@ -703,6 +731,8 @@ def _text(label, x, y, size, color, width):
         while label and blf.dimensions(0, label + suffix)[0] > width:
             label = label[:-1]
         label += suffix
+    if align:
+        x -= align * blf.dimensions(0, label)[0]
     blf.position(0, x, y, 0)
     blf.color(0, *color)
     blf.draw(0, label)
@@ -891,6 +921,75 @@ def _draw_tone_curve(rect, model, histogram, selected, scale):
           8 * scale, _PALETTE["muted"], width * .6)
 
 
+def _draw_appearance(box, state, key):
+    rect, scale = box["appearance"], box["scale"]
+    x, y, width, height = rect
+    top, right = y + height, x + width
+    left = box["before"][0]
+    column_width = box["after"][0] + box["after"][2] - left
+    compact = box["compact_waveforms"] or height < 55 * scale
+    appearance = None if state is None else state.appearance
+    status = None if state is None else state.appearance_status
+    _fill(rect, _PALETTE["plot"])
+    guide = []
+    saturation_ticks = ((0., "0"), (.5, "0.5"), (1., "1"), (2., "2"), (math.inf, "\u221e"))
+    for value, label in saturation_ticks:
+        px = x + appearance_scope.saturation_position(value) * width
+        if 0. < value < math.inf:
+            guide.extend(((px, y), (px, top)))
+        if not compact or value in (0., 1., math.inf):
+            alignment = 1. if value == math.inf else .5
+            _text(label, px, y - 11 * scale, 8 * scale, _PALETTE["muted"],
+                  20 * scale, align=alignment)
+    if not compact:
+        middle = y + appearance_scope.lightness_position(50.) * height
+        guide.extend(((x, middle), (right, middle)))
+    _lines(guide, _PALETTE["grid"], scale, cache=("appearance grid", rect))
+    if appearance is not None:
+        _draw_trace(rect, appearance.rgba, (key, "appearance"), additive=False)
+
+    knee = y + appearance_scope.lightness_position(appearance_scope.LIGHTNESS_KNEE) * height
+    dash = 5 * scale
+    segments = [point for start in np.arange(x, right, 2 * dash)
+                for point in ((start, knee), (min(start + dash, right), knee))]
+    _lines(segments, (*_PALETTE["orange"][:3], .65), scale, cache=("appearance knee", rect))
+    _lines(((x, y), (x, top), (x, y), (right, y), (x, top), (right, top),
+            (right, top), (right, y)), _PALETTE["outline"], scale,
+           cache=("appearance outline", rect))
+
+    lightness_ticks = [(y, "0"), (knee - 2 * scale, "100"),
+                       (top + 2 * scale, localization.tr("scope.appearance.upper"))]
+    if not compact:
+        lightness_ticks.insert(1, (middle, "50"))
+    for py, label in lightness_ticks:
+        _text(label, x - 3 * scale, py - 3 * scale, 8 * scale,
+              _PALETTE["orange" if label == "100" else "muted"], 31 * scale, align=1.)
+    _text("J_HK", x - 3 * scale, top + 10 * scale, 8 * scale,
+          _PALETTE["muted"], 28 * scale, align=1.)
+    _text("s" if compact else localization.tr("scope.appearance.axis_saturation"),
+          x - 11 * scale if compact else x + width * .5,
+          y - (11 if compact else 22) * scale, 8 * scale, _PALETTE["muted"],
+          width, align=.5)
+    _text(localization.tr("scope.appearance.title"), x, top + 10 * scale, 9 * scale,
+          _PALETTE["text"], column_width - (x - left))
+    if appearance is not None:
+        _text(localization.tr("scope.appearance.overflow", fraction=appearance.overflow_fraction),
+              left + column_width, top + 22 * scale, 8 * scale,
+              _PALETTE["orange" if appearance.overflow_fraction else "muted"],
+              column_width, align=1.)
+    if status != "current":
+        status_id = status if status in {"bake", "unavailable"} else (
+            "unavailable" if status == "error" else "updating")
+        _text(localization.tr("scope.appearance." + status_id), x + width * .5,
+              y + height * .5 - 3 * scale, 8 * scale,
+              _PALETTE["orange" if status_id == "unavailable" else "text"],
+              width - 4 * scale, align=.5)
+        if status_id == "unavailable" and state.appearance_error:
+            _text(state.appearance_error.splitlines()[0], x + width * .5,
+                  y + height * .5 - 15 * scale, 8 * scale,
+                  _PALETTE["muted"], width - 4 * scale, align=.5)
+
+
 def _draw_tone(box, state, key, linear, tone):
     scale = box["scale"]
     model = _tone_model(tone)
@@ -899,6 +998,7 @@ def _draw_tone(box, state, key, linear, tone):
     waves = None if state is None else state.waveforms
     _slider(box["exposure"], "exposure", linear.exposure, scale)
     _slider(box["fit"], "fit", tone.fit, scale)
+    _draw_appearance(box, state, key)
     peak = box["peak"]
     _fill(peak, _PALETTE["header"])
     px, py, pw, _ = peak
@@ -917,11 +1017,13 @@ def _draw_tone(box, state, key, linear, tone):
         grid = [(px, _level_y(rect, tick)) for tick in np.arange(0., PLOT_MAX, .5)
                 for px in (x, x + width)]
         _lines(grid, _PALETTE["grid"], scale, cache=("wave grid", rect))
-        _text(localization.tr("gizmo." + side), x, y + height + 23 * scale,
+        compact = box["compact_waveforms"]
+        _text(localization.tr("gizmo." + side), x, y + height + (8 if compact else 23) * scale,
               10 * scale, _PALETTE["text"], width)
-        anchor = localization.tr("property." + TONE_LEVEL_FIELDS[selected])
-        _text(f"{anchor}  {float(levels[selected]):.2f} J", x,
-              y + height + 9 * scale, 9 * scale, _PALETTE["orange"], width)
+        if not compact:
+            anchor = localization.tr("property." + TONE_LEVEL_FIELDS[selected])
+            _text(f"{anchor}  {float(levels[selected]):.2f} J", x,
+                  y + height + 9 * scale, 9 * scale, _PALETTE["orange"], width)
         for index, value in enumerate(levels):
             level_y = _level_y(rect, value)
             color = _PALETTE["orange" if index == selected else "reference"]
@@ -1013,12 +1115,18 @@ def tone_changed(node):
         _mark_updating(_runtime.tone_changed(node))
 
 
-def _mark_updating(affected):
+def appearance_changed(owner):
+    if _runtime is not None and _ENABLED:
+        _mark_updating(_runtime.appearance_changed(owner), appearance_only=True)
+
+
+def _mark_updating(affected, *, appearance_only=False):
     changed = set()
     with _REVISION_LOCK:
         for key in affected:
             if key in _REVISIONS:
-                _REVISIONS[key] += 1
+                plot, appearance = _REVISIONS[key]
+                _REVISIONS[key] = plot + int(not appearance_only), appearance + 1
                 changed.add(key)
     if not changed or threading.current_thread() is not threading.main_thread():
         return

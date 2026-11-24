@@ -28,6 +28,7 @@ class VectorscopeTests(unittest.TestCase):
         cls.policy = importlib.import_module(package_name + ".runtime.vectorscope_policy")
         cls.runtime = importlib.import_module(package_name + ".runtime.vectorscope")
         cls.analysis = importlib.import_module(package_name + ".vectorscope")
+        cls.appearance_scope = importlib.import_module(package_name + ".appearance_scope")
         cls.tone_scope = importlib.import_module(package_name + ".tone_scope")
         cls.kernel = importlib.import_module(package_name + ".kernel")
 
@@ -314,6 +315,70 @@ class VectorscopeTests(unittest.TestCase):
             self.assertEqual((status, error), ("current", None))
             backend.create_job.assert_called_once()
 
+    def test_final_appearance_waits_for_native_grade_and_refreshes_independently(self):
+        pixels = np.ones((2, 2, 4), dtype=np.float32)
+        route = {"owner_kind": "compositor", "capture_signature": "frame",
+                 "source_signature": "source"}
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree, pg_use_bake=False)
+        job = Mock()
+        job.advance.return_value = {"rgba": pixels.copy()}
+        backend = Mock()
+        backend.create_job.return_value = job
+        ready = Mock(side_effect=lambda grades: not grades)
+        signature = Mock(return_value="initial Grade")
+        runtime = self.runtime.ScopeRuntime(
+            None, lambda _route: (None, "snapshot.blend", []),
+            lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
+            backend=backend, upstream_ready=ready, grade_signature=signature,
+        )
+        tone = self.kernel.ToneSettings()
+
+        def describe(*_args, scope_capture="input", **_kwargs):
+            return dict(route, scope_capture=scope_capture)
+
+        with (patch.object(self.runtime.bake_routes, "describe_vectorscope", side_effect=describe),
+              patch.object(self.runtime, "capture_loaded_image", return_value=pixels) as direct):
+            runtime.observe(1, None, node, None, tone=tone)
+            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+                             (None, "updating", None))
+            ready.assert_called_with((node,))
+            self.assertTrue(runtime.poll())
+            self.assertTrue(runtime.poll())
+            backend.create_job.assert_not_called()
+            waveforms, status, _error = runtime.observe(1, None, node, None, tone=tone)
+            self.assertEqual(status, "current")
+
+            ready.side_effect = None
+            ready.return_value = True
+            runtime.observe_appearance(1, None, node, None)
+            self.assertTrue(runtime.poll())
+            self.assertFalse(runtime.poll())
+            plot, status, error = runtime.observe_appearance(1, None, node, None)
+            self.assertEqual((status, error), ("current", None))
+            self.assertIsInstance(plot, self.appearance_scope.AppearanceScope)
+            request = backend.create_job.call_args.args[0]
+            self.assertEqual(request["route"]["scope_capture"], "appearance")
+            direct.assert_called_once()
+
+            signature.return_value = "Grade with Warp edit"
+            self.assertEqual(runtime.appearance_changed(node), (1,))
+            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+                             (plot, "updating", None))
+            self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
+                             (waveforms, "current", None))
+            self.assertTrue(runtime.poll())
+            job.advance.side_effect = RuntimeError("Capture failed")
+            self.assertFalse(runtime.poll())
+            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+                             (None, "error", "Capture failed"))
+
+            node.pg_use_bake = True
+            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+                             (None, "bake", None))
+            self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
+                             (waveforms, "current", None))
+
     def make_runtime(self, watch, dependencies):
         runtime = self.runtime.ScopeRuntime(None, None, None, None, backend=object())
         runtime.dependencies = {1: frozenset(dependencies)}
@@ -439,6 +504,63 @@ class VectorscopeTests(unittest.TestCase):
         histogram = np.zeros((8, 8), dtype=np.float64)
         brightness = self.analysis.normalize_histogram(histogram)
         np.testing.assert_array_equal(brightness, np.zeros((8, 8), dtype=np.float32))
+
+    def test_appearance_scope_axis_mappings_have_requested_endpoints(self):
+        scope = self.appearance_scope
+        self.assertEqual(float(scope.lightness_position(0.)), 0.)
+        self.assertAlmostEqual(float(scope.lightness_position(100.)), .8)
+        self.assertAlmostEqual(float(scope.lightness_position(scope.LIGHTNESS_MAX)), 1.)
+        self.assertTrue(np.all(np.diff(scope.lightness_position(np.linspace(
+            0., scope.LIGHTNESS_MAX, 100))) > 0.))
+        self.assertEqual(float(scope.saturation_position(0.)), 0.)
+        self.assertAlmostEqual(float(scope.saturation_position(1.)), 1. / np.sqrt(2.))
+        self.assertEqual(float(scope.saturation_position(np.inf)), 1.)
+        np.testing.assert_array_equal(scope.saturation_position(np.array([0., np.inf], np.float32)),
+                                      [0., 1.])
+
+    def test_appearance_scope_reports_alpha_weighted_overflow(self):
+        scope = self.appearance_scope
+        pixels = np.array([[[scope.LIGHTNESS_MAX + 1., 0., 0., .25], [50., 0., 0., .75],
+                            [scope.LIGHTNESS_MAX + 4., 0., 0., 0.], [np.nan, 0., 0., 1.]]])
+        result = scope.analyze(pixels)
+        self.assertAlmostEqual(result.overflow_fraction, .25)
+        self.assertEqual(result.rgba.shape, (144, 288, 4))
+        self.assertFalse(result.rgba.flags.writeable)
+        np.testing.assert_array_equal(result.rgba, scope.analyze(pixels[:, 1:2]).rgba)
+        self.assertFalse(scope.analyze(pixels[:, :1]).rgba.any())
+        self.assertEqual(scope.analyze(pixels[:, 2:]).overflow_fraction, 0.)
+
+    def test_appearance_scope_places_black_4000_nits_and_infinite_saturation(self):
+        scope = self.appearance_scope
+        for pixel, expected in (((0., 0., 0., 1.), (0, 0)),
+                                ((scope.LIGHTNESS_MAX, 0., 0., 1.), (143, 0)),
+                                ((0., 20., 0., 1.), (int(144 * .8 * np.sqrt(1320.) / 100.), 287))):
+            with self.subTest(pixel=pixel):
+                density = scope.analyze(np.array([[pixel]])).rgba[..., 3]
+                self.assertEqual(np.unravel_index(np.argmax(density), density.shape), expected)
+
+    def test_appearance_scope_keeps_density_when_opposite_hues_cancel(self):
+        scope = self.appearance_scope
+        opposing = scope.analyze(np.array([[[50., 20., 0., 1.], [50., -20., 0., 1.]]]))
+        hue = scope.analyze(np.array([[[50., 20., 0., 1.]]]))
+        occupied = opposing.rgba[..., 3] > 0.
+        self.assertTrue(occupied.any())
+        np.testing.assert_allclose(opposing.rgba[occupied, :3], .6, atol=1e-6)
+        np.testing.assert_array_equal(opposing.rgba[..., 3], hue.rgba[..., 3])
+        weighted = scope.analyze(np.array([[[50., 20., 0., 1.], [50., -20., 0., .25]]]))
+        np.testing.assert_allclose(weighted.rgba[occupied, :3] - .6,
+                                   .6 * (hue.rgba[occupied, :3] - .6), atol=1e-6)
+
+    def test_appearance_scope_fades_hue_toward_neutral_and_palette_is_luminance_constant(self):
+        scope = self.appearance_scope
+        chromatic = scope.analyze(np.array([[[50., 8., 0., 1.]]]))
+        near_gray = scope.analyze(np.array([[[50., .2, 0., 1.]]]))
+        chromatic_rgb = chromatic.rgba[chromatic.rgba[..., 3] > 0., :3][0]
+        neutral_rgb = near_gray.rgba[near_gray.rgba[..., 3] > 0., :3][0]
+        self.assertGreater(np.linalg.norm(chromatic_rgb - .6), np.linalg.norm(neutral_rgb - .6))
+        np.testing.assert_allclose([chromatic_rgb @ scope._REC709_LUMINANCE,
+                                    neutral_rgb @ scope._REC709_LUMINANCE], .6)
+        self.assertTrue(np.allclose(scope._RGB_ANCHORS @ scope._REC709_LUMINANCE, .6))
 
     def test_density_shoulder_lifts_logarithmic_response(self):
         histogram = np.array([[0.0, 1.0, 10.0, 159.0, 830.0]])

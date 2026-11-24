@@ -99,18 +99,32 @@ def layout(stage, width, height, scale=1.0, position=(24.0, 24.0)):
         wave_width = .28 * plot_width
         after_x = inner_x + wave_width + wave_gap
         curve_x = after_x + wave_width + wave_gap
-        wave_y = py + 68 * scale
-        wave_height = panel_height - 164 * scale
+        plot_y = py + 62 * scale
+        plot_height = panel_height - 158 * scale
+        plot_top = plot_y + plot_height
+        wave_pair_width = 2 * wave_width + wave_gap
+        appearance_inset = 34 * scale
+        compact = plot_height < 132 * scale
+        plot_gap = (30 if compact else 58) * scale
+        minimum_wave_height = (17 if compact else 24) * scale
+        appearance_width = min(wave_pair_width - appearance_inset,
+                               2 * (plot_height - plot_gap - minimum_wave_height))
+        appearance_height = appearance_width / 2
+        appearance_y = plot_top - appearance_height
+        wave_height = appearance_y - plot_gap - plot_y
         control_y = py + panel_height - 72 * scale
         peak_width = 116 * scale
         result.update({
-            "before": _rect(inner_x, wave_y, wave_width, wave_height),
-            "after": _rect(after_x, wave_y, wave_width, wave_height),
-            "curve": _rect(curve_x, wave_y, plot_width - 2 * wave_width, wave_height),
+            "appearance": _rect(inner_x + appearance_inset, appearance_y,
+                                appearance_width, appearance_height),
+            "before": _rect(inner_x, plot_y, wave_width, wave_height),
+            "after": _rect(after_x, plot_y, wave_width, wave_height),
+            "curve": _rect(curve_x, plot_y, plot_width - 2 * wave_width, plot_height - 14 * scale),
+            "compact_waveforms": compact,
             "exposure": _rect(inner_x, control_y,
                               inner_width - peak_width - 16 * scale, 28 * scale),
             "fit": _rect(inner_x, py + 31 * scale,
-                         2 * wave_width + wave_gap, 28 * scale),
+                         wave_pair_width, 28 * scale),
             "peak": _rect(inner_x + inner_width - peak_width,
                           control_y, peak_width, 28 * scale),
         })

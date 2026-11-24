@@ -110,11 +110,25 @@ backend = vectorscope_ui._runtime.backend
 create_job = backend.create_job
 
 
-def track_helper_job(*args, **kwargs):
-    report["helper_jobs"] = report.get("helper_jobs", 0) + 1
-    return create_job(*args, **kwargs)
+def track_helper_job(inputs, **kwargs):
+    field = ("appearance_jobs" if inputs["route"].get("scope_capture") == "appearance"
+             else "helper_jobs")
+    report[field] = report.get(field, 0) + 1
+    job = create_job(inputs, **kwargs)
+    if field == "appearance_jobs":
+        advance = job.advance
+
+        def record_samples():
+            result = advance()
+            if result is not None:
+                appearance_samples[0] = result["rgba"]
+            return result
+
+        job.advance = record_samples
+    return job
 
 
+appearance_samples = [None]
 backend.create_job = track_helper_job
 
 tree = bpy.data.node_groups.new(TREE_NAME, nodes.COMPOSITOR_TREE)
@@ -184,6 +198,8 @@ def wait_for(predicate, step, timeout=90.0):
         if now >= next_report:
             report["scope_status"] = None if value is None else value.status
             report["scope_error"] = None if value is None else value.error
+            report["appearance_status"] = None if value is None else value.appearance_status
+            report["appearance_error"] = None if value is None else value.appearance_error
             report["scope_bins"] = (
                 None if value is None or value.brightness is None
                 else int(np.count_nonzero(value.brightness))
@@ -201,6 +217,16 @@ def wait_for(predicate, step, timeout=90.0):
             assert value.status not in {"error", "unavailable"}, (step, value.error)
         assert now < deadline, (step, value)
         yield 0.05
+
+
+def appearance_current(previous=None):
+    value = state()
+    if value is None:
+        return False
+    assert value.appearance_status != "error", value.appearance_error
+    return (value.appearance_status == "current" and value.appearance is not None
+            and value.appearance.rgba[..., 3].any()
+            and (previous is None or not np.array_equal(value.appearance.rgba, previous)))
 
 
 def snapshot():
@@ -407,6 +433,8 @@ def exercise_gizmo_controls():
     before = state().waveforms
     assert before.before.any() and before.after.any()
     yield from wait_for(lambda: report.get("tone_gizmo_drawn"), "Tone Gizmo failed to draw", 5.)
+    yield from wait_for(appearance_current, "Tone Gizmo did not publish final appearance")
+    original_appearance = state().appearance.rgba
     adjusted = yield from pointer.drag_control("curve", grade, (20, 0), cancel=True)
     assert adjusted.tone.input_nits[3] > baseline.tone.input_nits[3]
     assert adjusted.tone.input_nits[:3] == baseline.tone.input_nits[:3]
@@ -423,7 +451,44 @@ def exercise_gizmo_controls():
         "Peak edit did not update Tone waveforms",
     )
     assert pointer.settings(grade).tone.peak_nits == 2000
+    yield from wait_for(lambda: appearance_current(original_appearance),
+                        "Peak edit did not update final appearance")
+    tone_appearance = state().appearance.rgba
+    tone_waveforms = state().waveforms
+    appearance_jobs = report.get("appearance_jobs", 0)
+    grade.web_chroma_1_0 = -2.
+    grade.web_chroma_2_0 = -2.
+    yield from wait_for(lambda: appearance_current(tone_appearance),
+                        "Warp edit did not update final appearance")
+    assert report.get("appearance_jobs", 0) > appearance_jobs
+    assert state().status == "current" and state().waveforms is tone_waveforms
+    grade.web_chroma_1_0 = 0.
+    grade.web_chroma_2_0 = 0.
     grade.peak_nits = "1000"
+
+    # Guarded black and white must be sampled at the returned endpoints.
+    black_appearance = state().appearance.rgba
+    paint((-1., -1., -1., .25))
+    yield from wait_for(
+        lambda: (appearance_current(black_appearance)
+                 and np.allclose(appearance_samples[0][..., :3], 0.)),
+        "Final appearance did not sample guarded black",
+    )
+    np.testing.assert_allclose(appearance_samples[0][..., 3], .25, atol=1e-6)
+    black_appearance = state().appearance.rgba
+    paint((2048., 2048., 2048., .75))
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.appearance_status == "current"
+        and value.appearance is not None and value.appearance.rgba is not black_appearance
+        and value.appearance.overflow_fraction == 1.,
+        "Final appearance did not report guarded white overflow",
+    )
+    white = appearance_samples[0]
+    assert np.all(white[..., 0] > 100.)
+    np.testing.assert_allclose(white[..., 1:3], 0., atol=.02)
+    np.testing.assert_allclose(white[..., 3], .75, atol=1e-6)
+    report["appearance_tone_warp_and_endpoints"] = True
+    paint(RED)
     yield from pointer.click_control("linear_tab", grade)
     yield from wait_for(lambda: current(RED), "Linear trace did not return from Tone")
     assert report.get("helper_jobs", 0) == 0

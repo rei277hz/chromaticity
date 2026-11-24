@@ -146,15 +146,16 @@ def _splat_axis(grid, kernel, normalization):
 
 
 def splat_components(mass, energy):
-    """Spread each bin's mass and RGB energy over a one-bin Gaussian."""
-    size = mass.shape[0]
+    """Spread each bin's mass and associated components over a one-bin Gaussian."""
+    height, width = mass.shape
     radius = _GAUSSIAN_RADIUS
     offsets = np.arange(-radius, radius + 1) / _GAUSSIAN_SIGMA
     kernel = np.exp(-0.5 * np.square(offsets))
-    normalization = np.convolve(np.ones(size), kernel, mode="full")[radius:radius + size]
+    row_weights = np.convolve(np.ones(height), kernel, mode="full")[radius:radius + height]
+    col_weights = np.convolve(np.ones(width), kernel, mode="full")[radius:radius + width]
     grid = np.concatenate((mass[..., None], energy), axis=-1)
-    rows = _splat_axis(grid, kernel, normalization)
-    splatted = _splat_axis(rows.swapaxes(0, 1), kernel, normalization).swapaxes(0, 1)
+    rows = _splat_axis(grid, kernel, row_weights)
+    splatted = _splat_axis(rows.swapaxes(0, 1), kernel, col_weights).swapaxes(0, 1)
     return splatted[..., 0], splatted[..., 1:]
 
 

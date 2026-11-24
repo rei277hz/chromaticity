@@ -543,6 +543,29 @@ class NodeTemplateTests(unittest.TestCase):
                 finally:
                     instance.dispose()
 
+    def test_grade_manifest_authenticates_private_appearance_slots(self):
+        for tree_type in TREE_TYPES:
+            with self.subTest(tree_type=tree_type):
+                instance = node_templates.instantiate_grade(complete_prepared(), tree_type)
+                try:
+                    tree = instance.tree
+                    record = node_templates._STORE.record(
+                        node_templates.TemplateVariant("grade", tree_type),
+                    )
+                    self.assertTrue(node_templates.validate_grade_template(tree))
+                    for slot in (node_templates.SLOT_SCOPE_APPEARANCE,
+                                 node_templates.SLOT_SCOPE_APPEARANCE_ALPHA):
+                        node_name, = record.slots[slot]
+                        node = tree.nodes[node_name]
+                        self.assertTrue(node.hide)
+                        self.assertFalse(any(link.to_node.bl_idname == "NodeGroupOutput"
+                                             for socket in node.outputs for link in socket.links))
+                        del node[node_templates.TEMPLATE_SLOT]
+                        self.assertFalse(node_templates.validate_grade_template(tree))
+                        node[node_templates.TEMPLATE_SLOT] = slot
+                finally:
+                    instance.dispose()
+
     def test_stack_validation_rejects_packed_lut_pixel_changes(self):
         instance = node_templates.instantiate_stack(
             stack_prepared(size=33), "ShaderNodeTree",

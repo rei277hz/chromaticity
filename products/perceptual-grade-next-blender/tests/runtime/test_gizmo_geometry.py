@@ -37,14 +37,26 @@ class GizmoGeometryTests(unittest.TestCase):
         self.assertGreater(box["cr_balance"][0], x + side)
         self.assertLess(box["yb_balance"][1] + box["yb_balance"][3], y)
 
-    def test_tone_layout_has_waveforms_and_controls(self):
-        box = self.geometry.layout("TONE", 1200, 900, 1.0)
-        self.assertIsNotNone(box)
-        for name in ("before", "after", "curve", "exposure", "fit", "peak"):
-            self.assertIn(name, box)
-        self.assertEqual(box["before"][1:], box["after"][1:])
-        self.assertGreater(box["after"][0], box["before"][0] + box["before"][2])
-        self.assertGreater(box["curve"][0], box["after"][0] + box["after"][2])
+    def test_tone_layout_has_appearance_above_waveforms_and_beside_curve(self):
+        for width, height, scale in ((1200, 900, 1.), (304, 256, 1.), (608, 512, 2.)):
+            with self.subTest(width=width, height=height, scale=scale):
+                box = self.geometry.layout("TONE", width, height, scale)
+                self.assertIsNotNone(box)
+                for name in ("appearance", "before", "after", "curve", "exposure", "fit", "peak"):
+                    self.assertIn(name, box)
+                before, after, curve = box["before"], box["after"], box["curve"]
+                x, y, plot_width, plot_height = box["appearance"]
+                self.assertEqual(plot_width, 2 * plot_height)
+                self.assertGreater(plot_height, 0.)
+                self.assertEqual(before[1:], after[1:])
+                self.assertGreater(after[0], before[0] + before[2])
+                self.assertGreater(curve[0], after[0] + after[2])
+                self.assertGreater(y, before[1] + before[3])
+                self.assertGreater(x, before[0])
+                self.assertLessEqual(x + plot_width, after[0] + after[2])
+                self.assertLess(y + plot_height, box["exposure"][1])
+                self.assertGreater(before[3], 0.)
+                self.assertGreater(curve[3], before[3])
 
     def test_moved_panel_obeys_region_bounds_and_dpi(self):
         normal = self.geometry.layout("LINEAR", 900, 660, 1.0, (40, 50))

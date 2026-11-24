@@ -1,9 +1,9 @@
 # Perceptual Grade Gizmo design
 
-The current Gizmo is limited to Linear controls and the Stage 2 Tone curve. It
-shows the four Tone anchors, Fit, and Peak, together with the Linear vectorscope
-and Tone waveform. Original Unified Chroma controls are intentionally available
-only in the Stage 2 numeric sidebar while their design is being evaluated.
+The Gizmo shows the Linear controls and vectorscope, plus the Stage 2 Tone
+curve, four Tone anchors, Fit, Peak, Before and After waveforms, and the Final
+Appearance scope. Original Unified Chroma controls are available in the Stage 2
+numeric sidebar while their design is being evaluated.
 
 Stage 3 has no J/C contribution or opponent-pad Gizmo. Its numeric controls are
 limited to Warp and selective Adaptance. A future graphical Warp editor remains
@@ -48,6 +48,31 @@ The scope updates when the frame, source pixels, geometry, or viewport
 changes. During playback, a complete capture of the same source can remain
 visible with **Updating** as newer frames are captured. Capture failures and
 unavailable contexts appear in the scope.
+
+## Tone Final Appearance scope
+
+The read-only 2:1 plot sits above the Before and After waveforms, beside the
+Tone curve. It measures the selected Grade's appearance after Warp, H–K
+repair, and AP1-D65 boundary mapping, immediately before conversion to RGB.
+It uses the same Compositor input or Shader viewport context as the other
+Gizmo scopes. The plot is unavailable while **Use Bake** is active because
+the Grade is displaying a baked RGB texture.
+
+The bottom 80% of the vertical axis covers \(J_\mathrm{HK}=0\) through 100.
+The top 20% spans from the marked break at 100 to the neutral 4,000-nit
+reference. The readout above the plot gives the percentage of valid alpha
+weight above that reference. The horizontal position is
+\(s/\sqrt{1+s^2}\), where \(s=C/|J_A|\). Tick labels show the uncompressed
+saturation from zero to infinity. Black has zero saturation.
+
+Opacity shows alpha-weighted density. Each bin's tint follows its weighted
+circular mean hue, with tint strength set by how closely its hues agree.
+Near-neutral samples contribute their full density weight and less hue weight.
+Opposing hues produce a visible gray trace. A complete trace can stay visible
+with **Updating appearance** while the selected Grade is recaptured. A failed
+capture clears the trace and displays its error.
+
+## Linear scope latency report
 
 Build the Linux x86-64 latency report with
 

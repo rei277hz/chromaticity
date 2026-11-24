@@ -88,9 +88,9 @@ create_job = backend.create_job
 capture_jobs = []
 
 
-def track_capture(*args, **kwargs):
-    capture_jobs.append(None)
-    return create_job(*args, **kwargs)
+def track_capture(inputs, **kwargs):
+    capture_jobs.append(inputs["route"].get("scope_capture", "input"))
+    return create_job(inputs, **kwargs)
 
 
 backend.create_job = track_capture
@@ -184,6 +184,18 @@ def mixed_peaks(display):
     return peaks
 
 
+def appearance_current(previous=None):
+    value = state()
+    if value is None:
+        return False
+    assert value.appearance_status not in {"error", "unavailable", "bake"}, value.appearance_error
+    if value.appearance_status != "current" or value.appearance is None:
+        return False
+    trace = value.appearance.rgba
+    assert trace.shape == (144, 288, 4) and not trace.flags.writeable
+    return trace[..., 3].any() and (previous is None or not np.array_equal(trace, previous))
+
+
 def scenario():
     checkpoint("enable vectorscope")
     with bpy.context.temp_override(window=window, area=node_area, region=node_region):
@@ -253,7 +265,9 @@ def scenario():
     assert red_density > blue_density, (red_density, blue_density)
     report["mixed_trace_rgb"] = True
 
-    captures = len(capture_jobs)
+    # Fit changes the mapping only when the source and target anchors differ.
+    shared.pg_grade.pg_tone.input_white = 450.
+    input_captures = capture_jobs.count("input")
     yield from pointer.click_control("tone_tab", shared)
     yield from wait_for(
         lambda: (value := state()) is not None and value.status == "current"
@@ -262,6 +276,10 @@ def scenario():
     )
     waveforms = state().waveforms
     assert waveforms.before.any() and waveforms.after.any()
+    yield from wait_for(appearance_current, "Shared Shader Tone did not plot final appearance")
+    original_appearance = state().appearance.rgba
+    appearance_captures = capture_jobs.count("appearance")
+    assert appearance_captures > 0
     before = pointer.settings(shared)
     edited = yield from pointer.drag_control("fit", shared, (35, 0))
     assert edited.tone.fit > before.tone.fit
@@ -272,8 +290,22 @@ def scenario():
         and value.waveforms is not None and value.waveforms is not waveforms,
         "Shared Shader Tone Fit did not refresh the waveforms",
     )
-    assert len(capture_jobs) == captures, "Shared Shader Tone edits recaptured unchanged inputs"
+    yield from wait_for(lambda: appearance_current(original_appearance),
+                        "Shared Shader Tone Fit did not refresh final appearance")
+    assert capture_jobs.count("input") == input_captures
+    assert capture_jobs.count("appearance") > appearance_captures
     report["shared_tone_gizmo"] = True
+
+    tone_appearance = state().appearance.rgba
+    tone_waveforms = state().waveforms
+    appearance_captures = capture_jobs.count("appearance")
+    shared.pg_grade.pg_color.web_chroma_2_5 = -1.0
+    yield from wait_for(lambda: appearance_current(tone_appearance),
+                        "Shared Shader Warp did not refresh final appearance")
+    assert capture_jobs.count("input") == input_captures
+    assert capture_jobs.count("appearance") > appearance_captures
+    assert state().status == "current" and state().waveforms is tone_waveforms
+    report["appearance_tone_and_warp"] = True
 
 
 sequence = scenario()

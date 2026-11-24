@@ -1,4 +1,4 @@
-"""Isolated capture of one Grade Color input for the Linear scope."""
+"""Isolated capture of a Grade's input or guarded final appearance."""
 
 from pathlib import Path
 import tempfile
@@ -25,6 +25,11 @@ def _bounded_size(width, height):
 
 def _sources(root, group_path, node_name, *socket_names):
     """Copy the selected occurrence once and expose its input sources."""
+    tree, parents, target = _occurrence(root, group_path, node_name)
+    return tuple(_expose_input(tree, parents, target.inputs.get(name)) for name in socket_names)
+
+
+def _occurrence(root, group_path, node_name):
     tree = root
     parents = []
     for name in tuple(group_path):
@@ -38,7 +43,7 @@ def _sources(root, group_path, node_name, *socket_names):
     target = tree.nodes.get(str(node_name))
     if target is None:
         raise ValueError("Vectorscope Grade node is absent: " + str(node_name))
-    return tuple(_expose_input(tree, parents, target.inputs.get(name)) for name in socket_names)
+    return tree, parents, target
 
 
 def _expose_input(tree, parents, incoming):
@@ -65,21 +70,78 @@ def _expose_input(tree, parents, incoming):
         )
         output = constant.outputs[0]
 
+    socket_type = "NodeSocketColor" if incoming.type == "RGBA" else "NodeSocketFloat"
+    return _expose_output(tree, parents, output, socket_type, "PG Vectorscope Input ")
+
+
+def _group_output(tree):
+    endpoint = next((node for node in tree.nodes
+                     if node.bl_idname == "NodeGroupOutput" and node.is_active_output), None)
+    if endpoint is None:
+        endpoint = tree.nodes.new("NodeGroupOutput")
+        endpoint.is_active_output = True
+    return endpoint
+
+
+def _expose_output(tree, parents, source, socket_type, prefix):
     for parent, group in reversed(parents):
-        socket_type = "NodeSocketColor" if incoming.type == "RGBA" else "NodeSocketFloat"
         field = tree.interface.new_socket(
-            name="PG Vectorscope Input " + uuid4().hex,
-            in_out="OUTPUT", socket_type=socket_type,
+            name=prefix + uuid4().hex,
+            in_out="OUTPUT",
+            socket_type=socket_type,
         )
-        endpoint = next((node for node in tree.nodes
-                         if node.bl_idname == "NodeGroupOutput" and node.is_active_output), None)
-        if endpoint is None:
-            endpoint = tree.nodes.new("NodeGroupOutput")
-            endpoint.is_active_output = True
-        tree.links.new(output, _socket(endpoint.inputs, field.identifier))
-        output = _socket(group.outputs, field.identifier)
+        endpoint = _group_output(tree)
+        tree.links.new(source, _socket(endpoint.inputs, field.identifier))
+        source = _socket(group.outputs, field.identifier)
         tree = parent
-    return output
+    return source
+
+
+def _appearance_outputs(root, group_path, node_name):
+    """Expose the hidden final-appearance tap through private group copies."""
+    from ..kernel.node_templates import (
+        KERNEL_QUALITY, SLOT_SCOPE_APPEARANCE, SLOT_SCOPE_APPEARANCE_ALPHA,
+        TEMPLATE_SLOT,
+    )
+    from . import bake_graph
+
+    tree, parents, target = _occurrence(root, group_path, node_name)
+    kernel = target.node_tree
+    if target.mute or kernel is None:
+        raise ValueError("Vectorscope appearance capture requires a live full Grade node")
+    if kernel.get(bake_graph.WRAPPER):
+        if not bake_graph.structure_valid(kernel):
+            raise ValueError("Vectorscope Bake wrapper is incomplete")
+        shader = kernel.bl_idname == "ShaderNodeTree"
+        controls = (node.inputs[0 if shader else "Switch"] for node in kernel.nodes
+                    if node.get(bake_graph.SELECTOR))
+        if any(control.is_linked or control.default_value for control in controls):
+            raise ValueError("Vectorscope appearance capture cannot read an active Bake output")
+        target.node_tree = kernel.copy()
+        parents.append((tree, target))
+        tree = target.node_tree
+        target = bake_graph.marked(tree, bake_graph.LIVE)
+        kernel = target.node_tree
+    if (kernel.get("_perceptual_grade_stage2_complete") is not True
+            or kernel.get(KERNEL_QUALITY) not in (None, "full")):
+        raise ValueError("Vectorscope appearance capture requires a live full Grade node")
+    target.node_tree = kernel.copy()
+    kernel = target.node_tree
+    parents.append((tree, target))
+
+    packed = tuple(node for node in kernel.nodes
+                   if node.get(TEMPLATE_SLOT) == SLOT_SCOPE_APPEARANCE)
+    opacity = tuple(node for node in kernel.nodes
+                    if node.get(TEMPLATE_SLOT) == SLOT_SCOPE_APPEARANCE_ALPHA)
+    if len(packed) != 1 or len(opacity) != 1:
+        raise ValueError("Vectorscope Grade has no unique final-appearance endpoint")
+
+    fields = (
+        (packed[0].outputs[0], "NodeSocketColor", "Appearance "),
+        (_socket(opacity[0].outputs, "Value"), "NodeSocketFloat", "Appearance Alpha "),
+    )
+    return tuple(_expose_output(kernel, parents, source, socket_type, prefix)
+                 for source, socket_type, prefix in fields)
 
 
 def _socket(sockets, name):
@@ -261,6 +323,8 @@ def _raw_compositor_image(route, scene):
     import bpy
     from .bake_worker import _compositor_root
 
+    if route.get("scope_capture") == "appearance":
+        return None
     tree = _compositor_root(bpy, scene, route)
     for name in tuple(route.get("group_path", ())):
         group = tree.nodes.get(str(name))
@@ -294,7 +358,7 @@ def capture_loaded_image(route):
     """Read a bounded, already loaded input without freezing a scene snapshot."""
     import bpy
 
-    if route["owner_kind"] != "compositor":
+    if route["owner_kind"] != "compositor" or route.get("scope_capture") == "appearance":
         return None
     scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
     if scene is None:
@@ -346,8 +410,16 @@ def _compositor_capture(route, scene, context):
     started = context.start_timing()
     root = _compositor_root(bpy, scene, route)
     tree = root.copy()
-    output, = _sources(tree, route.get("group_path", ()), route["node_name"],
-                       route.get("socket_name", "Color"))
+    path, target = route.get("group_path", ()), route["node_name"]
+    if route.get("scope_capture") == "appearance":
+        packed, opacity = _appearance_outputs(tree, path, target)
+        restore = tree.nodes.new("CompositorNodeSetAlpha")
+        restore.inputs["Type"].default_value = "Replace Alpha"
+        tree.links.new(packed, restore.inputs["Image"])
+        tree.links.new(opacity, restore.inputs["Alpha"])
+        output = restore.outputs["Image"]
+    else:
+        output, = _sources(tree, path, target, route.get("socket_name", "Color"))
     for node in tuple(tree.nodes):
         if node.bl_idname in {"NodeGroupOutput", "CompositorNodeViewer", "CompositorNodeOutputFile"}:
             tree.nodes.remove(node)
@@ -478,6 +550,18 @@ def _aov(view_layer, tree, name, output=None, *, value=False):
         tree.links.new(output, destination)
 
 
+def _resolve_shader_aovs(rgba, alpha, mask, *, appearance):
+    coverage = np.clip(mask, 0.0, 1.0)
+    opacity = np.clip(alpha, 0.0, coverage)
+    weight = opacity if appearance else coverage
+    visible = weight > 1e-8
+    np.divide(rgba[..., :3], weight[..., None], out=rgba[..., :3],
+              where=visible[..., None])
+    rgba[..., :3][~visible] = 0.0
+    rgba[..., 3] = opacity
+    return rgba
+
+
 def _shader_owner(route):
     import bpy
     collections = {"material": bpy.data.materials, "world": bpy.data.worlds}
@@ -509,10 +593,13 @@ def _shader_capture(route, scene, view_layer, context):
 
     token = uuid4().hex
     color_name, mask_name = "PGVectorscopeColor_" + token, "PGVectorscopeMask_" + token
-    output, alpha_output = _sources(
-        owner.node_tree, route.get("group_path", ()), route["node_name"],
-        route.get("socket_name", "Color"), "Alpha",
-    )
+    path, target = route.get("group_path", ()), route["node_name"]
+    appearance = route.get("scope_capture") == "appearance"
+    if appearance:
+        output, alpha_output = _appearance_outputs(owner.node_tree, path, target)
+    else:
+        output, alpha_output = _sources(owner.node_tree, path, target,
+                                        route.get("socket_name", "Color"), "Alpha")
     _aov(view_layer, owner.node_tree, color_name, output)
     alpha_name = "PGVectorscopeAlpha_" + token
     _aov(view_layer, owner.node_tree, alpha_name, alpha_output, value=True)
@@ -551,12 +638,7 @@ def _shader_capture(route, scene, view_layer, context):
             rgba = _read_image(color_files[0], (width, height))
             alpha = _read_image(alpha_files[0], (width, height))[..., 0]
             mask = _read_image(mask_files[0], (width, height))[..., 0]
-        coverage = np.clip(mask, 0.0, 1.0)
-        np.divide(rgba[..., :3], coverage[..., None], out=rgba[..., :3],
-                  where=coverage[..., None] > 1e-8)
-        rgba[..., :3][coverage <= 1e-8] = 0.0
-        rgba[..., 3] = np.clip(alpha, 0.0, coverage)
-        return rgba
+        return _resolve_shader_aovs(rgba, alpha, mask, appearance=appearance)
 
 
 def capture(inputs, context):
@@ -571,6 +653,8 @@ def capture(inputs, context):
     route = inputs["route"]
     if not isinstance(route, dict) or not isinstance(route.get("view"), dict):
         raise TypeError("Vectorscope capture requires a frozen route and view")
+    if route.get("scope_capture", "input") not in {"input", "appearance"}:
+        raise ValueError("Vectorscope capture kind is not supported")
     with context.measure("capture_snapshot_open"):
         _open_snapshot(inputs)
     scene = route_datablock(bpy, bpy.data.scenes, route, "scene")

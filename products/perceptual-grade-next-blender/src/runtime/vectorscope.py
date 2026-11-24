@@ -1,4 +1,4 @@
-"""Transient, latest-demand coordination for the Linear Gizmo vectorscope."""
+"""Transient, latest-demand coordination for Grade Gizmo scopes."""
 
 # pg-book: technical-report/en#next-policy.vectorscope
 
@@ -11,7 +11,7 @@ import shutil
 import threading
 import time
 
-from .. import tone_scope, vectorscope as analysis
+from .. import appearance_scope, tone_scope, vectorscope as analysis
 from ..kernel.prepare import PreparedLinear, prepare_linear
 from ..kernel.settings import ToneSettings
 from . import vectorscope_policy as policy
@@ -48,6 +48,23 @@ class _Payload:
 
 
 @dataclass(frozen=True)
+class _AppearancePayload:
+    route: object
+
+    def analyze(self, rgba):
+        return appearance_scope.analyze(rgba)
+
+
+@dataclass(frozen=True)
+class _AppearanceKey:
+    editor: object
+
+
+def _editor_key(key):
+    return key.editor if isinstance(key, _AppearanceKey) else key
+
+
+@dataclass(frozen=True)
 class _ScopeWatch:
     images: frozenset
     mesh_witnesses: object
@@ -61,16 +78,17 @@ class _ScopeWatch:
 
 
 class ScopeRuntime:
-    """Capture evaluated Grade inputs outside Blender's drawing callback."""
+    """Capture evaluated Grade inputs and appearance outside the draw callback."""
 
     def __init__(self, bpy, snapshot_scope, linear_settings, working_space,
-                 backend=None, *, gate=None, upstream_ready=None):
+                 backend=None, *, gate=None, upstream_ready=None, grade_signature=None):
         self.snapshot_scope = snapshot_scope
         self.backend = backend or BakeHelperBackend()
         self.linear_settings = linear_settings
         self.working_space = working_space
         self.gate = gate
         self.upstream_ready = upstream_ready
+        self.grade_signature = grade_signature
         self.state = policy.State()
         self.payloads = {}
         self.displays = {}
@@ -188,20 +206,31 @@ class ScopeRuntime:
 
     def observe(self, node_editor_key, context, node, viewport, *, tone: ToneSettings | None = None):
         """Record the visible Linear or Tone demand and return its immutable display."""
+        return self._observe(self._key(node_editor_key), context, node, viewport, tone)
+
+    def observe_appearance(self, node_editor_key, context, node, viewport):
+        """Record the Tone tab's independent final appearance demand."""
+        return self._observe(_AppearanceKey(self._key(node_editor_key)), context, node, viewport, None)
+
+    def _observe(self, key, context, node, viewport, tone):
         if threading.current_thread() is not self._main_thread:
             raise RuntimeError("Vectorscope observation must run on Blender's main thread")
-        key = self._key(node_editor_key)
+        appearance = isinstance(key, _AppearanceKey)
         try:
+            if appearance and getattr(node, "pg_use_bake", False):
+                self._release(key)
+                return None, "bake", None
+            if appearance and getattr(node, "mute", False):
+                raise ValueError("Final appearance requires an unmuted Grade")
             route_started = self._clock()
             dependencies = []
             upstream = []
             watch = {}
-            route = bake_routes.describe_vectorscope(
-                node, context, viewport, dependencies=dependencies,
-                upstream_grades=upstream, watch=watch,
-            )
-            linear = self.linear_settings(node)
-            space = self.working_space()
+            route_options = {"dependencies": dependencies,
+                             "upstream_grades": upstream, "watch": watch}
+            if appearance:
+                route_options["scope_capture"] = "appearance"
+            route = bake_routes.describe_vectorscope(node, context, viewport, **route_options)
             selection = self._selection(node)
             pointers = frozenset(
                 int(item.as_pointer()) for item in dependencies
@@ -249,9 +278,20 @@ class ScopeRuntime:
             with self._observations:
                 self.watches[key] = scope_watch
             source_signature = self._digest((selection, route["source_signature"]))
-            capture_signature = self._digest((route["capture_signature"],
-                                              selection, epoch))
-            analysis_signature = self._analysis_signature(capture_signature, linear, space, tone)
+            capture_identity = (route["capture_signature"], selection, epoch)
+            if appearance:
+                signature = None if self.grade_signature is None else self.grade_signature(node)
+                if signature is None:
+                    raise RuntimeError("Could not read evaluated Grade settings")
+                if all(item.as_pointer() != node.as_pointer() for item in upstream):
+                    upstream.append(node)
+                capture_signature = self._digest((*capture_identity, "appearance", signature))
+                analysis_signature = capture_signature
+            else:
+                linear = self.linear_settings(node)
+                space = self.working_space()
+                capture_signature = self._digest(capture_identity)
+                analysis_signature = self._analysis_signature(capture_signature, linear, space, tone)
             route_finished = self._clock()
             previous = next((item for item in self.state.desired if item.key == key), None)
             changed = (previous is None or previous.capture_signature != capture_signature
@@ -259,9 +299,10 @@ class ScopeRuntime:
                        or previous.source_signature != source_signature)
             ready = self.upstream_ready is None or self.upstream_ready(tuple(upstream))
             if changed:
-                linear_started = self._clock()
-                payload = _Payload(route, prepare_linear(linear, space), epoch, tone)
-                linear_finished = self._clock()
+                capture_started = self._clock()
+                payload = (_AppearancePayload(route) if appearance else _Payload(
+                    route, prepare_linear(linear, space), epoch, tone))
+                capture_finished = self._clock()
                 samples = self.samples.get(capture_signature)
                 lookup_finished = self._clock()
                 trace = None if samples is None else payload.analyze(samples)
@@ -269,8 +310,8 @@ class ScopeRuntime:
                 if route_started is not None:
                     timings = (
                         ("route_signature", route_started, route_finished),
-                        ("linear_prepare", linear_started, linear_finished),
-                        ("cache_lookup", linear_finished, lookup_finished),
+                        ("linear_prepare", capture_started, capture_finished),
+                        ("cache_lookup", capture_finished, lookup_finished),
                     )
                     if samples is not None:
                         timings += (("cached_density", lookup_finished, self._clock()),)
@@ -296,7 +337,7 @@ class ScopeRuntime:
         key = self._key(key)
         demand = next((item for item in self.state.desired if item.key == key), None)
         payload = self.payloads.get(key)
-        if (demand is None or payload is None or payload.tone is not None
+        if (demand is None or not isinstance(payload, _Payload) or payload.tone is not None
                 or key in self.state.waiting):
             return None
         with self._observations:
@@ -335,7 +376,7 @@ class ScopeRuntime:
             return None, status, error
         display = self.displays.get(key)
         payload = self.payloads.get(key)
-        if (display is not None and payload is not None
+        if (display is not None and isinstance(payload, _Payload)
                 and isinstance(display, tone_scope.ToneWaveforms) != (payload.tone is not None)):
             return None, status, None
         return display, status, None
@@ -358,7 +399,8 @@ class ScopeRuntime:
             gate = None if self.gate is None else self.gate()
             with nullcontext() if gate is None else gate.commit():
                 direct_started = self._clock()
-                rgba = capture_loaded_image(payload.route)
+                rgba = (None if isinstance(payload, _AppearancePayload)
+                        else capture_loaded_image(payload.route))
                 direct_finished = self._clock()
                 if rgba is None:
                     snapshot_started = self._clock()
@@ -509,7 +551,7 @@ class ScopeRuntime:
                         watch.owner_kind,
                         watch.has_render_layers,
                     )
-        return tuple(affected)
+        return tuple(dict.fromkeys(_editor_key(key) for key in affected))
 
     @staticmethod
     def _covered_shader_dependency(pointer, watch):
@@ -525,16 +567,26 @@ class ScopeRuntime:
     def tone_changed(self, owner):
         return self._affected_editors(owner, tone_only=True)
 
-    def _affected_editors(self, owner, *, tone_only=False):
+    def appearance_changed(self, owner):
+        return self._affected_editors(owner, appearance_only=True)
+
+    def _affected_editors(self, owner, *, tone_only=False, appearance_only=False):
         try:
             pointer = int(owner.as_pointer())
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             return ()
         with self._observations:
-            return tuple(key for key, target in self.targets.items()
-                         if pointer in target and (not tone_only or (
-                             (payload := self.payloads.get(key)) is not None
-                             and payload.tone is not None)))
+            keys = []
+            for key, target in self.targets.items():
+                if pointer not in target:
+                    continue
+                if isinstance(key, _AppearanceKey):
+                    keys.append(key.editor)
+                elif not appearance_only and (not tone_only or (
+                        (payload := self.payloads.get(key)) is not None
+                        and payload.tone is not None)):
+                    keys.append(key)
+            return tuple(dict.fromkeys(keys))
 
     def _forget_observation(self, key):
         self.payloads.pop(key, None)
@@ -552,6 +604,13 @@ class ScopeRuntime:
 
     def release(self, node_editor_key):
         key = self._key(node_editor_key)
+        self.release_appearance(key)
+        self._release(key)
+
+    def release_appearance(self, node_editor_key):
+        self._release(_AppearanceKey(self._key(node_editor_key)))
+
+    def _release(self, key):
         self._forget_observation(key)
         self._dispatch(policy.Event("release", key=key))
 
