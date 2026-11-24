@@ -5,7 +5,7 @@ from numbers import Real
 from types import SimpleNamespace
 
 from .graph import AppearanceSockets, Graph
-from .guard_graph import GuardedSockets, output_guard
+from .guard_graph import GuardedSockets, output_guard, returned_appearance
 from .stack_inverse_shader import INVERSE_SOURCE
 from .parameter_color import ParameterColorGraph
 from ..kernel.prepare import prepare
@@ -289,14 +289,32 @@ def _appearance_functions(boundary, color):
     yield function("float stack_tone_magnitude(float magnitude)", stage, _code(remapped))
 
 
+def _graded_input(boundary, color, argument):
+    graph = _ComputeGraph(boundary, color)
+    cones = graph.parameters.matrix(_Expression(argument, "vec3"))
+    toned = graph.tone(graph.encode_cones(cones))
+    return graph, graph.color_and_guard(toned)
+
+
+def _scope_appearance_function(boundary, color):
+    graph, repaired = _graded_input(boundary, color, "input_color")
+    guarded = output_guard(graph, repaired)
+    appearance = returned_appearance(graph, guarded)
+    result = ", ".join(_code(value) for value in (
+        appearance.J_A, appearance.a, appearance.b, guarded.valid,
+    ))
+    return (
+        "vec4 grade_scope_appearance(vec3 input_color) {",
+        *graph.lines,
+        f"    return vec4({result});",
+        "}",
+    )
+
+
 def grade_source(boundary):
     """Create the complete Grade shader using shared build-only equations."""
     color = prepare(boundary=boundary, full_fields=True).color
-    graph = _ComputeGraph(boundary, color)
-    input_color = _Expression("input_value", "vec3")
-    cones = graph.parameters.matrix(input_color)
-    toned = graph.tone(graph.encode_cones(cones))
-    repaired = graph.color_and_guard(toned)
+    graph, repaired = _graded_input(boundary, color, "input_value")
     raw = graph.decode_coordinates(repaired.J_A, repaired.a, repaired.b)
     graph.lines.extend((
         "    if (final_grade == 0) {",
@@ -304,6 +322,7 @@ def grade_source(boundary):
         "    }",
     ))
     guarded = output_guard(graph, repaired)
+
     response_limit = 400.
     max_ja = 100. * (3.05 * response_limit / boundary.aw)**boundary.gamma
     # Bound the eccentricity polynomial over unit hue components.
@@ -313,6 +332,9 @@ def grade_source(boundary):
     max_magnitude = math.hypot(max_ja, math.sqrt(66. * 16. * max_chroma))
     body = "\n".join((
         _PREAMBLE,
+        "#ifdef SCOPE_PREVIEW",
+        *_scope_appearance_function(boundary, color),
+        "#else",
         "vec3 grade_value(vec3 input_value, int final_grade) {",
         *graph.lines,
         f"    return {_code(guarded.native_color)};",
@@ -324,6 +346,7 @@ def grade_source(boundary):
         f"const int stack_chroma_tone_slot = {TONE_CHROMA_TONE_SLOT};",
         *_appearance_functions(boundary, color),
         INVERSE_SOURCE,
+        "#endif",
         "#endif",
     ))
     return body

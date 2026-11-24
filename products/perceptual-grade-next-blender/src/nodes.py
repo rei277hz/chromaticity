@@ -4149,13 +4149,14 @@ def _load_post(_filepath):
 
 @persistent
 def _undo_redo_pre(*_args):
-    _begin_lifecycle_change()
+    _begin_lifecycle_change(preserve_gizmo=True)
 
 
-def _begin_lifecycle_change():
+def _begin_lifecycle_change(*, preserve_gizmo=False):
     failures = _lifecycle.begin((
         _cancel_color_gestures, _clear_gestures, _bake.withdraw_all,
-        vectorscope_ui.reset, _invalidate_node_stores,
+        lambda: vectorscope_ui.reset(preserve_preferences=preserve_gizmo),
+        _invalidate_node_stores,
     ))
     for error in failures:
         print("Perceptual Grade lifecycle cleanup failed:", error)
@@ -6365,6 +6366,27 @@ def _scope_upstream_ready(grades):
     return current
 
 
+def _scope_preview_roles(node, signature):
+    if _lifecycle.changing or _lifecycle.reset_pending or _frame_change_active:
+        return None
+    record = _node_stores.get(node.as_pointer())
+    if record is None:
+        return None
+    state = record["state"]
+    if (state.desired_signature != signature or state.applied_signature != signature
+            or state.applied_quality != "full" or not node_policy.output_allowed(state)):
+        return None
+    kernel = _kernel_for_node(node)
+    if not _kernel_is_current(kernel, node.id_data.bl_idname, signature, stack=False,
+                              validate_graph=False):
+        return None
+    active = kernel.get(PARAMETER_ACTIVE_BANK)
+    primary = kernel.get(PARAMETER_BANK_BINDINGS[active])
+    if not parameter_bundle_receipt_matches(primary):
+        return None
+    return parameter_bank_images(primary)
+
+
 def register():
     global _preparation_runtime, _grade_preparer, _grade_resources
     retrying_preparation_runtime = (
@@ -6444,7 +6466,7 @@ def register():
         vectorscope_ui.register(lambda: ScopeRuntime(
             bpy, _bake.manager._snapshot, _scope_linear_settings, _working_space,
             gate=_bake.gate, upstream_ready=_scope_upstream_ready,
-            grade_signature=_settings_signature_for,
+            grade_signature=_settings_signature_for, preview_roles=_scope_preview_roles,
         ), begin=_begin_gizmo_gesture, edit=_edit_gizmo_gesture,
             finish=_end_color_gesture, cancel=_cancel_color_gesture,
             linear_settings=_scope_linear_settings, tone_settings=_scope_tone_settings,

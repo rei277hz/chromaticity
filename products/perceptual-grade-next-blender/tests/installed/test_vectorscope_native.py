@@ -93,6 +93,7 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("direct_image_visible"), details)
         self.assertTrue(data.get("linear_edit_refreshed"), details)
         self.assertTrue(data.get("linear_gizmo_controls"), details)
+        self.assertTrue(data.get("gizmo_hover_and_resize"), details)
         self.assertTrue(data.get("hover_exhaustion_before_press"), details)
         self.assertTrue(data.get("hover_retry_acknowledged"), details)
         self.assertTrue(data.get("tone_gizmo_controls"), details)
@@ -109,6 +110,7 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("latest_frame_published"), details)
         self.assertTrue(data.get("shared_consumer_input"), details)
         self.assertTrue(data.get("source_keys_undone"), details)
+        self.assertTrue(data.get("undo_preserved_gizmo"), details)
         self.assertTrue(data.get("click_unchanged"), details)
         self.assertTrue(data.get("empty_plot_inert"), details)
         self.assertTrue(data.get("selection_cancelled"), details)
@@ -126,6 +128,10 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("right_click_cancelled"), details)
         self.assertTrue(data.get("shared_tone_gizmo"), details)
         self.assertTrue(data.get("appearance_tone_and_warp"), details)
+        self.assertTrue(data.get("appearance_preview_reused_inputs_and_roles"), details)
+        timing = data.get("appearance_timing_seconds", {})
+        self.assertEqual(set(timing), {"first_preview", "warm_preview", "release_to_exact"}, details)
+        self.assertTrue(all(value > 0 for value in timing.values()), details)
 
 
 if __name__ == "__main__":

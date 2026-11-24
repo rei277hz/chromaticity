@@ -31,7 +31,7 @@ class GizmoGeometryTests(unittest.TestCase):
             self.assertIn(name, box)
         x, y, side, height = box["scope"]
         self.assertEqual(side, height)
-        self.assertGreater(side, 300)
+        self.assertEqual(side, self.geometry.DEFAULT_LINEAR_SIZE)
         self.assertTrue(self.geometry.contains(box["scope"], (x + 1, y + 1)))
         self.assertLess(box["exposure"][0] + box["exposure"][2], x)
         self.assertGreater(box["cr_balance"][0], x + side)
@@ -85,6 +85,47 @@ class GizmoGeometryTests(unittest.TestCase):
         x, y, width, height = compact["rect"]
         self.assertEqual((x, y, x + width, y + height), (12, 12, 292, 244))
         self.assertLess(compact["tone_tab"][0] + compact["tone_tab"][2], compact["close"][0])
+
+    def test_tone_corner_resize_anchors_the_opposite_corner_at_scaled_dpi(self):
+        scale = 2.
+        region = (1600, 1200)
+        box = self.geometry.layout("TONE", *region, scale, (100, 100), (600, 400))
+        cases = (
+            ("w", -80, 0, (-80, 0, 80, 0)),
+            ("e", 80, 0, (0, 0, 80, 0)),
+            ("s", 0, -80, (0, -80, 0, 80)),
+            ("n", 0, 80, (0, 0, 0, 80)),
+            ("sw", -80, -80, (-80, -80, 80, 80)),
+            ("se", 80, -80, (0, -80, 80, 80)),
+            ("nw", -80, 80, (-80, 0, 80, 80)),
+            ("ne", 80, 80, (0, 0, 80, 80)),
+        )
+        self.assertEqual(set(box["resize_grips"]), {case[0] for case in cases})
+        x, y, width, height = box["rect"]
+        for handle, dx, dy, expected in cases:
+            with self.subTest(handle=handle):
+                position, size = self.geometry.resize(
+                    "TONE", box["rect"], box["bounds"], handle, dx, dy, scale)
+                resized = self.geometry.layout("TONE", *region, scale, position, size)
+                rx, ry, rw, rh = resized["rect"]
+                self.assertEqual((rx - x, ry - y, rw - width, rh - height), expected)
+
+    def test_linear_edge_resize_keeps_scope_square_and_stays_in_region(self):
+        box = self.geometry.layout("LINEAR", 900, 660)
+        position, size = self.geometry.resize(
+            "LINEAR", box["rect"], box["bounds"], "e", 1000, 0, 1.)
+        resized = self.geometry.layout("LINEAR", 900, 660, 1., position, size)
+        self.assertEqual(box["rect"][0], resized["rect"][0])
+        self.assertEqual(resized["scope"][2], resized["scope"][3])
+        self.assertGreater(resized["scope"][2], box["scope"][2])
+        self.assertLessEqual(resized["rect"][0] + resized["rect"][2], 888.)
+        self.assertLessEqual(resized["rect"][1] + resized["rect"][3], 648.)
+
+    def test_compact_default_dimensions(self):
+        linear = self.geometry.layout("LINEAR", 1200, 900)
+        tone = self.geometry.layout("TONE", 1200, 900)
+        self.assertEqual(linear["size"], 300.)
+        self.assertEqual(tone["size"], (500., 340.))
 
     def test_targets_and_handles_start_at_red_and_blue_targets(self):
         box = self.geometry.layout("LINEAR", 1200, 900)

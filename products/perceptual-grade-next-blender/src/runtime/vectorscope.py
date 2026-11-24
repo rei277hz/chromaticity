@@ -81,7 +81,8 @@ class ScopeRuntime:
     """Capture evaluated Grade inputs and appearance outside the draw callback."""
 
     def __init__(self, bpy, snapshot_scope, linear_settings, working_space,
-                 backend=None, *, gate=None, upstream_ready=None, grade_signature=None):
+                 backend=None, *, gate=None, upstream_ready=None, grade_signature=None,
+                 preview_roles=None, preview_backend=None):
         self.snapshot_scope = snapshot_scope
         self.backend = backend or BakeHelperBackend()
         self.linear_settings = linear_settings
@@ -89,6 +90,11 @@ class ScopeRuntime:
         self.gate = gate
         self.upstream_ready = upstream_ready
         self.grade_signature = grade_signature
+        self.preview_roles = preview_roles
+        self.preview_backend = preview_backend
+        self.preview_warmed = False
+        self.preview_unavailable = False
+        self.appearance_previews = {}
         self.state = policy.State()
         self.payloads = {}
         self.displays = {}
@@ -208,9 +214,106 @@ class ScopeRuntime:
         """Record the visible Linear or Tone demand and return its immutable display."""
         return self._observe(self._key(node_editor_key), context, node, viewport, tone)
 
-    def observe_appearance(self, node_editor_key, context, node, viewport):
+    def observe_appearance(self, node_editor_key, context, node, viewport, *, dragging=False):
         """Record the Tone tab's independent final appearance demand."""
-        return self._observe(_AppearanceKey(self._key(node_editor_key)), context, node, viewport, None)
+        editor = self._key(node_editor_key)
+        key = _AppearanceKey(editor)
+        if not dragging:
+            self.appearance_previews.pop(editor, None)
+            trace, status, error = self._observe(key, context, node, viewport, None)
+            if status == "current" and self.preview_roles is not None:
+                self._warm_preview()
+            return (trace if status == "current" else None), status, error
+
+        # Withdrawing the exact demand also cancels an in-flight appearance
+        # capture. The regular Tone input demand stays live throughout the drag.
+        if key in self.payloads:
+            self._release(key)
+        if getattr(node, "pg_use_bake", False):
+            return None, "bake", None
+        if getattr(node, "mute", False):
+            return None, "unavailable", "Appearance requires an unmuted Grade"
+        return self._observe_appearance_preview(editor, node)
+
+    def _observe_appearance_preview(self, editor, node):
+        updating = (None, "updating", None)
+        inputs = self._preview_inputs(editor, node)
+        if inputs is None or self.preview_roles is None or self.grade_signature is None:
+            return updating
+        demand, samples = inputs
+        signature = self.grade_signature(node)
+        if signature is None:
+            return updating
+        roles = self.preview_roles(node, signature)
+        if roles is None:
+            return updating
+        revision = (demand.capture_signature, signature)
+        previous = self.appearance_previews.get(editor)
+        if previous is not None and previous[0] == revision:
+            return previous[1], "preview", None
+
+        if not self._warm_preview():
+            return updating
+        try:
+            started = self._clock()
+            pixels = self.preview_backend.evaluate(
+                samples, roles, input_receipt=demand.capture_signature,
+            )
+            if pixels is None:
+                return updating
+            trace = appearance_scope.analyze(pixels)
+            current = self._preview_inputs(editor, node)
+            if (current is None or current[0] != demand
+                    or self.grade_signature(node) != signature):
+                return updating
+        except Exception:
+            self._disable_preview()
+            return updating
+        self.appearance_previews[editor] = revision, trace
+        self._record_timing("appearance_preview", started, self._clock(), demand,
+                            {"samples": pixels.size // 4})
+        return trace, "preview", None
+
+    def _warm_preview(self):
+        """Compile the optional preview backend outside pointer-motion handling."""
+        if self.preview_unavailable:
+            return False
+        try:
+            if self.preview_backend is None:
+                from ..appearance_preview import AppearancePreview
+
+                self.preview_backend = AppearancePreview()
+            if not self.preview_warmed:
+                self.preview_backend.warm()
+                self.preview_warmed = True
+            return True
+        except Exception:
+            self._disable_preview()
+            return False
+
+    def _disable_preview(self):
+        backend = self.preview_backend
+        self.preview_backend = None
+        self.preview_warmed = False
+        self.preview_unavailable = True
+        if backend is not None:
+            try:
+                backend.close()
+            except Exception:
+                pass
+
+    def _preview_inputs(self, editor, node):
+        payload = self.payloads.get(editor)
+        if (not isinstance(payload, _Payload) or payload.tone is None
+                or policy.status(self.state, editor)[0] != "current"):
+            return None
+        with self._observations:
+            if (self.targets.get(editor) != self._target(node)
+                    or self.source_epochs.get(editor) != payload.source_epoch):
+                return None
+        demand = next(item for item in self.state.desired if item.key == editor)
+        samples = self.samples.get(demand.capture_signature)
+        return None if samples is None else (demand, samples)
 
     def _observe(self, key, context, node, viewport, tone):
         if threading.current_thread() is not self._main_thread:
@@ -582,10 +685,11 @@ class ScopeRuntime:
                     continue
                 if isinstance(key, _AppearanceKey):
                     keys.append(key.editor)
-                elif not appearance_only and (not tone_only or (
-                        (payload := self.payloads.get(key)) is not None
-                        and payload.tone is not None)):
-                    keys.append(key)
+                else:
+                    payload = self.payloads.get(key)
+                    if not (appearance_only or tone_only) or (payload is not None
+                                                              and payload.tone is not None):
+                        keys.append(key)
             return tuple(dict.fromkeys(keys))
 
     def _forget_observation(self, key):
@@ -608,7 +712,9 @@ class ScopeRuntime:
         self._release(key)
 
     def release_appearance(self, node_editor_key):
-        self._release(_AppearanceKey(self._key(node_editor_key)))
+        editor = self._key(node_editor_key)
+        self.appearance_previews.pop(editor, None)
+        self._release(_AppearanceKey(editor))
 
     def _release(self, key):
         self._forget_observation(key)
@@ -619,6 +725,12 @@ class ScopeRuntime:
         self.payloads.clear()
         self.samples.clear()
         self.sample_bytes = 0
+        self.appearance_previews.clear()
+        if self.preview_backend is not None:
+            self.preview_backend.close()
+            self.preview_backend = None
+        self.preview_warmed = False
+        self.preview_unavailable = False
         with self._observations:
             self.dependencies.clear()
             self.watches.clear()

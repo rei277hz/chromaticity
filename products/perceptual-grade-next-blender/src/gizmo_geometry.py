@@ -11,6 +11,13 @@ from .vectorscope import CHROMA_LIMIT, color_bar_targets
 
 _TARGETS = {label: (cb, cr) for label, cb, cr in color_bar_targets()}
 _HANDLE_TARGETS = {"cr": "R", "yb": "B"}
+DEFAULT_LINEAR_SIZE = 300.
+DEFAULT_TONE_SIZE = (500., 340.)
+MIN_LINEAR_SIZE = 160.
+MAX_LINEAR_SIZE = 900.
+MIN_TONE_SIZE = (280., 232.)
+MAX_TONE_SIZE = (1200., 900.)
+_RESIZE_GRIP = 8.
 
 
 def _rect(x, y, width, height):
@@ -36,7 +43,7 @@ def scope_targets(rect):
             for label, (cb, cr) in _TARGETS.items()}
 
 
-def layout(stage, width, height, scale=1.0, position=(24.0, 24.0)):
+def layout(stage, width, height, scale=1.0, position=(24.0, 24.0), size=None):
     """Build the DPI-scaled Gizmo geometry for a Node Editor region.
 
     ``position`` is the lower-left logical panel position. The panel is
@@ -54,13 +61,18 @@ def layout(stage, width, height, scale=1.0, position=(24.0, 24.0)):
     if available_width < 280 * scale or available_height < 232 * scale:
         return None
     if stage == "LINEAR":
-        side = min(420 * scale, available_width - 168 * scale,
-                   available_height - 120 * scale)
+        requested_side = DEFAULT_LINEAR_SIZE if size is None else float(size)
+        max_side = min(MAX_LINEAR_SIZE * scale, available_width - 168 * scale,
+                       available_height - 120 * scale)
+        side = min(max_side, max(MIN_LINEAR_SIZE * scale, requested_side * scale))
         panel_width = side + 168 * scale
         panel_height = side + 120 * scale
     else:
-        panel_width = min(640 * scale, available_width)
-        panel_height = min(420 * scale, available_height)
+        requested_size = DEFAULT_TONE_SIZE if size is None else tuple(map(float, size))
+        panel_width = min(max(MIN_TONE_SIZE[0], requested_size[0]) * scale,
+                          MAX_TONE_SIZE[0] * scale, available_width)
+        panel_height = min(max(MIN_TONE_SIZE[1], requested_size[1]) * scale,
+                           MAX_TONE_SIZE[1] * scale, available_height)
     px, py = (float(value) * scale for value in position)
     px = max(12.0 * scale, min(px, width - panel_width - 12.0 * scale))
     py = max(12.0 * scale, min(py, height - panel_height - 12.0 * scale))
@@ -69,6 +81,9 @@ def layout(stage, width, height, scale=1.0, position=(24.0, 24.0)):
     inner_width = panel_width - 24 * scale
     result = {
         "rect": _rect(px, py, panel_width, panel_height),
+        "bounds": _rect(12 * scale, 12 * scale, available_width, available_height),
+        "size": (side / scale if stage == "LINEAR"
+                 else (panel_width / scale, panel_height / scale)),
         "header": _rect(px, py + panel_height - header_height,
                          panel_width, header_height),
         "close": _rect(px + panel_width - 28.0 * scale,
@@ -120,7 +135,56 @@ def layout(stage, width, height, scale=1.0, position=(24.0, 24.0)):
             "fit": _rect(curve_right, curve_y, 34 * scale, curve_height),
             "fit_track": ((curve_right, curve_y), (curve_right, curve_top)),
         })
+    grip = _RESIZE_GRIP * scale
+    x, y, panel_width, panel_height = result["rect"]
+    result["resize_grips"] = {
+        "w": _rect(x, y + grip, grip, panel_height - 2 * grip),
+        "e": _rect(x + panel_width - grip, y + grip, grip, panel_height - 2 * grip),
+        "s": _rect(x + grip, y, panel_width - 2 * grip, grip),
+        "n": _rect(x + grip, y + panel_height - grip, panel_width - 2 * grip, grip),
+        "sw": _rect(x, y, grip, grip),
+        "se": _rect(x + panel_width - grip, y, grip, grip),
+        "nw": _rect(x, y + panel_height - grip, grip, grip),
+        "ne": _rect(x + panel_width - grip, y + panel_height - grip, grip, grip),
+    }
     return result
+
+
+def _resize_axis(origin, extent, limit, delta, low, high):
+    lo, hi = limit
+    before, after = max(0., origin - lo), max(0., hi - origin - extent)
+    if low:
+        return -delta, before, 1.
+    if high:
+        return delta, after, 0.
+    return None, before + after, .5
+
+
+def resize(stage, rect, bounds, handle, dx, dy, scale):
+    """Keep the opposite edge fixed and stay inside the editor region."""
+    x, y, width, height = (value / scale for value in rect)
+    bx, by, bw, bh = (value / scale for value in bounds)
+    horizontal, room_x, anchor_x = _resize_axis(
+        x, width, (bx, bx + bw), dx / scale, "w" in handle, "e" in handle)
+    vertical, room_y, anchor_y = _resize_axis(
+        y, height, (by, by + bh), dy / scale, "s" in handle, "n" in handle)
+    if stage == "LINEAR":
+        side = width - 168
+        changes = [value for value in (horizontal, vertical) if value is not None]
+        delta = min(sum(changes) / len(changes), room_x, room_y)
+        size = min(MAX_LINEAR_SIZE, max(min(MIN_LINEAR_SIZE, side), side + delta))
+        dw = dh = size - side
+    elif stage == "TONE":
+        size = tuple(min(hi, max(lo, extent + min(delta or 0., room)))
+                     for lo, hi, extent, delta, room in zip(
+                         MIN_TONE_SIZE, MAX_TONE_SIZE, (width, height),
+                         (horizontal, vertical), (room_x, room_y)))
+        dw, dh = size[0] - width, size[1] - height
+    else:
+        raise ValueError("Gizmo stage must be LINEAR or TONE")
+    x = max(bx, min(x - dw * anchor_x, bx + bw - width - dw))
+    y = max(by, min(y - dh * anchor_y, by + bh - height - dh))
+    return (x, y), size
 
 
 def _handle_polar(rect, axis, spread, heading):

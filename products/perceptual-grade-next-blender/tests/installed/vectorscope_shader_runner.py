@@ -32,6 +32,7 @@ assert not errors and not bpy.app.background, errors
 bpy.ops.wm.save_userpref()
 select = drag_checks["select"]
 encoded_rgb = drag_checks["encoded_rgb"]
+scope_tint = drag_checks["scope_tint"]
 chroma_bin = drag_checks["chroma_bin"]
 complete_trace = drag_checks["complete_trace"]
 complete_tone_histogram = drag_checks["complete_tone_histogram"]
@@ -179,7 +180,7 @@ def mixed_peaks(display):
         neighborhood = trace[row - 1:row + 2, column - 1:column + 2]
         index = np.unravel_index(np.argmax(neighborhood[..., 3]), (3, 3))
         rgba = neighborhood[index]
-        if rgba[3] <= 0 or not np.allclose(rgba[:3], code, rtol=0, atol=1e-3):
+        if rgba[3] <= 0 or not np.allclose(rgba[:3], scope_tint(code), rtol=0, atol=1e-3):
             return None
         peaks.append(float(rgba[3]))
     return peaks
@@ -281,7 +282,39 @@ def scenario():
     appearance_captures = capture_jobs.count("appearance")
     assert appearance_captures > 0
     before = pointer.settings(shared)
-    edited = yield from pointer.drag_control("fit", shared, (0, 35))
+    start = pointer.control_point("fit", shared)
+    yield from pointer.press_at(start, "fit", shared)
+    previous_preview = None
+    timings = []
+    preview_resources = None
+    for delta in (18, 35):
+        end = start[0], start[1] + delta
+        moved = time.monotonic()
+        pointer.event_at("MOUSEMOVE", "NOTHING", end)
+        yield from wait_for(
+            lambda: (value := state()) is not None and value.appearance_status == "preview"
+            and value.appearance is not None and value.appearance is not previous_preview,
+            "Shared Shader Tone did not show the live appearance preview",
+        )
+        timings.append(time.monotonic() - moved)
+        previous_preview = state().appearance
+        assert previous_preview.rgba[..., 3].any()
+        assert capture_jobs.count("appearance") == appearance_captures
+        preview = vectorscope_ui._runtime.preview_backend
+        assert preview is not None
+        resources = {
+            "input": preview._input_texture,
+            **{role: value[2] for role, value in preview._role_textures.items()},
+        }
+        if preview_resources is None:
+            preview_resources = resources
+        else:
+            assert resources["input"] is preview_resources["input"]
+            for role in ("web", "web_toe", "adaptance"):
+                assert resources[role] is preview_resources[role]
+    released = time.monotonic()
+    pointer.event_at("LEFTMOUSE", "RELEASE", end)
+    edited = pointer.settings(shared)
     assert edited.tone.fit > before.tone.fit
     assert shared.pg_grade.pg_tone.fit == edited.tone.fit
     assert pointer.settings(grade) == baseline
@@ -293,7 +326,12 @@ def scenario():
     yield from wait_for(lambda: appearance_current(original_appearance),
                         "Shared Shader Tone Fit did not refresh final appearance")
     assert capture_jobs.count("input") == input_captures
-    assert capture_jobs.count("appearance") > appearance_captures
+    assert capture_jobs.count("appearance") == appearance_captures + 1
+    report["appearance_timing_seconds"] = {
+        "first_preview": timings[0], "warm_preview": timings[1],
+        "release_to_exact": time.monotonic() - released,
+    }
+    report["appearance_preview_reused_inputs_and_roles"] = True
     report["shared_tone_gizmo"] = True
 
     tone_appearance = state().appearance.rgba

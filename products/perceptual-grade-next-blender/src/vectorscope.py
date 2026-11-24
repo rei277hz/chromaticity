@@ -165,11 +165,14 @@ def trace_components(rgba, linear_matrix, space, *, size=SIZE):
 
 
 def trace_rgba(mass, energy):
-    """Encode measured RGB and display density as straight-alpha RGBA."""
+    """Encode peak-normalized tint and display density as straight-alpha RGBA."""
     rgba = np.zeros((*mass.shape, 4), dtype=np.float32)
     color = rgba[..., :3]
-    np.divide(energy, mass[..., None], out=color, where=mass[..., None] > 0)
-    np.clip(color, 0.0, 1.0, out=color)
+    # The shared mass divisor cancels when normalizing the mean by its peak.
+    bounded = np.clip(energy, 0.0, mass[..., None])
+    peak = bounded.max(axis=-1)
+    np.divide(bounded, peak[..., None], out=color, where=peak[..., None] > 0.0)
+    color[(mass > 0.0) & (peak == 0.0)] = 1.0
     rgba[..., 3] = normalize_histogram(mass)
     rgba.setflags(write=False)
     return rgba

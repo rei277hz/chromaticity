@@ -1,7 +1,7 @@
 # Perceptual Grade Gizmo design
 
 The Gizmo shows the Linear controls and vectorscope, plus the Stage 2 Tone
-Curve and Final Appearance scope. Original Unified Chroma controls are
+Curve and Appearance Distribution. Original Unified Chroma controls are
 available in the Stage 2 numeric sidebar while their design is being evaluated.
 
 Stage 3 has no J/C contribution or opponent-pad Gizmo. Its numeric controls are
@@ -19,6 +19,14 @@ reset value. Tone anchors reset to their current output targets within their
 neighbor bounds. Release confirms the gesture. Escape or right-click restores
 its pre-drag value.
 
+Undo and redo preserve the open stage, position, size, and selected Tone
+anchor. The scopes refresh for the restored Grade after recovery. Drag an
+edge or corner to resize the panel within the Node Editor. Linear opens with
+a 300-logical-pixel square vectorscope, and Tone opens at 500 by 340 logical
+pixels. Each editor remembers the size of each stage while the Gizmo is open.
+The panel consumes pointer events within its bounds. Keyboard shortcuts and
+drags that began outside the panel still reach Blender.
+
 ## Linear vectorscope
 
 Select a Shader or Compositor Grade and toggle **Vectorscope** in the Linear
@@ -26,7 +34,10 @@ sidebar. Each plot shows the selected node's Linear output. Nodes that share a
 Grade use its Linear settings and sample their own Color inputs. Cb increases
 to the right and Cr increases upward in Rec.709 signal space, with fixed
 bounds of -0.65 to +0.65 on both axes. The trace averages the measured
-display-encoded RGB, weighted by sample alpha and a one-bin Gaussian. A bin
+display-encoded RGB, weighted by sample alpha and a one-bin Gaussian. Each
+occupied bin's tint is normalized by its largest RGB channel, so the trace
+stays visible as exposure drops. A black occupied bin uses neutral gray.
+Cb/Cr positions still follow exposure, and empty bins are transparent. A bin
 with share `d` of the total plotted mass has logarithmic density
 `L = log1p(65535 * d) / log1p(65535)`. An endpoint-normalized exponential
 shoulder sets the intensity to `expm1(-L) / expm1(-1)`, lifting sparse bins and
@@ -54,7 +65,7 @@ changes. During playback, a complete capture of the same source can remain
 visible with **Updating** as newer frames are captured. Capture failures and
 unavailable contexts appear in the scope.
 
-## Tone Final Appearance scope
+## Tone Appearance Distribution
 
 The read-only 2:1 plot sits to the left of the Tone Curve. It measures the
 selected Grade's appearance after Warp, H–K
@@ -63,10 +74,10 @@ It uses the same Compositor input or Shader viewport context as the other
 Gizmo scopes. The plot is unavailable while **Use Bake** is active because
 the Grade is displaying a baked RGB texture.
 
-The vertical axis uses the same units as the Tone Curve, with
+The vertical axis uses normalized J ticks, with
 \(J_\mathrm{HK}/100=1\) at 80% of the height and the neutral 4,000-nit
-reference at the top. A single smooth curve gradually reduces the slope
-through the reference at 1. The readout above the plot gives the percentage
+reference at the top, labeled approximately 3.07. A single smooth curve
+gradually reduces the slope through the reference at 1. The readout above the plot gives the percentage
 of valid alpha weight above the 4,000-nit reference. The horizontal position is
 \(s/\sqrt{1+s^2}\), where \(s=C/|J_A|\). Tick labels show the uncompressed
 saturation from zero to infinity. Black has zero saturation.
@@ -74,9 +85,14 @@ saturation from zero to infinity. Black has zero saturation.
 Opacity shows alpha-weighted density. Each bin's tint follows its weighted
 circular mean hue, with tint strength set by how closely its hues agree.
 Near-neutral samples contribute their full density weight and less hue weight.
-Opposing hues produce a visible gray trace. A complete trace can stay visible
-with **Updating appearance** while the selected Grade is recaptured. A failed
-capture clears the trace and displays its error.
+Opposing hues produce a visible gray trace. During a Tone drag, **Preview**
+plots up to 4,096 deterministic samples from the current input capture.
+The generated Grade shader applies Warp, H–K repair, and gamut mapping before
+plotting the samples. Reduced captures include coverage-averaged pixels, so
+the preview can differ from the native result, especially at edges. If the
+current samples or Grade bank are pending, the plot shows **Updating
+appearance**. Release or cancellation requests one exact native capture for
+the settled settings. Capture failures show an error.
 
 ## Linear scope latency report
 

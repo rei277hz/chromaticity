@@ -16,6 +16,12 @@ def encoded_rgb(color, exposure=0.0):
     )
 
 
+def scope_tint(code):
+    clipped = np.clip(code, 0.0, 1.0)
+    peak = clipped.max()
+    return clipped / peak if peak > 0 else np.ones(3)
+
+
 def chroma_bin(code):
     luma = np.dot(code, (0.2126, 0.7152, 0.0722))
     cr, cb = (code[0] - luma) / 1.5748, (code[2] - luma) / 1.8556
@@ -45,7 +51,7 @@ def assert_solid_trace(display, color, exposure=0.0, *, tolerance=1e-3):
     trace = complete_trace(display)
     peak = np.unravel_index(np.argmax(display.brightness), display.brightness.shape)
     assert np.count_nonzero(display.brightness) > 1, "Expected a smoothed trace"
-    np.testing.assert_allclose(trace[peak][:3], np.clip(encoded_rgb(color, exposure), 0, 1),
+    np.testing.assert_allclose(trace[peak][:3], scope_tint(encoded_rgb(color, exposure)),
                                rtol=0, atol=tolerance)
     assert 0 < display.brightness[peak] < 1
     return trace
@@ -270,6 +276,9 @@ class ScopePointer:
         if control in ("cr", "yb"):
             linear = self.settings(node).linear
             return self.ui.geometry.handle_positions(box["scope"], linear, box["scale"])[control]
+        if control.startswith("resize_"):
+            x, y, width, height = box["resize_grips"][control.removeprefix("resize_")]
+            return x + width / 2, y + height / 2
         if control == "curve":
             tone = self.ui._tone_model(self.settings(node).tone)
             return self.ui._curve_point(box["curve"], tone.source[-1], tone.target[-1])
@@ -325,6 +334,45 @@ class ScopePointer:
         yield from self.press_at(point, control, node)
         self.event_at("LEFTMOUSE", "RELEASE", point)
         yield .05
+
+    def hover_control(self, control, node):
+        point = self.control_point(control, node)
+        injected = self.event_at("MOUSEMOVE", "NOTHING", point)
+        deadline = time.monotonic() + 5
+        while self._acknowledged is None:
+            assert time.monotonic() < deadline, ("Gizmo hover was not acknowledged", control)
+            yield .05
+        assert self._injected is injected and "RUNNING_MODAL" in self._acknowledged["result"], (
+            "Gizmo did not own its hovered handle", control, self._acknowledged,
+        )
+        window_key = self.window.as_pointer()
+        assert self.ui._HOVER_CURSORS[window_key][1] == self.ui._control_cursor(
+            self.ui._stage(self.ui._key(self.window, self.area)), control)
+        with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):
+            box = self.ui._gizmo_layout(self.area, self.region)
+        outside = (box["rect"][0] - 15, box["rect"][1] + box["rect"][3] / 2)
+        injected = self.event_at("MOUSEMOVE", "NOTHING", outside)
+        deadline = time.monotonic() + 5
+        while self._acknowledged is None:
+            assert time.monotonic() < deadline, "Gizmo did not restore the pointer outside its panel"
+            yield .05
+        assert self._injected is injected and window_key not in self.ui._HOVER_CURSORS
+
+    def resize_control(self, control, node, delta):
+        key = self.ui._key(self.window, self.area)
+        initial = self.ui._SIZES.get(self.ui._size_key(key))
+        point = self.control_point(control, node)
+        yield from self.press_at(point, control, node)
+        self.event_at("MOUSEMOVE", "NOTHING",
+                      tuple(value + change for value, change in zip(point, delta)))
+        deadline = time.monotonic() + 5
+        while self.ui._SIZES.get(self.ui._size_key(key)) == initial:
+            assert time.monotonic() < deadline, ("Gizmo resize did not change size", control)
+            yield .05
+        self.event_at("LEFTMOUSE", "RELEASE",
+                      tuple(value + change for value, change in zip(point, delta)))
+        yield .05
+        return self.ui._SIZES[self.ui._size_key(key)]
 
     def drag_control(self, control, node, delta, *, cancel=False):
         start = self.control_point(control, node)

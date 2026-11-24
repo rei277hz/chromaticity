@@ -39,6 +39,7 @@ select = drag_checks["select"]
 keyframes = drag_checks["keyframes"]
 complete_tone_histogram = drag_checks["complete_tone_histogram"]
 encoded_rgb = drag_checks["encoded_rgb"]
+scope_tint = drag_checks["scope_tint"]
 chroma_bin = drag_checks["chroma_bin"]
 complete_trace = drag_checks["complete_trace"]
 assert_solid_trace = drag_checks["assert_solid_trace"]
@@ -285,7 +286,8 @@ def exercise_mixed_trace(previous):
     trace = complete_trace(state())
     active = trace[..., 3] > 0
     actual = trace[active, :3]
-    expected = np.broadcast_to(np.average(code, axis=0, weights=(1.0, 0.25)), actual.shape)
+    expected = np.broadcast_to(scope_tint(np.average(code, axis=0, weights=(1.0, 0.25))),
+                               actual.shape)
     assert np.count_nonzero(active) > 1, "Mixed trace is missing its Gaussian density"
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-5)
     report["mixed_trace_rgb"] = True
@@ -296,15 +298,16 @@ def check_additive_trace_pixels():
     from mathutils import Matrix
 
     background = 0.023
-    mass = np.array([[0.0, 1.0, 1.0, 998.0]])
+    mass = np.array([[0.0, 1.0, 1.0, 1.0, 997.0]])
     measured_rgb = np.array([[0.0, 0.0, 0.0],
                              [0.3, 0.12, 0.06],
                              [0.6, 0.24, 0.12],
+                             [0.0, 0.0, 0.0],
                              [0.95, 0.95, 0.95]])
     trace = vectorscope.trace_rgba(mass, mass[..., None] * measured_rgb)
     original = trace.copy()
     assert not trace.flags.writeable
-    width, height = 32, 8
+    width, height = 40, 8
     saved_blend = gpu.state.blend_get()
     saved_depth = gpu.state.depth_test_get()
     saved_viewport = gpu.state.viewport_get()
@@ -324,7 +327,7 @@ def check_additive_trace_pixels():
             vectorscope_ui._draw_trace((-1, -1, 2, 2), trace, key)
             assert gpu.state.blend_get() == "ALPHA"
             pixels = np.asarray(framebuffer.read_color(0, 0, width, height, 4, 0, "FLOAT"))
-            actual = pixels.reshape(height, width, 4)[height // 2, (4, 12, 20, 28), :3]
+            actual = pixels.reshape(height, width, 4)[height // 2, (4, 12, 20, 28, 36), :3]
     finally:
         gpu.state.blend_set(saved_blend)
         gpu.state.depth_test_set(saved_depth)
@@ -335,18 +338,22 @@ def check_additive_trace_pixels():
 
     log_density = np.log1p(65535 * mass[0] / mass.sum()) / np.log(65536)
     density = (1.0 - np.exp(-log_density)) / (1.0 - np.exp(-1.0))
-    expected = background + measured_rgb * density[:, None]
+    tint = np.array([scope_tint(color) for color in measured_rgb])
+    expected = background + tint * density[:, None]
     np.testing.assert_allclose(actual, expected, rtol=0, atol=5e-4)
-    previous = background + measured_rgb * log_density[:, None]
+    previous = background + tint * log_density[:, None]
     assert np.all(actual[1:3] > previous[1:3] + 5e-4)
-    np.testing.assert_allclose(actual[1] - background, (actual[2] - background) / 2,
-                               rtol=0, atol=5e-4)
+    np.testing.assert_allclose(actual[1], actual[2], rtol=0, atol=5e-4)
     np.testing.assert_array_equal(trace, original)
     report["additive_trace_pixels"] = True
 
 
 def exercise_gizmo_controls():
     baseline = pointer.settings(grade)
+    yield from pointer.hover_control("cr", grade)
+    resized = yield from pointer.resize_control("resize_e", grade, (12, 0))
+    assert resized > 300.
+    report["gizmo_hover_and_resize"] = True
 
     original_simulate = pointer._simulate_event
     probe_calls = []
@@ -487,11 +494,11 @@ def exercise_gizmo_controls():
     grade.peak_nits = "1000"
 
     # Guarded black and white must be sampled at the returned endpoints.
-    black_appearance = state().appearance.rgba
     paint((-1., -1., -1., .25))
     yield from wait_for(
-        lambda: (appearance_current(black_appearance)
-                 and np.allclose(appearance_samples[0][..., :3], 0.)),
+        lambda: (appearance_current()
+                 and np.allclose(appearance_samples[0][..., :3], 0.)
+                 and np.allclose(appearance_samples[0][..., 3], .25, atol=1e-6)),
         "Final appearance did not sample guarded black",
     )
     np.testing.assert_allclose(appearance_samples[0][..., 3], .25, atol=1e-6)
@@ -662,8 +669,12 @@ def exercise_drags():
     restored_tree = bpy.data.node_groups[TREE_NAME]
     assert pointer.settings(restored_tree.nodes[NODE_NAME]) == baseline
     assert not keyframes(restored_tree), "Undo left Auto Key curves from the drag"
+    gizmo_key = vectorscope_ui._key(window, area)
+    assert gizmo_key in vectorscope_ui._ENABLED, "Undo hid the Gizmo"
+    yield from wait_for(lambda: current(RED), "Undo did not restore the vectorscope")
     report["per_node_drag"] = True
     report["source_keys_undone"] = True
+    report["undo_preserved_gizmo"] = True
 
 
 def exercise_animated_frame_cancel():
@@ -737,10 +748,10 @@ def scenario():
     checkpoint("native Linear and Tone Gizmo controls")
     yield from exercise_gizmo_controls()
 
-    grade.exposure = 1.0
-    yield from wait_for(lambda: current(RED, 1.0), "Linear exposure did not move the red peak")
+    grade.exposure = -6.0
+    yield from wait_for(lambda: current(RED, -6.0), "Linear exposure did not move the red peak")
     exposed_state, exposed = snapshot()
-    assert_solid_trace(exposed_state, RED, 1.0)
+    assert_solid_trace(exposed_state, RED, -6.0)
     report["linear_edit_refreshed"] = not np.array_equal(initial, exposed)
     assert report["linear_edit_refreshed"]
     grade.exposure = 0.0

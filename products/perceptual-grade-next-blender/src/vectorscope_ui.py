@@ -30,11 +30,14 @@ _TEXTURES = {}
 _SHADERS = {}
 _BATCHES = {}
 _DRAGS = {}
+_HOVER_CURSORS = {}
+_OUTSIDE_BUTTONS = {}
 _runtime = None
 _draw_handle = None
 _gesture = None
 _STAGE = {}
 _POSITIONS = {}
+_SIZES = {}
 _TONE_ANCHORS = {}
 _DEFAULT_TONE_ANCHOR = TONE_LEVEL_FIELDS.index("input_white")
 _PALETTE = {
@@ -50,6 +53,9 @@ _PALETTE = {
 _AXIS_LABELS = {"cr": "R", "yb": "B"}
 _SLIDER_RANGES = {"exposure": (-6., 6.), "cr_balance": (-2., 2.),
                   "yb_balance": (-2., 2.), "fit": (-2., 2.)}
+_POINTER_BUTTONS = {"LEFTMOUSE", "MIDDLEMOUSE", "RIGHTMOUSE", "BUTTON4MOUSE",
+                    "BUTTON5MOUSE", "BUTTON6MOUSE", "BUTTON7MOUSE", "PEN", "ERASER"}
+_POINTER_MOVES = {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
 _J_TICKS = tuple(range(math.floor(PLOT_MAX) + 1))
 
 
@@ -101,6 +107,7 @@ class _Drag:
     last: tuple | None = None
     token: int | None = None
     panel_position: tuple | None = None
+    panel_size: float | tuple | None = None
 
 
 def _key(window, area):
@@ -163,6 +170,10 @@ def _stage(key):
     return _STAGE.get(key, "LINEAR")
 
 
+def _size_key(key, stage=None):
+    return key, _stage(key) if stage is None else stage
+
+
 def _gizmo_layout(area, region, key=None):
     if key is None:
         key = _key(bpy.context.window, area)
@@ -172,7 +183,9 @@ def _gizmo_layout(area, region, key=None):
                      if panel.type == "UI" and panel.width > 1 and panel.x >= region.x),
                     default=right)
     return geometry.layout(_stage(key), right, region.height,
-                           bpy.context.preferences.system.ui_scale, _POSITIONS.get(key, _HOME))
+                           bpy.context.preferences.system.ui_scale,
+                           _POSITIONS.get(key, _HOME),
+                           _SIZES.get(_size_key(key)))
 
 
 def _view_regions(area):
@@ -242,11 +255,47 @@ def _plot_rect(area, region):
 
 
 def _close(key):
+    _restore_hover_cursor(key[0])
     _ENABLED.discard(key)
     _release(key)
     _STAGE.pop(key, None)
     _POSITIONS.pop(key, None)
     _TONE_ANCHORS.pop(key, None)
+    _SIZES.pop(_size_key(key, "LINEAR"), None)
+    _SIZES.pop(_size_key(key, "TONE"), None)
+
+
+def _restore_hover_cursor(window_key):
+    previous = _HOVER_CURSORS.pop(window_key, None)
+    if previous is None:
+        return
+    window = previous[0]
+    try:
+        window.cursor_modal_restore()
+    except (AttributeError, ReferenceError, RuntimeError):
+        pass
+
+
+def _set_hover_cursor(window, cursor=None):
+    if window is None:
+        return
+    try:
+        window_key = int(window.as_pointer())
+        previous = _HOVER_CURSORS.get(window_key)
+        if previous is not None and previous[1] == cursor:
+            return
+        if previous is not None:
+            _restore_hover_cursor(window_key)
+        if cursor is not None:
+            window.cursor_modal_set(cursor)
+            _HOVER_CURSORS[window_key] = (window, cursor)
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        pass
+
+
+def _restore_all_hover_cursors():
+    for window_key in tuple(_HOVER_CURSORS):
+        _restore_hover_cursor(window_key)
 
 
 def _release(key):
@@ -268,13 +317,27 @@ def _frame_key(scene):
 
 def _cancel_drag(window_key, *, before_frame_change=False):
     drag = _DRAGS.pop(window_key, None)
-    if drag is not None and drag.panel_position is not None:
-        _POSITIONS[drag.key] = drag.panel_position
-    if drag is None or drag.token is None:
+    if drag is None:
         return
+    _restore_hover_cursor(window_key)
     manager = bpy.context.window_manager
     window = None if manager is None else next(
         (item for item in manager.windows if item.as_pointer() == window_key), None)
+    if drag.panel_position is not None:
+        _POSITIONS[drag.key] = drag.panel_position
+        if drag.mode.startswith("resize_"):
+            size_key = _size_key(drag.key)
+            if drag.panel_size is None:
+                _SIZES.pop(size_key, None)
+            else:
+                _SIZES[size_key] = drag.panel_size
+        if window is not None and window.screen is not None:
+            area = next((item for item in window.screen.areas
+                         if item.as_pointer() == drag.key[1]), None)
+            if area is not None:
+                area.tag_redraw()
+    if drag.token is None:
+        return
     restore = window is None or (_frame_key(window.scene) == drag.frame)
     if before_frame_change and window is not None:
         restore = window.scene.as_pointer() == drag.frame[0]
@@ -346,46 +409,74 @@ def _control_values(mode, node, fields):
     return (-linear.balance[int(mode == "yb_balance")],)
 
 
-def _press_control(key, node, box, point, origin, frame):
-    mode, fields, white = "body", (), None
-    for item in ("close", "linear_tab", "tone_tab", "header"):
+def _control_at(key, node, box, point):
+    for item in ("close", "linear_tab", "tone_tab"):
         if geometry.contains(box[item], point):
-            mode = item
-            break
-    else:
-        for item in _SLIDER_RANGES:
-            if item in box and geometry.contains(box[item], point):
-                mode, fields = item, (item,)
-                break
-        else:
-            if "scope" in box:
-                positions = geometry.handle_positions(box["scope"],
-                                                      _gesture.linear_settings(node), box["scale"])
-                distance, axis = min((math.dist(point, pos), axis)
-                                     for axis, pos in positions.items())
-                if distance <= 7 * box["scale"]:
-                    mode, fields = axis, (axis + "_spread", axis + "_heading")
-                elif geometry.contains(box["scope"], point):
-                    state = display_state(bpy.context)
-                    if (state is not None and state.status == "current"
-                            and state.brightness is not None and state.brightness.any()):
-                        capture = _runtime.drag_capture(key, node)
-                        inputs = _runtime.drag_inputs(key, node)
-                        if capture is not None and inputs is not None:
-                            rgba, linear, space = inputs
-                            model = WhiteDrag.from_capture(rgba, linear, space)
-                            if model is not None:
-                                mode, fields = "scope", ("source_x", "source_y")
-                                white = _WhiteControl(capture, model, linear)
-            elif geometry.contains(box["peak"], point):
-                mode = "peak"
-            elif geometry.contains(box["curve"], point):
-                model = _tone_model(_gesture.tone_settings(node))
-                index = _tone_hit(box["curve"], point, model,
-                                  _TONE_ANCHORS.get(key, _DEFAULT_TONE_ANCHOR), box["scale"])
-                if index is not None:
-                    _TONE_ANCHORS[key] = index
-                    mode, fields = "curve", (TONE_LEVEL_FIELDS[index],)
+            return item, ()
+    for handle, rect in box["resize_grips"].items():
+        if geometry.contains(rect, point):
+            return "resize_" + handle, ()
+    if geometry.contains(box["header"], point):
+        return "header", ()
+    for item in _SLIDER_RANGES:
+        if item in box and geometry.contains(box[item], point):
+            return item, (item,)
+    if "scope" in box:
+        positions = geometry.handle_positions(box["scope"], _gesture.linear_settings(node),
+                                              box["scale"])
+        distance, axis = min((math.dist(point, pos), axis) for axis, pos in positions.items())
+        if distance <= 7 * box["scale"]:
+            return axis, (axis + "_spread", axis + "_heading")
+        if geometry.contains(box["scope"], point):
+            return "scope", ("source_x", "source_y")
+    elif geometry.contains(box["peak"], point):
+        return "peak", ()
+    elif geometry.contains(box["curve"], point):
+        model = _tone_model(_gesture.tone_settings(node))
+        index = _tone_hit(box["curve"], point, model,
+                          _TONE_ANCHORS.get(key, _DEFAULT_TONE_ANCHOR), box["scale"])
+        if index is not None:
+            return "curve", (TONE_LEVEL_FIELDS[index],)
+    return "body", ()
+
+
+def _control_cursor(stage, mode):
+    if mode in {"close", "linear_tab", "tone_tab", "peak"}:
+        return "HAND_POINT"
+    if mode in {"header", "scope", "cr", "yb"}:
+        return "SCROLL_XY"
+    if mode.startswith("resize_"):
+        handle = mode.removeprefix("resize_")
+        return {"w": "MOVE_X", "e": "MOVE_X", "s": "MOVE_Y", "n": "MOVE_Y"}.get(
+            handle, "SCROLL_XY")
+    if mode in {"fit", "cr_balance"} or (mode == "exposure" and stage == "LINEAR"):
+        return "SCROLL_Y"
+    if mode in {"curve", "exposure", "yb_balance"}:
+        return "SCROLL_X"
+    return None
+
+
+def _white_control(key, node):
+    state = display_state(bpy.context)
+    if (state is None or state.status != "current"
+            or state.brightness is None or not state.brightness.any()):
+        return None
+    capture = _runtime.drag_capture(key, node)
+    inputs = _runtime.drag_inputs(key, node)
+    if capture is None or inputs is None:
+        return None
+    rgba, linear, space = inputs
+    model = WhiteDrag.from_capture(rgba, linear, space)
+    return None if model is None else _WhiteControl(capture, model, linear)
+
+
+def _press_control(key, node, box, point, origin, frame):
+    mode, fields = _control_at(key, node, box, point)
+    white = _white_control(key, node) if mode == "scope" else None
+    if mode == "scope" and white is None:
+        mode, fields = "body", ()
+    elif mode == "curve":
+        _TONE_ANCHORS[key] = TONE_LEVEL_FIELDS.index(fields[0])
     if mode == "header":
         values = box["rect"][0] / box["scale"], box["rect"][1] / box["scale"]
     elif white is not None:
@@ -393,32 +484,58 @@ def _press_control(key, node, box, point, origin, frame):
     else:
         values = _control_values(mode, node, fields) if fields else ()
     rect = box["scope"] if mode in _AXIS_LABELS else box.get(mode, box["rect"])
+    resizing = mode.startswith("resize_")
     return _Drag(key, _binding(node), frame, mode, rect, origin, box["scale"],
                  fields, values, white,
-                 panel_position=_POSITIONS.get(key, _HOME) if mode == "header" else None)
+                 panel_position=_POSITIONS.get(key, _HOME) if mode == "header" or resizing else None,
+                 panel_size=_SIZES.get(_size_key(key)) if resizing else None)
 
 
-def _press_plot(window, event):
+def _plot_at(window, mouse):
     for area in window.screen.areas:
         key = _key(window, area)
         if key not in _ENABLED or area.type != "NODE_EDITOR":
             continue
-        region = next(iter(_view_regions(area)), None)
+        if not geometry.contains((area.x, area.y, area.width, area.height), mouse):
+            continue
+        region = next((item for item in _view_regions(area)
+                       if geometry.contains((item.x, item.y, item.width, item.height), mouse)), None)
         node = _selected(area.spaces.active)
         if region is None or node is None:
             continue
         box = _gizmo_layout(area, region, key)
         if box is None:
             continue
-        origin = event.mouse_x, event.mouse_y
-        point = origin[0] - region.x, origin[1] - region.y
-        if not geometry.contains(box["rect"], point):
-            continue
-        with bpy.context.temp_override(window=window, area=area, region=region):
-            _DRAGS[key[0]] = _press_control(key, node, box, point, origin, _frame_key(window.scene))
-        area.tag_redraw()
-        return True
-    return False
+        point = mouse[0] - region.x, mouse[1] - region.y
+        if geometry.contains(box["rect"], point):
+            return key, area, region, node, box, point
+    return None
+
+
+def _press_plot(window, event):
+    origin = event.mouse_x, event.mouse_y
+    hit = _plot_at(window, origin)
+    if hit is None:
+        return False
+    key, area, region, node, box, point = hit
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        drag = _press_control(key, node, box, point, origin, _frame_key(window.scene))
+    _DRAGS[key[0]] = drag
+    _set_hover_cursor(window, _control_cursor(_stage(key), drag.mode))
+    area.tag_redraw()
+    return True
+
+
+def _hover_plot(window, mouse):
+    hit = _plot_at(window, mouse)
+    if hit is None:
+        _set_hover_cursor(window)
+        return False
+    key, area, region, node, box, point = hit
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        mode, _ = _control_at(key, node, box, point)
+    _set_hover_cursor(window, _control_cursor(_stage(key), mode))
+    return True
 
 
 def _drag_values(drag, node, mouse):
@@ -510,34 +627,25 @@ def _release_button(drag, area, region, click, node):
     area.tag_redraw()
 
 
-def pointer_event(window, event):
-    """Handle plot input through the window's existing Grade gesture router."""
-    if window is None or window.screen is None or not _ENABLED:
-        return False
+def _drag_event(window, event, drag):
     window_key = window.as_pointer()
-    drag = _DRAGS.get(window_key)
-    if drag is None:
-        return (event.type == "LEFTMOUSE" and event.value == "PRESS"
-                and _press_plot(window, event))
-    if event.type == "WINDOW_DEACTIVATE":
-        _cancel_drag(window_key)
-        return False
     if event.type in {"ESC", "RIGHTMOUSE"} and event.value == "PRESS":
         _cancel_drag(window_key)
         return True
-    moving = event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
+    moving = event.type in _POINTER_MOVES
     releasing = event.type == "LEFTMOUSE" and event.value == "RELEASE"
     resetting = (event.type == "R" and (drag.fields or drag.mode == "header"))
     if resetting and (event.value != "PRESS" or getattr(event, "is_repeat", False)):
         return True
     if not (moving or releasing or resetting):
-        return False
+        return True
     mouse = event.mouse_x, event.mouse_y
     area = next((area for area in window.screen.areas
                  if area.as_pointer() == drag.key[1] and area.type == "NODE_EDITOR"), None)
     region = None if area is None else next(iter(_view_regions(area)), None)
     node = None if area is None else _selected(area.spaces.active)
-    if region is None or node is None or _gizmo_layout(area, region, drag.key) is None:
+    box = None if region is None else _gizmo_layout(area, region, drag.key)
+    if node is None or box is None:
         _cancel_drag(window_key)
         return True
     with bpy.context.temp_override(window=window, area=area, region=region):
@@ -555,6 +663,14 @@ def pointer_event(window, event):
             _POSITIONS[drag.key] = tuple(value + (end - start) / drag.scale
                                          for value, end, start in zip(drag.values, mouse, drag.origin))
             area.tag_redraw()
+        elif drag.mode.startswith("resize_"):
+            position, size = geometry.resize(_stage(drag.key), drag.rect, box["bounds"],
+                                              drag.mode.removeprefix("resize_"),
+                                              mouse[0] - drag.origin[0],
+                                              mouse[1] - drag.origin[1], drag.scale)
+            _POSITIONS[drag.key] = position
+            _SIZES[_size_key(drag.key)] = size
+            area.tag_redraw()
         elif drag.fields and (drag.token is not None or math.dist(mouse, drag.origin) >= 3 * drag.scale):
             _edit_drag(drag, node, _drag_values(drag, node, mouse))
         if releasing and _DRAGS.pop(window_key, None) is drag:
@@ -562,7 +678,53 @@ def pointer_event(window, event):
                 _gesture.finish(window_key, drag.token, node)
             else:
                 _release_button(drag, area, region, mouse, node)
+            _hover_plot(window, mouse)
     return True
+
+
+def _is_pointer_event(event):
+    kind = event.type
+    return (kind in _POINTER_MOVES or kind in _POINTER_BUTTONS
+            or kind.startswith(("WHEEL", "TRACKPAD", "NDOF_")))
+
+
+def pointer_event(window, event):
+    """Own pointer input over the overlay and update hover cursors."""
+    if window is None or window.screen is None:
+        return False
+    window_key = window.as_pointer()
+    drag = _DRAGS.get(window_key)
+    if event.type == "WINDOW_DEACTIVATE":
+        _cancel_drag(window_key)
+        _restore_hover_cursor(window_key)
+        _OUTSIDE_BUTTONS.pop(window_key, None)
+        return False
+    if drag is not None:
+        return ((_is_pointer_event(event) or event.type in {"R", "ESC"})
+                and _drag_event(window, event, drag))
+    if not _ENABLED:
+        _restore_hover_cursor(window_key)
+        return False
+    if not _is_pointer_event(event):
+        return False
+    # Recover when Blender swallowed a native release before this router.
+    if event.type in _POINTER_BUTTONS and event.value == "PRESS":
+        _OUTSIDE_BUTTONS.pop(window_key, None)
+    outside = _OUTSIDE_BUTTONS.get(window_key)
+    if outside is not None:
+        if event.type == outside and event.value == "RELEASE":
+            _OUTSIDE_BUTTONS.pop(window_key, None)
+        return False
+    mouse = event.mouse_x, event.mouse_y
+    if event.type == "LEFTMOUSE" and event.value == "PRESS":
+        if _press_plot(window, event):
+            return True
+    elif _hover_plot(window, mouse):
+        return True
+    _restore_hover_cursor(window_key)
+    if event.type in _POINTER_BUTTONS and event.value == "PRESS":
+        _OUTSIDE_BUTTONS[window_key] = event.type
+    return False
 
 
 def _observe(key, window, area, region, node):
@@ -588,9 +750,12 @@ def _observe(key, window, area, region, node):
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
             state = DisplayState(*_runtime.unavailable(key, error))
         if stage == "TONE":
+            drag = _DRAGS.get(key[0])
+            dragging = (drag is not None and drag.key == key and drag.token is not None
+                        and _drag_is_current(drag, window, node))
             try:
                 appearance, appearance_status, appearance_error = _runtime.observe_appearance(
-                    key, context, node, viewport,
+                    key, context, node, viewport, dragging=dragging,
                 )
             except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as error:
                 appearance, appearance_status, appearance_error = None, "unavailable", str(error)
@@ -639,6 +804,8 @@ def _tick():
         live_windows = {window.as_pointer() for window in windows}
         for key in _LAST_VIEW.keys() - live_windows:
             del _LAST_VIEW[key]
+        for window_key in _OUTSIDE_BUTTONS.keys() - live_windows:
+            del _OUTSIDE_BUTTONS[window_key]
     active = _runtime.poll()
     return _INTERVAL if _ENABLED or active else None
 
@@ -666,11 +833,17 @@ def display_state(context):
     frame_changed = frame != active_frame
     if state.status == "current" and (frame_changed or plot_revision != revision[0]):
         state = replace(state, status="updating", error=None)
-    if stage == "TONE" and getattr(node, "pg_use_bake", False):
+    if stage == "TONE" and getattr(node, "mute", False):
+        state = replace(state, appearance=None, appearance_status="unavailable",
+                        appearance_error="Appearance requires an unmuted Grade")
+    elif stage == "TONE" and getattr(node, "pg_use_bake", False):
         state = replace(state, appearance=None, appearance_status="bake", appearance_error=None)
-    elif (state.appearance_status == "current"
-            and (frame_changed or appearance_revision != revision[1])):
-        state = replace(state, appearance_status="updating", appearance_error=None)
+    elif stage == "TONE" and state.appearance is not None:
+        drag = _DRAGS.get(key[0])
+        dragging = drag is not None and drag.key == key and drag.token is not None
+        if (frame_changed or appearance_revision != revision[1]
+                or dragging != (state.appearance_status == "preview")):
+            state = replace(state, appearance=None, appearance_status="updating", appearance_error=None)
     return state
 
 
@@ -880,6 +1053,14 @@ def _draw_header(box, stage):
     _lines(((x + 7 * scale, y + 7 * scale), (x + 15 * scale, y + 15 * scale),
             (x + 15 * scale, y + 7 * scale), (x + 7 * scale, y + 15 * scale)),
            _PALETTE["muted"], scale)
+    px, py, width, height = box["rect"]
+    _lines(((px, py), (px + width, py), (px + width, py + height),
+            (px, py + height), (px, py)), _PALETTE["outline"], scale)
+    grip = 7 * scale
+    for cx, cy, sx, sy in ((px, py, 1, 1), (px + width, py, -1, 1),
+                           (px, py + height, 1, -1), (px + width, py + height, -1, -1)):
+        _lines(((cx + sx * grip, cy + sy * 2 * scale),
+                (cx + sx * 2 * scale, cy + sy * grip)), _PALETTE["muted"], scale)
 
 
 def _draw_linear(box, state, key, linear):
@@ -1005,7 +1186,8 @@ def _draw_appearance(box, state, key):
             _text(str(tick), x - 4 * scale, py - 3 * scale, 8 * scale,
                   _PALETTE["orange" if tick == 1 else "muted"], 20 * scale, align=1.)
             last_label = py
-    _text(localization.tr("scope.appearance.upper"), x - 4 * scale, top + 1 * scale,
+    _text(f"{appearance_scope.LIGHTNESS_MAX / appearance_scope.LIGHTNESS_KNEE:.2f}",
+          x - 4 * scale, top + 1 * scale,
           8 * scale, _PALETTE["muted"], 22 * scale, align=1.)
     _text("J_HK", left, top + 13 * scale, 8 * scale, _PALETTE["muted"], 28 * scale)
     _text("s" if compact else localization.tr("scope.appearance.axis_saturation"),
@@ -1020,7 +1202,10 @@ def _draw_appearance(box, state, key):
               left + column_width, top + 13 * scale, 8 * scale,
               _PALETTE["orange" if appearance.overflow_fraction else "muted"],
               column_width, align=1.)
-    if status != "current":
+    if status == "preview":
+        _text(localization.tr("scope.appearance.preview"), right - 4 * scale,
+              y + 4 * scale, 8 * scale, _PALETTE["text"], width - 8 * scale, align=1.)
+    elif status != "current":
         status_id = status if status in {"bake", "unavailable"} else (
             "unavailable" if status == "error" else "updating")
         _text(localization.tr("scope.appearance." + status_id), x + width * .5,
@@ -1155,10 +1340,17 @@ def _mark_updating(affected, *, appearance_only=False):
                     area.tag_redraw()
 
 
-def _clear_display():
+def _clear_display(*, preserve_preferences=False):
+    _restore_all_hover_cursors()
+    _OUTSIDE_BUTTONS.clear()
     for window_key in tuple(_DRAGS):
         _cancel_drag(window_key)
-    _ENABLED.clear()
+    if not preserve_preferences:
+        _ENABLED.clear()
+        _STAGE.clear()
+        _POSITIONS.clear()
+        _SIZES.clear()
+        _TONE_ANCHORS.clear()
     _PLOTS.clear()
     with _REVISION_LOCK:
         _REVISIONS.clear()
@@ -1166,13 +1358,10 @@ def _clear_display():
     _TEXTURES.clear()
     _BATCHES.clear()
     _tone_model.cache_clear()
-    _STAGE.clear()
-    _POSITIONS.clear()
-    _TONE_ANCHORS.clear()
 
 
-def reset():
-    _clear_display()
+def reset(*, preserve_preferences=False):
+    _clear_display(preserve_preferences=preserve_preferences)
     if _runtime is not None:
         _runtime.reset()
 

@@ -30,6 +30,7 @@ class VectorscopeTests(unittest.TestCase):
         cls.analysis = importlib.import_module(package_name + ".vectorscope")
         cls.appearance_scope = importlib.import_module(package_name + ".appearance_scope")
         cls.tone_scope = importlib.import_module(package_name + ".tone_scope")
+        cls.appearance_preview = importlib.import_module(package_name + ".appearance_preview")
         cls.kernel = importlib.import_module(package_name + ".kernel")
 
     def request(self, state, capture, *, key=1, source="source", analysis=None,
@@ -363,7 +364,7 @@ class VectorscopeTests(unittest.TestCase):
             signature.return_value = "Grade with Warp edit"
             self.assertEqual(runtime.appearance_changed(node), (1,))
             self.assertEqual(runtime.observe_appearance(1, None, node, None),
-                             (plot, "updating", None))
+                             (None, "updating", None))
             self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
                              (histogram, "current", None))
             self.assertTrue(runtime.poll())
@@ -377,6 +378,86 @@ class VectorscopeTests(unittest.TestCase):
                              (None, "bake", None))
             self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
                              (histogram, "current", None))
+
+    def test_appearance_preview_waits_for_current_input_and_grade(self):
+        pixels = np.ones((2, 2, 4), dtype=np.float32)
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree, pg_use_bake=False, mute=False)
+        signature = Mock(return_value="initial Grade")
+        roles = Mock(return_value=None)
+        preview = Mock()
+        preview.evaluate.return_value = pixels
+        job = Mock()
+        job.advance.return_value = {"rgba": pixels}
+        backend = Mock()
+        backend.create_job.return_value = job
+        runtime = self.runtime.ScopeRuntime(
+            None, lambda _route: (None, "snapshot.blend", []),
+            lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
+            backend=backend, grade_signature=signature, preview_roles=roles,
+            preview_backend=preview,
+        )
+        frame = "first frame"
+
+        def describe(*_args, scope_capture="input", **_kwargs):
+            return {"owner_kind": "compositor", "capture_signature": (frame, scope_capture),
+                    "source_signature": frame, "scope_capture": scope_capture}
+
+        def dragging():
+            return runtime.observe_appearance(1, None, node, None, dragging=True)
+
+        def input_observation():
+            return runtime.observe(1, None, node, None, tone=self.kernel.ToneSettings())
+
+        with (patch.object(self.runtime.bake_routes, "describe_vectorscope", side_effect=describe),
+              patch.object(self.runtime, "capture_loaded_image", return_value=pixels)):
+            input_observation()
+            runtime.poll()
+            self.assertEqual(dragging(), (None, "updating", None))
+            preview.evaluate.assert_not_called()
+            backend.create_job.assert_not_called()
+
+            roles.return_value = object()
+            trace, status, error = dragging()
+            self.assertIsInstance(trace, self.appearance_scope.AppearanceScope)
+            self.assertEqual((status, error), ("preview", None))
+            self.assertEqual(dragging(), (trace, "preview", None))
+            preview.evaluate.assert_called_once()
+            signature.return_value = "edited Grade"
+            self.assertIsNot(dragging()[0], trace)
+            self.assertFalse(runtime.poll())
+            self.assertEqual(preview.evaluate.call_count, 2)
+            backend.create_job.assert_not_called()
+
+            frame = "second frame"
+            input_observation()
+            self.assertEqual(dragging(), (None, "updating", None))
+            runtime.poll()
+            self.assertEqual(dragging()[1], "preview")
+            self.assertEqual(preview.evaluate.call_count, 3)
+            node.mute = True
+            self.assertEqual(dragging()[1], "unavailable")
+            node.mute = False
+            node.pg_use_bake = True
+            self.assertEqual(dragging(), (None, "bake", None))
+            node.pg_use_bake = False
+
+            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+                             (None, "updating", None))
+            runtime.poll()
+            runtime.poll()
+            self.assertEqual(runtime.observe_appearance(1, None, node, None)[1], "current")
+            self.assertEqual(backend.create_job.call_count, 1)
+            runtime.reset()
+            preview.close.assert_called_once()
+
+    def test_appearance_preview_sample_subset_is_bounded_and_repeatable(self):
+        source = np.arange(128 * 128 * 4, dtype=np.float32).reshape(128, 128, 4)
+        first = self.appearance_preview._sample_subset(source)
+        second = self.appearance_preview._sample_subset(source)
+        self.assertEqual(first.shape, (1, 4096, 4))
+        np.testing.assert_array_equal(first, second)
+        self.assertEqual(first.dtype, np.float32)
 
     def make_runtime(self, watch, dependencies):
         runtime = self.runtime.ScopeRuntime(None, None, None, None, backend=object())
@@ -612,7 +693,7 @@ class VectorscopeTests(unittest.TestCase):
         )
         return np.column_stack((linear, alpha))[None]
 
-    def test_trace_retains_lightness_and_alpha_weighted_rgb_at_equal_chroma(self):
+    def test_trace_normalizes_alpha_weighted_tint_at_equal_chroma(self):
         dark = np.array((0.43, 0.19, 0.25))
         light = dark + 0.4
         pixels = self.linear_pixels([dark, light, light], [1.0, 0.25, 0.0])
@@ -620,14 +701,41 @@ class VectorscopeTests(unittest.TestCase):
         dark_trace = self.analysis.analyze(pixels[:, :1], np.eye(3), "Linear Rec.709")
         visible = trace[..., 3] > 0.0
         self.assertTrue(visible.any())
-        expected = np.broadcast_to((dark + 0.25 * light) / 1.25, trace[visible, :3].shape)
+        weighted = dark + 0.25 * light
+        expected = np.broadcast_to(weighted / weighted.max(), trace[visible, :3].shape)
         np.testing.assert_allclose(trace[visible, :3], expected, rtol=1e-6)
-        np.testing.assert_allclose(dark_trace[visible, :3], np.broadcast_to(dark, expected.shape),
-                                   rtol=1e-6)
+        np.testing.assert_allclose(dark_trace[visible, :3],
+                                   np.broadcast_to(dark / dark.max(), expected.shape), rtol=1e-6)
         np.testing.assert_array_equal(trace[..., 3], dark_trace[..., 3])
         self.assertEqual(trace.dtype, np.float32)
         self.assertTrue(trace.flags.c_contiguous)
         self.assertFalse(trace.flags.writeable)
+
+    def test_lower_exposure_moves_chroma_without_dimming_the_trace(self):
+        pixels = self.linear_pixels([(0.54, 0.19, 0.11)], [0.3])
+        peaks = []
+        peak_densities = []
+        for exposure in (0.0, -8.0):
+            matrix = 2.0 ** exposure * np.eye(3)
+            trace = self.analysis.analyze(pixels, matrix, "Linear Rec.709")
+            density = trace[..., 3]
+            peak = np.unravel_index(density.argmax(), density.shape)
+            cr, cb, weights, edges = self.analysis.chroma_samples(pixels, matrix, "Linear Rec.709")
+            np.testing.assert_array_equal(weights, [0.3])
+            self.assertEqual(peak, tuple(np.searchsorted(edges, [cr[0], cb[0]], side="right") - 1))
+            self.assertEqual(trace[peak][:3].max(), 1.0)
+            peaks.append(peak)
+            peak_densities.append(density[peak])
+        self.assertNotEqual(*peaks)
+        self.assertEqual(*peak_densities)
+
+    def test_trace_shows_occupied_black_and_keeps_empty_bins_transparent(self):
+        pixels = self.linear_pixels([(0.0, 0.0, 0.0)], [0.5])
+        trace = self.analysis.analyze(pixels, np.eye(3), "Linear Rec.709")
+        occupied = trace[..., 3] > 0.0
+        self.assertTrue(occupied.any())
+        self.assertTrue(np.all(trace[occupied, :3] == 1.0))
+        self.assertTrue(np.all(trace[~occupied] == 0.0))
 
     def test_gaussian_splat_preserves_mass_and_rgb_energy_at_edges(self):
         for size in (1, 2, 16):

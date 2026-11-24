@@ -1,7 +1,10 @@
-# Stage 2 Tone Gizmo checklist
+# Grade Gizmo checklist
 
-- [x] Align Exposure, Fit, and Peak with the Tone Curve and add J ticks and SDR/HDR markings.
-- [x] Remove both waveform panels and retain the Tone Curve histogram.
-- [x] Apply the smooth J_HK mapping and normalized ticks to Final Appearance.
-- [x] Reset the active control with R while preserving drag continuation and cancellation.
-- [x] Update the Gizmo design documentation and run the scoped remote Buck2 checks.
+- [x] Replace the task tracking scope before implementation.
+- [x] Preserve Gizmo visibility and layout through undo and redo.
+- [x] Normalize Linear vectorscope tint independently of density and position.
+- [x] Route pointer events and cursors through the panel hit geometry.
+- [x] Add compact defaults and edge and corner resizing.
+- [x] Localize Appearance Distribution and label its normalized lightness axis.
+- [x] Preview final appearance during Tone drags and capture the exact settled result.
+- [x] Update the Gizmo design notes and run scoped remote Buck2 validation.
