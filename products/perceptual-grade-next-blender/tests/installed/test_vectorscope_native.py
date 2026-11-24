@@ -93,6 +93,8 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("direct_image_visible"), details)
         self.assertTrue(data.get("linear_edit_refreshed"), details)
         self.assertTrue(data.get("linear_gizmo_controls"), details)
+        self.assertTrue(data.get("hover_exhaustion_before_press"), details)
+        self.assertTrue(data.get("hover_retry_acknowledged"), details)
         self.assertTrue(data.get("tone_gizmo_controls"), details)
         self.assertTrue(data.get("tone_gizmo_drawn"), details)
         self.assertTrue(data.get("image_pixels_refreshed"), details)

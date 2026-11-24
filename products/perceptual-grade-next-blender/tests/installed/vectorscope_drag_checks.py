@@ -63,6 +63,9 @@ def keyframes(tree):
 class ScopePointer:
     _MOVES = {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
     _EVENTS = _MOVES | {"LEFTMOUSE", "RIGHTMOUSE", "ESC", "WINDOW_DEACTIVATE"}
+    _HOVER_ATTEMPTS = 3
+    _HOVER_RETRY_INTERVAL = 0.25
+    _HOVER_OFFSET = 8
 
     def __init__(self, nodes, ui):
         self.nodes, self.ui = nodes, ui
@@ -98,6 +101,9 @@ class ScopePointer:
             matches = (injected is not None and event.value == injected["value"]
                        and (event.type == injected["type"]
                             or injected["type"] == "MOUSEMOVE" and event.type in self._MOVES))
+            if matches and injected.get("phase") is not None:
+                entry["phase"] = injected["phase"]
+                entry["attempt"] = injected["attempt"]
             if matches and self._acknowledged is None:
                 injected["received_xy"] = entry["xy"]
                 if entry["xy"] == injected["xy"]:
@@ -185,15 +191,35 @@ class ScopePointer:
         x, y, side = self.ui._plot_rect(self.area, self.region)
         self.event_at(kind, value, (x + side / 2 + delta[0], y + side / 2 + delta[1]))
 
-    def event_at(self, kind, value, point):
+    def event_at(self, kind, value, point, *, phase=None, attempt=None):
         x = self.region.x + round(point[0])
         y = self.region.y + round(point[1])
-        injected = self._record("inject", type=kind, value=value, xy=(x, y),
-                                area=self.area.as_pointer(), local_xy=point)
+        details = {
+            "type": kind,
+            "value": value,
+            "xy": (x, y),
+            "area": self.area.as_pointer(),
+            "local_xy": point,
+        }
+        if attempt is not None:
+            details["phase"] = phase
+            details["attempt"] = attempt
+        injected = self._record("inject", **details)
         self._injected = injected
         self._acknowledged = None
-        self.window.event_simulate(type=kind, value=value, x=x, y=y)
+        self._simulate_event(kind, value, x, y)
         return injected
+
+    def _simulate_event(self, kind, value, x, y):
+        self.window.event_simulate(type=kind, value=value, x=x, y=y)
+
+    def _hover_away_point(self, point):
+        x, y = map(round, point)
+        away_x = x + self._HOVER_OFFSET
+        if away_x >= self.region.width:
+            away_x = x - self._HOVER_OFFSET
+        assert 0 <= away_x < self.region.width and 0 <= y < self.region.height, point
+        return away_x, y
 
     def _delivery_failure(self, injected):
         event = "press" if injected["type"] == "LEFTMOUSE" else "move"
@@ -232,12 +258,33 @@ class ScopePointer:
         while self.nodes._gesture_observer_token(window_key) is None:
             assert time.monotonic() < deadline, "The window gesture router did not register"
             yield .05
-        move = self.event_at("MOUSEMOVE", "NOTHING", point)
-        deadline = time.monotonic() + 5
-        while self._acknowledged is None:
-            assert time.monotonic() < deadline, (
-                self._delivery_failure(move), control, move["xy"])
+        away = self._hover_away_point(point)
+        target_moves = []
+        delivery_deadline = time.monotonic() + 5
+        for attempt in range(1, self._HOVER_ATTEMPTS + 1):
+            if time.monotonic() >= delivery_deadline:
+                break
+            # Let Blender process the away move before queuing the target.
+            self.event_at("MOUSEMOVE", "NOTHING", away,
+                          phase="away", attempt=attempt)
             yield .05
+            if time.monotonic() >= delivery_deadline:
+                break
+            move = self.event_at("MOUSEMOVE", "NOTHING", point,
+                                 phase="target", attempt=attempt)
+            target_moves.append(move)
+            attempt_deadline = delivery_deadline
+            if attempt < self._HOVER_ATTEMPTS:
+                attempt_deadline = min(attempt_deadline,
+                                       time.monotonic() + self._HOVER_RETRY_INTERVAL)
+            while self._acknowledged is None and time.monotonic() < attempt_deadline:
+                yield .05
+            if self._acknowledged is not None:
+                break
+        assert target_moves, ("Gizmo hover expired before target move", control, point)
+        move = target_moves[-1]
+        assert self._injected is move and self._acknowledged is not None, (
+            self._delivery_failure(move), control, move["xy"], target_moves)
         press = self.event_at("LEFTMOUSE", "PRESS", point)
         deadline = time.monotonic() + 5
         while ((drag := self.ui._DRAGS.get(window_key)) is None

@@ -319,8 +319,73 @@ def check_additive_trace_pixels():
 
 def exercise_gizmo_controls():
     baseline = pointer.settings(grade)
-    exposed = yield from pointer.drag_control("exposure", grade, (0, 25), cancel=True)
+
+    original_simulate = pointer._simulate_event
+    probe_calls = []
+
+    def drop_target_moves(kind, value, x, y):
+        entry = pointer._injected
+        phase = entry.get("phase")
+        probe_calls.append((kind, value, phase, entry.get("attempt")))
+        if kind == "MOUSEMOVE" and phase == "target":
+            return
+        original_simulate(kind, value, x, y)
+
+    pointer._simulate_event = drop_target_moves
+    exhaustion = None
+    try:
+        yield from pointer.press_at(
+            pointer.control_point("exposure", grade), "exposure", grade,
+        )
+    except AssertionError as error:
+        exhaustion = error
+    finally:
+        pointer._simulate_event = original_simulate
+
+    assert exhaustion is not None, "Dropped target moves unexpectedly reached the press"
+    details = exhaustion.args[0]
+    assert isinstance(details, tuple) and len(details) == 4, exhaustion.args
+    message, control, _xy, target_attempts = details
+    assert message.startswith("Gizmo router ") and "move" in message, details
+    assert control == "exposure", details
+    assert [(entry["phase"], entry["attempt"]) for entry in target_attempts] == [
+        ("target", 1), ("target", 2), ("target", 3),
+    ], target_attempts
+    assert probe_calls == [
+        ("MOUSEMOVE", "NOTHING", "away", 1), ("MOUSEMOVE", "NOTHING", "target", 1),
+        ("MOUSEMOVE", "NOTHING", "away", 2), ("MOUSEMOVE", "NOTHING", "target", 2),
+        ("MOUSEMOVE", "NOTHING", "away", 3), ("MOUSEMOVE", "NOTHING", "target", 3),
+    ], probe_calls
+    assert pointer.settings(grade) == baseline
+    assert pointer.ui._DRAGS.get(pointer.window.as_pointer()) is None
+    assert pointer.nodes._gesture_token(pointer.window.as_pointer()) is None
+    report["hover_exhaustion_before_press"] = True
+
+    dropped_targets = []
+    retried_targets = []
+
+    def drop_first_target(kind, value, x, y):
+        entry = pointer._injected
+        if kind == "MOUSEMOVE" and entry.get("phase") == "target":
+            if entry["attempt"] == 1:
+                dropped_targets.append(entry)
+                return
+            retried_targets.append(entry)
+        original_simulate(kind, value, x, y)
+
+    pointer._simulate_event = drop_first_target
+    try:
+        exposed = yield from pointer.drag_control("exposure", grade, (0, 25), cancel=True)
+    finally:
+        pointer._simulate_event = original_simulate
     assert exposed.linear.exposure > baseline.linear.exposure
+    assert len(dropped_targets) == 1, dropped_targets
+    assert any(entry["phase"] == "target" and entry["attempt"] >= 2
+               and entry.get("received_xy") == entry["xy"]
+               and entry.get("admission") == "current"
+               for entry in retried_targets), retried_targets
+    assert pointer.settings(grade) == baseline
+    report["hover_retry_acknowledged"] = True
     balanced = yield from pointer.drag_control("cr_balance", grade, (0, 25), cancel=True)
     assert balanced.linear.balance[0] < baseline.linear.balance[0]
     balanced = yield from pointer.drag_control("yb_balance", grade, (25, 0), cancel=True)
