@@ -11,9 +11,9 @@ import numpy as np
 
 from . import appearance_scope, gizmo_geometry as geometry, localization
 from .kernel.prepare import nits_to_j, prepare_tone
-from .kernel.settings import LinearSettings
-from .kernel.tone_ui import TONE_LEVEL_FIELDS, TONE_LIMITS, _j_to_nits
-from .tone_scope import PLOT_MAX, ToneWaveforms
+from .kernel.settings import D65, LinearSettings
+from .kernel.tone_ui import TONE_DEFAULTS, TONE_LEVEL_FIELDS, TONE_LIMITS, _j_to_nits
+from .tone_scope import PLOT_MAX
 from .vectorscope import WhiteDrag
 
 
@@ -43,13 +43,14 @@ _PALETTE = {
         "panel": "3d3d3d", "header": "303030", "plot": "282828",
         "outline": "575757", "grid": "404040", "text": "e6e6e6",
         "muted": "aaaaaa", "blue": "265787", "orange": "e87d0d",
-        "reference": "9b9b9b", "waveform": "87a3bd",
+        "reference": "9b9b9b", "hdr": "87a3bd",
         "R": "ff3352", "C": "4bc9cc", "B": "2890ff", "Y": "f0cf5a",
     }.items()
 }
 _AXIS_LABELS = {"cr": "R", "yb": "B"}
 _SLIDER_RANGES = {"exposure": (-6., 6.), "cr_balance": (-2., 2.),
                   "yb_balance": (-2., 2.), "fit": (-2., 2.)}
+_J_TICKS = tuple(range(math.floor(PLOT_MAX) + 1))
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,7 @@ class DisplayState:
     rgba: np.ndarray | None
     status: str
     error: str | None
-    waveforms: ToneWaveforms | None = None
+    tone_histogram: np.ndarray | None = None
     appearance: appearance_scope.AppearanceScope | None = None
     appearance_status: str | None = None
     appearance_error: str | None = None
@@ -99,6 +100,7 @@ class _Drag:
     white: _WhiteControl | None = None
     last: tuple | None = None
     token: int | None = None
+    panel_position: tuple | None = None
 
 
 def _key(window, area):
@@ -255,8 +257,6 @@ def _release(key):
     with _REVISION_LOCK:
         _REVISIONS.pop(key, None)
     _TEXTURES.pop(key, None)
-    _TEXTURES.pop((key, "before"), None)
-    _TEXTURES.pop((key, "after"), None)
     _TEXTURES.pop((key, "appearance"), None)
     if _runtime is not None:
         _runtime.release(key)
@@ -268,8 +268,8 @@ def _frame_key(scene):
 
 def _cancel_drag(window_key, *, before_frame_change=False):
     drag = _DRAGS.pop(window_key, None)
-    if drag is not None and drag.mode == "header":
-        _POSITIONS[drag.key] = drag.values
+    if drag is not None and drag.panel_position is not None:
+        _POSITIONS[drag.key] = drag.panel_position
     if drag is None or drag.token is None:
         return
     manager = bpy.context.window_manager
@@ -319,27 +319,24 @@ def _tone_anchor_levels(model):
     return model.source[1:], model.target[1:]
 
 
-def _tone_hit(mode, rect, point, model, selected, scale):
+def _tone_hit(rect, point, model, selected, scale):
     sources, targets = _tone_anchor_levels(model)
-    if mode == "curve":
-        actual = model.remap(sources * 100.) / 100.
-        choices = ((math.dist(point, _curve_point(rect, source, target)), index != selected, index)
-                   for index, source in enumerate(sources) if source <= PLOT_MAX
-                   for target in (targets[index], actual[index]) if target <= PLOT_MAX)
-    else:
-        levels = sources if mode == "before" else targets
-        choices = ((abs(point[1] - _level_y(rect, level)), index != selected, index)
-                   for index, level in enumerate(levels))
+    actual = model.remap(sources * 100.) / 100.
+    choices = ((math.dist(point, _curve_point(rect, source, target)), index != selected, index)
+               for index, source in enumerate(sources) if source <= PLOT_MAX
+               for target in (targets[index], actual[index]) if target <= PLOT_MAX)
     distance, _, index = min(choices, default=(math.inf, False, None))
     return index if distance <= 7 * scale else None
 
 
 def _control_values(mode, node, fields):
-    if mode in ("fit", "before", "curve"):
+    if mode in ("fit", "curve"):
         tone = _gesture.tone_settings(node)
         return ((tone.fit,) if mode == "fit"
                 else (tone.input_nits[TONE_LEVEL_FIELDS.index(fields[0])],))
     linear = _gesture.linear_settings(node)
+    if mode == "scope":
+        return linear.source_xy
     if mode in _AXIS_LABELS:
         index = int(mode == "yb")
         return linear.spread[index], linear.heading[index]
@@ -382,18 +379,13 @@ def _press_control(key, node, box, point, origin, frame):
                                 white = _WhiteControl(capture, model, linear)
             elif geometry.contains(box["peak"], point):
                 mode = "peak"
-            else:
-                for side in ("before", "after", "curve"):
-                    if not geometry.contains(box[side], point):
-                        continue
-                    model = _tone_model(_gesture.tone_settings(node))
-                    index = _tone_hit(side, box[side], point, model,
-                                      _TONE_ANCHORS.get(key, _DEFAULT_TONE_ANCHOR), box["scale"])
-                    if index is not None:
-                        _TONE_ANCHORS[key] = index
-                        if side != "after":
-                            mode, fields = side, (TONE_LEVEL_FIELDS[index],)
-                    break
+            elif geometry.contains(box["curve"], point):
+                model = _tone_model(_gesture.tone_settings(node))
+                index = _tone_hit(box["curve"], point, model,
+                                  _TONE_ANCHORS.get(key, _DEFAULT_TONE_ANCHOR), box["scale"])
+                if index is not None:
+                    _TONE_ANCHORS[key] = index
+                    mode, fields = "curve", (TONE_LEVEL_FIELDS[index],)
     if mode == "header":
         values = box["rect"][0] / box["scale"], box["rect"][1] / box["scale"]
     elif white is not None:
@@ -402,7 +394,8 @@ def _press_control(key, node, box, point, origin, frame):
         values = _control_values(mode, node, fields) if fields else ()
     rect = box["scope"] if mode in _AXIS_LABELS else box.get(mode, box["rect"])
     return _Drag(key, _binding(node), frame, mode, rect, origin, box["scale"],
-                 fields, values, white)
+                 fields, values, white,
+                 panel_position=_POSITIONS.get(key, _HOME) if mode == "header" else None)
 
 
 def _press_plot(window, event):
@@ -439,38 +432,64 @@ def _drag_values(drag, node, mouse):
         drag.last = mouse
         return geometry.drag_handle(drag.rect, drag.mode, *start,
                                     mouse[0] - last[0], mouse[1] - last[1])
-    if drag.mode in ("before", "curve"):
+    if drag.mode == "curve":
         reference = _gesture.tone_settings(node).reference_nits
-        delta = dy / drag.rect[3] if drag.mode == "before" else dx / drag.rect[2]
+        if dx == 0:
+            return drag.values
+        delta = dx / drag.rect[2]
         level = float(nits_to_j(drag.values[0], reference)) + delta * .1 * PLOT_MAX
         limits = TONE_LIMITS[TONE_LEVEL_FIELDS.index(drag.fields[0])]
         low, high = nits_to_j(limits, reference)
         return (_j_to_nits(float(min(high, max(low, level))), reference),)
     lo, hi = _SLIDER_RANGES[drag.mode]
-    vertical = drag.mode == "cr_balance" or drag.mode == "exposure" and _stage(drag.key) == "LINEAR"
+    vertical = (drag.mode in ("cr_balance", "fit")
+                or drag.mode == "exposure" and _stage(drag.key) == "LINEAR")
     delta = dy / drag.rect[3] if vertical else dx / drag.rect[2]
     return (min(hi, max(lo, drag.values[0] + delta * (hi - lo))),)
 
 
-def _move_drag(drag, node, mouse):
-    values = _drag_values(drag, node, mouse)
+def _edit_drag(drag, node, values):
     if drag.token is None:
         if values == drag.values:
-            return
+            return True
         if drag.white is not None:
             inputs = _runtime.drag_inputs(drag.key, node)
             unchanged = inputs is not None and inputs[1] == drag.white.linear
         else:
             unchanged = _control_values(drag.mode, node, drag.fields) == drag.values
-        if not unchanged:
-            _cancel_drag(drag.key[0])
-            return
-        drag.token = _gesture.begin(drag.key[0], node, drag.fields)
+        if unchanged:
+            drag.token = _gesture.begin(drag.key[0], node, drag.fields)
         if drag.token is None:
             _cancel_drag(drag.key[0])
-            return
+            return False
     if not _gesture.edit(drag.key[0], drag.token, node, values):
         _cancel_drag(drag.key[0])
+        return False
+    return True
+
+
+def _reset_drag(drag, node, mouse):
+    if drag.mode == "header":
+        _POSITIONS[drag.key] = drag.values = _HOME
+    else:
+        if drag.mode == "curve":
+            tone = _gesture.tone_settings(node)
+            index = TONE_LEVEL_FIELDS.index(drag.fields[0])
+            target = _tone_anchor_levels(_tone_model(tone))[1][index]
+            values = (_j_to_nits(float(target), tone.reference_nits),)
+        elif drag.mode == "fit":
+            values = (TONE_DEFAULTS["fit"],)
+        elif drag.white is not None:
+            values = D65
+        else:
+            values = (0.,) * len(drag.fields)
+        if not _edit_drag(drag, node, values):
+            return
+        drag.values = _control_values(drag.mode, node, drag.fields)
+        if drag.white is not None:
+            drag.white = replace(drag.white, linear=_gesture.linear_settings(node))
+    drag.origin = mouse
+    drag.last = None
 
 
 def _release_button(drag, area, region, click, node):
@@ -508,7 +527,10 @@ def pointer_event(window, event):
         return True
     moving = event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
     releasing = event.type == "LEFTMOUSE" and event.value == "RELEASE"
-    if not (moving or releasing):
+    resetting = (event.type == "R" and (drag.fields or drag.mode == "header"))
+    if resetting and (event.value != "PRESS" or getattr(event, "is_repeat", False)):
+        return True
+    if not (moving or releasing or resetting):
         return False
     mouse = event.mouse_x, event.mouse_y
     area = next((area for area in window.screen.areas
@@ -519,19 +541,22 @@ def pointer_event(window, event):
         _cancel_drag(window_key)
         return True
     with bpy.context.temp_override(window=window, area=area, region=region):
-        if drag.white is not None and (releasing or drag.token is None):
+        if drag.white is not None and (releasing or resetting or drag.token is None):
             # A link or viewport change can precede the next timer observation.
             _observe(drag.key, window, area, region, node)
         if (_DRAGS.get(window_key) is not drag
                 or not _drag_is_current(drag, window, node)):
             _cancel_drag(window_key)
             return True
-        if drag.mode == "header":
+        if resetting:
+            _reset_drag(drag, node, mouse)
+            area.tag_redraw()
+        elif drag.mode == "header":
             _POSITIONS[drag.key] = tuple(value + (end - start) / drag.scale
                                          for value, end, start in zip(drag.values, mouse, drag.origin))
             area.tag_redraw()
         elif drag.fields and (drag.token is not None or math.dist(mouse, drag.origin) >= 3 * drag.scale):
-            _move_drag(drag, node, mouse)
+            _edit_drag(drag, node, _drag_values(drag, node, mouse))
         if releasing and _DRAGS.pop(window_key, None) is drag:
             if drag.token is not None:
                 _gesture.finish(window_key, drag.token, node)
@@ -581,7 +606,7 @@ def _observe(key, window, area, region, node):
         _cancel_drag(key[0])
     if (previous is None or previous[3:] != (revision, stage)
             or previous[2].rgba is not state.rgba
-            or previous[2].waveforms is not state.waveforms
+            or previous[2].tone_histogram is not state.tone_histogram
             or previous[2].status != state.status or previous[2].error != state.error
             or previous[2].appearance is not state.appearance
             or previous[2].appearance_status != state.appearance_status
@@ -795,12 +820,24 @@ def _guides(rect, scale, linear):
         _circle(point, 4.5 * scale, color, 1.6 * scale)
 
 
-def _slider(rect, field, value, scale, *, vertical=False):
+def _slider(rect, field, value, scale, *, vertical=False, track=None):
     lo, hi = _SLIDER_RANGES[field]
     x, y, width, height = rect
     amounts = (value - lo) / (hi - lo)
     label = localization.tr("property." + field)
-    if vertical:
+    if track is not None:
+        start, end = track
+        if vertical:
+            _text(label, x + 5 * scale, y + height - 9 * scale, 8 * scale,
+                  _PALETTE["text"], width - 5 * scale)
+            _text(f"{value:+.2f}", x + 5 * scale, y, 8 * scale,
+                  _PALETTE["orange"], width - 5 * scale)
+        else:
+            label_y = start[1] - 36 * scale
+            _text(label, x, label_y, 9 * scale, _PALETTE["text"], width - 34 * scale)
+            _text(f"{value:+.2f}", x + width, label_y, 9 * scale,
+                  _PALETTE["orange"], 34 * scale, align=1.)
+    elif vertical:
         _text(label, x + scale, y + height - 10 * scale, 9 * scale, _PALETTE["text"], width)
         _text(f"{value:+.2f}", x + scale, y + 4 * scale, 9 * scale, _PALETTE["orange"], width)
         start = x + width / 2, y + 21 * scale
@@ -856,16 +893,6 @@ def _draw_linear(box, state, key, linear):
     _slider(box["yb_balance"], "yb_balance", -linear.balance[1], scale)
 
 
-def _tone_connector(a, b, color, scale):
-    # Smooth connectors join matched landmarks without resembling waveform data.
-    points = []
-    for i in range(24):
-        t = i / 23
-        ease = t * t * (3 - 2 * t)
-        points.append((a[0] + t * (b[0] - a[0]), a[1] + ease * (b[1] - a[1])))
-    _lines([point for i in range(0, 22, 2) for point in points[i:i + 2]], color, scale)
-
-
 def _draw_tone_curve(rect, model, histogram, selected, scale):
     from gpu_extras.batch import batch_for_shader
 
@@ -884,10 +911,17 @@ def _draw_tone_curve(rect, model, histogram, selected, scale):
         batch_for_shader(shader, "TRIS", {"pos": points}).draw(shader)
 
     grid = []
-    for tick in np.arange(0., PLOT_MAX, .5):
+    for tick in _J_TICKS:
         px, py = _curve_point(rect, tick, tick)
         grid.extend(((px, y), (px, y + height), (x, py), (x + width, py)))
+        _text(str(tick), px, y - 12 * scale, 8 * scale,
+              _PALETTE["muted"], 14 * scale, align=.5)
+        _text(str(tick), x - 4 * scale, py - 3 * scale, 8 * scale,
+              _PALETTE["muted"], 14 * scale, align=1.)
     _lines(grid, _PALETTE["grid"], scale, cache=("curve grid", rect))
+    right, top = x + width, y + height
+    _lines(((x, top), (right, top)), _PALETTE["outline"], scale,
+           cache=("curve top", rect))
     identity = []
     for index in range(0, 36, 2):
         for tick in (index, index + 1):
@@ -913,21 +947,25 @@ def _draw_tone_curve(rect, model, histogram, selected, scale):
         _circle(_curve_point(rect, source_j, targets[index]), 3 * scale, color, scale)
         if actual[index] <= PLOT_MAX:
             _circle(_curve_point(rect, source_j, actual[index]), 1.5 * scale, color, 2 * scale)
-    _text(localization.tr("gizmo.tone_curve"), x, y + height + 23 * scale,
-          10 * scale, _PALETTE["text"], width)
-    _text(localization.tr("gizmo.output_j"), x, y + height + 9 * scale,
+    sdr_width = width / PLOT_MAX
+    _fill((x, top + 4 * scale, sdr_width, 3 * scale), _PALETTE["reference"])
+    _fill((x + sdr_width, top + 4 * scale, width - sdr_width, 3 * scale), _PALETTE["hdr"])
+    _text("SDR", x, top + 12 * scale, 7 * scale, _PALETTE["muted"], sdr_width)
+    _text("HDR", x + sdr_width + 3 * scale, top + 12 * scale,
+          7 * scale, _PALETTE["muted"], width - sdr_width - 3 * scale)
+    _text(localization.tr("gizmo.output_j"), x, top + 21 * scale,
           8 * scale, _PALETTE["muted"], width)
-    _text(localization.tr("gizmo.input_j"), x + width * .38, y - 14 * scale,
-          8 * scale, _PALETTE["muted"], width * .6)
+    _text(localization.tr("gizmo.input_j"), x + width * .5, y - 24 * scale,
+          8 * scale, _PALETTE["muted"], width, align=.5)
 
 
 def _draw_appearance(box, state, key):
     rect, scale = box["appearance"], box["scale"]
     x, y, width, height = rect
     top, right = y + height, x + width
-    left = box["before"][0]
-    column_width = box["after"][0] + box["after"][2] - left
-    compact = box["compact_waveforms"] or height < 55 * scale
+    left = box["rect"][0] + 12 * scale
+    column_width = box["curve_title"][0] - left - 8 * scale
+    compact = height < 55 * scale
     appearance = None if state is None else state.appearance
     status = None if state is None else state.appearance_status
     _fill(rect, _PALETTE["plot"])
@@ -941,14 +979,17 @@ def _draw_appearance(box, state, key):
             alignment = 1. if value == math.inf else .5
             _text(label, px, y - 11 * scale, 8 * scale, _PALETTE["muted"],
                   20 * scale, align=alignment)
-    if not compact:
-        middle = y + appearance_scope.lightness_position(50.) * height
-        guide.extend(((x, middle), (right, middle)))
+    lightness_ticks = tuple(
+        (tick, y + appearance_scope.lightness_position(tick * appearance_scope.LIGHTNESS_KNEE) * height)
+        for tick in _J_TICKS
+    )
+    for tick, py in lightness_ticks[2:]:
+        guide.extend(((x, py), (right, py)))
     _lines(guide, _PALETTE["grid"], scale, cache=("appearance grid", rect))
     if appearance is not None:
         _draw_trace(rect, appearance.rgba, (key, "appearance"), additive=False)
 
-    knee = y + appearance_scope.lightness_position(appearance_scope.LIGHTNESS_KNEE) * height
+    knee = lightness_ticks[1][1]
     dash = 5 * scale
     segments = [point for start in np.arange(x, right, 2 * dash)
                 for point in ((start, knee), (min(start + dash, right), knee))]
@@ -957,24 +998,26 @@ def _draw_appearance(box, state, key):
             (right, top), (right, y)), _PALETTE["outline"], scale,
            cache=("appearance outline", rect))
 
-    lightness_ticks = [(y, "0"), (knee - 2 * scale, "100"),
-                       (top + 2 * scale, localization.tr("scope.appearance.upper"))]
-    if not compact:
-        lightness_ticks.insert(1, (middle, "50"))
-    for py, label in lightness_ticks:
-        _text(label, x - 3 * scale, py - 3 * scale, 8 * scale,
-              _PALETTE["orange" if label == "100" else "muted"], 31 * scale, align=1.)
-    _text("J_HK", x - 3 * scale, top + 10 * scale, 8 * scale,
-          _PALETTE["muted"], 28 * scale, align=1.)
+    last_label = y
+    for tick, py in lightness_ticks:
+        _lines(((x - 2 * scale, py), (x, py)), _PALETTE["outline"], scale)
+        if tick <= 1 or (py - last_label >= 9 * scale and top - py >= 8 * scale):
+            _text(str(tick), x - 4 * scale, py - 3 * scale, 8 * scale,
+                  _PALETTE["orange" if tick == 1 else "muted"], 20 * scale, align=1.)
+            last_label = py
+    _text(localization.tr("scope.appearance.upper"), x - 4 * scale, top + 1 * scale,
+          8 * scale, _PALETTE["muted"], 22 * scale, align=1.)
+    _text("J_HK", left, top + 13 * scale, 8 * scale, _PALETTE["muted"], 28 * scale)
     _text("s" if compact else localization.tr("scope.appearance.axis_saturation"),
           x - 11 * scale if compact else x + width * .5,
           y - (11 if compact else 22) * scale, 8 * scale, _PALETTE["muted"],
           width, align=.5)
-    _text(localization.tr("scope.appearance.title"), x, top + 10 * scale, 9 * scale,
-          _PALETTE["text"], column_width - (x - left))
+    title_y = box["curve_title"][1] + 8 * scale
+    _text(localization.tr("scope.appearance.title"), left, title_y, 9 * scale,
+          _PALETTE["text"], column_width)
     if appearance is not None:
         _text(localization.tr("scope.appearance.overflow", fraction=appearance.overflow_fraction),
-              left + column_width, top + 22 * scale, 8 * scale,
+              left + column_width, top + 13 * scale, 8 * scale,
               _PALETTE["orange" if appearance.overflow_fraction else "muted"],
               column_width, align=1.)
     if status != "current":
@@ -984,7 +1027,7 @@ def _draw_appearance(box, state, key):
               y + height * .5 - 3 * scale, 8 * scale,
               _PALETTE["orange" if status_id == "unavailable" else "text"],
               width - 4 * scale, align=.5)
-        if status_id == "unavailable" and state.appearance_error:
+        if status_id == "unavailable" and state is not None and state.appearance_error and not compact:
             _text(state.appearance_error.splitlines()[0], x + width * .5,
                   y + height * .5 - 15 * scale, 8 * scale,
                   _PALETTE["muted"], width - 4 * scale, align=.5)
@@ -993,52 +1036,24 @@ def _draw_appearance(box, state, key):
 def _draw_tone(box, state, key, linear, tone):
     scale = box["scale"]
     model = _tone_model(tone)
-    source, target = _tone_anchor_levels(model)
     selected = _TONE_ANCHORS.get(key, _DEFAULT_TONE_ANCHOR)
-    waves = None if state is None else state.waveforms
-    _slider(box["exposure"], "exposure", linear.exposure, scale)
-    _slider(box["fit"], "fit", tone.fit, scale)
+    histogram = None if state is None else state.tone_histogram
     _draw_appearance(box, state, key)
+    _draw_tone_curve(box["curve"], model, histogram, selected, scale)
+    _slider(box["exposure"], "exposure", linear.exposure, scale, track=box["exposure_track"])
+    _slider(box["fit"], "fit", tone.fit, scale, vertical=True, track=box["fit_track"])
+    tx, ty, tw, _ = box["curve_title"]
+    _text(localization.tr("gizmo.tone_curve"), tx, ty + 8 * scale,
+          10 * scale, _PALETTE["text"], tw)
     peak = box["peak"]
     _fill(peak, _PALETTE["header"])
     px, py, pw, _ = peak
     peak_value = localization.tr(f"tone.peak.{int(tone.peak_nits)}")
-    _text(localization.tr("gizmo.peak", value=peak_value), px + 6 * scale, py + 9 * scale,
-          9 * scale, _PALETTE["text"], pw - 23 * scale)
+    label = localization.tr("gizmo.peak", value=peak_value) if pw >= 100 * scale else peak_value
+    _text(label, px + 6 * scale, py + 8 * scale, 9 * scale, _PALETTE["text"], pw - 23 * scale)
     _lines(((px + pw - 15 * scale, py + 15 * scale), (px + pw - 11 * scale, py + 11 * scale),
             (px + pw - 11 * scale, py + 11 * scale), (px + pw - 7 * scale, py + 15 * scale)),
            _PALETTE["muted"], scale)
-    for side, levels in (("before", source), ("after", target)):
-        rect = box[side]
-        x, y, width, height = rect
-        _fill(rect, _PALETTE["plot"])
-        if waves is not None:
-            _draw_trace(rect, getattr(waves, side), (key, side), color=_PALETTE["waveform"])
-        grid = [(px, _level_y(rect, tick)) for tick in np.arange(0., PLOT_MAX, .5)
-                for px in (x, x + width)]
-        _lines(grid, _PALETTE["grid"], scale, cache=("wave grid", rect))
-        compact = box["compact_waveforms"]
-        _text(localization.tr("gizmo." + side), x, y + height + (8 if compact else 23) * scale,
-              10 * scale, _PALETTE["text"], width)
-        if not compact:
-            anchor = localization.tr("property." + TONE_LEVEL_FIELDS[selected])
-            _text(f"{anchor}  {float(levels[selected]):.2f} J", x,
-                  y + height + 9 * scale, 9 * scale, _PALETTE["orange"], width)
-        for index, value in enumerate(levels):
-            level_y = _level_y(rect, value)
-            color = _PALETTE["orange" if index == selected else "reference"]
-            if value <= PLOT_MAX:
-                _lines(((x, level_y), (x + width, level_y)), color, scale)
-            mark = x + width if side == "before" else x
-            _circle((mark, level_y), 2.5 * scale, color, scale)
-    before, after = box["before"], box["after"]
-    for index in (*[i for i in range(len(source)) if i != selected], selected):
-        color = _PALETTE["orange" if index == selected else "reference"]
-        a, b = _level_y(before, source[index]), _level_y(after, target[index])
-        _tone_connector((before[0] + before[2] + 3 * scale, a),
-                        (after[0] - 3 * scale, b), color, scale)
-    _draw_tone_curve(box["curve"], model, None if waves is None else waves.histogram,
-                     selected, scale)
 
 
 def _draw_status(box, state):

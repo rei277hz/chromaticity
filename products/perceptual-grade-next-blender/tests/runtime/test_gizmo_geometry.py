@@ -37,26 +37,44 @@ class GizmoGeometryTests(unittest.TestCase):
         self.assertGreater(box["cr_balance"][0], x + side)
         self.assertLess(box["yb_balance"][1] + box["yb_balance"][3], y)
 
-    def test_tone_layout_has_appearance_above_waveforms_and_beside_curve(self):
+    def test_tone_layout_has_side_by_side_plots_and_edge_controls(self):
         for width, height, scale in ((1200, 900, 1.), (304, 256, 1.), (608, 512, 2.)):
             with self.subTest(width=width, height=height, scale=scale):
                 box = self.geometry.layout("TONE", width, height, scale)
                 self.assertIsNotNone(box)
-                for name in ("appearance", "before", "after", "curve", "exposure", "fit", "peak"):
+                for name in ("appearance", "curve", "curve_title", "exposure",
+                             "exposure_track", "fit", "fit_track", "peak"):
                     self.assertIn(name, box)
-                before, after, curve = box["before"], box["after"], box["curve"]
-                x, y, plot_width, plot_height = box["appearance"]
-                self.assertEqual(plot_width, 2 * plot_height)
-                self.assertGreater(plot_height, 0.)
-                self.assertEqual(before[1:], after[1:])
-                self.assertGreater(after[0], before[0] + before[2])
-                self.assertGreater(curve[0], after[0] + after[2])
-                self.assertGreater(y, before[1] + before[3])
-                self.assertGreater(x, before[0])
-                self.assertLessEqual(x + plot_width, after[0] + after[2])
-                self.assertLess(y + plot_height, box["exposure"][1])
-                self.assertGreater(before[3], 0.)
-                self.assertGreater(curve[3], before[3])
+                appearance, curve = box["appearance"], box["curve"]
+                self.assertNotIn("before", box)
+                self.assertNotIn("after", box)
+                self.assertAlmostEqual(appearance[2], 2 * appearance[3])
+                self.assertGreaterEqual(appearance[0], box["rect"][0])
+                self.assertLess(appearance[0] + appearance[2], curve[0])
+                self.assertAlmostEqual(appearance[1] + appearance[3], curve[1] + curve[3])
+                self.assertGreaterEqual(curve[2], 84 * scale)
+                self.assertGreaterEqual(curve[3], 74 * scale)
+
+                curve_x, curve_y, curve_width, curve_height = curve
+                curve_right = curve_x + curve_width
+                curve_top = curve_y + curve_height
+                self.assertEqual(box["exposure_track"],
+                                 ((curve_x, curve_y), (curve_right, curve_y)))
+                self.assertEqual(box["fit_track"],
+                                 ((curve_right, curve_y), (curve_right, curve_top)))
+                self.assertEqual(box["exposure"][1] + box["exposure"][3], curve_y)
+                self.assertEqual(box["exposure"][0], curve_x)
+                self.assertEqual(box["exposure"][2], curve_width)
+                self.assertEqual(box["fit"][0], curve_right)
+                self.assertEqual(box["fit"][1], curve_y)
+                self.assertEqual(box["fit"][3], curve_height)
+
+                title, peak = box["curve_title"], box["peak"]
+                self.assertEqual(title[1], peak[1])
+                self.assertEqual(title[3], peak[3])
+                self.assertAlmostEqual(title[0] + title[2] + 6 * scale, peak[0])
+                self.assertLessEqual(peak[0] + peak[2],
+                                     box["rect"][0] + box["rect"][2] - 12 * scale)
 
     def test_moved_panel_obeys_region_bounds_and_dpi(self):
         normal = self.geometry.layout("LINEAR", 900, 660, 1.0, (40, 50))

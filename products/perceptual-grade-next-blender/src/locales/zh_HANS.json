@@ -75,8 +75,6 @@
   "label.gizmo": "调色面板",
   "tooltip.toggle_gizmo": "在此编辑器中显示或隐藏感知调色面板。",
   "gizmo.wordmark": "PERCEPTUAL GRADE",
-  "gizmo.before": "调整前",
-  "gizmo.after": "调整后",
   "gizmo.peak": "峰值：{value}",
   "gizmo.tone_curve": "色调曲线",
   "gizmo.input_j": "输入 J",

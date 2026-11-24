@@ -377,7 +377,7 @@ class ScopeRuntime:
         display = self.displays.get(key)
         payload = self.payloads.get(key)
         if (display is not None and isinstance(payload, _Payload)
-                and isinstance(display, tone_scope.ToneWaveforms) != (payload.tone is not None)):
+                and (display.ndim == 1) != (payload.tone is not None)):
             return None, status, None
         return display, status, None
 

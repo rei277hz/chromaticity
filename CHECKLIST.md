@@ -1,5 +1,7 @@
-# Vectorscope checklist
+# Stage 2 Tone Gizmo checklist
 
-- [ ] Compare sparse trails and dense patches against Resolve using the same image.
-- [ ] Profile and reduce warm Shader viewport `capture_render` latency.
-- [ ] Verify capture freshness and playback behavior after the optimization.
+- [x] Align Exposure, Fit, and Peak with the Tone Curve and add J ticks and SDR/HDR markings.
+- [x] Remove both waveform panels and retain the Tone Curve histogram.
+- [x] Apply the smooth J_HK mapping and normalized ticks to Final Appearance.
+- [x] Reset the active control with R while preserving drag continuation and cancellation.
+- [x] Update the Gizmo design documentation and run the scoped remote Buck2 checks.

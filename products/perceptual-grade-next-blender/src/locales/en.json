@@ -75,8 +75,6 @@
   "label.gizmo": "Gizmo",
   "tooltip.toggle_gizmo": "Show or hide the Perceptual Grade Gizmo in this editor.",
   "gizmo.wordmark": "PERCEPTUAL GRADE",
-  "gizmo.before": "Before",
-  "gizmo.after": "After",
   "gizmo.peak": "Peak: {value}",
   "gizmo.tone_curve": "Tone Curve",
   "gizmo.input_j": "Input J",

@@ -269,15 +269,14 @@ class VectorscopeTests(unittest.TestCase):
 
             first, status, error = runtime.observe(1, None, node, None, tone=tone)
             self.assertEqual((status, error), ("current", None))
-            np.testing.assert_array_equal(first.before, first.after)
+            self.assertEqual(first.shape, (128,))
             self.assertEqual(runtime.tone_changed(node), (1,))
             self.assertEqual(runtime.linear_changed(node), (1,))
             self.assertIsNone(runtime.drag_inputs(1, node))
 
             second, status, error = runtime.observe(1, None, node, None, tone=edited)
             self.assertEqual((status, error), ("current", None))
-            np.testing.assert_array_equal(second.before, first.before)
-            self.assertFalse(np.array_equal(second.after, first.after))
+            self.assertFalse(np.array_equal(second, first))
 
             route["capture_signature"] = "frame two"
             self.assertEqual(runtime.observe(1, None, node, None), (None, "updating", None))
@@ -310,8 +309,8 @@ class VectorscopeTests(unittest.TestCase):
             self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
                              (None, "updating", None))
             self.assertFalse(runtime.poll())
-            waveform, status, error = runtime.observe(1, None, node, None, tone=tone)
-            self.assertIsInstance(waveform, self.tone_scope.ToneWaveforms)
+            histogram, status, error = runtime.observe(1, None, node, None, tone=tone)
+            self.assertEqual(histogram.shape, (128,))
             self.assertEqual((status, error), ("current", None))
             backend.create_job.assert_called_once()
 
@@ -346,7 +345,7 @@ class VectorscopeTests(unittest.TestCase):
             self.assertTrue(runtime.poll())
             self.assertTrue(runtime.poll())
             backend.create_job.assert_not_called()
-            waveforms, status, _error = runtime.observe(1, None, node, None, tone=tone)
+            histogram, status, _error = runtime.observe(1, None, node, None, tone=tone)
             self.assertEqual(status, "current")
 
             ready.side_effect = None
@@ -366,7 +365,7 @@ class VectorscopeTests(unittest.TestCase):
             self.assertEqual(runtime.observe_appearance(1, None, node, None),
                              (plot, "updating", None))
             self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
-                             (waveforms, "current", None))
+                             (histogram, "current", None))
             self.assertTrue(runtime.poll())
             job.advance.side_effect = RuntimeError("Capture failed")
             self.assertFalse(runtime.poll())
@@ -377,7 +376,7 @@ class VectorscopeTests(unittest.TestCase):
             self.assertEqual(runtime.observe_appearance(1, None, node, None),
                              (None, "bake", None))
             self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
-                             (waveforms, "current", None))
+                             (histogram, "current", None))
 
     def make_runtime(self, watch, dependencies):
         runtime = self.runtime.ScopeRuntime(None, None, None, None, backend=object())
@@ -510,6 +509,7 @@ class VectorscopeTests(unittest.TestCase):
         self.assertEqual(float(scope.lightness_position(0.)), 0.)
         self.assertAlmostEqual(float(scope.lightness_position(100.)), .8)
         self.assertAlmostEqual(float(scope.lightness_position(scope.LIGHTNESS_MAX)), 1.)
+        self.assertAlmostEqual(float(scope.lightness_position(50.)), .423, places=3)
         self.assertTrue(np.all(np.diff(scope.lightness_position(np.linspace(
             0., scope.LIGHTNESS_MAX, 100))) > 0.))
         self.assertEqual(float(scope.saturation_position(0.)), 0.)
@@ -517,6 +517,20 @@ class VectorscopeTests(unittest.TestCase):
         self.assertEqual(float(scope.saturation_position(np.inf)), 1.)
         np.testing.assert_array_equal(scope.saturation_position(np.array([0., np.inf], np.float32)),
                                       [0., 1.])
+
+    def test_appearance_lightness_has_continuous_slope_and_curvature_at_reference(self):
+        step = .01
+        offsets = step * np.arange(-3, 4)
+        left, near_left, before, center, after, near_right, right = (
+            self.appearance_scope.lightness_position(100. + offsets)
+        )
+        slope_left = (3 * center - 4 * before + near_left) / (2 * step)
+        slope_right = (-3 * center + 4 * after - near_right) / (2 * step)
+        curvature_left = (2 * center - 5 * before + 4 * near_left - left) / step**2
+        curvature_right = (2 * center - 5 * after + 4 * near_right - right) / step**2
+        self.assertAlmostEqual(slope_left, slope_right, places=8)
+        self.assertLess(curvature_left, -1e-4)
+        self.assertAlmostEqual(curvature_left, curvature_right, places=8)
 
     def test_appearance_scope_reports_alpha_weighted_overflow(self):
         scope = self.appearance_scope
@@ -534,7 +548,8 @@ class VectorscopeTests(unittest.TestCase):
         scope = self.appearance_scope
         for pixel, expected in (((0., 0., 0., 1.), (0, 0)),
                                 ((scope.LIGHTNESS_MAX, 0., 0., 1.), (143, 0)),
-                                ((0., 20., 0., 1.), (int(144 * .8 * np.sqrt(1320.) / 100.), 287))):
+                                ((100., 0., 0., 1.), (115, 0)),
+                                ((0., 20., 0., 1.), (44, 287))):
             with self.subTest(pixel=pixel):
                 density = scope.analyze(np.array([[pixel]])).rgba[..., 3]
                 self.assertEqual(np.unravel_index(np.argmax(density), density.shape), expected)
@@ -575,20 +590,16 @@ class VectorscopeTests(unittest.TestCase):
         self.assertLess(float(brightness[0, -1]), 1.0)
         self.assertFalse(brightness.flags.writeable)
 
-    def test_tone_waveforms_use_neutral_lightness_and_finite_alpha_mass(self):
+    def test_tone_histogram_uses_neutral_lightness_and_finite_alpha_mass(self):
         pixels = np.array([[[1., 1., 1., .25], [1., 1., 1., 0.], [np.inf, 1., 1., 1.]],
                            [[1., 1., 1., 1.], [1., 1., 1., np.nan], [0., 0., 0., 2.]]])
         linear = self.kernel.prepare_linear(space="ACEScg")
-        waveform = self.tone_scope.analyze(pixels, linear, self.kernel.ToneSettings())
-        self.assertEqual(waveform.before.shape, (160, 192))
-        self.assertEqual(waveform.histogram.shape, (128,))
-        white_row = int(160 / waveform.plot_max)
-        self.assertEqual(np.argwhere(waveform.before > 0.).tolist(), [[0, 160], [white_row, 32]])
-        self.assertAlmostEqual(float(waveform.histogram.sum()), 2.25, places=6)
-        np.testing.assert_array_equal(waveform.before, waveform.after)
-        self.assertFalse(waveform.before.flags.writeable)
-        self.assertFalse(waveform.after.flags.writeable)
-        self.assertFalse(waveform.histogram.flags.writeable)
+        histogram = self.tone_scope.analyze(pixels, linear, self.kernel.ToneSettings())
+        self.assertEqual(histogram.shape, (128,))
+        white_bin = int(histogram.size / self.tone_scope.PLOT_MAX)
+        np.testing.assert_array_equal(np.flatnonzero(histogram), [0, white_bin])
+        np.testing.assert_array_equal(histogram[[0, white_bin]], [1., 1.25])
+        self.assertFalse(histogram.flags.writeable)
 
     @staticmethod
     def linear_pixels(code, alpha):

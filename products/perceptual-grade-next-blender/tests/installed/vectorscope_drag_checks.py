@@ -32,6 +32,15 @@ def complete_trace(display):
     return trace
 
 
+def complete_tone_histogram(display):
+    histogram = display.tone_histogram
+    assert display.rgba is None
+    assert histogram.shape == (128,) and histogram.dtype == np.float32
+    assert not histogram.flags.writeable
+    assert np.isfinite(histogram).all() and np.all(histogram >= 0) and histogram.any()
+    return histogram
+
+
 def assert_solid_trace(display, color, exposure=0.0, *, tolerance=1e-3):
     trace = complete_trace(display)
     peak = np.unravel_index(np.argmax(display.brightness), display.brightness.shape)
@@ -62,7 +71,7 @@ def keyframes(tree):
 
 class ScopePointer:
     _MOVES = {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
-    _EVENTS = _MOVES | {"LEFTMOUSE", "RIGHTMOUSE", "ESC", "WINDOW_DEACTIVATE"}
+    _EVENTS = _MOVES | {"LEFTMOUSE", "RIGHTMOUSE", "ESC", "R", "WINDOW_DEACTIVATE"}
     _HOVER_ATTEMPTS = 3
     _HOVER_RETRY_INTERVAL = 0.25
     _HOVER_OFFSET = 8
@@ -209,6 +218,23 @@ class ScopePointer:
         self._acknowledged = None
         self._simulate_event(kind, value, x, y)
         return injected
+
+    def reset_drag_at(self, point):
+        for value in ("PRESS", "RELEASE"):
+            injected = self.event_at("R", value, point)
+            deadline = time.monotonic() + 5
+            while self._acknowledged is None:
+                assert time.monotonic() < deadline, (
+                    "Gizmo router did not acknowledge R " + value, self.diagnostics(),
+                )
+                yield .05
+            receipt = self._acknowledged
+            assert self._injected is injected and receipt["xy"] == injected["xy"], (
+                "Gizmo router acknowledged a different R event", injected, receipt,
+            )
+            assert "RUNNING_MODAL" in receipt["result"], (
+                "R was not consumed by the active Gizmo drag", receipt,
+            )
 
     def _simulate_event(self, kind, value, x, y):
         self.window.event_simulate(type=kind, value=value, x=x, y=y)

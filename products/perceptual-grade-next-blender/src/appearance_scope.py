@@ -6,13 +6,15 @@ import numpy as np
 
 from .color_core.linear import rgb_to_xyz
 from .color_core.modcam16 import encode_cones, signed_hk
-from .kernel.prepare import nits_to_j, prepare_linear
+from .kernel.prepare import prepare_linear
+from .tone_scope import PLOT_MAX
 from .vectorscope import normalize_histogram, splat_components
 
 
 LIGHTNESS_KNEE = 100.
-LIGHTNESS_MAX = float(100. * nits_to_j(4000.))
+LIGHTNESS_MAX = LIGHTNESS_KNEE * PLOT_MAX
 _KNEE_POSITION = .8
+_KNEE_SOFTNESS = .15
 _WIDTH = 288
 _HEIGHT = 144
 _LUMINANCE = .6
@@ -27,12 +29,23 @@ class AppearanceScope:
     overflow_fraction: float
 
 
+def _smooth_positive(value):
+    return .5 * (value + np.hypot(value, _KNEE_SOFTNESS))
+
+
+_BLACK_OFFSET = _smooth_positive(-1.)
+_KNEE_OFFSET = _smooth_positive(0.) - _BLACK_OFFSET
+_MAX_OFFSET = _smooth_positive(PLOT_MAX - 1.) - _BLACK_OFFSET
+# Fit a smooth slope transition through (0, 0), (1, .8), and (PLOT_MAX, 1).
+_SLOPE_CHANGE = (1. - _KNEE_POSITION * PLOT_MAX) / (_MAX_OFFSET - PLOT_MAX * _KNEE_OFFSET)
+_LOW_SLOPE = _KNEE_POSITION - _SLOPE_CHANGE * _KNEE_OFFSET
+
+
 def lightness_position(j):
-    """Return the normalized plot position of a raw J_HK value."""
-    value = np.clip(j, 0., LIGHTNESS_MAX)
-    return (_KNEE_POSITION * np.minimum(value, LIGHTNESS_KNEE) / LIGHTNESS_KNEE
-            + (1. - _KNEE_POSITION) * np.maximum(value - LIGHTNESS_KNEE, 0.)
-            / (LIGHTNESS_MAX - LIGHTNESS_KNEE))
+    """Return the unclipped plot position of a raw J_HK value."""
+    value = np.asarray(j, dtype=np.float64) / LIGHTNESS_KNEE
+    highlight = _smooth_positive(value - 1.) - _BLACK_OFFSET
+    return _LOW_SLOPE * value + _SLOPE_CHANGE * highlight
 
 
 def saturation_position(s):
@@ -93,7 +106,8 @@ def analyze(rgba):
     saturation = np.where(chroma > 0., np.inf, 0.)
     with np.errstate(over="ignore"):
         np.divide(chroma, np.abs(ja), out=saturation, where=ja != 0.)
-    rows = np.minimum((_HEIGHT * lightness_position(lightness)).astype(int), _HEIGHT - 1)
+    positions = np.clip(lightness_position(lightness), 0., 1.)
+    rows = np.minimum((_HEIGHT * positions).astype(int), _HEIGHT - 1)
     cols = np.minimum((_WIDTH * saturation_position(saturation)).astype(int), _WIDTH - 1)
     bins = rows * _WIDTH + cols
 

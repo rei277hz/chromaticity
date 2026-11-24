@@ -34,6 +34,7 @@ select = drag_checks["select"]
 encoded_rgb = drag_checks["encoded_rgb"]
 chroma_bin = drag_checks["chroma_bin"]
 complete_trace = drag_checks["complete_trace"]
+complete_tone_histogram = drag_checks["complete_tone_histogram"]
 assert_solid_trace = drag_checks["assert_solid_trace"]
 
 report = {"passed": False}
@@ -271,24 +272,23 @@ def scenario():
     yield from pointer.click_control("tone_tab", shared)
     yield from wait_for(
         lambda: (value := state()) is not None and value.status == "current"
-        and value.waveforms is not None,
-        "Shared Shader Grade did not publish Tone waveforms",
+        and value.tone_histogram is not None,
+        "Shared Shader Grade did not publish the Tone histogram",
     )
-    waveforms = state().waveforms
-    assert waveforms.before.any() and waveforms.after.any()
+    histogram = complete_tone_histogram(state())
     yield from wait_for(appearance_current, "Shared Shader Tone did not plot final appearance")
     original_appearance = state().appearance.rgba
     appearance_captures = capture_jobs.count("appearance")
     assert appearance_captures > 0
     before = pointer.settings(shared)
-    edited = yield from pointer.drag_control("fit", shared, (35, 0))
+    edited = yield from pointer.drag_control("fit", shared, (0, 35))
     assert edited.tone.fit > before.tone.fit
     assert shared.pg_grade.pg_tone.fit == edited.tone.fit
     assert pointer.settings(grade) == baseline
     yield from wait_for(
         lambda: (value := state()) is not None and value.status == "current"
-        and value.waveforms is not None and value.waveforms is not waveforms,
-        "Shared Shader Tone Fit did not refresh the waveforms",
+        and value.tone_histogram is not None and value.tone_histogram is not histogram,
+        "Shared Shader Tone Fit did not refresh the histogram",
     )
     yield from wait_for(lambda: appearance_current(original_appearance),
                         "Shared Shader Tone Fit did not refresh final appearance")
@@ -297,14 +297,14 @@ def scenario():
     report["shared_tone_gizmo"] = True
 
     tone_appearance = state().appearance.rgba
-    tone_waveforms = state().waveforms
+    tone_histogram = complete_tone_histogram(state())
     appearance_captures = capture_jobs.count("appearance")
     shared.pg_grade.pg_color.web_chroma_2_5 = -1.0
     yield from wait_for(lambda: appearance_current(tone_appearance),
                         "Shared Shader Warp did not refresh final appearance")
     assert capture_jobs.count("input") == input_captures
     assert capture_jobs.count("appearance") > appearance_captures
-    assert state().status == "current" and state().waveforms is tone_waveforms
+    assert state().status == "current" and state().tone_histogram is tone_histogram
     report["appearance_tone_and_warp"] = True
 
 

@@ -1,18 +1,23 @@
 # Perceptual Grade Gizmo design
 
 The Gizmo shows the Linear controls and vectorscope, plus the Stage 2 Tone
-curve, four Tone anchors, Fit, Peak, Before and After waveforms, and the Final
-Appearance scope. Original Unified Chroma controls are available in the Stage 2
-numeric sidebar while their design is being evaluated.
+Curve and Final Appearance scope. Original Unified Chroma controls are
+available in the Stage 2 numeric sidebar while their design is being evaluated.
 
 Stage 3 has no J/C contribution or opponent-pad Gizmo. Its numeric controls are
 limited to Warp and selective Adaptance. A future graphical Warp editor remains
 out of scope for this product change.
 
-The Tone curve uses the prepared Stage 2 settings. Its waveform applies the
-incoming Unified Chroma radial map before calculating H–K magnitude, so the
-preview reflects the rendered Stage 2 input. The Gizmo does not expose or edit
-Muted/Vivid, Crossover, Shadow/Highlight Chroma, or Black Compression.
+The Tone Curve plots the prepared Stage 2 mapping and its four editable
+anchors. Input J and Output J have a one-unit grid, and the SDR/HDR bars split
+at Input J = 1. Exposure runs along the bottom edge, Fit along the right edge,
+and Peak sits on the title row. The histogram bins alpha-weighted output J
+after applying Linear and Stage 2 to the captured input.
+
+Press **R** during a drag to reset the held control and continue from its
+reset value. Tone anchors reset to their current output targets within their
+neighbor bounds. Release confirms the gesture. Escape or right-click restores
+its pre-drag value.
 
 ## Linear vectorscope
 
@@ -51,17 +56,18 @@ unavailable contexts appear in the scope.
 
 ## Tone Final Appearance scope
 
-The read-only 2:1 plot sits above the Before and After waveforms, beside the
-Tone curve. It measures the selected Grade's appearance after Warp, H–K
+The read-only 2:1 plot sits to the left of the Tone Curve. It measures the
+selected Grade's appearance after Warp, H–K
 repair, and AP1-D65 boundary mapping, immediately before conversion to RGB.
 It uses the same Compositor input or Shader viewport context as the other
 Gizmo scopes. The plot is unavailable while **Use Bake** is active because
 the Grade is displaying a baked RGB texture.
 
-The bottom 80% of the vertical axis covers \(J_\mathrm{HK}=0\) through 100.
-The top 20% spans from the marked break at 100 to the neutral 4,000-nit
-reference. The readout above the plot gives the percentage of valid alpha
-weight above that reference. The horizontal position is
+The vertical axis uses the same units as the Tone Curve, with
+\(J_\mathrm{HK}/100=1\) at 80% of the height and the neutral 4,000-nit
+reference at the top. A single smooth curve gradually reduces the slope
+through the reference at 1. The readout above the plot gives the percentage
+of valid alpha weight above the 4,000-nit reference. The horizontal position is
 \(s/\sqrt{1+s^2}\), where \(s=C/|J_A|\). Tick labels show the uncompressed
 saturation from zero to infinity. Black has zero saturation.
 

@@ -1,7 +1,9 @@
-# Next
+# Stage 2 Tone Gizmo
 
-Compare the vectorscope's sparse trails and dense patches against Resolve
-using the same image.
+Keep the Final Appearance scope and Tone Curve side by side. Show normalized
+J ticks and SDR/HDR ranges on the Tone Curve, retain its histogram, and remove
+the Before and After waveform panels. Align Exposure and Fit with the plot
+edges and place Peak on the title row.
 
-Reduce Shader viewport vectorscope capture latency during playback and scene
-pixel changes, starting with the warm `capture_render` stage.
+Give Final Appearance one smooth lightness mapping with J_HK = 100 labeled 1
+at 80% height. Support R to reset the active control during a Gizmo drag.

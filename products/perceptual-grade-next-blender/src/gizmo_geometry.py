@@ -94,39 +94,31 @@ def layout(stage, width, height, scale=1.0, position=(24.0, 24.0)):
             "yb_balance": _rect(scope_x, py + 32 * scale, side, 32 * scale),
         })
     else:
-        wave_gap = 24 * scale
-        plot_width = inner_width - 2 * wave_gap
-        wave_width = .28 * plot_width
-        after_x = inner_x + wave_width + wave_gap
-        curve_x = after_x + wave_width + wave_gap
-        plot_y = py + 62 * scale
-        plot_height = panel_height - 158 * scale
-        plot_top = plot_y + plot_height
-        wave_pair_width = 2 * wave_width + wave_gap
-        appearance_inset = 34 * scale
-        compact = plot_height < 132 * scale
-        plot_gap = (30 if compact else 58) * scale
-        minimum_wave_height = (17 if compact else 24) * scale
-        appearance_width = min(wave_pair_width - appearance_inset,
-                               2 * (plot_height - plot_gap - minimum_wave_height))
+        # Both plots reserve a left gutter for their vertical tick labels.
+        appearance_column = 104 * scale + .45 * (inner_width - 256 * scale)
+        tone_x = inner_x + appearance_column + 14 * scale
+        inner_right = inner_x + inner_width
+        curve_x = tone_x + 20 * scale
+        curve_y = py + 72 * scale
+        curve_right = inner_right - 34 * scale
+        curve_top = py + panel_height - 86 * scale
+        curve_width = curve_right - curve_x
+        curve_height = curve_top - curve_y
+        appearance_width = min(appearance_column - 26 * scale, 2 * curve_height)
         appearance_height = appearance_width / 2
-        appearance_y = plot_top - appearance_height
-        wave_height = appearance_y - plot_gap - plot_y
-        control_y = py + panel_height - 72 * scale
-        peak_width = 116 * scale
+        title_y = py + panel_height - 58 * scale
+        peak_width = min(116 * scale, inner_right - tone_x - 66 * scale)
+        peak_x = inner_right - peak_width
         result.update({
-            "appearance": _rect(inner_x + appearance_inset, appearance_y,
+            "appearance": _rect(inner_x + 26 * scale, curve_top - appearance_height,
                                 appearance_width, appearance_height),
-            "before": _rect(inner_x, plot_y, wave_width, wave_height),
-            "after": _rect(after_x, plot_y, wave_width, wave_height),
-            "curve": _rect(curve_x, plot_y, plot_width - 2 * wave_width, plot_height - 14 * scale),
-            "compact_waveforms": compact,
-            "exposure": _rect(inner_x, control_y,
-                              inner_width - peak_width - 16 * scale, 28 * scale),
-            "fit": _rect(inner_x, py + 31 * scale,
-                         wave_pair_width, 28 * scale),
-            "peak": _rect(inner_x + inner_width - peak_width,
-                          control_y, peak_width, 28 * scale),
+            "curve": _rect(curve_x, curve_y, curve_width, curve_height),
+            "curve_title": _rect(tone_x, title_y, peak_x - tone_x - 6 * scale, 24 * scale),
+            "peak": _rect(peak_x, title_y, peak_width, 24 * scale),
+            "exposure": _rect(curve_x, curve_y - 16 * scale, curve_width, 16 * scale),
+            "exposure_track": ((curve_x, curve_y), (curve_right, curve_y)),
+            "fit": _rect(curve_right, curve_y, 34 * scale, curve_height),
+            "fit_track": ((curve_right, curve_y), (curve_right, curve_top)),
         })
     return result
 

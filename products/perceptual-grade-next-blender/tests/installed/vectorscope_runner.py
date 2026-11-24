@@ -1,5 +1,6 @@
 """Drive direct and evaluated compositor Color inputs through Blender's GUI."""
 
+from dataclasses import replace
 import addon_utils
 import importlib
 import json
@@ -36,6 +37,7 @@ bpy.context.preferences.edit.use_global_undo = True
 bpy.ops.wm.save_userpref()
 select = drag_checks["select"]
 keyframes = drag_checks["keyframes"]
+complete_tone_histogram = drag_checks["complete_tone_histogram"]
 encoded_rgb = drag_checks["encoded_rgb"]
 chroma_bin = drag_checks["chroma_bin"]
 complete_trace = drag_checks["complete_trace"]
@@ -168,7 +170,7 @@ draw_tone = vectorscope_ui._draw_tone
 
 def track_tone_draw(box, state, key, linear, tone):
     draw_tone(box, state, key, linear, tone)
-    if state is not None and state.status == "current" and state.waveforms is not None:
+    if state is not None and state.status == "current" and state.tone_histogram is not None:
         report["tone_gizmo_drawn"] = True
 
 
@@ -427,19 +429,21 @@ def exercise_gizmo_controls():
     yield from pointer.click_control("tone_tab", grade)
     yield from wait_for(
         lambda: (value := state()) is not None and value.status == "current"
-        and value.waveforms is not None,
-        "Tone Gizmo did not publish waveforms",
+        and value.tone_histogram is not None,
+        "Tone Gizmo did not publish its histogram",
     )
-    before = state().waveforms
-    assert before.before.any() and before.after.any()
+    histogram = complete_tone_histogram(state())
     yield from wait_for(lambda: report.get("tone_gizmo_drawn"), "Tone Gizmo failed to draw", 5.)
     yield from wait_for(appearance_current, "Tone Gizmo did not publish final appearance")
     original_appearance = state().appearance.rgba
+    adjusted = yield from pointer.drag_control("exposure", grade, (25, 0), cancel=True)
+    assert adjusted.linear.exposure > baseline.linear.exposure
     adjusted = yield from pointer.drag_control("curve", grade, (20, 0), cancel=True)
     assert adjusted.tone.input_nits[3] > baseline.tone.input_nits[3]
     assert adjusted.tone.input_nits[:3] == baseline.tone.input_nits[:3]
-    adjusted = yield from pointer.drag_control("fit", grade, (35, 0), cancel=True)
+    adjusted = yield from pointer.drag_control("fit", grade, (0, 35), cancel=True)
     assert adjusted.tone.fit > baseline.tone.fit
+    yield from exercise_fit_reset()
     with bpy.context.temp_override(window=window, area=area, region=region):
         assert bpy.ops.perceptual_grade.gizmo_set_peak(
             peak_nits="2000", node_pointer=str(grade.as_pointer()),
@@ -447,23 +451,39 @@ def exercise_gizmo_controls():
         ) == {"FINISHED"}
     yield from wait_for(
         lambda: (value := state()) is not None and value.status == "current"
-        and value.waveforms is not None and value.waveforms is not before,
-        "Peak edit did not update Tone waveforms",
+        and value.tone_histogram is not None and value.tone_histogram is not histogram,
+        "Peak edit did not update the Tone histogram",
     )
     assert pointer.settings(grade).tone.peak_nits == 2000
     yield from wait_for(lambda: appearance_current(original_appearance),
                         "Peak edit did not update final appearance")
     tone_appearance = state().appearance.rgba
-    tone_waveforms = state().waveforms
+    tone_histogram = complete_tone_histogram(state())
     appearance_jobs = report.get("appearance_jobs", 0)
     grade.web_chroma_1_0 = -2.
     grade.web_chroma_2_0 = -2.
     yield from wait_for(lambda: appearance_current(tone_appearance),
                         "Warp edit did not update final appearance")
     assert report.get("appearance_jobs", 0) > appearance_jobs
-    assert state().status == "current" and state().waveforms is tone_waveforms
+    assert state().status == "current" and state().tone_histogram is tone_histogram
     grade.web_chroma_1_0 = 0.
     grade.web_chroma_2_0 = 0.
+
+    # With a non-default peak, R resets Highlights to the current output target.
+    before = pointer.settings(grade)
+    point = pointer.control_point("curve", grade)
+    yield from pointer.press_at(point, "curve", grade)
+    yield from pointer.reset_drag_at(point)
+    reset_settings = pointer.settings(grade)
+    assert reset_settings.linear == before.linear
+    assert reset_settings.tone.input_nits[:3] == before.tone.input_nits[:3]
+    assert abs(reset_settings.tone.input_nits[3] - 2000.) < .05
+    pointer.event_at("LEFTMOUSE", "RELEASE", point)
+    yield from wait_for(lambda: nodes._gesture_token(window.as_pointer()) is None,
+                        "Highlights reset gesture did not finish", 5.)
+    assert pointer.settings(grade) == reset_settings
+    report["highlight_reset_to_peak"] = True
+    grade.input_highlights = before.tone.input_nits[3]
     grade.peak_nits = "1000"
 
     # Guarded black and white must be sampled at the returned endpoints.
@@ -493,6 +513,44 @@ def exercise_gizmo_controls():
     yield from wait_for(lambda: current(RED), "Linear trace did not return from Tone")
     assert report.get("helper_jobs", 0) == 0
     report["tone_gizmo_controls"] = True
+
+
+def exercise_fit_reset():
+    window_key = window.as_pointer()
+    grade.fit = .75
+    before = pointer.settings(grade)
+    reset = replace(before, tone=replace(before.tone, fit=0.))
+    start = pointer.control_point("fit", grade)
+    yield from pointer.press_at(start, "fit", grade)
+    assert nodes._gesture_token(window_key) is None
+    yield from pointer.reset_drag_at(start)
+    assert nodes._gesture_token(window_key) is not None
+    assert pointer.settings(grade) == reset
+    pointer.event_at("LEFTMOUSE", "RELEASE", start)
+    yield from wait_for(lambda: nodes._gesture_token(window_key) is None,
+                        "Fit reset gesture did not finish", 5.)
+    assert pointer.settings(grade) == reset
+    report["fit_reset_before_motion"] = True
+
+    grade.fit = before.tone.fit
+    yield from pointer.press_at(start, "fit", grade)
+    end = start[0], start[1] + 35
+    pointer.event_at("MOUSEMOVE", "NOTHING", end)
+    yield from wait_for(lambda: grade.fit > before.tone.fit,
+                        "Fit drag did not move before reset", 5.)
+    yield from pointer.reset_drag_at(end)
+    assert pointer.settings(grade) == reset
+    continued = end[0], end[1] - 16
+    pointer.event_at("MOUSEMOVE", "NOTHING", continued)
+    yield from wait_for(lambda: grade.fit < 0., "Fit drag did not rebase on reset", 5.)
+    pointer.event_at("ESC", "PRESS", continued)
+    pointer.event_at("ESC", "RELEASE", continued)
+    pointer.event_at("LEFTMOUSE", "RELEASE", continued)
+    yield from wait_for(lambda: nodes._gesture_token(window_key) is None,
+                        "Fit reset gesture did not cancel", 5.)
+    assert pointer.settings(grade) == before
+    report["fit_reset_continues_and_cancels"] = True
+    grade.fit = reset.tone.fit
 
 
 def exercise_drags():
