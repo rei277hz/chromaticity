@@ -52,8 +52,9 @@ def main():
     config = json.loads(Path(sys.argv[sys.argv.index("--") + 1]).read_text(encoding="utf8"))
     sys.path[:0] = config.get("import_paths", ())
     import numpy as np
-    from color_tools.perceptual_grade_reference import appearance, grading, model
+    from color_tools.perceptual_grade_reference import appearance, model
     from color_tools.perceptual_grade_reference.responses import GAMMA, INVERSE, eccentricity
+    from tools.perceptual_grade.reports import oracle
 
     playback = config.get("playback", False)
     changed_callback = "_per_node_grade_changed" if playback else "_grade_changed"
@@ -290,7 +291,7 @@ def main():
             "reference": "independent analytic Linear/Tone; spatial in-gamut swatches",
             "observer_off": "external capture disabled; Image Editor draw cadence retained; acceptance snapshots disabled",
         }
-        for name, value in zip(nodes.TONE_LEVEL_FIELDS, (0., 10., 20., 300., 1200.)):
+        for name, value in zip(nodes.TONE_LEVEL_FIELDS, (10., 20., 300., 1200.)):
             setattr(nodes._tone_controls(grade), name, value)
         report["profile"]["baseline_settings"] = asdict(nodes._grade_settings(grade, nodes._working_space()))
 
@@ -366,7 +367,7 @@ def main():
             xyz = inputs[:, 1, None] * white + (inputs - inputs[:, 1, None]) @ matrix.T
             xyz = xyz @ correction.T
             encoded = appearance.encode(xyz, white, 203.)
-            mapped = grading.Tone(grading.ToneSettings(**asdict(settings.tone))).apply(encoded)
+            mapped = oracle.reference_chroma(settings.tone).apply(encoded)
             _fl, aw = appearance.response_constants(203.)
             hue = np.arctan2(mapped.q[:, 2], mapped.q[:, 1])
             ab = mapped.q[:, 1:] * (aw / (1204 * eccentricity(hue)))[:, None]

@@ -11,7 +11,7 @@ def build_example(tree_type='ShaderNodeTree'):
     prepared = prepare(
         linear=LinearSettings(exposure=.7, source_xy=(.34, .36),
                               balance=(.15, -.12), spread=(20., -15.), heading=(8., -12.)),
-        tone=ToneSettings(input_nits=(0., 8., 40., 235., 1150.), fit=0., peak_nits=1000.),
+        tone=ToneSettings(input_nits=(8., 40., 235., 1150.), fit=0., peak_nits=1000.),
         space='Linear Rec.709',
     )
     built = build_group(prepared, tree_type, name='Raw Linear + Tone example', export=False)

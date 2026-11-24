@@ -8,8 +8,8 @@ from tools.perceptual_grade.reports.web_toe_local import local_result, with_toe_
 
 
 class WebToeLocalTests(unittest.TestCase):
-    def test_legacy_toe_override_preserves_inactive_web_without_geometry(self):
-        prepared = prepare(color=ColorSettings(lightness=((1., 0., 0., 0.),)*4))
+    def test_inactive_web_preserves_identity_without_geometry(self):
+        prepared = prepare(color=ColorSettings())
         self.assertIsNone(prepared.color.web_toe_table)
         self.assertIsNone(prepared.color.geometry)
         self.assertIs(with_toe_cells(prepared, 524288), prepared)

@@ -9,8 +9,6 @@ from . import test_color_stages as stages
 
 
 class PersistentColorStageTests(stages.ColorStageTests):
-    persistent_routes = True
-
     @classmethod
     def source_identity(cls):
         return dict(super().source_identity(), persistent_test_sha256=

@@ -259,7 +259,7 @@ class VectorscopeTests(unittest.TestCase):
         route = {"owner_kind": "compositor", "capture_signature": "frame one",
                  "source_signature": "source"}
         tone = self.kernel.ToneSettings()
-        edited = replace(tone, input_nits=(*tone.input_nits[:3], 400., tone.input_nits[4]))
+        edited = replace(tone, input_nits=(*tone.input_nits[:3], 400.))
         with (patch.object(self.runtime.bake_routes, "describe_vectorscope", return_value=route),
               patch.object(self.runtime, "capture_loaded_image", return_value=pixels) as capture):
             self.assertEqual(runtime.observe(1, None, node, None), (None, "updating", None))

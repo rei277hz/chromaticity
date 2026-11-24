@@ -27,13 +27,11 @@ from .gate_policy import audit_field, field_passed, scalar_limits
 
 
 ATTRIBUTES = {
-    'Color coefficients': 'coefficient_table',
     'Web parameters': 'web_table',
     'Web toes': 'web_toe_table',
     'Adaptance parameters': 'adaptance_table',
 }
 DEFAULT_CASES = {
-    'Color coefficients': ('all_active', 'lightness_fit_6', 'chroma_fit_6'),
     'Web parameters': ('all_active', 'web_alternating_extremes'),
     'Web toes': ('all_active', 'web_alternating_extremes'),
     'Adaptance parameters': ('all_active', 'all_families_max_active_tail'),

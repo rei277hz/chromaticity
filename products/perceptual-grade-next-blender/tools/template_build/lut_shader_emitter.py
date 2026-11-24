@@ -12,6 +12,7 @@ from ..kernel.prepare import prepare
 from ..kernel.stage2_parameters import (
     MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT, MATRIX_RED_SLOT,
     PARAMETER_ROLE_SHAPES, TONE_DOMAIN_SLOT, TONE_SCALARS_SLOT,
+    TONE_CHROMA_GAIN_SLOT, TONE_CHROMA_TONE_SLOT,
 )
 
 
@@ -37,8 +38,13 @@ class _ComputeParameters:
     def __init__(self, graph):
         self.graph = graph
         black, span, slope, high = self.scalar(TONE_SCALARS_SLOT)
-        self.tone = SimpleNamespace(active=True, black=black, span=span,
-                                    slope=slope, high=high)
+        low, vivid, knee, chroma_active = self.scalar(TONE_CHROMA_GAIN_SLOT)
+        shadow, highlight, crossover, curve_active = self.scalar(TONE_CHROMA_TONE_SLOT)
+        self.tone = SimpleNamespace(
+            active=curve_active, black=black, span=span, slope=slope, high=high,
+            chroma_parameters=(low, vivid, knee), chroma_active=chroma_active,
+            chroma_tone=(shadow, highlight, crossover),
+        )
         self.domain = self.scalar(TONE_DOMAIN_SLOT)[0]
 
     def scalar(self, slot):
@@ -61,8 +67,8 @@ class _ComputeParameters:
     def sample_field(self, role, table, coordinate, row):
         graph = self.graph
         height, width, _ = PARAMETER_ROLE_SHAPES[role]
-        sampler = {"color": "grade_color", "web": "grade_web",
-                   "web_toe": "grade_web_toe", "adaptance": "grade_adaptance"}[role]
+        sampler = {"web": "grade_web", "web_toe": "grade_web_toe",
+                   "adaptance": "grade_adaptance"}[role]
         if table.segments > 1:
             segment = graph.minimum(table.segments-1,
                 graph.op('FLOOR',graph.div(coordinate,table.segment_cells)))
@@ -258,6 +264,13 @@ def _appearance_functions(boundary, color):
     graded = stage.color_and_guard(stage.tone(entered))
     yield function("vec4 stack_grade(vec4 state)", stage, pack(graded))
 
+    stage = graph()
+    raw = GuardedSockets(stage, h, a, b, energy, energy)
+    chroma = stage.hypot(a, b)
+    entered = AppearanceSockets(stage, raw.J_A, a, b, 0., 1., chroma)
+    warped = stage.color_and_guard(entered)
+    yield function("vec4 stack_warp(vec4 state)", stage, pack(warped))
+
     for name, cones_only in (("stack_decode", False), ("stack_decode_cones", True)):
         stage = graph()
         raw = GuardedSockets(stage, h, a, b, energy, energy)
@@ -268,6 +281,9 @@ def _appearance_functions(boundary, color):
     raw = GuardedSockets(stage, h, a, b, energy, energy)
     yield function("vec3 stack_project(vec4 state)", stage, _code(output_guard(stage, raw).native_color))
 
+    stage = graph()
+    remapped = stage.remap_normalized(_Expression("position"))
+    yield function("float stack_tone_normalized(float position)", stage, _code(remapped))
     stage = graph()
     remapped = stage.remap(_Expression("magnitude"))
     yield function("float stack_tone_magnitude(float magnitude)", stage, _code(remapped))
@@ -294,7 +310,7 @@ def grade_source(boundary):
     max_eccentricity = sum((.2312, .5388, .2828, .3459, 1.0547, .0768, .154, .1, .186))
     max_chroma = (1204. / boundary.aw * max_eccentricity * response_limit
                   * math.hypot(24./11., 4./9.))
-    max_magnitude = math.hypot(max_ja, math.sqrt(66. * max_chroma))
+    max_magnitude = math.hypot(max_ja, math.sqrt(66. * 16. * max_chroma))
     body = "\n".join((
         _PREAMBLE,
         "vec3 grade_value(vec3 input_value, int final_grade) {",
@@ -302,8 +318,10 @@ def grade_source(boundary):
         f"    return {_code(guarded.native_color)};",
         "}",
         "#ifdef STACK_INVERSE",
-        f"const vec3 stack_inverse_bound = vec3({max_ja}, {max_chroma}, {max_chroma});",
         f"const float stack_max_magnitude = {max_magnitude};",
+        f"const int stack_tone_scalars_slot = {TONE_SCALARS_SLOT};",
+        f"const int stack_chroma_gain_slot = {TONE_CHROMA_GAIN_SLOT};",
+        f"const int stack_chroma_tone_slot = {TONE_CHROMA_TONE_SLOT};",
         *_appearance_functions(boundary, color),
         INVERSE_SOURCE,
         "#endif",

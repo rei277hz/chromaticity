@@ -31,7 +31,6 @@ from .gate_policy import texture_admission_policy
 
 
 COLOR_CELLS = {
-    'Color coefficients': (65536, 32768, 16384, 8192, 4096, 2048),
     'Web parameters': (16384, 8192, 4096, 2048),
     'Web toes': (262144, 131072, 65536, 32768, 16384, 8192, 4096,
                  2048, 1792, 1536, 1280, 1024, 768, 512, 256),
@@ -39,12 +38,11 @@ COLOR_CELLS = {
 }
 TONE_CELLS = (256, 128, 64, 32)
 BOUNDARY_CELLS = ((64, 96, 256), (32, 48, 128), (16, 24, 64))
-ROLES = ('Tone', *COLOR_CELLS, 'Output boundary', 'Combined Web', 'Combined Color')
+ROLES = ('Tone', *COLOR_CELLS, 'Output boundary', 'Combined Web')
 TOE_ADMISSION_CELLS = tuple(range(256, 2049, 256))
 ORIGINAL_TOE_CELLS = 524288
-ORIGINAL_COLOR_CELLS = 131072
 ORIGINAL_COMPACT_ADAPTANCE_CELLS = 16384
-HDR_FIELD_ROLES = ('Color coefficients', 'Adaptance parameters')
+HDR_FIELD_ROLES = ('Adaptance parameters',)
 
 
 def case_shards(case_names, count):
@@ -102,14 +100,13 @@ def _graph_builder(graph_builder):
 
 
 def _request(*, samples, spaces, contexts, cases, case_universe, candidates,
-             baseline_toe_cells, baseline_parameter_cells, baseline_color_cells,
+             baseline_toe_cells, baseline_parameter_cells,
              baseline_compact_adaptance_cells, backend, threads, case_shard, graph_builder):
     request = dict(samples=samples, spaces=list(spaces), contexts=list(contexts),
                    cases=list(cases), case_universe=list(case_universe),
                    baseline_toe_cells=baseline_toe_cells, candidates=candidates,
                    graph_builder=graph_builder)
     for key, value in (('baseline_parameter_cells', baseline_parameter_cells),
-                       ('baseline_color_cells', baseline_color_cells),
                        ('baseline_compact_adaptance_cells', baseline_compact_adaptance_cells)):
         if value is not None:
             request[key] = value
@@ -146,8 +143,6 @@ def selection(roles=None, candidate_ids=None):
               for low, high, hue in BOUNDARY_CELLS]
     specs += [dict(id='Combined Web/4096+32768', role='Combined Web',
                    parameter_cells=4096, toe_cells=32768)]
-    specs += [dict(id='Combined Color/16384+8192', role='Combined Color',
-                   color_cells=16384, compact_adaptance_cells=8192)]
     if roles:
         unknown = set(roles)-set(ROLES)
         if unknown:
@@ -302,18 +297,12 @@ def _make_candidate(base, spec, boundary_cache):
         candidate, parameter = color_candidate(base, 'Web parameters', spec['parameter_cells'])
         candidate, toe = color_candidate(candidate, 'Web toes', spec['toe_cells'])
         return candidate, [parameter, toe]
-    if role == 'Combined Color':
-        candidate, color = color_candidate(base, 'Color coefficients', spec['color_cells'])
-        candidate, compact = color_candidate(candidate, 'Adaptance parameters', spec['compact_adaptance_cells'])
-        return candidate, [color, compact]
     raise ValueError(f'Unknown candidate role: {role}')
 
 
 def _required_roles(spec):
     if spec['role'] == 'Combined Web':
         return ('Web parameters', 'Web toes')
-    if spec['role'] == 'Combined Color':
-        return HDR_FIELD_ROLES
     return (spec['role'],)
 
 
@@ -388,7 +377,7 @@ def toe_admission(report):
             or set(spaces) != set(cases.SPACES) or len(spaces) != len(cases.SPACES)
             or set(contexts) != {'shader', 'compositor'} or len(contexts) != 2
             or request.get('samples') != 1024 or request.get('case_shard') is not None):
-        reasons.append('Admission requires the complete 149-case, three-space, two-context corpus at 1024 samples')
+        reasons.append('Admission requires the complete three-space, two-context corpus at 1024 samples')
     expected_keys = {(case, space, context) for case in canonical_cases
                      for space in cases.SPACES for context in ('shader', 'compositor')}
     baseline_rows = report.get('baselines', ())
@@ -477,10 +466,9 @@ def toe_admission(report):
 
 
 def _field_shape(role, cells):
-    """Expected RGBA32F packing for the two HDR-admitted field roles."""
+    """Expected RGBA32F packing for Compact Adaptance."""
     segment = min(cells, 8192)
-    semantic_rows = 2 if role == 'Color coefficients' else 1
-    height = semantic_rows*(cells//segment)
+    height = cells//segment
     return [1 << (height-1).bit_length(), segment+1, 4]
 
 
@@ -533,7 +521,7 @@ def _complete_field_diagnostics(field):
 
 
 def field_admission(report):
-    """Admit explicit Color/Compact candidates by HDR worsening and safety.
+    """Admit explicit Compact Adaptance candidates by HDR worsening and safety.
 
     Scalar/local precision is diagnostic under the authorized policy. Every
     measured native image must match the complete scalar-diagnostic payload.
@@ -542,21 +530,20 @@ def field_admission(report):
     """
     request = report.get('request', {})
     specs = [spec for spec in request.get('candidates', ())
-             if spec.get('role') in (*HDR_FIELD_ROLES, 'Combined Color')]
+             if spec.get('role') in HDR_FIELD_ROLES]
     if not specs:
         return None
     policies = {role: texture_admission_policy(role) for role in HDR_FIELD_ROLES}
     reasons = []
     if any(policy.get('basis') != 'hdr_worsening' for policy in policies.values()):
-        reasons.append('Color and Compact Adaptance HDR admission is not authorized')
+        reasons.append('Compact Adaptance HDR admission is not authorized')
     limit = min(policy.get('max_worsening_codes', -np.inf) for policy in policies.values())
     if report.get('complete') is not True or report.get('sources_stable_during_run') is not True:
         reasons.append('Report is incomplete or sources changed during measurement')
     if report.get('identity', {}).get('request') != request:
         reasons.append('Request differs from its source-bound identity')
-    if (request.get('baseline_color_cells') != ORIGINAL_COLOR_CELLS
-            or request.get('baseline_compact_adaptance_cells') != ORIGINAL_COMPACT_ADAPTANCE_CELLS):
-        reasons.append('Admission requires the explicit original 131072 Color / 16384 Compact Adaptance baseline')
+    if request.get('baseline_compact_adaptance_cells') != ORIGINAL_COMPACT_ADAPTANCE_CELLS:
+        reasons.append('Admission requires the explicit original 16384-cell Compact Adaptance baseline')
     if request.get('graph_builder') != 'persistent':
         reasons.append('Admission requires the persistent graph builder')
     names = [row[0] for row in (*full_cases.grades(), *full_cases.ui_boundaries())]
@@ -568,7 +555,7 @@ def field_admission(report):
             or set(request.get('contexts', ())) != {'shader', 'compositor'}
             or len(request.get('contexts', ())) != 2
             or request.get('samples') != 1024 or request.get('case_shard') is not None):
-        reasons.append('Admission requires the complete 149-case, three-space, two-context corpus at 1024 samples')
+        reasons.append('Admission requires the complete three-space, two-context corpus at 1024 samples')
     expected = {(case, space, context) for case in names for space in cases.SPACES
                 for context in ('shader', 'compositor')}
     baselines = report.get('baselines', ())
@@ -586,9 +573,7 @@ def field_admission(report):
     candidates = []
     for spec in specs:
         changed = _required_roles(spec)
-        sizes = ({'Color coefficients': spec.get('color_cells'),
-                  'Adaptance parameters': spec.get('compact_adaptance_cells')}
-                 if spec['role'] == 'Combined Color' else {spec['role']: spec.get('cells')})
+        sizes = {spec['role']: spec.get('cells')}
         rejected = list(reasons)
         if any(not isinstance(count, int) or isinstance(count, bool) or count not in supported_cells(role)
                for role, count in sizes.items()):
@@ -631,8 +616,8 @@ def field_admission(report):
                     rejected.append('Candidate field dimensions or byte count differ from the requested layout')
                 if role not in active:
                     continue
-                base_cells = ORIGINAL_COLOR_CELLS if role == 'Color coefficients' else ORIGINAL_COMPACT_ADAPTANCE_CELLS
-                if not _verified_field_image(baseline.get('image_receipts', {}).get(role, {}), role, base_cells):
+                if not _verified_field_image(baseline.get('image_receipts', {}).get(role, {}), role,
+                                             ORIGINAL_COMPACT_ADAPTANCE_CELLS):
                     rejected.append('Baseline native image dimensions or payload verification are missing')
                 if not _verified_field_image(row.get('image_receipts', {}).get(role, {}), role, sizes[role], field):
                     rejected.append('Candidate native image does not match the scalar-diagnostic payload')
@@ -673,7 +658,6 @@ def field_admission(report):
             worst_worsening=None if worst is None else dict(case=worst['case'], space=worst['space'],
                 context=worst['context'], pixel=worst.get('hdr', {}).get('witnesses', {}).get('worsening'))))
     return dict(policies=policies, max_worsening_codes=limit,
-        baseline_color_cells=request.get('baseline_color_cells'),
         baseline_compact_adaptance_cells=request.get('baseline_compact_adaptance_cells'),
         baseline_node_budget_failure_rows=sum(row.get('node_budget_passed') is False for row in baselines),
         admitted_candidates=[row['id'] for row in candidates if row['passed']], candidates=candidates,
@@ -726,7 +710,7 @@ def _markdown(report):
                      ' | '.join(f'{value:.9g}' for value in maximums) + f' | {percentage} | {failed} |')
     lines += ['', 'The table reports maxima over measured rows, not pooled percentiles. JSON retains per-row distributions and full worst-pixel witnesses.',
               'Code values are fractional full-range 10-bit RGB after the pinned ACES HDR-1000/PQ view. Near-black percentages are excluded below one reference code; their absolute errors remain recorded.',
-              'Raw scalar failures remain visible. Web toes, Color coefficients and Compact Adaptance use their authorized HDR layout budgets with retained final-output/flag/containment checks; other roles retain scalar/local gates. Local/native-stage and GPU evidence are separate. No per-pixel archive is stored.', '']
+              'Web toes and Compact Adaptance retain raw scalar results and use HDR layout budgets with final-output, flag, and containment checks. Other roles use scalar and local gates.', '']
     admission = report.get('toe_admission')
     if admission is not None:
         lines += [f"Web-toe HDR admission: smallest passing supported size **{admission['selected_cells']} cells** "
@@ -740,7 +724,7 @@ def _markdown(report):
         lines.append('')
     admission = report.get('field_admission')
     if admission is not None:
-        lines += ['Color/Compact HDR layout admission: complete scalar precision diagnostics; '
+        lines += ['Compact Adaptance HDR layout admission requires complete scalar diagnostics and '
                   f"maximum signed worsening {admission['max_worsening_codes']:g} codes. "
                   'Inherited construction failures remain separate.', '',
                   '| Candidate | Maximum worsening | Admitted | New node-budget failures | Rejection reasons |',
@@ -999,7 +983,7 @@ def merge_shards(output_dir, shard_dirs, *, expected_cases=None):
 def run(output_dir, *, samples=1024, spaces=cases.SPACES, contexts=('shader','compositor'),
         selected=None, roles=None, candidate_ids=None, resume=False, case_shard=None,
         baseline_toe_cells=ORIGINAL_TOE_CELLS, baseline_parameter_cells=None,
-        baseline_color_cells=None, baseline_compact_adaptance_cells=None,
+        baseline_compact_adaptance_cells=None,
         backend='cpu', threads=None, xvfb=None, graph_builder='specialized'):
     spaces = tuple(spaces)
     contexts = tuple(contexts)
@@ -1009,10 +993,9 @@ def run(output_dir, *, samples=1024, spaces=cases.SPACES, contexts=('shader','co
         raise ValueError('Unsupported baseline Web-toe cell count')
     if baseline_parameter_cells is not None and baseline_parameter_cells not in supported_cells('Web parameters'):
         raise ValueError('Unsupported baseline Web-parameter cell count')
-    for role, cells in (('Color coefficients', baseline_color_cells),
-                        ('Adaptance parameters', baseline_compact_adaptance_cells)):
-        if cells is not None and cells not in supported_cells(role):
-            raise ValueError(f'Unsupported baseline {role} cell count')
+    if (baseline_compact_adaptance_cells is not None
+            and baseline_compact_adaptance_cells not in supported_cells('Adaptance parameters')):
+        raise ValueError('Unsupported baseline Adaptance parameter cell count')
     threads = _backend_threads(backend, threads)
     import bpy
     from .benchmark import available_threads, software_gpu_info, thread_snapshot
@@ -1052,7 +1035,6 @@ def run(output_dir, *, samples=1024, spaces=cases.SPACES, contexts=('shader','co
     request = _request(samples=samples, spaces=spaces, contexts=contexts,
         cases=[row[0] for row in corpus], case_universe=corpus_names, candidates=specs,
         baseline_toe_cells=baseline_toe_cells, baseline_parameter_cells=baseline_parameter_cells,
-        baseline_color_cells=baseline_color_cells,
         baseline_compact_adaptance_cells=baseline_compact_adaptance_cells,
         backend=backend, threads=threads, case_shard=shard_metadata, graph_builder=graph_builder)
     identity = dict(sources=source_identity, display=display.metadata,
@@ -1126,8 +1108,6 @@ def run(output_dir, *, samples=1024, spaces=cases.SPACES, contexts=('shader','co
         base = _with_baseline_toe(base, baseline_toe_cells)
         if baseline_parameter_cells is not None:
             base = _with_baseline_parameters(base, baseline_parameter_cells)
-        if baseline_color_cells is not None:
-            base = _with_baseline_field(base, 'Color coefficients', baseline_color_cells)
         if baseline_compact_adaptance_cells is not None:
             base = _with_baseline_field(base, 'Adaptance parameters', baseline_compact_adaptance_cells)
         context_key = (base.fl, base.aw, base.gamma)
@@ -1254,8 +1234,6 @@ def main(argv=None):
                         help='Explicit baseline toe layout (default: original 524288 cells)')
     parser.add_argument('--baseline-parameter-cells', type=int,
                         help='Explicit baseline Web-parameter layout (default: current runtime cells)')
-    parser.add_argument('--baseline-color-cells', type=int,
-                        help='Explicit baseline Color coefficient layout (default: current runtime cells)')
     parser.add_argument('--baseline-compact-adaptance-cells', type=int,
                         help='Explicit baseline Compact Adaptance layout (default: current runtime cells)')
     parser.add_argument('--graph-builder', choices=('specialized', 'persistent'),
@@ -1276,7 +1254,7 @@ def main(argv=None):
         if args.samples is not None or args.spaces is not None or args.contexts is not None:
             parser.error('--samples, --spaces and --contexts are read from shard identities')
         if any(value is not None for value in (args.baseline_toe_cells, args.baseline_parameter_cells,
-                                               args.baseline_color_cells, args.baseline_compact_adaptance_cells)):
+                                               args.baseline_compact_adaptance_cells)):
             parser.error('Baseline layouts are read from shard identities')
         if args.backend is not None or args.threads is not None or args.xvfb is not None or args.worker:
             parser.error('Backend and thread settings are read from shard identities')
@@ -1300,10 +1278,9 @@ def main(argv=None):
             raise ValueError('Unsupported baseline Web-parameter cell count')
         if args.baseline_toe_cells is not None and args.baseline_toe_cells not in supported_cells('Web toes'):
             raise ValueError('Unsupported baseline Web-toe cell count')
-        for role, cells in (('Color coefficients', args.baseline_color_cells),
-                            ('Adaptance parameters', args.baseline_compact_adaptance_cells)):
-            if cells is not None and cells not in supported_cells(role):
-                raise ValueError(f'Unsupported baseline {role} cell count')
+        if (args.baseline_compact_adaptance_cells is not None
+                and args.baseline_compact_adaptance_cells not in supported_cells('Adaptance parameters')):
+            raise ValueError('Unsupported baseline Adaptance parameter cell count')
     except ValueError as error:
         parser.error(str(error))
     if shard is not None:
@@ -1330,7 +1307,6 @@ def main(argv=None):
         resume=args.resume, case_shard=shard,
         baseline_toe_cells=ORIGINAL_TOE_CELLS if args.baseline_toe_cells is None else args.baseline_toe_cells,
         baseline_parameter_cells=args.baseline_parameter_cells,
-        baseline_color_cells=args.baseline_color_cells,
         baseline_compact_adaptance_cells=args.baseline_compact_adaptance_cells,
         backend=backend, threads=threads, xvfb=args.xvfb, graph_builder=args.graph_builder or 'specialized')
 

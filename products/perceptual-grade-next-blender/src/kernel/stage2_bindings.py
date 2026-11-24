@@ -25,7 +25,7 @@ PARAMETER_READER_ROLE = "_perceptual_grade_parameter_reader_role"
 PARAMETER_ROLE = "_perceptual_grade_parameter_role"
 PARAMETER_ROLE_BINDING = "_perceptual_grade_parameter_role_"
 
-TEMPLATE_SCHEMA = "perceptual-grade-node-template-v4"
+TEMPLATE_SCHEMA = "perceptual-grade-node-template-v5"
 TEMPLATE_KIND = "_perceptual_grade_template_kind"
 TEMPLATE_VARIANT = "_perceptual_grade_template_variant"
 TEMPLATE_IMAGE_ROLE = "_perceptual_grade_template_image_role"

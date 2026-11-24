@@ -2,7 +2,7 @@
 import hashlib
 import json
 import os
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
 import time
 from unittest import mock
@@ -10,8 +10,7 @@ import unittest
 import bpy
 import numpy as np
 
-from color_tools.kernel import prepare, prepare_linear, ColorSettings, WebSettings
-from color_tools.perceptual_grade_reference import grading
+from color_tools.kernel import prepare, prepare_linear, ColorSettings, LinearSettings, ToneSettings, WebSettings
 from color_tools.template_build import graph as graph_module
 from color_tools.template_build.graph import count_nodes, build_group, Graph, BuiltGrade
 from color_tools.kernel.boundary import prepare_boundary
@@ -103,13 +102,6 @@ class FullGradeTests(unittest.TestCase):
                 reference_started = time.perf_counter()
                 prepared = replace(prepared_grades[name], linear=prepare_linear(linear, space), space=space)
                 expected = oracle.evaluate_full(values[:, :3], linear, tone, color, space)
-                if name == 'saturation':
-                    # Raw overflow is a separate diagnostic from the guarded
-                    # export oracle, whose Color state has already been repaired.
-                    _, reference_tone = oracle.parameters(linear, tone)
-                    raw_color = grading.Color(
-                        grading.ColorSettings(**asdict(color)), grading.Tone(reference_tone),
-                        hk_guard=False).apply_state(expected['tone'])
                 reference_seconds = time.perf_counter()-reference_started
                 for context in selected_contexts():
                     with self.subTest(space=space, case=name, context=context):
@@ -133,12 +125,6 @@ class FullGradeTests(unittest.TestCase):
                                 self.assertGreaterEqual(len(fixture.built.images), 4)
                             if name in ('reset', 'all_active'):
                                 np.testing.assert_array_equal(actual['saturated'], 0.)
-                            if name == 'saturation':
-                                # Four independently decoded source hues provoke
-                                # finite raw energies beyond float32, of both signs.
-                                self.assertTrue(np.all(abs(raw_color.energy[-4:]) > np.finfo(np.float32).max))
-                                self.assertTrue(np.all(actual['saturated'][-4:] > .5), actual['saturated'][-4:])
-                                self.assertLessEqual(oracle.metrics(actual['rgb'][-4:], expected['rgb'][-4:])['max_normalized'], 1e-4)
                         finally:
                             disposal_started = time.perf_counter()
                             fixture.close()
@@ -152,6 +138,34 @@ class FullGradeTests(unittest.TestCase):
                                 disposal_seconds=time.perf_counter()-disposal_started,
                                 total_native_seconds=time.perf_counter()-case_started,
                             )), flush=True)
+
+    def test_guarded_output_after_final_scale_overflows_energy(self):
+        linear, tone = LinearSettings(), ToneSettings()
+        # This portable control value puts the post-repair energy beyond
+        # float32 while the independent reference still represents it.
+        color = ColorSettings(web=WebSettings(log_scale=((64.,) * 6,) * 4))
+        for space in cases.SPACES:
+            # Keep the rendered fixture square so UVs land on pixel centers.
+            colors = np.tile(full_cases.rgba(space, 256)[-4:], (2, 1))
+            values = np.concatenate((colors, np.column_stack((-colors[:, :3], colors[:, 3]))))
+            prepared = prepare(linear, tone, space, color=color, boundary=self.boundary)
+            expected = oracle.evaluate_full(values[:, :3], linear, tone, color, space)
+            energy = expected['color'].energy
+            limit = np.finfo(np.float32).max
+            self.assertTrue(np.isfinite(energy).all())
+            self.assertTrue(np.all(energy[:len(colors)] > limit), energy)
+            self.assertTrue(np.all(energy[len(colors):] < -limit), energy)
+            for context in selected_contexts():
+                with self.subTest(space=space, context=context):
+                    fixture = NativeFixture(prepared, values, context, threads=2)
+                    try:
+                        actual = fixture.render()
+                        np.testing.assert_array_equal(actual['saturated'], 1.)
+                        np.testing.assert_array_equal(actual['alpha'], values[:, 3])
+                        result = assess(actual, expected, values)
+                        self.assertTrue(result['passed'], result)
+                    finally:
+                        fixture.close()
 
     def test_oversized_graphs_and_construction_cleanup(self):
         prepared = prepare(color=ColorSettings(web=WebSettings(hue_degrees=((1.,)*6,)*4)),

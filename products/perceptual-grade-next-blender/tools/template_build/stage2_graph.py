@@ -1,4 +1,4 @@
-"""Complete fixed Grade graphs driven by two five-role parameter banks."""
+"""Complete fixed Grade graphs driven by two four-role parameter banks."""
 
 from dataclasses import replace
 from types import SimpleNamespace
@@ -10,6 +10,7 @@ from ..kernel.color_prepare import prepare_color
 from ..kernel.stage2_parameters import (
     MATRIX_RED_SLOT, MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT,
     TONE_SCALARS_SLOT, TONE_DOMAIN_SLOT, OUTPUT_MATRIX_ROW_SLOTS,
+    TONE_CHROMA_GAIN_SLOT, TONE_CHROMA_TONE_SLOT,
     PARAMETER_CONTENT_SIGNATURE,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, parameter_content_signature,
     parameter_image_matches, prepare_parameters, parameter_bank_images,
@@ -94,8 +95,13 @@ class ParameterBindings:
         self.selector_node[PARAMETER_SELECTOR] = True
         scalars, high = self.sample(TONE_SCALARS_SLOT)
         black, span, slope = graph.split(scalars)
-        self.tone = SimpleNamespace(active=True, black=black, span=span,
-                                    slope=slope, high=high)
+        gains, chroma_active = self.sample(TONE_CHROMA_GAIN_SLOT)
+        stops, curve_active = self.sample(TONE_CHROMA_TONE_SLOT)
+        self.tone = SimpleNamespace(
+            active=curve_active, black=black, span=span, slope=slope, high=high,
+            chroma_parameters=graph.split(gains), chroma_active=chroma_active,
+            chroma_tone=graph.split(stops),
+        )
         self.domain = graph.split(self.sample(TONE_DOMAIN_SLOT)[0])[0]
 
     def sample(self, slot):
@@ -232,7 +238,7 @@ def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,
     if parameter_image is not None:
         if parameter_images is not None:
             raise ValueError("Pass parameter_images or parameter_image, not both")
-        raise ValueError("Grade requires two complete five-role parameter banks")
+        raise ValueError("Grade requires two complete four-role parameter banks")
     elif parameter_images is not None:
         parameter_images = tuple(parameter_images)
     import bpy

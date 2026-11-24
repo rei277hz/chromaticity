@@ -1,4 +1,4 @@
-"""Measure offline Color/compact-Adaptance candidate field generation costs.
+"""Measure offline compact Adaptance field generation costs.
 
 The runtime layout is unchanged. Only `_generate_field` is timed: parameter
 preparation, payload hashing, scalar audits, native upload and grading are
@@ -29,7 +29,6 @@ from .evaluate import evidence_hashes
 
 
 DEFAULT_GRIDS = {
-    'Color coefficients': (131072, 65536, 32768, 16384, 8192, 4096),
     'Adaptance parameters': (16384, 8192, 4096, 2048),
 }
 CASE_NAMES = ('reset', 'all_active', 'web_alternating_extremes', 'all_families_max_active_tail')
@@ -48,7 +47,7 @@ def run(output_dir, *, repeats=5, grids=None, generation_limit_ms=10.):
         raise ValueError('Repetitions and the generation target must be positive')
     grids = DEFAULT_GRIDS if grids is None else grids
     if not grids or set(grids)-set(DEFAULT_GRIDS):
-        raise ValueError('Select Color coefficients or Adaptance parameters')
+        raise ValueError('Select Adaptance parameters')
     grids = {role: tuple(dict.fromkeys(map(int, counts))) for role, counts in grids.items()}
     for role, counts in grids.items():
         if not counts or any(count not in supported_cells(role) for count in counts):
@@ -165,11 +164,10 @@ def main(argv=None):
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--repeats', type=int, default=5)
     parser.add_argument('--fields', nargs='+', choices=tuple(DEFAULT_GRIDS), default=list(DEFAULT_GRIDS))
-    parser.add_argument('--color-cells', nargs='+', type=int, default=list(DEFAULT_GRIDS['Color coefficients']))
     parser.add_argument('--adaptance-cells', nargs='+', type=int, default=list(DEFAULT_GRIDS['Adaptance parameters']))
     parser.add_argument('--generation-limit-ms', type=float, default=10.)
     args = parser.parse_args(argv)
-    grids = {name: args.color_cells if name == 'Color coefficients' else args.adaptance_cells for name in args.fields}
+    grids = {name: args.adaptance_cells for name in args.fields}
     try:
         run(args.output_dir, repeats=args.repeats, grids=grids, generation_limit_ms=args.generation_limit_ms)
     except ValueError as error:

@@ -1,10 +1,10 @@
 """Fixed runtime field layouts; offline audits own accuracy certification.
 
 ``tools.audit_fields`` checks the retained scalar corpus and reports lower-grid
-failure witnesses. Color coefficients and Web toes retain their authorized
-0.05-code HDR worsening layouts; their scalar/local precision remains
-diagnostic. Compact Adaptance uses a denser fixed grid for strict extreme-grade
-final-output acceptance. The retained safety and final-output checks still
+failure witnesses. Web toes retain their authorized 0.05-code HDR worsening
+layout; its scalar/local precision remains diagnostic. Compact Adaptance uses
+a denser fixed grid for strict extreme-grade final-output acceptance with 3A.
+The retained safety and final-output checks still
 apply. Adaptance always uses its single compact field, including stronger
 calibrated gains.
 Receipts remain external evidence, not a claim over the continuous domain.
@@ -12,18 +12,17 @@ Runtime never chooses a resolution from authored values.
 """
 from types import MappingProxyType
 
-LAYOUT_SCHEMA = 6
+LAYOUT_SCHEMA = 7
 TONE_CELLS = 256
 FIELD_LATTICE = (2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288)
 WEB_TOE_CANDIDATES = tuple(range(256, 2049, 256))
 FIELD_CELLS = MappingProxyType({
-    'Color coefficients': 8192,
     'Web parameters': 4096,
     'Web toes': 1536,
     # Near a zero cardinal endpoint, small absolute log interpolation errors
     # can shift reflected H after a very large Web chroma request. The retained
     # strict extreme-grade output corpus requires this fixed compact grid.
-    'Adaptance parameters': 32768,
+    'Adaptance parameters': 65536,
 })
 
 

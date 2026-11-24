@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 LOW_Y = 0.015507796089266005
 D65 = (.3127, .329)
 SPACES = ('Linear Rec.709', 'Linear Rec.2020', 'ACEScg')
-ZERO44 = ((0.,) * 4,) * 4
+TONE_PEAKS = (500, 1000, 2000, 4000)
+TONE_CHROMA_LIMITS = {
+    'black_compression_nits': (0., 2.), 'muted_gain': (-2., 2.),
+    'vivid_gain': (-2., 2.), 'saturation_crossover': (.05, .95),
+    'shadow_chroma': (-2., 2.), 'highlight_chroma': (-2., 2.),
+    'tone_crossover': (10., 160.),
+}
 ZERO46 = ((0.,) * 6,) * 4
 ZERO42 = ((0., 0.),) * 4
 
@@ -28,11 +34,18 @@ class LinearSettings:
 
 @dataclass(frozen=True)
 class ToneSettings:
-    """Reference-schema controls; preparation accepts Tone Fit in [-2, 2]."""
-    input_nits: tuple = (0., LOW_Y*203., .18*203., 203., 1000.)
+    """Original Unified Chroma Tone and chroma controls."""
+    input_nits: tuple = (LOW_Y*203., .18*203., 203., 1000.)
     fit: float = 0.
     reference_nits: float = 203.
     peak_nits: float = 1000.
+    black_compression_nits: float = 0.
+    muted_gain: float = 0.
+    vivid_gain: float = 0.
+    saturation_crossover: float = .5
+    shadow_chroma: float = 0.
+    highlight_chroma: float = 0.
+    tone_crossover: float = 45.
 
     def __post_init__(self):
         object.__setattr__(self, 'input_nits', tuple(self.input_nits))
@@ -57,19 +70,13 @@ class WebSettings:
 
 @dataclass(frozen=True)
 class ColorSettings:
-    """Reference Color schema; columns are low/high chroma and a/b opponents."""
-    lightness: tuple = ZERO44
-    chroma: tuple = ZERO44
+    """Stage 3 Warp settings. Tonal J/C drivers belong to Stage 2 Tone."""
     adaptance: tuple = ZERO42
-    lightness_fit: float = 0.
-    chroma_fit: float = 0.
-    global_gain: float = 0.
     adaptance_half_saturation: float = .25
     web: WebSettings = field(default_factory=WebSettings)
 
     def __post_init__(self):
-        for name in ('lightness', 'chroma', 'adaptance'):
-            object.__setattr__(self, name, tuple(tuple(row) for row in getattr(self, name)))
+        object.__setattr__(self, 'adaptance', tuple(tuple(row) for row in self.adaptance))
         if isinstance(self.web, dict):
             object.__setattr__(self, 'web', WebSettings(**self.web))
         if not isinstance(self.web, WebSettings):

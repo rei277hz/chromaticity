@@ -9,8 +9,8 @@ from ..color_core import linear as color_linear
 
 
 # Version the Stack math in generated LUTs, installed kernels, and image Bakes.
-STACK_COMPOSITION_SCHEMA = 2
-STACK_INVERSE_SCHEMA = 1
+STACK_COMPOSITION_SCHEMA = 3
+STACK_INVERSE_SCHEMA = 2
 SIZE = 65
 PREVIEW_SIZE = 33
 CELLS = SIZE - 1

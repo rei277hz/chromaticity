@@ -82,7 +82,7 @@ class ColorGraph:
 
     def _color_enabled(self, name):
         color = self.prepared.color
-        if name in ('lightness', 'chroma', 'adaptance', 'web'):
+        if name in ('adaptance', 'web'):
             return float(getattr(color, name + '_active'))
         return float(_active(getattr(color.settings.web, name)))
 
@@ -105,7 +105,7 @@ class ColorGraph:
                   ((.0582, .1475), (.0258, .0308), (.1347, .0385), (.0289, .0096)))
         ja = 100*(1220/self.prepared.aw)**self.prepared.gamma
         c = 1204*(1+rho)/self.prepared.aw*400*math.hypot(24/11, 4/9)
-        height = math.sqrt(ja*ja+66*c)
+        height = math.sqrt(ja*ja+66*c*self.prepared.tone.maximum_chroma_gain)
         target = float(self.prepared.tone.remap(height))
         return target
 
@@ -193,12 +193,6 @@ class ColorGraph:
             result.append(rows[row][channel])
         return tuple(result)
 
-    def _color_dot4(self, values, weights):
-        value = 0.
-        for a, b in zip(values, weights):
-            value = self.madd(a, b, value)
-        return value
-
     def _color_h(self, energy, chroma):
         base = self.mul(SQRT_HK, self.sqrt(chroma))
         magnitude = self._color_magnitude(energy, chroma)
@@ -246,74 +240,6 @@ class ColorGraph:
         changed = self.maximum(self.lt(0., self.abs(dh)), self.lt(0., self.abs(db)))
         return (self.safe_select(changed, energy, state.energy),
                 self._color_flag(state.saturated, self.mul(changed, flag)), offset)
-
-    def _color_drivers(self, state):
-        c = state.source_chroma
-        if self._color_source_squares_safe:
-            c2 = self.mul(c, c)
-            r2 = self.mul((35./75.)**2, self.abs(state.source_energy))
-            visible_square = self.add(c2, 4.)
-            visibility_den = self.sqrt(visible_square)
-            visibility = self.div(c2, visible_square)
-        else:
-            r = self.mul(35./75., self.mul(
-                math.sqrt(self._color_energy_scale),
-                self.sqrt(self.abs(state.source_energy))))
-            scale = self.maximum(c, r)
-            cn, rn = self.div(c, scale), self.div(r, scale)
-            c2, r2 = self.mul(cn, cn), self.mul(rn, rn)
-            visibility_den = self._color_norm(c, 2.)
-            v = self.div(c, visibility_den)
-            visibility = self.mul(v, v)
-        den = self.add(c2, r2)
-        return (self.mul(visibility, self.div(r2, den)),
-                self.mul(visibility, self.div(c2, den)),
-                self.div(state.a, visibility_den), self.div(state.b, visibility_den))
-
-    def _color_terms(self, state):
-        prepared = self.prepared.color
-        if not (self._color_full_topology or prepared.lightness_active or prepared.chroma_active):
-            return state
-        chroma_fields = self._color_full_topology or _active(prepared.settings.chroma)
-        if self._color_full_topology or prepared.lightness_active or chroma_fields:
-            x = self._color_height(prepared.coefficient_table, state.tonal_h)
-            drivers = self._color_drivers(state)
-        h, a, b, flag = state.H, state.a, state.b, state.saturated
-        if self._color_full_topology or prepared.lightness_active:
-            values = self.sample_field(prepared.coefficient_table, x, 0)
-            h = self.select(self._color_enabled('lightness'),
-                            self.add(h, self._color_dot4(values, drivers)), h)
-        if self._color_full_topology or prepared.chroma_active:
-            exponent = self._color_setting('global_gain')
-            if chroma_fields:
-                values = self.sample_field(prepared.coefficient_table, x, 1)
-                exponent = self.add(exponent, self._color_dot4(values, drivers))
-            upper = math.inf if self._color_full_topology else prepared.settings.global_gain + max(
-                max(abs(row[0]), abs(row[1])) + math.hypot(*row[2:])
-                for row in prepared.settings.chroma)
-            gain, fs = self._color_exp(exponent, upper, 2.)
-            a, fa = self._color_mul(a, gain)
-            b, fb = self._color_mul(b, gain)
-            enabled = self._color_enabled('chroma')
-            a, b = self.select(enabled, a, state.a), self.select(enabled, b, state.b)
-            flag = self.select(enabled, self._color_flag(flag, fs, fa, fb), flag)
-        chroma, chroma_flag = self._color_norm_result(a, b)
-        flag = self._color_flag(flag, chroma_flag)
-        energy, fe, offset = self._color_carry(state, h, chroma)
-        # Original black is fixed even when tonal lightness coefficients exist.
-        nonblack = self.lt(0., state.tonal_h)
-        result = replace(state, H=self.safe_select(nonblack, h, state.H),
-                       a=self.safe_select(nonblack, a, state.a),
-                       b=self.safe_select(nonblack, b, state.b),
-                       energy=self.safe_select(nonblack, energy, state.energy),
-                       chroma_value=chroma, offset_value=offset, ja_value=None,
-                       saturated=self._color_flag(state.saturated, self.mul(nonblack, self._color_flag(flag, fe))))
-        changed = self.mul(nonblack, self.maximum(
-            self.lt(0., self.abs(self.sub(h, state.H))),
-            self.lt(0., self.abs(self.sub(chroma, state.chroma)))))
-        result = replace(result, ja_value=self.select(changed, result.J_A, state.J_A))
-        return self._color_route(self.maximum(self._color_enabled('lightness'),
-                                               self._color_enabled('chroma')), result, state)
 
     def _color_sector(self, angle, angles):
         local = self.add(self.op('FLOORED_MODULO', self.sub(angle, angles[0]), TAU), angles[0])
@@ -739,7 +665,6 @@ class ColorGraph:
         prepared = self.prepared.color
         if not (self._color_full_topology or prepared.active):
             return self.hk_guard(state) if guarded else state
-        state = self._color_terms(state)
         state, scale, scale_flag = self._color_web(state)
         state = self._color_adaptance(state)
         if guarded:

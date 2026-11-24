@@ -95,8 +95,12 @@ def settings():
         pg_linear=SimpleNamespace(exposure=0., source_x=.3127, source_y=.329,
                                   cr_balance=0., yb_balance=0., cr_spread=0.,
                                   yb_spread=0., cr_heading=0., yb_heading=0.),
-        pg_tone=SimpleNamespace(input_black=0., input_shadows=1., input_midtones=36.54,
-                                input_white=203., input_highlights=1000., fit=0., peak_nits="1000"))
+        pg_tone=SimpleNamespace(input_shadows=1., input_midtones=36.54,
+                                input_white=203., input_highlights=1000.,
+                                black_compression_nits=0., muted_gain=0., vivid_gain=0.,
+                                saturation_crossover=.5, shadow_chroma=0.,
+                                highlight_chroma=0., tone_crossover=45., fit=0.,
+                                peak_nits="1000"))
 
 
 class BakeRouteTests(unittest.TestCase):
@@ -364,8 +368,7 @@ class BakeRouteTests(unittest.TestCase):
                                           self.color_ui.COLOR_FIELDS)
 
     def test_upstream_and_stack_color_edits_change_bake_identity(self):
-        names = ("j_a_1", "c_high_2", "lightness_fit", "chroma_fit", "global_gain",
-                 "adaptance_half_saturation", "adaptance_b_3",
+        names = ("adaptance_half_saturation", "adaptance_b_3",
                  "web_chroma_0_0", "web_hue_1_2", "web_scale_3_5")
         for kind in ("PGShaderGrade", "PGShaderGradePerNode", "PGShaderGradeStack"):
             with self.subTest(upstream=kind):

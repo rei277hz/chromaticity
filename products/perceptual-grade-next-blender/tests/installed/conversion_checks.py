@@ -166,9 +166,9 @@ def _round_trip(nodes, tree, assert_grade_current):
     with nodes._suspend(original_grade.pg_tone):
         original_grade.pg_tone.fit = 0.25
         original_grade.pg_tone.peak_nits = "4000"
+        original_grade.pg_tone.muted_gain = 0.5
+        original_grade.pg_tone.highlight_chroma = -0.125
     with nodes._suspend(original_grade.pg_color):
-        original_grade.pg_color.j_a_1 = 0.5
-        original_grade.pg_color.c_high_2 = -0.125
         original_grade.pg_color.adaptance_a_1 = 0.25
         original_grade.pg_color.web_scale_1_0 = 0.0625
     original_grade.pg_color.web_hue_1_0 = 180.0
@@ -456,7 +456,7 @@ def prepare_persistence(nodes, trees):
         shared.pg_grade = nodes._make_grade()
         shared.pg_grade.pg_linear.exposure = 0.4375
         shared.pg_grade.pg_tone.fit = 0.375
-        shared.pg_grade.pg_color.global_gain = 0.0625
+        shared.pg_grade.pg_tone.vivid_gain = 0.0625
         local = nodes.convert_grade_node(shared, "NODE")
         local.name = "Saved converted animated Grade"
         assert local.keyframe_insert(data_path="exposure", frame=frame)

@@ -72,7 +72,7 @@ class StageTests(TestCase):
 
     def test_failed_build_releases_packed_images_and_tree(self):
         bpy.ops.wm.read_factory_settings(use_empty=True)
-        prepared = prepare(tone=ToneSettings(input_nits=(0, 8, 40, 235, 1150)))
+        prepared = prepare(tone=ToneSettings(input_nits=(8, 40, 235, 1150)))
         before_groups = {group.as_pointer() for group in bpy.data.node_groups}
         before_images = {image.as_pointer() for image in bpy.data.images}
 

@@ -22,12 +22,12 @@ class CurrentTextureCandidatesTests(unittest.TestCase):
     def test_baseline_is_current_and_selection_only_reduces(self):
         layout = candidates.baseline_layout(self.base)
         self.assertEqual({key: value for key, value in layout.items() if key != 'Output boundary'},
-                         {'Tone':256, 'Color coefficients':8192, 'Web parameters':4096,
-                          'Web toes':1536, 'Adaptance parameters':32768})
+                         {'Tone':256, 'Web parameters':4096,
+                          'Web toes':1536, 'Adaptance parameters':65536})
         self.assertEqual((layout['Output boundary']['width'], layout['Output boundary']['height']), (513,321))
         specs = candidates.selection()
-        self.assertEqual(len(specs), 9)
-        self.assertEqual(len({s['id'] for s in specs}), 9)
+        self.assertEqual(len(specs), 8)
+        self.assertEqual(len({s['id'] for s in specs}), 8)
         for spec in specs:
             candidates.validate_spec(spec)
             if spec['role'] != 'Output boundary':
@@ -48,7 +48,7 @@ class CurrentTextureCandidatesTests(unittest.TestCase):
             candidates.selection(['Tone/128','Tone/128'])
 
     def test_each_color_reduction_preserves_all_unrelated_payloads(self):
-        selected = ['Color coefficients/4096','Web parameters/2048','Web toes/1280','Adaptance parameters/2048']
+        selected = ['Web parameters/2048','Web toes/1280','Adaptance parameters/2048']
         for spec in candidates.selection(selected):
             with self.subTest(role=spec['role']):
                 changed, metadata = candidates.candidate(self.base, spec)

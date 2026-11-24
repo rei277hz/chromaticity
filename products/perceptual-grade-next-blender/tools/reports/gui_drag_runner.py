@@ -16,7 +16,7 @@ import time
 import traceback
 
 
-SCENARIOS = ('reset', 'exposure', 'tone_fit', 'lightness', 'chroma', 'global_gain',
+SCENARIOS = ('reset', 'exposure', 'tone_fit', 'muted_gain', 'vivid_gain', 'shadow_chroma',
              'web_chroma', 'web_hue', 'web_scale', 'adaptance',
              'all_active_exposure', 'all_active_color', 'web_stress', 'reset_active',
              'aba_exposure', 'burst_exposure')
@@ -40,11 +40,8 @@ def settings_for(name, index, count):
     if name == 'tone_fit':
         tone = next(row[2] for row in cases.grades() if row[0] == 'combined')
         return replace(settings, tone=replace(tone, fit=-1+2*fraction))
-    if name in ('lightness', 'chroma'):
-        rows = ((0.,)*4, (.2*fraction, 0., 0., 0.), (0.,)*4, (0.,)*4)
-        return replace(settings, color=replace(settings.color, **{name: rows}))
-    if name == 'global_gain':
-        return replace(settings, color=replace(settings.color, global_gain=.2*fraction))
+    if name in ('muted_gain', 'vivid_gain', 'shadow_chroma'):
+        return replace(settings, tone=replace(settings.tone, **{name: .2*fraction}))
     if name.startswith('web_') and name != 'web_stress':
         field = {'web_chroma': 'log_chroma', 'web_hue': 'hue_degrees',
                  'web_scale': 'log_scale'}[name]
@@ -60,7 +57,7 @@ def settings_for(name, index, count):
         if name == 'all_active_exposure':
             linear = replace(linear, exposure=linear.exposure+.2*fraction)
         else:
-            color = replace(color, global_gain=color.global_gain+.2*fraction)
+            tone = replace(tone, vivid_gain=tone.vivid_gain+.2*fraction)
         return Settings(linear=linear, tone=tone, color=color)
     if name == 'web_stress':
         row = next(row for row in full_cases.ui_boundaries() if row[0] == 'web_alternating_extremes')
@@ -480,11 +477,10 @@ def main(argv=None):
                 families.add('linear')
             if prepared.tone.active:
                 families.add('tone')
-            for field in ('lightness', 'chroma', 'adaptance'):
-                if any(value != 0 for row in getattr(settings.color, field) for value in row):
-                    families.add(field)
-            if settings.color.global_gain != 0:
-                families.add('global_gain')
+            if prepared.tone.chroma_active:
+                families.add('tone_chroma')
+            if any(value != 0 for row in settings.color.adaptance for value in row):
+                families.add('adaptance')
             for field in ('log_chroma', 'hue_degrees', 'log_scale'):
                 if any(value != 0 for row in getattr(settings.color.web, field) for value in row):
                     families.add('web_'+field)

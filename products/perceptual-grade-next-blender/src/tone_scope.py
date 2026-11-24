@@ -52,8 +52,9 @@ def analyze(rgba, linear, tone):
     chroma = np.hypot(appearance.q[..., 1], appearance.q[..., 2])
     magnitude = np.hypot(appearance.ja, np.sqrt(HK * chroma))
     before = magnitude / 100.
-    # Tone's common appearance gain solves for this remapped magnitude.
-    after = tone.remap(magnitude) / 100.
+    chroma *= tone.chroma_gain(appearance.ja, chroma)
+    edited_magnitude = np.hypot(appearance.ja, np.sqrt(HK * chroma))
+    after = tone.remap(edited_magnitude) / 100.
     before_visible = before <= PLOT_MAX
     after_visible = after <= PLOT_MAX
     histogram = np.histogram(after[after_visible], bins=_HISTOGRAM_BINS,

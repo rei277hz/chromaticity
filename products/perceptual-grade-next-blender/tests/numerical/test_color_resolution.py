@@ -41,7 +41,7 @@ class ColorResolutionTests(unittest.TestCase):
             self.assertEqual(np.shape(angles), (4, 6))
             self.assertTrue(np.all(np.apply_along_axis(gaps, 1, np.asarray(angles)) > 4.))
             changed_input = replace(settings, tone=replace(settings.tone,
-                input_nits=(1., 2., 3., 400., 800.), fit=2.), space="ACEScg")
+                input_nits=(2., 3., 400., 800.), black_compression_nits=1., fit=2.), space="ACEScg")
             self.assertIs(hue_source_angles(settings), hue_source_angles(changed_input))
             self.assertEqual(adaptation_context(settings), adaptation_context(changed_input))
 

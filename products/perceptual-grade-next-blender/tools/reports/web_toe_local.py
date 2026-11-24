@@ -159,7 +159,7 @@ def run(output_dir, *, cells, samples=256, contexts=('shader', 'compositor'), se
                 web=replace(color.web, hue_degrees=((rotation,)*6,)*4))
             prepared = with_toe_cells(prepare(linear, tone, color=settings), LEGACY_TOE_CELLS)
             reference = grading.Color(grading.ColorSettings(**asdict(settings)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      oracle.reference_chroma(tone).tone,
                                       hk_guard=False)
             frames = []
             if rotation in (None, 0.):

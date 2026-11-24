@@ -8,7 +8,7 @@ SPACES = ('Linear Rec.709', 'Linear Rec.2020', 'ACEScg')
 # matrix decomposition. Sources: core/model/{linear,tone}.py and graph/nodes.py.
 LINEAR_RANGES = {'exposure':(-6.,6.), 'source_xy':(0.,.9), 'balance':(-2.,2.),
                  'spread':(-100.,150.), 'heading':(-180.,180.)}
-TONE_RANGES = ((0.,2.),(.01,50.),(.1,250.),(10.,1000.),(100.,10000.))
+TONE_RANGES = ((.01,50.),(.1,250.),(10.,1000.),(100.,10000.))
 PEAKS = (500,1000,2000,4000)
 FITS = range(-2,3)  # Existing UI choices intersect the experiment's Tone Fit <= 2 cap.
 
@@ -22,13 +22,15 @@ def assert_ui_settings(linear, tone):
             raise ValueError(f'{name} is outside the Gizmo/slider range')
     if linear.matrix is not None:
         raise ValueError('Arbitrary matrix overrides are API tests, not UI precision cases')
+    if not 0. <= tone.black_compression_nits <= 2.:
+        raise ValueError('Black Compression is outside its UI range')
     for value,(lo,hi) in zip(tone.input_nits,TONE_RANGES):
         if not lo <= value <= hi:
             raise ValueError('Tone anchor is outside its UI range')
-    if tone.fit not in FITS or tone.peak_nits not in PEAKS or tone.reference_nits != 203.:
+    if not -2. <= tone.fit <= 2. or tone.peak_nits not in PEAKS or tone.reference_nits != 203.:
         raise ValueError('Tone fit/viewing/peak is outside the accepted experiment domain')
     ref=Tone(RefTone())
-    if np.any(np.diff(ref.nits_to_j(tone.input_nits)) < .001-1e-12):
+    if np.any(np.diff(ref.nits_to_j((0., *tone.input_nits))) < .001-1e-12):
         raise ValueError('Tone anchors violate the UI landmark spacing')
 
 
@@ -37,18 +39,18 @@ def grades():
     yield 'reset', base, ToneSettings()
     yield 'linear', replace(base, exposure=.7, source_xy=(.34, .36),
                            balance=(.15, -.12), spread=(20., -15.), heading=(8., -12.)), ToneSettings()
-    yield 'tone', base, ToneSettings(input_nits=(0., 8., 40., 235., 1150.))
-    yield 'narrow', base, ToneSettings(input_nits=(.2, .21, 42., 250., 1300.), fit=2.)
-    yield 'dark', replace(base, exposure=-1.5), ToneSettings(input_nits=(.01, 1., 90., 400., 4000.), fit=-2.)
+    yield 'tone', base, ToneSettings(input_nits=(8., 40., 235., 1150.))
+    yield 'narrow', base, ToneSettings(input_nits=(.21, 42., 250., 1300.), fit=2., black_compression_nits=.2)
+    yield 'dark', replace(base, exposure=-1.5), ToneSettings(input_nits=(1., 90., 400., 4000.), fit=-2., black_compression_nits=.01)
     yield 'combined', replace(base, exposure=.3, source_xy=(.30, .35),
-                             balance=(.1, -.05), spread=(-15., 30.), heading=(-6., 8.)), ToneSettings(input_nits=(0., 7., 45., 203., 1000.), fit=1., peak_nits=2000.)
-    yield 'poles', replace(base, exposure=6.), ToneSettings(input_nits=(0., .01, .1, 10., 100.))
+                             balance=(.1, -.05), spread=(-15., 30.), heading=(-6., 8.)), ToneSettings(input_nits=(7., 45., 203., 1000.), fit=1., peak_nits=2000.)
+    yield 'poles', replace(base, exposure=6.), ToneSettings(input_nits=(.01, .1, 10., 100.))
 
 
 def ui_boundaries():
     """Individual slider extremes, with tone anchor ordering retained."""
     base=LinearSettings()
-    tone=ToneSettings(input_nits=(0.,8.,40.,235.,1150.))
+    tone=ToneSettings(input_nits=(8.,40.,235.,1150.))
     for name in ('exposure','balance','spread','heading'):
         for value in LINEAR_RANGES[name]:
             for axis in range(1 if name=='exposure' else 2):
@@ -68,11 +70,11 @@ def ui_boundaries():
     for peak in PEAKS:
         yield f'peak_{peak}',base,replace(tone,peak_nits=peak)
     # Each endpoint is exercised in an ordered, directly UI-reachable curve.
-    for index,nits in enumerate(((2.,8.,40.,235.,1150.),(0.,.01,40.,235.,1150.),
-                                 (0.,50.,80.,235.,1150.),(0.,.01,.1,235.,1150.),
-                                 (0.,8.,250.,300.,1150.),(0.,1.,5.,10.,1150.),
-                                 (0.,8.,40.,1000.,1500.),(0.,1.,5.,50.,100.),
-                                 (0.,8.,40.,235.,10000.))):
+    yield 'black_compression_max', base, replace(tone, black_compression_nits=2.)
+    for index,nits in enumerate(((.01,40.,235.,1150.),(50.,80.,235.,1150.),
+                                 (.01,.1,235.,1150.),(8.,250.,300.,1150.),
+                                 (1.,5.,10.,1150.),(8.,40.,1000.,1500.),
+                                 (1.,5.,50.,100.),(8.,40.,235.,10000.))):
         yield f'anchor_endpoint_{index}',base,replace(tone,input_nits=nits)
 
     # Every neighboring pair can reach .001 J with suitable preceding values:
@@ -93,10 +95,9 @@ def ui_boundaries():
                 high = middle
         return (low+high)/2
 
-    minimum_pairs = ((0, .2, .01, 50.), (1, 5., .1, 250.), (2, 20., 10., 1000.),
-                     (3, 100., 100., 10000.))
+    minimum_pairs = ((0, 5., .1, 250.), (1, 20., 10., 1000.), (2, 100., 100., 10000.))
     for index, previous, lo, hi in minimum_pairs:
-        anchors = [0., 5., 20., 100., 1000.]
+        anchors = [5., 20., 100., 1000.]
         anchors[index] = previous
         target = float(reference.nits_to_j(previous))+.001
         anchors[index+1] = j_to_nits(target, lo, hi)
@@ -108,7 +109,7 @@ def ui_boundaries():
         target = float(reference.nits_to_j(previous))
         white = j_to_nits(target+.001, 10., 1000.)
         highlights = j_to_nits(target+.002, 100., 10000.)
-        anchors = (0., 5., previous, white, highlights)
+        anchors = (5., previous, white, highlights)
         yield f'tone_joint_minimum_gap_{previous:g}', base, replace(tone, input_nits=anchors, fit=2)
 
 

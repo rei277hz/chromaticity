@@ -36,6 +36,7 @@ _gesture = None
 _STAGE = {}
 _POSITIONS = {}
 _TONE_ANCHORS = {}
+_DEFAULT_TONE_ANCHOR = TONE_LEVEL_FIELDS.index("input_white")
 _PALETTE = {
     name: tuple(int(rgb[index:index + 2], 16) / 255 for index in (0, 2, 4)) + (1.,)
     for name, rgb in {
@@ -309,14 +310,20 @@ def _curve_point(rect, source, target):
     return rect[0] + source / PLOT_MAX * rect[2], _level_y(rect, target)
 
 
+def _tone_anchor_levels(model):
+    # The first curve knot is the fixed origin; the four following knots are editable.
+    return model.source[1:], model.target[1:]
+
+
 def _tone_hit(mode, rect, point, model, selected, scale):
+    sources, targets = _tone_anchor_levels(model)
     if mode == "curve":
-        actual = model.remap(model.source * 100.) / 100.
+        actual = model.remap(sources * 100.) / 100.
         choices = ((math.dist(point, _curve_point(rect, source, target)), index != selected, index)
-                   for index, source in enumerate(model.source) if source <= PLOT_MAX
-                   for target in (model.target[index], actual[index]) if target <= PLOT_MAX)
+                   for index, source in enumerate(sources) if source <= PLOT_MAX
+                   for target in (targets[index], actual[index]) if target <= PLOT_MAX)
     else:
-        levels = model.source if mode == "before" else model.target
+        levels = sources if mode == "before" else targets
         choices = ((abs(point[1] - _level_y(rect, level)), index != selected, index)
                    for index, level in enumerate(levels))
     distance, _, index = min(choices, default=(math.inf, False, None))
@@ -376,7 +383,8 @@ def _press_control(key, node, box, point, origin, frame):
                     if not geometry.contains(box[side], point):
                         continue
                     model = _tone_model(_gesture.tone_settings(node))
-                    index = _tone_hit(side, box[side], point, model, _TONE_ANCHORS.get(key, 3), box["scale"])
+                    index = _tone_hit(side, box[side], point, model,
+                                      _TONE_ANCHORS.get(key, _DEFAULT_TONE_ANCHOR), box["scale"])
                     if index is not None:
                         _TONE_ANCHORS[key] = index
                         if side != "after":
@@ -866,12 +874,13 @@ def _draw_tone_curve(rect, model, histogram, selected, scale):
     if len(curve) > 1:
         _lines([point for segment in zip(curve, curve[1:]) for point in segment],
                _PALETTE["orange"], 1.6 * scale)
-    actual = model.remap(model.source * 100.) / 100.
-    for index, source_j in enumerate(model.source):
+    sources, targets = _tone_anchor_levels(model)
+    actual = model.remap(sources * 100.) / 100.
+    for index, source_j in enumerate(sources):
         if source_j > PLOT_MAX:
             continue
         color = _PALETTE["orange" if index == selected else "reference"]
-        _circle(_curve_point(rect, source_j, model.target[index]), 3 * scale, color, scale)
+        _circle(_curve_point(rect, source_j, targets[index]), 3 * scale, color, scale)
         if actual[index] <= PLOT_MAX:
             _circle(_curve_point(rect, source_j, actual[index]), 1.5 * scale, color, 2 * scale)
     _text(localization.tr("gizmo.tone_curve"), x, y + height + 23 * scale,
@@ -885,8 +894,8 @@ def _draw_tone_curve(rect, model, histogram, selected, scale):
 def _draw_tone(box, state, key, linear, tone):
     scale = box["scale"]
     model = _tone_model(tone)
-    source, target = model.source, model.target
-    selected = _TONE_ANCHORS.get(key, 3)
+    source, target = _tone_anchor_levels(model)
+    selected = _TONE_ANCHORS.get(key, _DEFAULT_TONE_ANCHOR)
     waves = None if state is None else state.waveforms
     _slider(box["exposure"], "exposure", linear.exposure, scale)
     _slider(box["fit"], "fit", tone.fit, scale)

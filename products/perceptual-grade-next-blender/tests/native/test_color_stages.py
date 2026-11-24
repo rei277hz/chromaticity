@@ -2,16 +2,14 @@
 from dataclasses import asdict, replace
 from functools import partial
 from pathlib import Path
-from types import SimpleNamespace
 import hashlib
 import json
 import unittest
 import numpy as np
-import bpy
 
 from color_tools.kernel import prepare, ToneSettings, ColorSettings, WebSettings
-from color_tools.perceptual_grade_reference import grading
-from color_tools.perceptual_grade_reference.responses import State
+from color_tools.perceptual_grade_reference import appearance, grading
+from color_tools.perceptual_grade_reference.responses import HK, State, signed_hk
 from tools.perceptual_grade.reports import cases, full_cases, oracle, color_local, web_toe_local
 from tools.perceptual_grade.reports.gate_policy import texture_admission_policy, web_local_limit
 from tools.perceptual_grade.reports.native import NativeFixture
@@ -21,34 +19,43 @@ from tools.perceptual_grade.reports.web_toe_local import with_toe_cells
 
 
 def color_cases():
-    yield 'lightness', ColorSettings(lightness=((3., -5., 2., -1.),)*4)
-    yield 'chroma', ColorSettings(chroma=((.3, -.2, .1, -.15),)*4)
-    yield 'global_gain', ColorSettings(global_gain=.2)
     yield 'hue', ColorSettings(web=WebSettings(hue_degrees=((5., -3., 2., -4., 1., -2.),)*4))
     yield 'web_chroma', ColorSettings(web=WebSettings(log_chroma=((.2, -.1, .1, -.2, .1, 0.),)*4))
     yield 'final_scale', ColorSettings(web=WebSettings(log_scale=((.1, -.1, .2, -.1, .1, 0.),)*4))
     yield 'adaptance', ColorSettings(adaptance=((1., .5),)*4)
-    yield 'combined', ColorSettings(lightness=((1., 2., 1., -1.),)*4,
-        chroma=((.1, .2, .1, -.1),)*4, adaptance=((1., .5),)*4,
+    yield 'combined', ColorSettings(adaptance=((1., .5),)*4,
         web=WebSettings(hue_degrees=((5., -3., 2., -4., 1., -2.),)*4,
                         log_chroma=((.2, -.1, .1, -.2, .1, 0.),)*4,
                         log_scale=((.1, -.1, .2, -.1, .1, 0.),)*4))
     yield 'varying_tonal_selectors', full_cases.all_active()
 
 
-def local_precision_sources(prepared, stage, frozen, *, persistent=False):
+def local_precision_sources(stage, frozen):
     """Mark samples whose result consumes the sole runtime field for a stage."""
-    color = prepared.color
-    all_samples = np.ones(len(frozen), dtype=bool)
-    if stage == 'terms' and color.coefficient_table is not None:
-        return {'Color coefficients': all_samples}
     if stage != 'adaptance':
         return {}
-    return {'Adaptance parameters': all_samples}
+    return {'Adaptance parameters': np.ones(len(frozen), dtype=bool)}
 
 
 class ColorStageTests(unittest.TestCase):
-    persistent_routes = False
+    @staticmethod
+    def overflow_rgb(space, tone):
+        """RGB pixels whose post-Tone states exercise the signed overflow path."""
+        reference = oracle.reference_chroma(tone)
+        height = float(reference.tone.target[1]) * 100.
+        chroma = np.geomspace(.01, .99 * height**2 / HK, 48)
+        angles = np.arange(4) * np.pi / 2
+        ab = np.stack((chroma[:, None] * np.cos(angles),
+                       chroma[:, None] * np.sin(angles)), axis=-1).reshape(-1, 2)
+        ja = np.repeat(np.sqrt(height**2 - HK * chroma), 4)
+        target = np.column_stack((ja, ab))
+        source = reference.inverse(target)
+        source_ja = source[:, 0]
+        source_q = np.column_stack((signed_hk(source_ja, np.hypot(source[:, 1], source[:, 2])),
+                                    source[:, 1:]))
+        white, _, after = oracle.adapters(space)
+        return (appearance.decode(source_q, source_ja * abs(source_ja), white, 203.)
+                @ after.T).astype(np.float32)
 
     def check_local_precision(self, metrics, required_metrics, local_limit):
         for coordinate in ('h', 'ab', 'energy'):
@@ -59,20 +66,11 @@ class ColorStageTests(unittest.TestCase):
 
     def test_local_precision_policy_tracks_compact_for_all_controls_and_heights(self):
         frozen = np.column_stack((np.array((0., 1., 2., 3.)), np.zeros((4, 3))))
-        color = SimpleNamespace(coefficient_table=object(), log_gains=np.full((4, 3), .5))
-        prepared = SimpleNamespace(color=color)
-        for large in (False, True):
-            color.log_gains[0, 0] = 2. if large else .5
-            for tail in (False, True):
-                color.log_gains[-1] = .5 if tail else 0.
-                for persistent in (False, True):
-                    sources = local_precision_sources(prepared, 'adaptance', frozen,
-                                                      persistent=persistent)
-                    self.assertEqual(set(sources), {'Adaptance parameters'})
-                    np.testing.assert_array_equal(sources['Adaptance parameters'], True)
-        self.assertEqual(local_precision_sources(prepared, 'web', frozen), {})
-        self.assertEqual(local_precision_sources(prepared, 'scale', frozen), {})
-        self.assertEqual(texture_admission_policy('Color coefficients')['local_precision'], 'diagnostic')
+        sources = local_precision_sources('adaptance', frozen)
+        self.assertEqual(set(sources), {'Adaptance parameters'})
+        np.testing.assert_array_equal(sources['Adaptance parameters'], True)
+        self.assertEqual(local_precision_sources('web', frozen), {})
+        self.assertEqual(local_precision_sources('scale', frozen), {})
         self.assertEqual(texture_admission_policy('Adaptance parameters')['local_precision'], 'diagnostic')
         self.assertEqual(texture_admission_policy('Web parameters')['local_precision'], 'required')
 
@@ -119,7 +117,7 @@ class ColorStageTests(unittest.TestCase):
         color = replace(color, web=replace(color.web, hue_degrees=((rotation,)*6,)*4))
         prepared = with_toe_cells(prepare(linear, tone, color=color), 524288)
         reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                  grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                  oracle.reference_chroma(tone).tone,
                                   hk_guard=False)
         anchors = prepared.color.anchors
         heights = np.unique(np.r_[0., anchors, (anchors[:-1]+anchors[1:])/2,
@@ -186,19 +184,18 @@ class ColorStageTests(unittest.TestCase):
 
     def test_isolated_sharp_control_boundaries(self):
         selected = ((name, color) for name, _, _, color in full_cases.ui_boundaries()
-                    if name in {'lightness_fit_6', 'chroma_fit_6',
-                                'web_log_chroma_+1', 'web_log_scale_+1',
+                    if name in {'web_log_chroma_+1', 'web_log_scale_+1',
                                 'adaptance_half_0.05'})
         self.check_color(True, selected)
 
     def check_color(self, isolated, selected=None):
         values = cases.rgba(256)
-        tone = ToneSettings(input_nits=(0., 8., 40., 235., 1150.))
+        tone = ToneSettings(input_nits=(8., 40., 235., 1150.))
         for name, color in color_cases() if selected is None else selected:
             prepared = prepare(tone=tone, color=color)
             source = oracle.evaluate(values[:, :3], prepared.linear.settings, tone, prepared.space)['tone']
             reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      oracle.reference_chroma(tone).tone,
                                       hk_guard=False)
             if isolated:
                 inputs = np.column_stack((source.q, source.ja*abs(source.ja))).astype(np.float32)
@@ -236,12 +233,18 @@ class ColorStageTests(unittest.TestCase):
                     np.testing.assert_array_equal(actual['valid'][black], 0.)
 
     def test_saturated_raw_state_against_unchanged_float64_reference(self):
+        tone = ToneSettings()
         values = full_cases.rgba(count=256)
-        color, tone = full_cases.saturation_grade(), ToneSettings()
+        overflow = self.overflow_rgb("Linear Rec.709", tone)
+        values = np.vstack((values, np.column_stack((overflow,
+                                                     np.ones(len(overflow), np.float32)))))
+        color = full_cases.saturation_grade()
+        # The portable API permits a stronger scale than the slider range.
+        color = replace(color, web=replace(color.web, log_scale=((10.,) * 6,) * 4))
         prepared = prepare(tone=tone, color=color)
         composed_source = oracle.evaluate(values[:, :3], prepared.linear.settings, tone, prepared.space)['tone']
         reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                  grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                  oracle.reference_chroma(tone).tone,
                                   hk_guard=False)
         for isolated, context in ((isolated, context) for isolated in (False, True)
                                   for context in ('shader', 'compositor')):
@@ -251,6 +254,8 @@ class ColorStageTests(unittest.TestCase):
                     inputs = np.column_stack((source.q, source.ja*abs(source.ja))).astype(np.float32)
                     source = State(inputs[:, :3].astype(float), inputs[:, 3].astype(float))
                 expected = reference.apply_state(source)
+                saturated_energy = abs(expected.energy) > np.finfo(np.float32).max
+                self.assertGreaterEqual(int(np.count_nonzero(saturated_energy)), 4)
                 fixture = NativeFixture(prepared, inputs, context,
                     builder=partial(stage_builder, isolated=isolated))
                 try:
@@ -275,7 +280,6 @@ class ColorStageTests(unittest.TestCase):
                 self.assertTrue(np.isfinite(actual['rgb']).all())
                 self.assertTrue(np.isfinite(actual['valid']).all())
                 self.assertGreaterEqual(len(flagged), 4)
-                saturated_energy = abs(expected.energy) > np.finfo(np.float32).max
                 np.testing.assert_array_equal(actual['saturated'][saturated_energy], 1.)
                 np.testing.assert_array_equal(actual['valid'][saturated_energy],
                     np.sign(expected.energy[saturated_energy])*np.finfo(np.float32).max)
@@ -290,7 +294,6 @@ class ColorStageTests(unittest.TestCase):
             inputs = np.column_stack((source.q, source.ja*abs(source.ja))).astype(np.float32)
             # Place explicit exterior-response states at the frozen shadow
             # selector, independent of the Linear/Tone combination above.
-            from color_tools.perceptual_grade_reference.responses import signed_hk
             ja = float(prepared.tone.target[1])*100
             angle = np.arange(4)*np.pi/2
             inputs[-4:, :3] = np.column_stack((np.full(4, signed_hk(ja, 1.)),
@@ -298,7 +301,7 @@ class ColorStageTests(unittest.TestCase):
             inputs[-4:, 3] = ja*ja
             source = State(inputs[:, :3].astype(float), inputs[:, 3].astype(float))
             reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      oracle.reference_chroma(tone).tone,
                                       hk_guard=False)
             expected = reference.apply_state(source)
             for context in ('shader', 'compositor'):
@@ -326,24 +329,22 @@ class ColorStageTests(unittest.TestCase):
                                    'all_active_saturation'}]
         selected += [item for item in full_cases.ui_boundaries() if item[0] in {
             'all_families_max', 'all_families_max_active_tail',
-            'lightness_fit_6', 'chroma_fit_6', 'web_alternating_extremes'}]
+            'web_alternating_extremes'}]
         for name, linear, tone, color in selected:
             prepared = with_toe_cells(prepare(linear, tone, color=color), 524288)
             source = oracle.evaluate(full_cases.rgba(count=256)[:, :3], linear, tone, prepared.space)['tone']
             source = State(source.q, source.ja*abs(source.ja))
             reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      oracle.reference_chroma(tone).tone,
                                       hk_guard=False)
             for stage, source, expected, frozen, expected_scale in local_color_frames(reference, source):
-                active = {'terms': prepared.color.lightness_active or prepared.color.chroma_active,
-                          'web': prepared.color.web_active, 'adaptance': prepared.color.adaptance_active,
+                active = {'web': prepared.color.web_active, 'adaptance': prepared.color.adaptance_active,
                           'scale': bool(np.any(color.web.log_scale))}
                 if not active[stage]:
                     continue
                 local_limit = web_local_limit(color, stage)
                 inputs, source = rounded_state(source)
-                precision_sources = local_precision_sources(prepared, stage, frozen,
-                    persistent=self.persistent_routes)
+                precision_sources = local_precision_sources(stage, frozen)
                 diagnostic = np.zeros(len(inputs), dtype=bool)
                 for role, sampled in precision_sources.items():
                     if texture_admission_policy(role)['local_precision'] == 'diagnostic':
@@ -397,7 +398,7 @@ class ColorStageTests(unittest.TestCase):
                         overflow = ((abs(expected.energy) > np.finfo(np.float32).max) |
                                     np.any(abs(expected.q) > np.finfo(np.float32).max, axis=-1))
                         np.testing.assert_array_equal(actual['saturated'][overflow], 1.)
-                        if stage in {'terms', 'web', 'scale'}:
+                        if stage in {'web', 'scale'}:
                             representable = ~overflow & (co <= np.finfo(np.float32).max)
                             if stage == 'web' and expected_scale is not None:
                                 # Web also computes the final radial scale
@@ -405,8 +406,7 @@ class ColorStageTests(unittest.TestCase):
                                 # unscaled appearance state at this point.
                                 representable &= co*expected_scale <= np.finfo(np.float32).max
                             np.testing.assert_array_equal(actual['saturated'][representable], 0.)
-                        if name in {'all_active', 'lightness_fit_6', 'chroma_fit_6',
-                                    'web_alternating_extremes'}:
+                        if name in {'all_active', 'web_alternating_extremes'}:
                             # An unexpected diagnostic must not remove an
                             # ordinary sample from the numerical gate.
                             np.testing.assert_array_equal(actual['saturated'], 0.)

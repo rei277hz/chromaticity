@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import bpy
 from color_tools.template_build.graph import Graph, BuiltGrade, count_nodes
-from color_tools.perceptual_grade_reference.responses import State, requested_energy, signed_hk
+from color_tools.perceptual_grade_reference.responses import State, signed_hk
 from .native import _image
 
 
@@ -49,9 +49,7 @@ def stage_builder(prepared, tree_type, *, isolated=False, stage='color', local=F
         h0, c0, e0 = graph.split(source.outputs['Frozen'])
         state = replace(graph._color_input(appearance), tonal_h=h0,
                         source_chroma=c0, source_energy=e0, reference_energy=e0)
-        if stage == 'terms':
-            state = graph._color_terms(state)
-        elif stage == 'web':
+        if stage == 'web':
             state, scale, scale_flag = graph._color_web(state)
             state = replace(state, saturated=graph._color_flag(state.saturated, scale_flag))
         elif stage == 'adaptance':
@@ -70,9 +68,7 @@ def stage_builder(prepared, tree_type, *, isolated=False, stage='color', local=F
     elif stage == 'color':
         state = graph.color(appearance)
     else:
-        state = graph._color_terms(graph._color_input(appearance))
-        if stage != 'terms':
-            state, _, _ = graph._color_web(state)
+        state, _, _ = graph._color_web(graph._color_input(appearance))
         if stage == 'adaptance':
             state = graph._color_adaptance(state)
     for value, name in ((state.q, 'Color'), (state.chroma, 'Alpha'),
@@ -122,20 +118,6 @@ def local_color_frames(reference, initial):
     frozen = np.column_stack((np.hypot(state.ja, np.sqrt(66*c)), c, state.energy,
                               np.ones_like(c))).astype(np.float32)
     h, c, e = frozen[:, :3].astype(float).T
-    light, chroma = reference.terms(h)
-    r = 35/75*np.sqrt(abs(e))
-    denominator, visible = c*c+r*r, c*c/(c*c+4)
-    low = np.divide(r*r, denominator, out=np.zeros_like(c), where=denominator != 0)
-    high = np.divide(c*c, denominator, out=np.zeros_like(c), where=denominator != 0)
-    drivers = np.column_stack((visible*low, visible*high, state.q[:, 1:]/np.hypot(c, 2)[:, None]))
-    gain = np.exp2(reference.settings.global_gain+np.sum(chroma*drivers, axis=-1))
-    q = np.column_stack((state.q[:, 0]+np.sum(light*drivers, axis=-1), state.q[:, 1:]*gain[:, None]))
-    q = np.where((h == 0)[:, None], state.q, q)
-    changed = np.any(q != state.q, axis=-1)
-    energy = np.where(changed, requested_energy(q, state.q, state.ja), state.energy)
-    expected = State(q, energy)
-    yield 'terms', state, expected, frozen, None
-    _, state = rounded_state(expected)
     captured = []
     def capture(q, energy):
         captured.append(State(q, energy))

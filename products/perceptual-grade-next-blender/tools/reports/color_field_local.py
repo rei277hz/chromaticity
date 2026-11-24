@@ -1,4 +1,4 @@
-"""CPU local-stage diagnostics for smaller Color and compact Adaptance fields.
+"""CPU local-stage diagnostics for smaller compact Adaptance fields.
 
 Each native layout receives the same independently rounded float32 stage input
 and frozen selectors. This is an accuracy report, not a performance benchmark;
@@ -27,15 +27,12 @@ from .field_effects import ATTRIBUTES, _candidate
 from .gpu_report import _json_values
 
 
-DEFAULT_CELLS = {'Color coefficients': (16384, 8192),
-                 'Adaptance parameters': (8192, 4096, 2048)}
-STAGES = {'Color coefficients': 'terms', 'Adaptance parameters': 'adaptance'}
+DEFAULT_CELLS = {'Adaptance parameters': (8192, 4096, 2048)}
+STAGES = {'Adaptance parameters': 'adaptance'}
 DEFAULT_CASES = ('all_active', 'saturation', 'all_active_saturation',
-                 'all_families_max', 'all_families_max_active_tail',
-                 'lightness_fit_6', 'chroma_fit_6', 'web_alternating_extremes',
+                 'all_families_max', 'all_families_max_active_tail', 'web_alternating_extremes',
                  'adaptance')
-STRICT_UNSATURATED_CASES = frozenset(('all_active', 'lightness_fit_6',
-                                    'chroma_fit_6', 'web_alternating_extremes',
+STRICT_UNSATURATED_CASES = frozenset(('all_active', 'web_alternating_extremes',
                                     'adaptance'))
 LOCAL_LIMIT = 1e-5
 SAMPLES = 256
@@ -71,7 +68,7 @@ def _witness(index, inputs, frozen, source, expected, actual, errors):
                 errors={name: float(value[index]) for name, value in errors.items()})
 
 
-def _assessment(actual, source, expected, inputs, frozen, case, stage):
+def _assessment(actual, source, expected, inputs, frozen, case):
     """Retain the existing identical-handoff gate and its comparison masks."""
     limit = np.finfo(np.float32).max
     ci = np.hypot(source.q[:, 1], source.q[:, 2])
@@ -110,15 +107,7 @@ def _assessment(actual, source, expected, inputs, frozen, case, stage):
              np.all(expected.q == 0., axis=-1) & (expected.energy == 0.))
     black_changed = black & (np.any(actual['rgb'] != 0., axis=-1) |
                              (actual['valid'] != 0.) | saturated)
-    representable = ~overflow & (co <= limit)
-    # Terms require an unflagged result for every representable state. The
-    # extreme Adaptance cases retain the existing native-stage masking policy;
-    # candidate-versus-baseline flag changes are separately rejected below.
-    must_be_unsaturated = (np.ones(len(inputs), dtype=bool)
-                          if case in STRICT_UNSATURATED_CASES else
-                          representable if stage == 'terms' else
-                          np.zeros(len(inputs), dtype=bool))
-    unexpected_saturation = must_be_unsaturated & saturated
+    unexpected_saturation = (case in STRICT_UNSATURATED_CASES) & saturated
     precision_passed = (bool(finite.any()) and all(
         np.isfinite(state[name]) and state[name] <= LOCAL_LIMIT
         for name in ('h', 'ab', 'energy')))
@@ -195,7 +184,7 @@ def _render(prepared, role, stage, inputs, frozen, source, expected, context, ca
                 native_image_names=[image.name for image in fixture.built.images])
         connect_frozen(fixture, frozen)
         actual = fixture.render()
-        assessment = _assessment(actual, source, expected, inputs, frozen, case, stage)
+        assessment = _assessment(actual, source, expected, inputs, frozen, case)
         return actual, dict(status='measured', execution=execution, image=image,
                             stats=actual['stats'], **assessment)
     finally:
@@ -245,7 +234,7 @@ def run(output_dir, *, fields=tuple(DEFAULT_CELLS), cells=None, selected_cases=D
     from .color_local import local_color_frames, rounded_state
     fields, selected_cases = tuple(fields), tuple(selected_cases)
     if not fields or set(fields)-set(DEFAULT_CELLS):
-        raise ValueError('Select Color coefficients and/or Adaptance parameters')
+        raise ValueError('Select Adaptance parameters')
     corpus = {row[0]: row for row in (*full_cases.grades(), *full_cases.ui_boundaries())}
     if not selected_cases or set(selected_cases)-set(corpus):
         raise ValueError('Select known nonempty cases')
@@ -287,7 +276,7 @@ def run(output_dir, *, fields=tuple(DEFAULT_CELLS), cells=None, selected_cases=D
         for space in spaces:
             prepared = prepare(linear, tone, space, color=color, full_fields=full_fields)
             reference = grading.Color(grading.ColorSettings(**asdict(color)),
-                                      grading.Tone(grading.ToneSettings(**asdict(tone))),
+                                      oracle.reference_chroma(tone).tone,
                                       hk_guard=False)
             values = full_cases.rgba(space, SAMPLES)
             tone_state = oracle.evaluate(values[:, :3], linear, tone, space)['tone']
@@ -296,12 +285,10 @@ def run(output_dir, *, fields=tuple(DEFAULT_CELLS), cells=None, selected_cases=D
                       for stage, source, expected, frozen, _ in local_color_frames(reference, initial)}
             for role in fields:
                 stage = STAGES[role]
-                active = ((prepared.color.lightness_active or prepared.color.chroma_active)
-                          if stage == 'terms' else prepared.color.adaptance_active)
                 base_key = dict(case=case, space=space, role=role, stage=stage,
                     settings=dict(linear=asdict(linear), tone=asdict(tone), color=asdict(color)),
                     input_rgba_sha256=_hash(values.tobytes()))
-                if not active:
+                if not prepared.color.adaptance_active:
                     for context in CONTEXTS:
                         report['baselines'].append(dict(**base_key, context=context, baseline=True,
                             cells=FIELD_CELLS[role], status='inactive_stage'))

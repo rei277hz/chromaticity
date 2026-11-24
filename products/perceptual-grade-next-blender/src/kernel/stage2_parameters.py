@@ -1,7 +1,7 @@
 """Immutable data for one complete Grade parameter bundle.
 
 The fixed layout includes Tone endpoint jets, changing scalar parameters,
-and four Color field roles. Preparing it never touches Blender or grants
+and three Warp field roles. Preparing it never touches Blender or grants
 permission to publish it to a native reader.
 """
 
@@ -20,7 +20,7 @@ from .stage2_bindings import PARAMETER_IMAGE, PARAMETER_ROLE
 from .tables import TEXTURE_WIDTH
 
 
-PARAMETER_SCHEMA = 4
+PARAMETER_SCHEMA = 5
 PARAMETER_SHAPE = (1, TEXTURE_WIDTH, 4)
 PARAMETER_CONTENT_SIGNATURE = "_perceptual_grade_parameter_content_signature"
 PARAMETER_BUNDLE_SIGNATURE = "_perceptual_grade_parameter_bundle_signature"
@@ -40,15 +40,15 @@ COLOR_BOUNDS_SLOT = COLOR_SCALARS_SLOT + 1
 ADAPTANCE_BOUNDS_SLOT = COLOR_BOUNDS_SLOT + 1
 ADAPTANCE_ANCHORS_SLOT = ADAPTANCE_BOUNDS_SLOT + 1
 ADAPTANCE_SUPPORT_SLOT = ADAPTANCE_ANCHORS_SLOT + 1
-LAST_PARAMETER_SLOT = ADAPTANCE_SUPPORT_SLOT
-PARAMETER_ROLES = ('parameter', 'color', 'web', 'web_toe', 'adaptance')
+TONE_CHROMA_GAIN_SLOT = ADAPTANCE_SUPPORT_SLOT + 1
+TONE_CHROMA_TONE_SLOT = TONE_CHROMA_GAIN_SLOT + 1
+LAST_PARAMETER_SLOT = TONE_CHROMA_TONE_SLOT
+PARAMETER_ROLES = ('parameter', 'web', 'web_toe', 'adaptance')
 COLOR_ROLE_FIELDS = MappingProxyType({
-    'color': 'coefficient_table', 'web': 'web_table',
-    'web_toe': 'web_toe_table', 'adaptance': 'adaptance_table',
+    'web': 'web_table', 'web_toe': 'web_toe_table', 'adaptance': 'adaptance_table',
 })
 PARAMETER_ROLE_SHAPES = MappingProxyType({
     'parameter': PARAMETER_SHAPE,
-    'color': packed_shape('Color coefficients', 2),
     'web': packed_shape('Web parameters', 29),
     'web_toe': packed_shape('Web toes', 1),
     'adaptance': packed_shape('Adaptance parameters', 1),
@@ -81,6 +81,13 @@ class PreparedParameters:
                 or data[0, TONE_SCALARS_SLOT, 3] <= 0
                 or data[0, TONE_DOMAIN_SLOT, 0] <= 0):
             raise ValueError("Stage 2 Tone parameters are outside their valid domain")
+        low, high, knee, chroma_active = data[0, TONE_CHROMA_GAIN_SLOT]
+        shadow, highlight, crossover, curve_active = data[0, TONE_CHROMA_TONE_SLOT]
+        if (not .25 <= low <= 4. or not .25 <= high <= 4. or knee <= 0.
+                or not -2. <= shadow <= 2. or not -2. <= highlight <= 2.
+                or not 10. <= crossover <= 160.
+                or chroma_active not in (0., 1.) or curve_active not in (0., 1.)):
+            raise ValueError("Stage 2 chroma parameters are outside their valid domain")
         if (np.any(data[0, TONE_DOMAIN_SLOT, 1:3] != 0.)
                 or np.any(data[0, LAST_PARAMETER_SLOT + 1:, :3] != 0.)):
             raise ValueError("Stage 2 parameter reserved channels must be zero")
@@ -127,7 +134,7 @@ def parameter_bundle_signature(role_signatures) -> str:
 
 
 def parameter_bank_images(image):
-    """Resolve a persistent bank's five fixed Image identities."""
+    """Resolve a persistent bank's four fixed Image identities."""
     from .stage2_bindings import PARAMETER_ROLE_BINDING
     return {'parameter': image, **{
         role: image.get(PARAMETER_ROLE_BINDING + role) for role in COLOR_ROLE_FIELDS
@@ -200,7 +207,7 @@ def bind_parameter_bank(images, signatures=None):
     from .stage2_bindings import PARAMETER_IMAGE, PARAMETER_ROLE, PARAMETER_ROLE_BINDING
     images = dict(images)
     if set(images) != set(PARAMETER_ROLES) or any(value is None for value in images.values()):
-        raise ValueError('Grade parameter banks require all five role images')
+        raise ValueError('Grade parameter banks require every role image')
     if signatures is not None:
         signatures = dict(signatures)
         parameter_bundle_signature(signatures)
@@ -289,6 +296,8 @@ def prepare_parameters(prepared: PreparedGrade) -> PreparedParameters:
             tone = prepared.tone
             pixels[0, TONE_SCALARS_SLOT] = tone.black, tone.span, tone.slope, tone.high
             pixels[0, TONE_DOMAIN_SLOT, 0] = table.domain
+            pixels[0, TONE_CHROMA_GAIN_SLOT] = (*tone.chroma_parameters, tone.chroma_active)
+            pixels[0, TONE_CHROMA_TONE_SLOT] = (*tone.chroma_tone, tone.active)
             pixels[0, OUTPUT_MATRIX_ROW_SLOTS, :3] = output_matrix
             color = prepared.color
             if not color.full_fields:
@@ -296,17 +305,14 @@ def prepare_parameters(prepared: PreparedGrade) -> PreparedParameters:
                 color = prepare_color(color.settings, prepared.tone, full_fields=True,
                                       previous=color)
             settings = color.settings
-            pixels[0, COLOR_FLAGS_SLOT] = (color.lightness_active, color.chroma_active,
-                                           color.adaptance_active, color.web_active)
+            pixels[0, COLOR_FLAGS_SLOT] = (0., 0., color.adaptance_active, color.web_active)
             pixels[0, WEB_FLAGS_SLOT] = tuple(
                 any(value != 0 for row in getattr(settings.web, name) for value in row)
                 for name in ('hue_degrees', 'log_chroma', 'log_scale')
             ) + (color.active,)
-            pixels[0, COLOR_SCALARS_SLOT] = (settings.global_gain,
-                settings.adaptance_half_saturation, color.high, color.coefficient_table.domain)
+            pixels[0, COLOR_SCALARS_SLOT] = (0., settings.adaptance_half_saturation, color.high, 0.)
             pixels[0, COLOR_BOUNDS_SLOT] = (
-                settings.global_gain + max(max(abs(row[0]), abs(row[1])) + math.hypot(*row[2:])
-                                           for row in settings.chroma),
+                0.,
                 max(0., math.log(2.) * max(value for row in settings.web.log_chroma for value in row) - math.log(.9)),
                 max(0., math.log(2.) * max(value for row in settings.web.log_scale for value in row) - math.log(.9)),
                 float(abs(color.adaptance_table.pixels[..., :3]).max()),

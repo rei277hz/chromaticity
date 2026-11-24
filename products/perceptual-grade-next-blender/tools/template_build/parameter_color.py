@@ -29,13 +29,13 @@ class ParameterColorGraph(ColorGraph):
         return (*self.split(color), alpha)
 
     def _color_setting(self, name):
-        index = {'global_gain': 0, 'adaptance_half_saturation': 1}[name]
+        index = {'adaptance_half_saturation': 1}[name]
         return self._color_lanes(COLOR_SCALARS_SLOT)[index]
 
     def _color_enabled(self, name):
-        if name in ('lightness', 'chroma', 'adaptance', 'web'):
+        if name in ('adaptance', 'web'):
             return self._color_lanes(COLOR_FLAGS_SLOT)[
-                ('lightness', 'chroma', 'adaptance', 'web').index(name)
+                ('adaptance', 'web').index(name) + 2
             ]
         return self._color_lanes(WEB_FLAGS_SLOT)[
             ('hue_degrees', 'log_chroma', 'log_scale').index(name)

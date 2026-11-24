@@ -22,7 +22,6 @@ DISPATCH_SAMPLES = 4096
 _LOCAL_SIZE = 64
 _ROLE_SAMPLERS = {
     "parameter": "grade_parameters",
-    "color": "grade_color",
     "web": "grade_web",
     "web_toe": "grade_web_toe",
     "adaptance": "grade_adaptance",

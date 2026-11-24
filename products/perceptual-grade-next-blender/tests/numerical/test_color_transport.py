@@ -133,7 +133,7 @@ class ColorTransportTests(unittest.TestCase):
         np.testing.assert_allclose(responses, (1., 1., 1.), atol=1e-7)
         # Any active authored family, including final Web Scale, requires the
         # actual Color output even if a rounded energy happens to be unchanged.
-        for name in ('lightness', 'chroma', 'adaptance', 'web'):
+        for name in ('adaptance', 'web'):
             with self.subTest(active=name):
                 graph.flags = {name: True}
                 retain, _ = _retained_tone_responses(graph, tone)
@@ -230,7 +230,7 @@ class ColorTransportTests(unittest.TestCase):
                         color=grading.ColorSettings(**asdict(color))), space)
                     prepared = prepare(linear, tone, space, color=color)
                     graph = FloatGraph(prepared)
-                    state = graph._color_terms(input_state(graph, expected["tone"]))
+                    state = input_state(graph, expected["tone"])
                     state, scale, scale_flag = graph._color_web(state)
                     before_adaptance = state
                     state = graph._color_adaptance(state)

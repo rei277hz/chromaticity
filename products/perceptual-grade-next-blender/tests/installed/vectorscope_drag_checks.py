@@ -84,16 +84,29 @@ class ScopePointer:
             return self.ui.geometry.handle_positions(box["scope"], linear, box["scale"])[control]
         if control == "curve":
             tone = self.ui._tone_model(self.settings(node).tone)
-            return self.ui._curve_point(box["curve"], tone.source[3], tone.target[3])
+            return self.ui._curve_point(box["curve"], tone.source[-1], tone.target[-1])
         x, y, width, height = box[control]
         return x + width / 2, y + height / 2
 
-    def click_control(self, control, node):
-        point = self.control_point(control, node)
+    def press_at(self, point, control=None):
+        window_key = self.window.as_pointer()
+        deadline = time.monotonic() + 5
+        while self.nodes._gesture_observer_token(window_key) is None:
+            assert time.monotonic() < deadline, "The window gesture router did not register"
+            yield .05
         self.event_at("MOUSEMOVE", "NOTHING", point)
         yield .05
         self.event_at("LEFTMOUSE", "PRESS", point)
-        yield .05
+        deadline = time.monotonic() + 5
+        while (drag := self.ui._DRAGS.get(window_key)) is None:
+            assert time.monotonic() < deadline, ("Gizmo did not receive press", control, point)
+            yield .05
+        if control is not None:
+            assert drag.mode == control, ("Gizmo pressed a different control", control, drag.mode)
+
+    def click_control(self, control, node):
+        point = self.control_point(control, node)
+        yield from self.press_at(point, control)
         self.event_at("LEFTMOUSE", "RELEASE", point)
         yield .05
 
@@ -102,10 +115,7 @@ class ScopePointer:
         end = tuple(value + change for value, change in zip(start, delta))
         before = self.settings(node)
         window_key = self.window.as_pointer()
-        self.event_at("MOUSEMOVE", "NOTHING", start)
-        yield .05
-        self.event_at("LEFTMOUSE", "PRESS", start)
-        yield .05
+        yield from self.press_at(start, control)
         self.event_at("MOUSEMOVE", "NOTHING", end)
         deadline = time.monotonic() + 5
         while self.nodes._gesture_token(window_key) is None:
@@ -141,14 +151,8 @@ class ScopePointer:
         return int(cb), int(cr)
 
     def press(self):
-        deadline = time.monotonic() + 5
-        while self.nodes._gesture_observer_token(self.window.as_pointer()) is None:
-            assert time.monotonic() < deadline, "The window gesture router did not register"
-            yield .05
-        self.event("MOUSEMOVE", "NOTHING")
-        yield .05
-        self.event("LEFTMOUSE", "PRESS")
-        yield .05
+        x, y, side = self.ui._plot_rect(self.area, self.region)
+        yield from self.press_at((x + side / 2, y + side / 2))
 
     def inert_drag(self, delta=(0, 0)):
         yield from self.press()

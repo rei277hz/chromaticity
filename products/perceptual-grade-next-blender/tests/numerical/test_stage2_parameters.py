@@ -18,7 +18,8 @@ from color_tools.kernel.stage2_parameters import (
     COLOR_FLAGS_SLOT, COLOR_ROLE_FIELDS, COLOR_SCALARS_SLOT, PARAMETER_BUNDLE_SIGNATURE,
     PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLE_SHAPES, PARAMETER_ROLES,
     PARAMETER_SCHEMA, PARAMETER_SHAPE, PreparedParameters,
-    LAST_PARAMETER_SLOT, TONE_DOMAIN_SLOT, TONE_JET_COUNT, TONE_SCALARS_SLOT,
+    LAST_PARAMETER_SLOT, TONE_CHROMA_GAIN_SLOT, TONE_CHROMA_TONE_SLOT,
+    TONE_DOMAIN_SLOT, TONE_JET_COUNT, TONE_SCALARS_SLOT,
     bind_parameter_bank, parameter_bundle_receipt_matches, parameter_bundle_signature,
     parameter_content_signature,
     parameter_image_matches,
@@ -94,14 +95,11 @@ class Stage2ParameterTests(unittest.TestCase):
             values.fill(7.)
             np.testing.assert_array_equal(copied.fields[role], result.fields[role])
         with self.assertRaises(TypeError):
-            copied.fields["color"] = fields["color"]
+            copied.fields["web"] = fields["web"]
 
     def test_complete_role_bundle_is_owned_immutable_and_matches_authored_settings(self):
         settings = ColorSettings(
-            lightness=((1., 2., 3., 4.),) * 4,
-            chroma=((.1, .2, .3, .4),) * 4,
             adaptance=((1., -1.),) * 4,
-            global_gain=.5,
             web=WebSettings(hue_degrees=((2.,) * 6,) * 4,
                             log_chroma=((.25,) * 6,) * 4,
                             log_scale=((-.5,) * 6,) * 4),
@@ -118,9 +116,9 @@ class Stage2ParameterTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 values.flags.writeable = True
         flags = result.pixels[0, COLOR_FLAGS_SLOT]
-        np.testing.assert_array_equal(flags, (1., 1., 1., 1.))
+        np.testing.assert_array_equal(flags, (0., 0., 1., 1.))
         scalars = result.pixels[0, COLOR_SCALARS_SLOT]
-        np.testing.assert_array_equal(scalars[:2], (.5, .25))
+        np.testing.assert_array_equal(scalars[:2], (0., .25))
         self.assertGreater(float(result.roles["web"].max()), 0.)
 
     def test_prepared_parameters_rejects_missing_mixed_or_malformed_role_fields(self):
@@ -132,7 +130,7 @@ class Stage2ParameterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "every Color role"):
             PreparedParameters(result.pixels, fields=missing)
         mixed = dict(result.fields)
-        mixed["web"] = np.zeros(PARAMETER_ROLE_SHAPES["color"], dtype=np.float32)
+        mixed["web"] = result.fields["web_toe"]
         with self.assertRaisesRegex(ValueError, "Invalid Grade parameter field: web"):
             PreparedParameters(result.pixels, fields=mixed)
         nonfinite = dict(result.fields)
@@ -174,7 +172,7 @@ class Stage2ParameterTests(unittest.TestCase):
         for image in images.values():
             image.pixels.foreach_get = lambda _output: self.fail("metadata check read pixels")
         self.assertTrue(parameter_bundle_receipt_matches(primary))
-        signatures["color"] = "0" * 64
+        signatures["web"] = "0" * 64
         with self.assertRaisesRegex(ValueError, "contents do not match"):
             set_parameter_bundle_signature(primary, signatures)
 
@@ -223,18 +221,28 @@ class Stage2ParameterTests(unittest.TestCase):
                 )
 
     def test_packed_tone_reproduces_existing_runtime_evaluation(self):
-        settings = ToneSettings(input_nits=(.2, 8., 40., 235., 1150.), fit=2.)
+        settings = ToneSettings(input_nits=(8., 40., 235., 1150.), fit=2.)
         prepared = complete(tone=settings)
         pixels = prepare_parameters(prepared).pixels[0]
         table = replace(prepared.table, jets=pixels[:TONE_JET_COUNT, :3],
                         domain=float(pixels[TONE_DOMAIN_SLOT, 0]))
         black, span, slope, high = pixels[TONE_SCALARS_SLOT]
         h = np.r_[np.linspace(0., 600., 4097), np.geomspace(1e-8, 1e7, 257)].astype(np.float32)
-        t = np.maximum(np.float32(0), (h / np.float32(100) - black) / span)
+        t = np.maximum(np.float32(0), h / np.float32(100) / span)
         z = np.minimum(t / np.float32(table.domain), np.float32(1))
         actual = np.float32(100) * (slope * t + table.evaluate(z))
         actual = np.where(t == np.float32(1), np.float32(100) * high, actual)
         np.testing.assert_array_equal(actual, prepared.tone.remap_table(h))
+
+    def test_stage2_packs_unified_chroma_and_black_compression(self):
+        tone = ToneSettings(black_compression_nits=.125, muted_gain=-1., vivid_gain=1.,
+                            saturation_crossover=.2, shadow_chroma=-.75,
+                            highlight_chroma=1.25, tone_crossover=52.)
+        prepared = complete(tone=tone)
+        pixels = prepare_parameters(prepared).pixels[0]
+        self.assertGreater(float(pixels[TONE_SCALARS_SLOT, 0]), 0.)
+        np.testing.assert_array_equal(pixels[TONE_CHROMA_GAIN_SLOT], (.5, 2., .5, 1.))
+        np.testing.assert_array_equal(pixels[TONE_CHROMA_TONE_SLOT], (-.75, 1.25, 52., 1.))
 
     def test_rejects_incomplete_or_incompatible_snapshot(self):
         prepared = complete()

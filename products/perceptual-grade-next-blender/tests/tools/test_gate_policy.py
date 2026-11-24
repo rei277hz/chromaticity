@@ -28,14 +28,14 @@ class WebGatePolicyTests(unittest.TestCase):
             max_error=.01, max_relative_interpolation_error=.03, audit_complete=True)
         self.assertFalse(field_passed(row, ColorSettings()))
         self.assertFalse(field_passed(row, alternating()))
-        for role in ('Color coefficients', 'Adaptance parameters'):
-            policy = texture_admission_policy(role)
-            self.assertEqual(policy['max_worsening_codes'], .05)
-            self.assertEqual(policy['scalar_precision'], 'diagnostic')
-            self.assertEqual(policy['local_precision'], 'diagnostic')
-            failed = SimpleNamespace(name=role, relative_columns=(), absolute_columns=(),
-                                     max_error=.01, audit_complete=True)
-            self.assertFalse(field_passed(failed, ColorSettings()))
+        role = 'Adaptance parameters'
+        policy = texture_admission_policy(role)
+        self.assertEqual(policy['max_worsening_codes'], .05)
+        self.assertEqual(policy['scalar_precision'], 'diagnostic')
+        self.assertEqual(policy['local_precision'], 'diagnostic')
+        failed = SimpleNamespace(name=role, relative_columns=(), absolute_columns=(),
+                                 max_error=.01, audit_complete=True)
+        self.assertFalse(field_passed(failed, ColorSettings()))
         for role in ('Web parameters', 'Tone', 'Output boundary'):
             self.assertEqual(texture_admission_policy(role)['scalar_precision'], 'required')
             self.assertEqual(texture_admission_policy(role)['local_precision'], 'required')
@@ -46,7 +46,7 @@ class WebGatePolicyTests(unittest.TestCase):
             settings = alternating(hue)
             self.assertTrue(is_alternating_extreme_web(settings))
             self.assertEqual(web_local_limit(settings, 'web'), 1e-4)
-            self.assertEqual(web_local_limit(settings, 'terms'), 1e-5)
+            self.assertEqual(web_local_limit(settings, 'adaptance'), 1e-5)
             self.assertEqual(web_local_limit(settings, 'scale'), 1e-5)
 
     def test_nearby_or_compound_controls_keep_original_limits(self):
@@ -61,7 +61,7 @@ class WebGatePolicyTests(unittest.TestCase):
             log_scale=base.web.log_scale)))
         controls.append(ColorSettings(web=WebSettings(log_chroma=base.web.log_chroma,
             log_scale=base.web.log_scale, hue_degrees=((0., -360., 0., 0., 0., 0.),)*4)))
-        controls.append(ColorSettings(chroma=((1., 0., 0., 0.),)*4, web=base.web))
+        controls.append(ColorSettings(adaptance=((1., 0.),)*4, web=base.web))
         for settings in controls:
             self.assertFalse(is_alternating_extreme_web(settings))
             self.assertEqual(web_local_limit(settings, 'web'), 1e-5)
@@ -97,9 +97,8 @@ class WebGatePolicyTests(unittest.TestCase):
             self.assertFalse(audit_field(extreme, None, settings=alternating())['stop_on_failure'])
             self.assertTrue(audit_field(ordinary, None, settings=ColorSettings())['stop_on_failure'])
             self.assertFalse(audit_field(toes, None, settings=ColorSettings())['stop_on_failure'])
-            for name in ('Color coefficients', 'Adaptance parameters'):
-                self.assertFalse(audit_field(SimpleNamespace(name=name), None,
-                                             settings=ColorSettings())['stop_on_failure'])
+            self.assertFalse(audit_field(SimpleNamespace(name='Adaptance parameters'), None,
+                                         settings=ColorSettings())['stop_on_failure'])
             self.assertTrue(audit_field(SimpleNamespace(name='Web parameters'), None,
                                         settings=ColorSettings())['stop_on_failure'])
 

@@ -19,14 +19,12 @@ from tools.build_boundary import generate_boundary
 
 
 ATTRIBUTES = {
-    'Color coefficients': 'coefficient_table',
     'Web parameters': 'web_table',
     'Web toes': 'web_toe_table',
     'Adaptance parameters': 'adaptance_table',
 }
 REDUCED_CELLS = {
     'Tone': (128,),
-    'Color coefficients': (4096,),
     'Web parameters': (2048,),
     'Web toes': (1280, 1024, 768),
     'Adaptance parameters': (2048,),

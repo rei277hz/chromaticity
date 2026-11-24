@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ..kernel.color_ui import COLOR_FIELDS
 from ..kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
+from ..kernel.tone_ui import TONE_FIELDS
 from . import bake_graph
 from .bake_images import datablock_key, route_datablock
 from .compositor_effects import compositor_occurrences, matching_compositor_occurrences
@@ -25,7 +26,7 @@ from .shader_scene import shader_scene_inventory
 
 SCHEMA = 1
 # Version the persisted digest independently of the worker route payload.
-FINGERPRINT_SCHEMA = 2
+FINGERPRINT_SCHEMA = 3
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
@@ -59,8 +60,6 @@ POINTWISE = frozenset((
 ))
 LINEAR_FIELDS = ("exposure", "source_x", "source_y", "cr_balance", "yb_balance",
                  "cr_spread", "yb_spread", "cr_heading", "yb_heading")
-TONE_FIELDS = ("input_black", "input_shadows", "input_midtones", "input_white",
-               "input_highlights", "fit", "peak_nits")
 _UI_PROPERTIES = frozenset((
     "rna_type", "id_data", "original", "name", "name_full", "label", "location",
     "width", "width_hidden", "height", "dimensions", "select", "hide",

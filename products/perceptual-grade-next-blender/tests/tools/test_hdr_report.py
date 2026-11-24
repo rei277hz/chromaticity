@@ -16,7 +16,7 @@ from tools.perceptual_grade.reports import hdr_report
 class HdrReportTests(unittest.TestCase):
     def test_sweep_contains_every_halving_and_combined_web(self):
         specs = hdr_report.selection()
-        self.assertEqual(len(specs), 37)
+        self.assertEqual(len(specs), 30)
         self.assertNotIn('Adaptance interior parameters', hdr_report.ROLES)
         self.assertEqual(len({row['id'] for row in specs}), len(specs))
         self.assertEqual([r['cells'] for r in specs if r['role']=='Tone'], [256,128,64,32])
@@ -25,8 +25,7 @@ class HdrReportTests(unittest.TestCase):
                          [262144,131072,65536,32768,16384,8192,4096,2048,1792,1536,1280,1024,768,512,256])
         self.assertEqual([r['id'] for r in hdr_report.selection(candidate_ids=['Combined Web/4096+32768'])],
                          ['Combined Web/4096+32768'])
-        self.assertEqual([r['id'] for r in hdr_report.selection(candidate_ids=['Combined Color/16384+8192'])],
-                         ['Combined Color/16384+8192'])
+        self.assertEqual([r['cells'] for r in specs if r['role']=='Adaptance parameters'], [8192,4096,2048])
         with self.assertRaises(ValueError):
             hdr_report.selection(candidate_ids=['Tone/7'])
 
@@ -43,22 +42,23 @@ class HdrReportTests(unittest.TestCase):
                 self.color = color
 
         base = Prepared(PreparedColor((first, second, other)))
-        color_result, compact_result = object(), object()
+        parameter_result, toe_result = object(), object()
 
         def candidate(prepared, role, cells):
-            self.assertIn((role, cells), (('Color coefficients', 16384), ('Adaptance parameters', 8192)))
             tables = list(prepared.color.tables)
-            tables[0 if role == 'Color coefficients' else 1] = color_result if role == 'Color coefficients' else compact_result
+            index, value = {('Web parameters', 4096): (0, parameter_result),
+                            ('Web toes', 32768): (1, toe_result)}[role, cells]
+            tables[index] = value
             return Prepared(PreparedColor(tuple(tables))), dict(name=role, cells=cells)
 
-        spec = next(row for row in hdr_report.selection() if row['role'] == 'Combined Color')
+        spec = next(row for row in hdr_report.selection() if row['role'] == 'Combined Web')
         with patch.object(hdr_report, 'color_candidate', side_effect=candidate):
             combined, metadata = hdr_report._make_candidate(base, spec, {})
-        self.assertIs(combined.color.tables[0], color_result)
-        self.assertIs(combined.color.tables[1], compact_result)
+        self.assertIs(combined.color.tables[0], parameter_result)
+        self.assertIs(combined.color.tables[1], toe_result)
         self.assertIs(combined.color.tables[2], other)
-        self.assertEqual([row['name'] for row in metadata], list(hdr_report.HDR_FIELD_ROLES))
-        self.assertEqual(hdr_report._required_roles(spec), hdr_report.HDR_FIELD_ROLES)
+        self.assertEqual([row['name'] for row in metadata], ['Web parameters', 'Web toes'])
+        self.assertEqual(hdr_report._required_roles(spec), ('Web parameters', 'Web toes'))
 
     def test_journal_retains_committed_rows_and_discards_interrupted_tail(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -234,13 +234,11 @@ class HdrReportTests(unittest.TestCase):
 
     def _field_admission_fixture(self):
         names = [row[0] for row in (*hdr_report.full_cases.grades(), *hdr_report.full_cases.ui_boundaries())]
-        specs = [dict(id='Color coefficients/16384', role='Color coefficients', cells=16384),
-                 dict(id='Adaptance parameters/8192', role='Adaptance parameters', cells=8192),
-                 dict(id='Combined Color/16384+8192', role='Combined Color',
-                      color_cells=16384, compact_adaptance_cells=8192)]
+        role = 'Adaptance parameters'
+        specs = hdr_report.selection(roles=(role,))
         request = dict(samples=1024, spaces=list(hdr_report.cases.SPACES),
             contexts=['shader', 'compositor'], cases=names, case_universe=names,
-            baseline_color_cells=131072, baseline_compact_adaptance_cells=16384,
+            baseline_compact_adaptance_cells=16384,
             graph_builder='persistent', candidates=specs)
         baselines, rows = [], []
 
@@ -254,37 +252,27 @@ class HdrReportTests(unittest.TestCase):
             for space in request['spaces']:
                 for context in request['contexts']:
                     axes = dict(case=case, space=space, context=context)
-                    baseline_images = {role:image(role, cells) for role, cells in (
-                        ('Color coefficients', 131072), ('Adaptance parameters', 16384))}
                     baselines.append(dict(**axes, status='measured', final_rgb_passed=True,
                         containment_max_normalized=0., node_budget_passed=True,
-                        image_receipts=baseline_images))
+                        image_receipts={role: image(role, 16384)}))
                     for spec in specs:
-                        changed = hdr_report._required_roles(spec)
-                        sizes = ({'Color coefficients': spec['color_cells'],
-                                  'Adaptance parameters': spec['compact_adaptance_cells']}
-                                 if spec['role'] == 'Combined Color' else {spec['role']:spec['cells']})
-                        metadata = []
-                        receipts = {}
-                        for role in changed:
-                            cells = sizes[role]
-                            shape = hdr_report._field_shape(role, cells)
-                            receipt = image(role, cells)
-                            receipts[role] = receipt
-                            metadata.append(dict(name=role, cells=cells, shape=shape,
-                                bytes=shape[0]*shape[1]*16, pixels_sha256=receipt['pixels_sha256'],
-                                field_passed=False, audit_complete=True, probes=196631,
-                                max_conditioned_error=2e-5, max_pointwise_error=3e-5,
-                                max_mapper_error=1e-7, relative_interpolation_error=0.,
-                                absolute_interpolation_error=0., relative_interpolation_limit=0.,
-                                absolute_interpolation_limit=0.,
-                                witness=dict(conditioned=dict(coordinate=.25, channel=0,
-                                    expected=1., actual=1.00002, error=2e-5))))
-                        rows.append(dict(**axes, candidate=spec['id'], changed_roles=list(changed),
-                            sampled_roles=list(changed), status='measured', final_rgb_passed=True,
+                        cells = spec['cells']
+                        shape = hdr_report._field_shape(role, cells)
+                        receipt = image(role, cells)
+                        metadata = dict(name=role, cells=cells, shape=shape,
+                            bytes=shape[0]*shape[1]*16, pixels_sha256=receipt['pixels_sha256'],
+                            field_passed=False, audit_complete=True, probes=196631,
+                            max_conditioned_error=2e-5, max_pointwise_error=3e-5,
+                            max_mapper_error=1e-7, relative_interpolation_error=0.,
+                            absolute_interpolation_error=0., relative_interpolation_limit=0.,
+                            absolute_interpolation_limit=0.,
+                            witness=dict(conditioned=dict(coordinate=.25, channel=0,
+                                expected=1., actual=1.00002, error=2e-5)))
+                        rows.append(dict(**axes, candidate=spec['id'], changed_roles=[role],
+                            sampled_roles=[role], status='measured', final_rgb_passed=True,
                             containment_max_normalized=0., changed_validity_pixels=0,
                             changed_saturation_pixels=0, node_budget_passed=True,
-                            texture_metadata=metadata, image_receipts=receipts,
+                            texture_metadata=[metadata], image_receipts={role: receipt},
                             hdr=dict(candidate=dict(worsening=dict(max=.04, percentage=dict(max=.02)),
                                                    movement=dict(pixel_peak=dict(max=.08))))))
         return dict(complete=True, sources_stable_during_run=True, request=request,
@@ -293,7 +281,6 @@ class HdrReportTests(unittest.TestCase):
     def test_field_admission_accepts_hdr_budget_with_scalar_failures_diagnostic(self):
         report = self._field_admission_fixture()
         admission = hdr_report.field_admission(report)
-        self.assertEqual(admission['baseline_color_cells'], 131072)
         self.assertEqual(admission['baseline_compact_adaptance_cells'], 16384)
         self.assertEqual(admission['max_worsening_codes'], .05)
         self.assertEqual(len(admission['admitted_candidates']), 3)
@@ -308,23 +295,23 @@ class HdrReportTests(unittest.TestCase):
             ('coverage', lambda row: row.__setitem__('candidate', 'missing-candidate')),
             ('validity', lambda row: row.__setitem__('changed_validity_pixels', 1)),
             ('saturation', lambda row: row.__setitem__('changed_saturation_pixels', 1)),
-            ('payload', lambda row: row['image_receipts']['Color coefficients'].__setitem__('size', [1, 1])),
-            ('payload_hash', lambda row: row['image_receipts']['Color coefficients'].__setitem__('pixels_sha256', '0'*64)),
+            ('payload', lambda row: row['image_receipts']['Adaptance parameters'].__setitem__('size', [1, 1])),
+            ('payload_hash', lambda row: row['image_receipts']['Adaptance parameters'].__setitem__('pixels_sha256', '0'*64)),
             ('overbudget', lambda row: row.__setitem__('node_budget_passed', False)),
             ('hdr_budget', lambda row: row['hdr']['candidate']['worsening'].__setitem__('max', .0500001)),
             ('incomplete_scalar', lambda row: row['texture_metadata'][0].__setitem__('audit_complete', False)),
         )
         for label, mutate in mutations:
             report = self._field_admission_fixture()
-            target = next(row for row in report['rows'] if row['candidate'] == 'Combined Color/16384+8192')
+            target = next(row for row in report['rows'] if row['candidate'] == 'Adaptance parameters/8192')
             with self.subTest(label=label):
                 mutate(target)
                 result = hdr_report.field_admission(report)
                 candidate = next(row for row in result['candidates']
-                                 if row['id'] == 'Combined Color/16384+8192')
+                                 if row['id'] == 'Adaptance parameters/8192')
                 self.assertFalse(candidate['passed'])
         report = self._field_admission_fixture()
-        report['request'].pop('baseline_color_cells')
+        report['request'].pop('baseline_compact_adaptance_cells')
         result = hdr_report.field_admission(report)
         self.assertTrue(all(not row['passed'] for row in result['candidates']))
         report = self._field_admission_fixture()
@@ -349,7 +336,7 @@ class HdrReportTests(unittest.TestCase):
         ]
         for label, mutate in mutations:
             report = self._field_admission_fixture()
-            target = next(row for row in report['rows'] if row['candidate'] == 'Combined Color/16384+8192')
+            target = next(row for row in report['rows'] if row['candidate'] == 'Adaptance parameters/8192')
             with self.subTest(label=label):
                 mutate(target['texture_metadata'][0])
                 candidate = next(row for row in hdr_report.field_admission(report)['candidates']
@@ -362,7 +349,7 @@ class HdrReportTests(unittest.TestCase):
         baseline = report['baselines'][0]
         candidate = next(row for row in report['rows'] if row['case'] == baseline['case']
                          and row['space'] == baseline['space'] and row['context'] == baseline['context']
-                         and row['candidate'] == 'Combined Color/16384+8192')
+                         and row['candidate'] == 'Adaptance parameters/8192')
         baseline['node_budget_passed'] = False
         candidate['node_budget_passed'] = False
         result = hdr_report.field_admission(report)
@@ -376,7 +363,7 @@ class HdrReportTests(unittest.TestCase):
         candidate = 'Tone/256'
         request = dict(samples=256, spaces=['ACEScg'], contexts=['shader'], cases=[case],
                        case_universe=['case-a', 'case-b'], case_shard=dict(index=shard_index, count=2),
-                       baseline_color_cells=131072, baseline_compact_adaptance_cells=16384,
+                       baseline_parameter_cells=4096, baseline_compact_adaptance_cells=16384,
                        graph_builder='persistent',
                        candidates=[dict(id=candidate, role='Tone', cells=256)])
         identity = dict(sources={'tool': source}, display={'view': 'pinned'},
@@ -415,7 +402,7 @@ class HdrReportTests(unittest.TestCase):
             self.assertTrue(report['complete'])
             self.assertEqual(report['request']['cases'], ['case-a', 'case-b'])
             self.assertNotIn('case_shard', report['request'])
-            self.assertEqual(report['request']['baseline_color_cells'], 131072)
+            self.assertEqual(report['request']['baseline_parameter_cells'], 4096)
             self.assertEqual(report['request']['baseline_compact_adaptance_cells'], 16384)
             self.assertEqual(report['request']['graph_builder'], 'persistent')
             self.assertEqual([row['case'] for row in report['baselines']], ['case-a', 'case-b'])
@@ -513,12 +500,11 @@ class HdrBackendTests(unittest.TestCase):
     def test_cli_forwards_explicit_baselines_and_launches_software_gpu(self):
         with patch.object(hdr_report, 'run') as run:
             hdr_report.main(['--output-dir', '/tmp/hdr-cpu', '--baseline-parameter-cells', '32768',
-                             '--baseline-toe-cells', '1536', '--baseline-color-cells', '131072',
+                             '--baseline-toe-cells', '1536',
                              '--baseline-compact-adaptance-cells', '16384', '--graph-builder', 'persistent',
                              '--candidate-ids', 'Web parameters/4096'])
         self.assertEqual(run.call_args.kwargs['baseline_parameter_cells'], 32768)
         self.assertEqual(run.call_args.kwargs['baseline_toe_cells'], 1536)
-        self.assertEqual(run.call_args.kwargs['baseline_color_cells'], 131072)
         self.assertEqual(run.call_args.kwargs['baseline_compact_adaptance_cells'], 16384)
         self.assertEqual(run.call_args.kwargs['graph_builder'], 'persistent')
         self.assertEqual(run.call_args.kwargs['backend'], 'cpu')
@@ -549,11 +535,10 @@ class HdrBackendTests(unittest.TestCase):
         self.assertFalse(result['node_budget_passed'])
         fixture.close.assert_called_once()
 
-    def test_resume_identity_pins_both_color_baselines_and_graph_builder(self):
-        names = [row[0] for row in (*hdr_report.full_cases.grades(), *hdr_report.full_cases.ui_boundaries())]
+    def test_resume_identity_pins_field_baselines_and_graph_builder(self):
         options = dict(samples=256, spaces=['ACEScg'], contexts=['shader'], cases=['reset'],
-            case_universe=['reset'], candidates=hdr_report.selection(candidate_ids=['Color coefficients/16384']),
-            baseline_toe_cells=1536, baseline_parameter_cells=4096, baseline_color_cells=131072,
+            case_universe=['reset'], candidates=hdr_report.selection(candidate_ids=['Adaptance parameters/8192']),
+            baseline_toe_cells=1536, baseline_parameter_cells=4096,
             baseline_compact_adaptance_cells=16384, backend='cpu', threads=8,
             case_shard=None, graph_builder='persistent')
         request = hdr_report._request(**options)
@@ -565,14 +550,14 @@ class HdrBackendTests(unittest.TestCase):
                     patch.object(hdr_report, 'HDRDisplay', return_value=SimpleNamespace(metadata={'view':'test'})), \
                     patch.object(hdr_report, 'prepare', side_effect=RuntimeError('stop before native work')):
                 run_options = dict(samples=256, spaces=['ACEScg'], contexts=['shader'], selected=['reset'],
-                    candidate_ids=['Color coefficients/16384'], baseline_toe_cells=1536,
-                    baseline_parameter_cells=4096, baseline_color_cells=131072,
+                    candidate_ids=['Adaptance parameters/8192'], baseline_toe_cells=1536,
+                    baseline_parameter_cells=4096,
                     baseline_compact_adaptance_cells=16384, threads=8, graph_builder='persistent')
                 with self.assertRaisesRegex(RuntimeError, 'stop before native work'):
                     hdr_report.run(directory, **run_options)
                 identity = json.loads((directory/'checkpoint.json').read_text())['identity']
                 self.assertEqual(identity['request'], request)
-                for key, value in (('baseline_color_cells',16384),
+                for key, value in (('baseline_parameter_cells',8192),
                                    ('baseline_compact_adaptance_cells',8192),
                                    ('graph_builder','specialized')):
                     with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'Cannot resume'):
@@ -581,7 +566,7 @@ class HdrBackendTests(unittest.TestCase):
                     hdr_report.run(directory, resume=True, **run_options)
 
     def test_cli_rejects_bad_color_baselines_before_launching(self):
-        for argument in ('--baseline-color-cells', '--baseline-compact-adaptance-cells'):
+        for argument in ('--baseline-parameter-cells', '--baseline-compact-adaptance-cells'):
             with self.subTest(argument=argument), patch.object(hdr_report, 'run') as run:
                 with self.assertRaises(SystemExit):
                     hdr_report.main(['--output-dir','/tmp/hdr-invalid',argument,'7'])

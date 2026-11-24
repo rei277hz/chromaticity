@@ -88,7 +88,7 @@ class ArchitectureTests(unittest.TestCase):
             api=importlib.import_module(namespace+'.kernel')
             templates=importlib.import_module(namespace+'.kernel.node_templates')
             importlib.import_module(namespace+'.kernel.stage2_bindings')
-            prepared=api.prepare(tone=api.ToneSettings(input_nits=(0.,8.,40.,235.,1150.)))
+            prepared=api.prepare(tone=api.ToneSettings(input_nits=(8.,40.,235.,1150.)))
             boundary=importlib.import_module(namespace+'.kernel.boundary')
             geometry=boundary.prepare_boundary(prepared.fl,prepared.aw,prepared.gamma)
             self.assertEqual(geometry.pixels.shape,(321,513,4))

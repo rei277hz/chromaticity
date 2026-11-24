@@ -18,7 +18,7 @@ SPACES = ("Linear Rec.709", "Linear Rec.2020", "ACEScg")
 
 def complete_prepared(space="Linear Rec.709", *, adjusted=False):
     linear = LinearSettings(exposure=0.5 if adjusted else 0.0)
-    tone = (ToneSettings(input_nits=(0., 5., 45., 230., 1300.), fit=0.25)
+    tone = (ToneSettings(input_nits=(5., 45., 230., 1300.), fit=0.25)
             if adjusted else ToneSettings())
     prepared = prepare(linear, tone, space)
     return replace(prepared, tone=prepare_tone(tone, full_fields=True),

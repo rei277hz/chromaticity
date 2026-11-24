@@ -5,7 +5,9 @@ import math
 import numpy as np
 
 from ..color_core import linear as color_linear
-from .settings import D65, LOW_Y, SPACES, LinearSettings, ToneSettings, ColorSettings, Settings
+from ..color_core.modcam16 import HK
+from .settings import D65, LOW_Y, SPACES, TONE_CHROMA_LIMITS
+from .settings import LinearSettings, ToneSettings, ColorSettings, Settings
 from .color_prepare import PreparedColor, prepare_color
 from .tables import TEXTURE_WIDTH, kernel, readonly, build_runtime_table
 from .layouts import TONE_CELLS
@@ -179,6 +181,31 @@ def _smooth_cap(value, upper):
     return upper if d <= 0 else value if d >= 1 else upper-d**3*(6+d*(-8+3*d))
 
 
+def _radial_gain(chroma, knee, low, high, *, invert=False):
+    chroma, knee = np.broadcast_arrays(chroma, knee)
+    if not invert:
+        total = chroma+knee
+        weight = np.divide(chroma, total, out=np.ones_like(chroma), where=total > 0.)
+        return low+(high-low)*weight
+
+    # Use either form of the positive quadratic root to avoid cancellation.
+    scale = np.maximum(chroma, knee)
+    y = np.divide(chroma, scale, out=np.zeros_like(chroma), where=scale > 0.)
+    k = np.divide(knee, scale, out=np.zeros_like(knee), where=scale > 0.)
+    d = low*k-y
+    root = np.hypot(d, 2*np.sqrt(high*k)*np.sqrt(y))
+    positive = (knee > 0.) & (d >= 0.)
+    result = np.empty_like(chroma)
+    result[...] = 1./high
+    np.divide(2*k, root+d, out=result, where=positive)
+    np.divide(root-d, 2*high*y, out=result, where=(knee > 0.) & ~positive)
+    return np.where(low == high, 1./high, result)
+
+
+def _black_compress(x, black, *, invert=False):
+    return x*_radial_gain(x, 2*black, .5, 1., invert=invert)
+
+
 @dataclass(frozen=True)
 class PreparedTone:
     settings: ToneSettings
@@ -200,6 +227,48 @@ class PreparedTone:
     high: float
     table: object = None
 
+    @property
+    def chroma_active(self):
+        p = self.settings
+        return any((p.muted_gain, p.vivid_gain, p.shadow_chroma, p.highlight_chroma))
+
+    @property
+    def chroma_parameters(self):
+        p = self.settings
+        low, high = math.exp2(p.muted_gain), math.exp2(p.vivid_gain)
+        knee_multiplier = (p.saturation_crossover / (1-p.saturation_crossover)
+                           * math.sqrt(high / low))
+        return low, high, knee_multiplier
+
+    @property
+    def maximum_chroma_gain(self):
+        p = self.settings
+        return max(1., math.exp2(max(p.muted_gain, p.vivid_gain)
+                                 + max(0., p.shadow_chroma, p.highlight_chroma)))
+
+    @property
+    def chroma_tone(self):
+        p = self.settings
+        return p.shadow_chroma, p.highlight_chroma, p.tone_crossover
+
+    def chroma_gain(self, ja, chroma, *, invert=False):
+        """Evaluate the two monotone chroma maps at incoming signed J_A."""
+        lightness, chroma = np.broadcast_arrays(np.abs(np.asarray(ja, dtype=float)),
+                                              np.asarray(chroma, dtype=float))
+        base = (35. / 75.)*lightness
+        shadow, highlight, crossover = self.chroma_tone
+        offset = lightness/crossover-1.
+        t = np.minimum(1., np.abs(offset))
+        amount = np.where(offset < 0., shadow, highlight)*t*t*(3.-2.*t)
+        tonal = np.exp2(amount)
+        low, high, knee_multiplier = self.chroma_parameters
+        knee = base*knee_multiplier
+        if invert:
+            gain = _radial_gain(chroma, base/9., 1., tonal, invert=True)
+            return gain*_radial_gain(chroma*gain, knee, low, high, invert=True)
+        gain = _radial_gain(chroma, knee, low, high)
+        return gain*_radial_gain(chroma*gain, base/9., 1., tonal)
+
     def remap_normalized(self, t):
         """Normalized target J at normalized source position t (always active math)."""
         t = np.maximum(0., np.asarray(t, dtype=np.float64))
@@ -215,37 +284,95 @@ class PreparedTone:
         h = np.asarray(h, dtype=np.float64)
         if not self.active:
             return h.copy()
-        return 100*self.remap_normalized(np.maximum(0., (h/100-self.black)/self.span))
+        compressed = _black_compress(h/100., self.black)
+        return 100*self.remap_normalized(compressed/self.span)
 
     def remap_table(self, h, dtype=np.float32):
         h = np.asarray(h, dtype=dtype)
         if not self.active:
             return h.copy()
-        t = np.maximum(dtype(0), (h/dtype(100)-dtype(self.black))/dtype(self.span))
+        compressed = _black_compress(h/dtype(100), dtype(self.black))
+        t = np.maximum(dtype(0), compressed/dtype(self.span))
         z = np.minimum(t/dtype(self.table.domain), dtype(1))
         result = dtype(100)*(dtype(self.slope)*t+self.table.evaluate(z, dtype))
         return np.where(t == dtype(1), dtype(100*self.high), result)
+
+    def inverse(self, h):
+        """Undo the scalar H-K curve and Black Compression."""
+        h = np.asarray(h, dtype=float)
+        if not np.isfinite(h).all() or np.any(h < 0.):
+            raise ValueError('Tone inverse requires finite nonnegative lightness')
+        if not self.active:
+            return h.copy()
+        target = h/100.
+        upper_slope = self.slope + np.sum(self.residual/self.norms)
+        low, high = target/upper_slope, target/self.slope
+        for _ in range(60):
+            middle = low+.5*(high-low)
+            below = self.remap_normalized(middle) < target
+            low, high = np.where(below, middle, low), np.where(below, high, middle)
+        t = np.where(h == 100*self.high, 1., low+.5*(high-low))
+        return 100*_black_compress(t*self.span, self.black, invert=True)
+
+    def _map_appearance(self, points, invert):
+        points = np.asarray(points, dtype=float)
+        if points.shape[-1:] != (3,) or not np.isfinite(points).all():
+            raise ValueError('Tone input must contain finite (J_A, a, b) triples')
+        if not (self.active or self.chroma_active):
+            return points.copy()
+        ja, ab = points[..., 0], points[..., 1:]
+        chroma = np.hypot(ab[..., 0], ab[..., 1])
+        if self.chroma_active and not invert:
+            gain = self.chroma_gain(ja, chroma)
+            chroma, ab = chroma*gain, ab*gain[..., None]
+        if self.active:
+            root_chroma = math.sqrt(HK)*np.sqrt(chroma)
+            height = np.hypot(ja, root_chroma)
+            mapped = self.inverse(height) if invert else self.remap(height)
+            ratio = np.divide(mapped, height, out=np.ones_like(height), where=height > 0.)
+            j_fraction = np.divide(ja, height, out=np.zeros_like(ja), where=height > 0.)
+            c_fraction = np.divide(root_chroma, height, out=np.zeros_like(height), where=height > 0.)**2
+            denominator = np.hypot(c_fraction, 2*j_fraction*ratio)+c_fraction
+            gain = np.divide(2*ratio**2, denominator, out=np.ones_like(height), where=height > 0.)
+            ja, chroma, ab = ja*gain, chroma*gain, ab*gain[..., None]
+        if self.chroma_active and invert:
+            ab = ab*self.chroma_gain(ja, chroma, invert=True)[..., None]
+        return np.concatenate((ja[..., None], ab), axis=-1)
+
+    def forward(self, points):
+        """Apply 3A to signed appearance triples before Warp."""
+        return self._map_appearance(points, False)
+
+    def inverse_appearance(self, points):
+        """Undo 3A on signed appearance triples before Warp."""
+        return self._map_appearance(points, True)
 
 
 def prepare_tone(settings=ToneSettings(), *, full_fields=False):
     if not isinstance(settings, ToneSettings):
         raise TypeError('tone must be ToneSettings')
-    nits = _finite(settings.input_nits, (5,), 'Tone input anchors')
+    nits = _finite(settings.input_nits, (4,), 'Tone input anchors')
     fit = _finite(settings.fit, (), 'Tone fit').item()
     reference = _finite(settings.reference_nits, (), 'Viewing reference').item()
     peak = _finite(settings.peak_nits, (), 'Tone peak').item()
+    for name, bounds in TONE_CHROMA_LIMITS.items():
+        value = _finite(getattr(settings, name), (), name).item()
+        if not bounds[0] <= value <= bounds[1]:
+            raise ValueError(f'{name} must be between {bounds[0]} and {bounds[1]}')
     if reference != 203.:
         raise ValueError('This experiment supports the reference Model at D65 / 203 nits')
     if not -2. <= fit <= 2.:
         raise ValueError('The evaluated Tone fit domain is [-2, 2]')
-    peak = _smooth_cap(_smooth_floor(peak, 2*reference), 10000.)
+    peak = _smooth_cap(_smooth_floor(peak, 2.*reference), 10000.)
     target = nits_to_j((0., LOW_Y*reference, .18*reference, reference, peak), reference)
     target[0], target[3] = 0., 1.
-    source = nits_to_j(nits, reference)
+    source = nits_to_j(np.r_[0., nits], reference)
     for i in range(1, 5):
         source[i] = max(source[i], source[i-1]+.001)
-    black, span = float(source[0]), float(source[-1]-source[0])
-    knots = (source-black)/span
+    black = float(nits_to_j(settings.black_compression_nits, reference))
+    compressed = _black_compress(source, black)
+    span = float(compressed[-1])
+    knots = compressed/span
     width = .05*2.**(-fit)
     slope = float(np.min(np.diff(target)/np.diff(knots)))
     residual = np.maximum(0., np.diff(target)-slope*np.diff(knots))
@@ -256,7 +383,7 @@ def prepare_tone(settings=ToneSettings(), *, full_fields=False):
     prepared = PreparedTone(settings, reference, peak, fl, aw, GAMMA,
                             readonly(source), readonly(target), black, span, readonly(knots),
                             width, slope, readonly(residual), readonly(norms),
-                            not np.array_equal(source, target), float(target[-1]))
+                            black != 0. or not np.array_equal(source, target), float(target[-1]))
     # An exact reset has an exact native bypass and needs no image resource.
     return replace(prepared, table=build_runtime_table(prepared, TONE_CELLS) if prepared.active or full_fields else None)
 

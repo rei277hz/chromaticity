@@ -166,9 +166,7 @@ def _retained_tone_responses(g,tone):
     # Without authored Color changes, nonnegative post-Tone energy never
     # invokes H-K: its threshold is E*H²/(E+H²) <= E. Negative H independently
     # disables repair. Test signed coordinates, never rounded energy equality.
-    active=g.maximum(g._color_enabled('lightness'),g.maximum(
-        g._color_enabled('chroma'),g.maximum(g._color_enabled('adaptance'),
-                                           g._color_enabled('web'))))
+    active=g.maximum(g._color_enabled('adaptance'),g._color_enabled('web'))
     repair_possible=g.mul(g.lt(tone.J_A,0.),g.sub(1.,g.lt(tone.H,0.)))
     retain=g.mul(g.sub(1.,active),g.sub(1.,repair_possible))
     from .graph import INVERSE_OPPONENT

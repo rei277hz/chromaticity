@@ -13,7 +13,7 @@ from color_tools.kernel.tone_ui import TONE_LIMITS, clamp_tone_anchor
 class ToneControlTests(unittest.TestCase):
     def test_each_edited_anchor_keeps_a_lightness_gap_without_moving_neighbors(self):
         controls = ToneSettings()
-        for index in range(5):
+        for index in range(4):
             for value in (-100., 1e7):
                 with self.subTest(index=index, value=value):
                     clamped = clamp_tone_anchor(controls, index, value)
@@ -27,7 +27,7 @@ class ToneControlTests(unittest.TestCase):
                     self.assertGreaterEqual(float(np.min(gaps)), .001 - 1e-12)
 
     def test_safe_interior_edit_round_trips(self):
-        controls = replace(ToneSettings(), input_nits=(0., 5., 50., 210., 1200.))
+        controls = replace(ToneSettings(), input_nits=(5., 50., 210., 1200.))
         for index, value in enumerate(controls.input_nits):
             self.assertAlmostEqual(clamp_tone_anchor(controls, index, value), value,
                                    delta=1e-9)
@@ -35,7 +35,7 @@ class ToneControlTests(unittest.TestCase):
     def test_invalid_anchor_inputs_are_rejected(self):
         with self.assertRaises(TypeError):
             clamp_tone_anchor(None, 0, 0.)
-        for index in (-1, 5, True):
+        for index in (-1, 4, True):
             with self.assertRaises(ValueError):
                 clamp_tone_anchor(ToneSettings(), index, 0.)
         with self.assertRaises(ValueError):

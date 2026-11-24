@@ -344,7 +344,6 @@ def exercise_gizmo_controls():
     adjusted = yield from pointer.drag_control("curve", grade, (20, 0), cancel=True)
     assert adjusted.tone.input_nits[3] > baseline.tone.input_nits[3]
     assert adjusted.tone.input_nits[:3] == baseline.tone.input_nits[:3]
-    assert adjusted.tone.input_nits[4] == baseline.tone.input_nits[4]
     adjusted = yield from pointer.drag_control("fit", grade, (35, 0), cancel=True)
     assert adjusted.tone.fit > baseline.tone.fit
     with bpy.context.temp_override(window=window, area=area, region=region):

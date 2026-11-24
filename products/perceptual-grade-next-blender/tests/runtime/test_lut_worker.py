@@ -98,11 +98,11 @@ class LUTWorkerTests(unittest.TestCase):
         settings = (Settings(
             linear=LinearSettings(exposure=.5, balance=(.1, .2),
                                   matrix=((1., 0., 0.), (0., 2., 0.), (0., 0., 3.))),
-            tone=ToneSettings(fit=.5), space="ACEScg",
+            tone=ToneSettings(fit=.5, black_compression_nits=.4, muted_gain=-.5,
+                              vivid_gain=.7, saturation_crossover=.6, shadow_chroma=.3,
+                              highlight_chroma=-.25, tone_crossover=60.), space="ACEScg",
             color=ColorSettings(
-                lightness=((1., -2., 3., -4.),)*4,
-                chroma=((.1, -.2, .3, -.4),)*4,
-                adaptance=((1., -.5),)*4, global_gain=.25,
+                adaptance=((1., -.5),)*4,
                 web=WebSettings(hue_degrees=((2.,)*6,)*4,
                                 log_chroma=((.1,)*6,)*4,
                                 log_scale=((.2,)*6,)*4)),

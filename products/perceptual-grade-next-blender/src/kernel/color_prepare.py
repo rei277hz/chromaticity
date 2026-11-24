@@ -10,8 +10,8 @@ import numpy as np
 
 from ..color_core import linear as color_linear
 from ..color_core.modcam16 import encode_cones, eccentricity, INVERSE, GAMMA
-from .settings import ColorSettings, WebSettings
-from .tables import kernel, readonly
+from .settings import ColorSettings
+from .tables import readonly
 from .layouts import FIELD_CELLS, LAYOUT_SCHEMA, packed_shape, supported_cells
 
 COLOR_TABLE_ERROR_LIMIT = 1e-5
@@ -37,31 +37,6 @@ def cardinal_values(h, anchors, values):
     index = np.clip(np.searchsorted(anchors, h, side='right')-1, 0, len(anchors)-2)
     u = smoother((h-anchors[index])/(anchors[index+1]-anchors[index]))
     return values[index]+(values[index+1]-values[index])*u.reshape(u.shape+(1,)*(values.ndim-1))
-
-
-def coefficient_weights(h, knots, high, fit):
-    t = smoother(np.asarray(h, float)/high)
-    width = .05*2.**(-float(fit))
-    values = np.stack([kernel(t, left, right, width)/kernel(1., left, right, width)
-                       for left, right in zip(knots[:-1], knots[1:])], axis=-1)
-    values = np.minimum.accumulate(np.clip(values, 0., 1.), axis=-1)
-    return np.stack((1-values[..., 1], values[..., 1]-values[..., 2],
-                     values[..., 2]-values[..., 3], values[..., 3]), axis=-1)
-
-
-def drivers(q, ja):
-    q, ja = np.asarray(q, float), np.asarray(ja, float)
-    c = np.hypot(q[..., 1], q[..., 2])
-    r = (35./75.)*abs(ja)
-    scale = np.maximum(c, r)
-    cn = np.divide(c, scale, out=np.zeros_like(c), where=scale > 0)
-    rn = np.divide(r, scale, out=np.zeros_like(c), where=scale > 0)
-    den = cn*cn+rn*rn
-    visible = (c/np.hypot(c, 2.))**2
-    low = np.divide(rn*rn, den, out=np.zeros_like(c), where=den > 0)
-    high = np.divide(cn*cn, den, out=np.zeros_like(c), where=den > 0)
-    return np.concatenate((np.stack((visible*low, visible*high), axis=-1),
-                           q[..., 1:]/np.hypot(c, 2.)[..., None]), axis=-1)
 
 
 def radial_attenuation(c, toe):
@@ -153,13 +128,11 @@ def adaptation_log_gains(targets, anchors, aw):
 class PreparedColor:
     settings: ColorSettings
     anchors: np.ndarray
-    coefficient_knots: np.ndarray
     high: float
     reference: float
     aw: float
     log_gains: np.ndarray
     geometry: WebGeometry | None
-    coefficient_table: object = None
     web_table: object = None
     web_toe_table: object = None
     adaptance_table: object = None
@@ -168,46 +141,37 @@ class PreparedColor:
 
     @property
     def tables(self):
-        return tuple(value for value in (self.coefficient_table, self.web_table, self.web_toe_table, self.adaptance_table)
+        return tuple(value for value in (self.web_table, self.web_toe_table, self.adaptance_table)
                      if value is not None)
 
-    @property
-    def lightness_active(self): return bool(np.any(self.settings.lightness))
-    @property
-    def chroma_active(self): return bool(np.any(self.settings.chroma) or self.settings.global_gain)
     @property
     def adaptance_active(self): return bool(np.any(self.settings.adaptance))
     @property
     def web_active(self): return self.settings.web.active
     @property
     def active(self):
-        return self.lightness_active or self.chroma_active or self.adaptance_active or self.web_active
-
-    def terms(self, h):
-        p = self.settings
-        return (coefficient_weights(h, self.coefficient_knots, self.high, p.lightness_fit) @ np.asarray(p.lightness),
-                coefficient_weights(h, self.coefficient_knots, self.high, p.chroma_fit) @ np.asarray(p.chroma))
+        return self.adaptance_active or self.web_active
 
     def finite_bounds(self, post_tone_h_bound):
         """Conservative absolute stage bounds; optimization only, never admission.
 
-        Source-ratio intervals retain the correlation between chroma membership
-        and Adaptance reach. Each interval uses conservative endpoint bounds,
+        Source-ratio intervals retain the correlation between input chroma and
+        Adaptance reach. Each interval uses conservative endpoint bounds,
         including zero and the unbounded tail. Failure to establish a small
         range keeps native saturation operations; it never rejects controls.
         """
         h0 = max(0., float(post_tone_h_bound))
-        def driver_bound(values):
-            values = np.asarray(values, float)
-            return float(np.max(np.maximum(abs(values[:, 0]), abs(values[:, 1]))
-                                +np.hypot(values[:, 2], values[:, 3])))
         try:
-            h = h0+driver_bound(self.settings.lightness)
-            c = h0*h0/66.*math.exp2(self.settings.global_gain+driver_bound(self.settings.chroma))
-            scale = 1.
-            if self.web_active:
-                c *= max(1., math.exp2(float(np.max(self.settings.web.log_chroma)))/.9)
-                scale = max(1., math.exp2(float(np.max(self.settings.web.log_scale)))/.9)
+            h = h0
+            web_gain, scale = 1., 1.
+            for field in ('log_chroma', 'log_scale'):
+                values = np.asarray(getattr(self.settings.web, field))
+                bound = max(1., math.exp2(float(values.max()))/.9) if np.any(values) else 1.
+                if field == 'log_chroma':
+                    web_gain = bound
+                else:
+                    scale = bound
+            c = h0*h0/66.*web_gain
             b = math.sqrt(66*c)
             e = (h+b)*(h+3*b)
             intermediate = dict(pre_adaptance_H=h, pre_adaptance_C=c, pre_adaptance_energy=e,
@@ -232,25 +196,15 @@ class PreparedColor:
                 # with unrelated low-H calibration gains.
                 if self.adaptance_table is not None:
                     normalization = math.exp(max(0., float(np.max(self.adaptance_table.pixels[..., 3]))))
-                light = np.asarray(self.settings.lightness, float)
-                chroma = np.asarray(self.settings.chroma, float)
-                def weighted_driver_bound(values, lo, hi):
-                    direction = np.hypot(values[:, 2], values[:, 3])
-                    return max(float(np.max(abs(values[:, 0])*weight+abs(values[:, 1])*(1-weight)+direction))
-                               for weight in (lo, hi))
-                web_gain = max(1., math.exp2(float(np.max(self.settings.web.log_chroma)))/.9) if self.web_active else 1.
                 half = self.settings.adaptance_half_saturation
                 limits = np.r_[0., np.exp2(np.linspace(-24., 24., 193)), math.inf]
                 input_bound = transformed_bound = response = 0.
                 for left, right in zip(limits[:-1], limits[1:]):
                     # u=C0/abs(J_A0), so C0<=min(u_upper*H0,H0²/66).
                     c0 = h0*h0/66. if math.isinf(right) else min(right*h0, h0*h0/66.)
-                    lo = 0. if math.isinf(right) else ((35/75)/math.hypot(35/75, right))**2
-                    hi = ((35/75)/math.hypot(35/75, left))**2
-                    ch = c0*math.exp2(self.settings.global_gain+weighted_driver_bound(chroma, lo, hi))*web_gain
-                    hh = h0+weighted_driver_bound(light, lo, hi)
+                    ch = c0*web_gain
                     bb = math.sqrt(66*ch)
-                    ee = (hh+bb)*(hh+3*bb)
+                    ee = (h0+bb)*(h0+3*bb)
                     incoming = self.aw/3.05*(math.sqrt(ee)/100.)**(1/GAMMA)+self.aw/(1204*(1-rho))*opponent*ch
                     unit = max(half, left)
                     a4, c4 = (half/unit)**4, (left/unit)**4
@@ -575,7 +529,7 @@ def _runtime_layout_matches(table):
 
 
 def _prepare_tables(prepared, *, builder=_generate_field, previous=None):
-    coefficient, web, web_toe, adaptance = None, None, None, None
+    web, web_toe, adaptance = None, None, None
     if (previous is not None and builder is _generate_field
             and getattr(previous, 'layout_schema', None) == LAYOUT_SCHEMA
             and not hasattr(previous, 'adaptance_interior_table')):
@@ -584,8 +538,6 @@ def _prepare_tables(prepared, *, builder=_generate_field, previous=None):
                         and np.array_equal(prepared.anchors, previous.anchors))
         p, q = prepared.settings, previous.settings
         reusable = {
-            'Color coefficients': same_context and all(getattr(p, key) == getattr(q, key)
-                for key in ('lightness', 'chroma', 'lightness_fit', 'chroma_fit')),
             'Web parameters': same_context and p.web == q.web,
             # Hue does not participate in radial toe preparation.
             'Web toes': same_context and p.web.log_chroma == q.web.log_chroma and p.web.log_scale == q.web.log_scale,
@@ -596,17 +548,6 @@ def _prepare_tables(prepared, *, builder=_generate_field, previous=None):
             if reusable[name] and name in existing and _runtime_layout_matches(existing[name]):
                 return existing[name]
             return generate(name, *args, **kwargs)
-    if prepared.full_fields or prepared.lightness_active or np.any(prepared.settings.chroma):
-        def values(x):
-            a, b = prepared.terms(x*prepared.high)
-            return np.concatenate((a, b), axis=-1)
-        coefficient = builder('Color coefficients', values,
-                                   {'lightness': range(4), 'chroma': range(4, 8)},
-                                   'linear', prepared.high,
-                                   prepared.anchors/prepared.high,
-                                   1+np.r_[np.max(abs(np.asarray(prepared.settings.lightness)), axis=0),
-                                           np.max(abs(np.asarray(prepared.settings.chroma)), axis=0)],
-                                   absolute_columns=(4, 5, 6, 7) if np.any(prepared.settings.chroma) else ())
     if prepared.full_fields or prepared.web_active:
         anchor_angles = prepared.web_parameters(prepared.anchors)['target_angles']
         # A constant whole-turn shift per handle keeps its left endpoint near
@@ -678,27 +619,20 @@ def _prepare_tables(prepared, *, builder=_generate_field, previous=None):
                                 'response_compact', 0., np.r_[s/(1+s), .5],
                                 1+np.r_[np.max(abs(prepared.log_gains), axis=0),
                                         2*np.max(abs(prepared.log_gains))])
-    return replace(prepared, coefficient_table=coefficient, web_table=web, web_toe_table=web_toe,
+    return replace(prepared, web_table=web, web_toe_table=web_toe,
                    adaptance_table=adaptance)
 
 
 def _prepare_color_parameters(settings, tone, *, full_fields=False, previous=None):
     if not isinstance(settings, ColorSettings):
         raise TypeError('color must be ColorSettings')
-    for name, shape in (('lightness', (4, 4)), ('chroma', (4, 4)), ('adaptance', (4, 2))):
-        array = np.asarray(getattr(settings, name), float)
-        if array.shape != shape or not np.isfinite(array).all():
-            raise ValueError(f'Color {name} must be finite with shape {shape}')
+    adaptance = np.asarray(settings.adaptance, float)
+    if adaptance.shape != (4, 2) or not np.isfinite(adaptance).all():
+        raise ValueError('Adaptance must be finite with shape (4, 2)')
     for name in ('log_chroma', 'hue_degrees', 'log_scale'):
         array = np.asarray(getattr(settings.web, name), float)
         if array.shape != (4, 6) or not np.isfinite(array).all():
             raise ValueError(f'Web {name} must be finite with shape (4, 6)')
-    for name in ('lightness_fit', 'chroma_fit'):
-        value = float(getattr(settings, name))
-        if not math.isfinite(value) or not -2 <= value <= 6:
-            raise ValueError('The evaluated Color fit domain is [-2, 6]')
-    if not math.isfinite(settings.global_gain):
-        raise ValueError('Global chroma gain must be finite')
     if not math.isfinite(settings.adaptance_half_saturation) or not .05 <= settings.adaptance_half_saturation <= 1:
         raise ValueError('Adaptance half-influence saturation must be in [.05, 1]')
     anchors = readonly(100*tone.target[1:])
@@ -715,8 +649,7 @@ def _prepare_color_parameters(settings, tone, *, full_fields=False, previous=Non
     if full_fields or settings.web.active:
         geometry = (previous.geometry if same_context and previous.geometry is not None
                     else web_geometry(anchors, tone.reference))
-    prepared = PreparedColor(settings, anchors, readonly(smoother(tone.target/tone.target[-1])),
-                             100*tone.high, tone.reference, tone.aw, logs, geometry,
+    prepared = PreparedColor(settings, anchors, 100*tone.high, tone.reference, tone.aw, logs, geometry,
                              full_fields=full_fields)
     if prepared.web_active:
         prepared.web_parameters(anchors)

@@ -58,7 +58,7 @@ class NativeTests(unittest.TestCase):
 
     def test_instances_own_independent_resources(self):
         bpy.ops.wm.read_factory_settings(use_empty=True)
-        prepared=prepare(tone=ToneSettings(input_nits=(0,8,40,235,1150)))
+        prepared=prepare(tone=ToneSettings(input_nits=(8,40,235,1150)))
         a,b=build_group(prepared),build_group(prepared)
         self.assertNotEqual(a.tree,b.tree)
         self.assertNotEqual(a.images[0],b.images[0])

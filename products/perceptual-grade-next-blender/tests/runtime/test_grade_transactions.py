@@ -126,7 +126,7 @@ class GradeTransactionTests(unittest.TestCase):
             primary = SimpleNamespace()
             roles = {
                 "_perceptual_grade_parameter_role_" + role: SimpleNamespace()
-                for role in ("color", "web", "web_toe", "adaptance")
+                for role in ("web", "web_toe", "adaptance")
             }
             primary.get = roles.get
             return primary

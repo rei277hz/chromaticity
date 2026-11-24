@@ -286,6 +286,7 @@ python_library(
     ],
     visibility = ["PUBLIC"],
     deps = [
+        ":color_transport_sources",
         ":shader_display_timing_report_sources",
         ":stack_lut_timing_sources",
         "//libraries/perceptual-grade-reference:model_code",

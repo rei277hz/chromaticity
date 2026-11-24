@@ -3,17 +3,19 @@
 import math
 
 from .prepare import GAMMA, nits_to_j, viewing
-from .settings import LOW_Y, ToneSettings
+from .settings import TONE_CHROMA_LIMITS, TONE_PEAKS, ToneSettings
 
 
 TONE_LEVEL_FIELDS = (
-    "input_black", "input_shadows", "input_midtones", "input_white", "input_highlights",
+    "input_shadows", "input_midtones", "input_white", "input_highlights",
 )
-TONE_FIELDS = (*TONE_LEVEL_FIELDS, "fit", "peak_nits")
-TONE_DEFAULTS = dict(zip(TONE_LEVEL_FIELDS, (0., LOW_Y * 203., .18 * 203., 203., 1000.)))
-TONE_DEFAULTS.update(fit=0., peak_nits="1000")
-TONE_LIMITS = ((0., 2.), (.01, 50.), (.1, 250.), (10., 1000.), (100., 10000.))
-TONE_PEAKS = (500, 1000, 2000, 4000)
+TONE_CHROMA_FIELDS = tuple(TONE_CHROMA_LIMITS)
+TONE_FIELDS = (*TONE_LEVEL_FIELDS, *TONE_CHROMA_FIELDS, "fit", "peak_nits")
+_DEFAULTS = ToneSettings()
+TONE_DEFAULTS = dict(zip(TONE_LEVEL_FIELDS, _DEFAULTS.input_nits))
+TONE_DEFAULTS.update((name, getattr(_DEFAULTS, name)) for name in TONE_CHROMA_FIELDS)
+TONE_DEFAULTS.update(fit=_DEFAULTS.fit, peak_nits=str(int(_DEFAULTS.peak_nits)))
+TONE_LIMITS = ((.01, 50.), (.1, 250.), (10., 1000.), (100., 10000.))
 
 
 def _j_to_nits(value, reference):
@@ -27,7 +29,7 @@ def clamp_tone_anchor(settings, index, value):
     if not isinstance(settings, ToneSettings):
         raise TypeError("Tone controls require ToneSettings")
     if type(index) is not int or not 0 <= index < len(TONE_LEVEL_FIELDS):
-        raise ValueError("Tone anchor index must be between zero and four")
+        raise ValueError("Tone anchor index must be between zero and three")
     if not math.isfinite(value):
         raise ValueError("Tone anchor must be finite")
     lo, hi = TONE_LIMITS[index]
@@ -36,6 +38,6 @@ def clamp_tone_anchor(settings, index, value):
     high = float(nits_to_j(hi, settings.reference_nits))
     if index:
         low = max(low, float(nits_to_j(settings.input_nits[index - 1], settings.reference_nits)) + .001)
-    if index < 4:
+    if index + 1 < len(TONE_LEVEL_FIELDS):
         high = min(high, float(nits_to_j(settings.input_nits[index + 1], settings.reference_nits)) - .001)
     return _j_to_nits(max(low, min(high, current)), settings.reference_nits)

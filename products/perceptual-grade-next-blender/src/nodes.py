@@ -63,12 +63,11 @@ from .lut_helper import StackHelperBackend
 from .kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
 from .kernel.settings import D65, SPACES, StackEntrySettings, split_stack_entries, stack_directions
 from .kernel.tone_ui import (
-    TONE_DEFAULTS, TONE_FIELDS, TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS,
-    clamp_tone_anchor,
+    TONE_CHROMA_FIELDS, TONE_CHROMA_LIMITS, TONE_DEFAULTS, TONE_FIELDS,
+    TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS, clamp_tone_anchor,
 )
 from .kernel.color_ui import (
-    COLOR_DEFAULTS as _COLOR_DEFAULTS, COLOR_DRIVERS as _COLOR_DRIVERS,
-    COLOR_FIELDS as _COLOR_FIELDS,
+    COLOR_DEFAULTS as _COLOR_DEFAULTS, COLOR_FIELDS as _COLOR_FIELDS,
 )
 from .kernel.color_resolution import COLOR_RESOLUTION_SCHEMA, resolve_settings
 from .policy import node as node_policy
@@ -151,7 +150,7 @@ _playback_sessions = {}
 _playback_serial = count(1)
 _frame_color_keys = {}
 _frame_color_invalidations = set()
-_KERNEL_SCHEMA = 6
+_KERNEL_SCHEMA = 7
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
 _KERNEL_QUALITY = "_perceptual_grade_quality"
@@ -192,13 +191,12 @@ _LINEAR_DEFAULTS = {
 
 _TONE_FIELDS = TONE_FIELDS
 _ANIMATABLE_TONE_FIELDS = tuple(name for name in _TONE_FIELDS if name != "peak_nits")
+_GIZMO_TONE_FIELDS = (*TONE_LEVEL_FIELDS, "fit")
 _COLOR_TONES = ("shadows", "midtones", "white", "highlights")
 _WEB_HANDLES = ("red", "yellow", "green", "cyan", "blue", "magenta")
 _ANIMATABLE_COLOR_FIELDS = _COLOR_FIELDS
 _COLOR_CUSTOM_FIELDS = frozenset(name for name in _COLOR_FIELDS
                                 if name.startswith(("web_hue_", "adaptance_a_", "adaptance_b_")))
-_J_LOW_LIMITS = (30.0, 50.0, 100.0, 200.0)
-_J_HIGH_LIMITS = (100.0, 200.0, 400.0, 700.0)
 
 
 def _is_grade_node(node):
@@ -778,7 +776,10 @@ def _tone_settings(settings):
         # Use the same binary32 round-trip as Blender's RNA storage.
         native_default = struct.unpack("f", struct.pack("f", default))[0]
         values.append(default if value == native_default else value)
-    return ToneSettings(tuple(values), float(settings.fit), 203., float(settings.peak_nits))
+    return ToneSettings(
+        input_nits=tuple(values), fit=float(settings.fit), peak_nits=int(settings.peak_nits),
+        **{name: float(getattr(settings, name)) for name in TONE_CHROMA_FIELDS},
+    )
 
 
 def _raw_grade_settings(owner, working_space):
@@ -797,12 +798,7 @@ def _color_settings(settings):
                            for column in columns) for tone in range(4))
 
     return ColorSettings(
-        lightness=rows("j", _COLOR_DRIVERS),
-        chroma=rows("c", _COLOR_DRIVERS),
         adaptance=rows("adaptance", ("a", "b")),
-        lightness_fit=float(settings.lightness_fit),
-        chroma_fit=float(settings.chroma_fit),
-        global_gain=float(settings.global_gain),
         adaptance_half_saturation=float(settings.adaptance_half_saturation),
         web=WebSettings(**{
             field: tuple(tuple(float(getattr(settings, f"web_{family}_{tone}_{handle}"))
@@ -819,14 +815,14 @@ def _snapshot_values(settings):
     linear = settings.linear
     tone = settings.tone
     color = settings.color
-    color_rows = (*color.lightness, *color.chroma, *color.adaptance,
+    color_rows = (*color.adaptance,
                   *color.web.log_chroma, *color.web.hue_degrees, *color.web.log_scale)
     return tuple(float(value).hex() for value in (
         linear.exposure, *linear.source_xy,
         -linear.balance[0], -linear.balance[1],
         *linear.spread, *linear.heading,
         *tone.input_nits, tone.fit, tone.reference_nits, tone.peak_nits,
-        color.lightness_fit, color.chroma_fit, color.global_gain,
+        *(getattr(tone, name) for name in TONE_CHROMA_FIELDS),
         color.adaptance_half_saturation,
         *(value for row in color_rows for value in row),
     ))
@@ -3356,16 +3352,12 @@ def _color_gesture_entry(node):
 
 
 def _begin_color_gesture(window_key, node, fields):
-    """Bind one Contributions or Opponent a/b handle to its settings owner."""
+    """Bind one Adaptance a/b pair to its settings owner."""
     if fields not in {
-        pair for tone in range(len(_COLOR_TONES)) for pair in (
-            (f"j_low_{tone}", f"c_low_{tone}"),
-            (f"j_high_{tone}", f"c_high_{tone}"),
-            (f"j_a_{tone}", f"j_b_{tone}"),
-            (f"c_a_{tone}", f"c_b_{tone}"),
-        )
+        (f"adaptance_a_{tone}", f"adaptance_b_{tone}")
+        for tone in range(len(_COLOR_TONES))
     }:
-        raise ValueError("Invalid Color gesture fields")
+        raise ValueError("Invalid Warp gesture fields")
     if not _is_output_node(node):
         return None
     owner, settings = _color_settings_for_node(node)
@@ -3378,7 +3370,7 @@ def _begin_gizmo_gesture(window_key, node, fields):
                   ("cr_balance",), ("yb_balance",),
                   ("cr_spread", "cr_heading"), ("yb_spread", "yb_heading")}:
         get_controls = _linear_controls
-    elif len(fields) == 1 and fields[0] in _ANIMATABLE_TONE_FIELDS:
+    elif len(fields) == 1 and fields[0] in _GIZMO_TONE_FIELDS:
         get_controls = _tone_controls
     else:
         raise ValueError("Invalid Gizmo gesture fields")
@@ -4703,14 +4695,15 @@ def _tone_peak_items():
 
 
 def _tone_setting_properties(*, animatable):
-    return {
+    fields = {
         name: _float_setting(
             "property." + name, TONE_DEFAULTS[name], *TONE_LIMITS[index],
-            3 if index < 2 else 2 if index < 4 else 1,
+            3 if index < 2 else 2,
             _tone_anchor_changed(index), animatable=animatable,
         )
         for index, name in enumerate(TONE_LEVEL_FIELDS)
-    } | {
+    }
+    fields.update({
         "fit": _float_setting("property.fit", 0.0, -2.0, 2.0, 2,
                               _tone_changed, animatable=animatable),
         "peak_nits": EnumProperty(
@@ -4721,41 +4714,18 @@ def _tone_setting_properties(*, animatable):
             items=_tone_peak_items(),
             options=set(), update=_peak_changed,
         ),
-    }
+    })
+    for name in TONE_CHROMA_FIELDS:
+        minimum, maximum = TONE_CHROMA_LIMITS[name]
+        fields[name] = _float_setting(
+            "property." + name, TONE_DEFAULTS[name], minimum, maximum, 3,
+            _tone_changed, animatable=animatable,
+        )
+    return fields
 
 
 def _color_setting_properties(*, animatable):
     fields = {}
-    for family in ("j", "c"):
-        for tone in range(4):
-            for driver in _COLOR_DRIVERS:
-                if family == "j":
-                    limit = ((20.0, 20.0, 30.0, 50.0)[tone]
-                             if driver in {"a", "b"} else
-                             (_J_LOW_LIMITS if driver == "low" else _J_HIGH_LIMITS)[tone])
-                else:
-                    limit = (16.0 if driver == "high" else
-                             (4.0, 2.0, 1.0, 1.0)[tone]
-                             if driver in {"a", "b"} else 4.0)
-                name = f"{family}_{driver}_{tone}"
-                fields[name] = _float_setting(
-                    "property." + family + "_" + driver, 0.0, -limit, limit,
-                    1 if family == "j" else 2, _color_changed, animatable=animatable,
-                    description_id=f"tooltip.{family}_{driver}",
-                )
-    for name, label, tooltip in (("lightness_fit", "j_fit", "tooltip.j_fit"),
-                                 ("chroma_fit", "c_fit", "tooltip.c_fit")):
-        options = {"ANIMATABLE"} if animatable else set()
-        fields[name] = IntProperty(
-            name=localization.native("property." + label),
-            translation_context=localization.CONTEXT,
-            description=localization.native(tooltip), default=0, min=-2, max=6,
-            options=options, update=_color_changed,
-        )
-    fields["global_gain"] = _float_setting(
-        "property.global_gain", 0.0, -3.0, 3.0, 2,
-        _color_changed, animatable=animatable,
-    )
     fields["adaptance_half_saturation"] = _float_setting(
         "property.adaptance_half_saturation", 0.25, 0.05, 1.0, 2,
         _color_changed, animatable=animatable,
@@ -4907,11 +4877,16 @@ def _draw_tone_settings(node, layout):
         return
     column = layout.column()
     column.enabled = enabled
+    column.prop(settings, "black_compression_nits", slider=True)
     for field in TONE_LEVEL_FIELDS:
         column.prop(settings, field, slider=True)
     column.prop(settings, "fit", slider=True)
     column.prop(settings, "peak_nits")
     column.label(text=localization.tr("label.reference"))
+    column.separator()
+    for field in TONE_CHROMA_FIELDS:
+        if field != "black_compression_nits":
+            column.prop(settings, field, slider=True)
     column.operator(PG_OT_reset_tone.bl_idname, icon="LOOP_BACK")
 
 
@@ -4925,22 +4900,7 @@ def _color_settings_for_node(node):
     return (node, _color_controls(node))
 
 
-def _color_family_fields(family):
-    if family in {"j", "c"}:
-        return tuple(f"{family}_{driver}_{tone}"
-                     for tone in range(4) for driver in _COLOR_DRIVERS) + (
-                         "lightness_fit" if family == "j" else "chroma_fit",
-                     ) + (("global_gain",) if family == "c" else ())
-    if family == "adaptance":
-        return ("adaptance_half_saturation",) + tuple(
-            f"adaptance_{axis}_{tone}" for tone in range(4) for axis in ("a", "b")
-        )
-    return tuple(f"web_{kind}_{tone}_{handle}"
-                 for tone in range(4) for handle in range(6)
-                 for kind in ("chroma", "hue", "scale"))
-
-
-def _draw_color_family(node, layout, family):
+def _draw_warp_settings(node, layout):
     layout.context_pointer_set("pg_stack_node" if _is_stack_node(node) else "pg_node", node)
     owner, settings = _color_settings_for_node(node)
     if settings is None:
@@ -4948,49 +4908,36 @@ def _draw_color_family(node, layout, family):
     column = layout.column()
     column.enabled = _is_per_node_grade_node(node) or owner is not None
     raw = resolved = None
-    if owner is not None and family in {"adaptance", "warp"}:
-        raw = _raw_grade_settings(owner, "Linear Rec.709")
-        resolved = resolve_settings(raw)
-    if family in {"j", "c"}:
-        for tone, tone_name in enumerate(_COLOR_TONES):
-            box = column.box()
-            box.label(text=localization.tr("tone." + tone_name))
-            for driver in _COLOR_DRIVERS:
-                box.prop(settings, f"{family}_{driver}_{tone}",
-                         text=localization.tr("property." + driver), slider=True)
-        fit = "lightness_fit" if family == "j" else "chroma_fit"
-        column.prop(settings, fit, slider=True)
-        if family == "c":
-            column.prop(settings, "global_gain", slider=True)
-    elif family == "adaptance":
-        column.prop(settings, "adaptance_half_saturation", slider=True)
-        for tone, tone_name in enumerate(_COLOR_TONES):
-            box = column.box()
-            box.label(text=localization.tr("tone." + tone_name))
+    if owner is not None:
+        raw_settings = _raw_grade_settings(owner, "Linear Rec.709")
+        raw, resolved = raw_settings.color, resolve_settings(raw_settings).color
+    column.label(text=localization.tr("panel.color_adaptance"))
+    column.prop(settings, "adaptance_half_saturation", slider=True)
+    for tone, tone_name in enumerate(_COLOR_TONES):
+        box = column.box()
+        box.label(text=localization.tr("tone." + tone_name))
+        row = box.row(align=True)
+        row.prop(settings, f"adaptance_a_{tone}", text="a", slider=True)
+        row.prop(settings, f"adaptance_b_{tone}", text="b", slider=True)
+        if raw is not None and raw.adaptance[tone] != resolved.adaptance[tone]:
+            _draw_color_notice(row, "label.color_limited", "tooltip.adaptance_limited")
+    column.separator()
+    for tone, tone_name in enumerate(_COLOR_TONES):
+        box = column.box()
+        box.label(text=localization.tr("tone." + tone_name))
+        header = box.row(align=True)
+        header.label(text="")
+        for kind in ("chroma", "hue", "scale"):
+            header.label(text=localization.tr("property.web_" + kind))
+        for handle, handle_name in enumerate(_WEB_HANDLES):
             row = box.row(align=True)
-            row.prop(settings, f"adaptance_a_{tone}", text="a", slider=True)
-            row.prop(settings, f"adaptance_b_{tone}", text="b", slider=True)
-            if raw is not None and raw.color.adaptance[tone] != resolved.color.adaptance[tone]:
-                _draw_color_notice(row, "label.color_limited", "tooltip.adaptance_limited")
-    else:
-        for tone, tone_name in enumerate(_COLOR_TONES):
-            box = column.box()
-            box.label(text=localization.tr("tone." + tone_name))
-            header = box.row(align=True)
-            header.label(text="")
+            row.label(text=localization.tr("handle." + handle_name))
             for kind in ("chroma", "hue", "scale"):
-                header.label(text=localization.tr("property.web_" + kind))
-            for handle, handle_name in enumerate(_WEB_HANDLES):
-                row = box.row(align=True)
-                row.label(text=localization.tr("handle." + handle_name))
-                for kind in ("chroma", "hue", "scale"):
-                    row.prop(settings, f"web_{kind}_{tone}_{handle}", text="", slider=True)
-                    if kind == "hue":
-                        if (raw is not None and raw.color.web.hue_degrees[tone][handle]
-                                != resolved.color.web.hue_degrees[tone][handle]):
-                            _draw_color_notice(row, "label.color_limited", "tooltip.hue_limited")
-    op = column.operator(PG_OT_reset_color.bl_idname, icon="LOOP_BACK")
-    op.family = family.upper()
+                row.prop(settings, f"web_{kind}_{tone}_{handle}", text="", slider=True)
+                if (kind == "hue" and raw is not None and raw.web.hue_degrees[tone][handle]
+                        != resolved.web.hue_degrees[tone][handle]):
+                    _draw_color_notice(row, "label.color_limited", "tooltip.hue_limited")
+    column.operator(PG_OT_reset_color.bl_idname, icon="LOOP_BACK")
 
 
 def _draw_color_notice(layout, label, tooltip):
@@ -5587,14 +5534,6 @@ class PG_OT_reset_color(bpy.types.Operator):
     bl_translation_context = localization.CONTEXT
     bl_options = {"REGISTER", "UNDO"}
 
-    family: EnumProperty(
-        options={"HIDDEN", "SKIP_SAVE"},
-        items=(("J", localization.native("panel.color_j"), ""),
-               ("C", localization.native("panel.color_c"), ""),
-               ("ADAPTANCE", localization.native("panel.color_adaptance"), ""),
-               ("WARP", localization.native("panel.color_warp"), "")),
-    )
-
     @classmethod
     def poll(cls, context):
         node = _output_node_from_context(context)
@@ -5610,7 +5549,7 @@ class PG_OT_reset_color(bpy.types.Operator):
         owner, settings = _color_settings_for_node(node)
         if settings is None or owner is None:
             return {"CANCELLED"}
-        _reset_color(settings, _color_family_fields(self.family.lower()))
+        _reset_color(settings)
         if _is_per_node_grade_node(node):
             _per_node_grade_changed(node)
         else:
@@ -5944,7 +5883,9 @@ class PG_PT_tone(bpy.types.Panel):
             _draw_tone_settings(node, self.layout)
 
 
-class _PGColorPanel:
+class PG_PT_color_warp(bpy.types.Panel):
+    bl_idname = "PG_PT_color_warp"
+    bl_label = localization.native("panel.color_warp")
     bl_space_type = "NODE_EDITOR"
     bl_region_type = "UI"
     bl_category = localization.native("panel.category")
@@ -5958,31 +5899,7 @@ class _PGColorPanel:
     def draw(self, context):
         node = _output_node_from_context(context)
         if _is_output_node(node):
-            _draw_color_family(node, self.layout, self.color_family)
-
-
-class PG_PT_color_j(_PGColorPanel, bpy.types.Panel):
-    bl_idname = "PG_PT_color_j"
-    bl_label = localization.native("panel.color_j")
-    color_family = "j"
-
-
-class PG_PT_color_c(_PGColorPanel, bpy.types.Panel):
-    bl_idname = "PG_PT_color_c"
-    bl_label = localization.native("panel.color_c")
-    color_family = "c"
-
-
-class PG_PT_color_adaptance(_PGColorPanel, bpy.types.Panel):
-    bl_idname = "PG_PT_color_adaptance"
-    bl_label = localization.native("panel.color_adaptance")
-    color_family = "adaptance"
-
-
-class PG_PT_color_warp(_PGColorPanel, bpy.types.Panel):
-    bl_idname = "PG_PT_color_warp"
-    bl_label = localization.native("panel.color_warp")
-    color_family = "warp"
+            _draw_warp_settings(node, self.layout)
 
 
 def convert_grade_node(node, target_kind):
@@ -6399,9 +6316,6 @@ def register():
         PG_OT_gesture_router,
         PG_PT_linear,
         PG_PT_tone,
-        PG_PT_color_j,
-        PG_PT_color_c,
-        PG_PT_color_adaptance,
         PG_PT_color_warp,
     )
     try:

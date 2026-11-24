@@ -83,12 +83,12 @@ class Stage2UpdateTests(unittest.TestCase):
                 exposure=.7, source_xy=(.34567, .3585), balance=(.4, -.2),
                 spread=(45., -50.), heading=(-38., 72.),
             )),
-            Settings(tone=ToneSettings(input_nits=(.2, 8., 40., 235., 1150.), fit=2.)),
+            Settings(tone=ToneSettings(input_nits=(8., 40., 235., 1150.), black_compression_nits=.2, fit=2.)),
             Settings(
                 linear=LinearSettings(exposure=-.35, source_xy=(.31, .36),
                                       balance=(-.2, .3), spread=(25., -20.),
                                       heading=(18., -42.)),
-                tone=ToneSettings(input_nits=(0., 5., 45., 230., 1300.), fit=-1.),
+                tone=ToneSettings(input_nits=(5., 45., 230., 1300.), fit=-1.),
             ),
             Settings(linear=LinearSettings(exposure=.25), tone=ToneSettings()),
             Settings(color=full_cases.guard_before_scale_grade()),
@@ -113,7 +113,7 @@ class Stage2UpdateTests(unittest.TestCase):
                         built.tree[key] for key in PARAMETER_BANK_BINDINGS
                     )
                     self.assertEqual(len(parameter_images), 2)
-                    self.assertEqual(len(marked_images), 10)
+                    self.assertEqual(len(marked_images), 8)
                     bank_images = tuple(
                         image for primary in parameter_images
                         for image in parameter_bank_images(primary).values()
@@ -173,7 +173,7 @@ class Stage2UpdateTests(unittest.TestCase):
         initial = complete_prepared(Settings(), boundary)
         settings = Settings(
             linear=LinearSettings(exposure=.4, source_xy=(.34, .36)),
-            tone=ToneSettings(input_nits=(0., 7., 45., 203., 1000.),
+            tone=ToneSettings(input_nits=(7., 45., 203., 1000.),
                               fit=1., peak_nits=2000.),
             color=full_cases.guard_before_scale_grade(),
         )
@@ -186,7 +186,7 @@ class Stage2UpdateTests(unittest.TestCase):
             parameter_images = tuple(
                 image for image in fixture.built.images if image.get(PARAMETER_IMAGE)
             )
-            self.assertEqual(len(parameter_images), 10)
+            self.assertEqual(len(parameter_images), 8)
             active_bank = fixture.built.tree[PARAMETER_ACTIVE_BANK]
             primary = fixture.built.tree[PARAMETER_BANK_BINDINGS[active_bank]]
             write_parameter_bundle(primary, parameters)
