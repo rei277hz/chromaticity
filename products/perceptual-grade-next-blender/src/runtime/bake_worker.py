@@ -15,8 +15,10 @@ from uuid import uuid4
 
 import numpy as np
 
-from .bake_images import image_format, resolve_datablocks, route_datablock
-from .compositor_effects import matching_compositor_occurrences
+from .capture_host import (
+    compositor_root, configure_linear, disable_file_outputs, open_snapshot,
+)
+from .capture_images import route_datablock
 
 
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
@@ -24,111 +26,6 @@ _GRADE_NODES = frozenset({
     "PGShaderGrade", "PGCompositorGrade",
     "PGShaderGradeStack", "PGCompositorGradeStack",
 })
-
-
-def _minimal_node_types():
-    """Register only persisted node ABI classes needed while opening a snapshot."""
-    import bpy
-
-    for base, identifier in (
-        ("NodeTree", "PGGradeData"),
-        ("ShaderNodeCustomGroup", "PGShaderGrade"),
-        ("CompositorNodeCustomGroup", "PGCompositorGrade"),
-        ("ShaderNodeCustomGroup", "PGShaderGradeStack"),
-        ("CompositorNodeCustomGroup", "PGCompositorGradeStack"),
-        ("ShaderNodeCustomGroup", "PGShaderGradePerNode"),
-        ("CompositorNodeCustomGroup", "PGCompositorGradePerNode"),
-    ):
-        registry = bpy.types.NodeTree if base == "NodeTree" else bpy.types.Node
-        if registry.bl_rna_get_subclass_py(identifier, None) is not None:
-            continue
-        cls = type(identifier, (getattr(bpy.types, base),), {
-            "__module__": __name__, "bl_idname": identifier,
-            "bl_label": identifier, "bl_icon": "COLOR",
-        })
-        bpy.utils.register_class(cls)
-
-
-def _open_snapshot(inputs):
-    """Open the immutable per-request Blender snapshot."""
-    import bpy
-
-    value = inputs.get("snapshot_path")
-    if not isinstance(value, str):
-        raise ValueError("Bake snapshot path is absent")
-    path = Path(value)
-    if not path.is_absolute() or path.is_symlink() or not path.is_file():
-        raise ValueError("Invalid bake snapshot path")
-    _minimal_node_types()
-    result = bpy.ops.wm.open_mainfile(filepath=str(path), use_scripts=False, load_ui=False)
-    if "FINISHED" not in result:
-        raise RuntimeError("Bake snapshot could not be opened")
-    route = inputs["route"]
-    _restore_images(inputs["images"], route["images"])
-
-
-def _verify_sampler_bindings(host, occurrences, images):
-    """Require the native sampler at every recorded occurrence to use its frozen Image."""
-    collections = {
-        "material": "materials", "world": "worlds", "light": "lights", "compositor": "scenes",
-    }
-    owners = {}
-    for kind, key in (item["owner"] for item in occurrences):
-        owners.setdefault(kind, set()).add(tuple(key))
-    roots = {
-        kind: resolve_datablocks(host, getattr(host.data, collections[kind]), keys)
-        for kind, keys in owners.items()
-    }
-    for occurrence in occurrences:
-        kind, owner_key = occurrence["owner"]
-        owner = roots[kind][tuple(owner_key)]
-        tree = (_compositor_root(host, owner, occurrence)
-                if kind == "compositor" else owner.node_tree)
-        reader_path = occurrence["reader_path"]
-        if reader_path is None:
-            raise ValueError("Bake source has no bound native Image reader")
-        path = (*occurrence["group_path"], occurrence["node_name"], *reader_path)
-        node = None
-        for name in path:
-            node = tree.nodes.get(name) if tree is not None else None
-            if node is None:
-                raise ValueError(f"Bake source sampler is missing at {path!r}")
-            tree = getattr(node, "node_tree", None)
-        if (node.bl_idname not in {"ShaderNodeTexImage", "CompositorNodeImage"}
-                or node.image != images[tuple(occurrence["image_key"])]):
-            raise ValueError(f"Bake source sampler at {path!r} has a different Image")
-
-
-def _restore_images(records, occurrences):
-    import bpy
-
-    required = {tuple(item["image_key"]) for item in occurrences}
-    provided = {tuple(record["image_key"]) for record in records}
-    if len(provided) != len(records) or provided != required:
-        raise ValueError("Bake Image payload identities do not match the requested samplers")
-    if not required:
-        return
-    images = resolve_datablocks(bpy, bpy.data.images, required)
-    _verify_sampler_bindings(bpy, occurrences, images)
-    for record in records:
-        image = images[tuple(record["image_key"])]
-        width, height = (int(value) for value in image.size)
-        if ((width, height) != (record["width"], record["height"])
-                or any(record[name] != value for name, value in image_format(image).items())):
-            raise ValueError(f"Bake source Image format changed: {record['image_key']!r}")
-        if min(width, height) < 1 or width * height * 16 > MAX_PIXEL_BYTES:
-            raise ValueError("Bake source Image exceeds the pixel budget")
-        path = Path(record["pixels_path"])
-        if not path.is_absolute() or path.is_symlink() or not path.is_file():
-            raise ValueError("Invalid bake image payload")
-        values = np.load(path, allow_pickle=False)
-        if (values.dtype != np.float32 or not 1 <= record["channels"] <= 4
-                or values.shape != (height, width, record["channels"])):
-            raise ValueError("Bake Image payload does not match its captured storage")
-        if not np.isfinite(values).all():
-            raise ValueError("Bake image payload contains nonfinite pixels")
-        image.pixels.foreach_set(values.ravel())
-        image.update()
 
 
 def _checkpoint(context):
@@ -334,39 +231,6 @@ def _target_outputs(root, path, node_name):
     return outputs[0], outputs[1], tree
 
 
-def _configure_linear(scene):
-    """Configure a helper render for untransformed float pixels."""
-    settings = scene.render.image_settings
-    settings.file_format = "OPEN_EXR"
-    settings.color_mode = "RGBA"
-    settings.color_depth = "32"
-    settings.exr_codec = "ZIPS"
-    if hasattr(settings, "color_management"):
-        settings.color_management = "OVERRIDE"
-    try:
-        settings.linear_colorspace_settings.name = "scene_linear"
-    except (AttributeError, RuntimeError, ValueError):
-        pass
-    try:
-        scene.view_settings.view_transform = "Standard"
-        scene.view_settings.look = "None"
-        scene.view_settings.exposure = 0.0
-        scene.view_settings.gamma = 1.0
-    except (AttributeError, RuntimeError, ValueError):
-        pass
-
-
-def _disable_file_outputs():
-    import bpy
-
-    for tree in tuple(bpy.data.node_groups):
-        if tree.bl_idname != "CompositorNodeTree":
-            continue
-        for node in tuple(tree.nodes):
-            if node.bl_idname == "CompositorNodeOutputFile":
-                tree.nodes.remove(node)
-
-
 def _plane(scene):
     import bpy
 
@@ -547,7 +411,7 @@ def _shader(inputs, context):
     scene.render.resolution_percentage = 100
     scene.render.use_sequencer = False
     scene.compositing_node_group = None
-    _configure_linear(scene)
+    configure_linear(scene)
     _select(scene, obj, uv_name)
     image = _new_image("PG Next Bake Result", width, height)
     rgb = _bake_pass(scene, obj, material, tree, sink, emission, image, context, margin)
@@ -580,7 +444,7 @@ def _compositor(inputs, context):
     if scene is None:
         raise ValueError("Compositor Bake scene is absent")
     _set_frame(scene, route)
-    tree = _compositor_root(bpy, scene, route).copy()
+    tree = compositor_root(bpy, scene, route).copy()
     path = tuple(route["group_path"])
     output, _alpha, tree = _target_outputs(tree, path, str(route["node_name"]))
     with tempfile.TemporaryDirectory(prefix="pg-next-compositor-bake-") as directory:
@@ -627,7 +491,7 @@ def _compositor(inputs, context):
             scene.render.use_sequencer = False
             scene.render.compositor_device = "CPU"
             scene.render.compositor_precision = "FULL"
-            _configure_linear(scene)
+            configure_linear(scene)
             _checkpoint(context)
             if bpy.context.scene != scene:
                 raise RuntimeError("Compositor Bake's selected scene changed before rendering")
@@ -663,13 +527,6 @@ def _compositor(inputs, context):
     return _result(pixels, inputs, backend="COMPOSITOR")
 
 
-def _compositor_root(host, scene, route):
-    matches = tuple(matching_compositor_occurrences(host, scene, route))
-    if len(matches) != 1:
-        raise ValueError("Bake compositor effect is missing or ambiguous in the snapshot")
-    return matches[0][1]
-
-
 def _set_frame(scene, route):
     scene.frame_set(int(route["frame"]), subframe=float(route["subframe"]))
 
@@ -694,7 +551,7 @@ def _result(pixels, inputs, *, backend, device=None):
     if scene is None:
         raise ValueError("Bake output scene is absent")
     try:
-        _configure_linear(scene)
+        configure_linear(scene)
         image.pixels.foreach_set(pixels.reshape(-1))
         image.update()
         image.save_render(str(path), scene=scene)
@@ -710,53 +567,32 @@ def _result(pixels, inputs, *, backend, device=None):
     }
 
 
-class BakeWorker:
-    """Process-owned dispatch object used by :class:`HelperRuntime`."""
+def bake(inputs, context):
+    if not isinstance(inputs, dict):
+        raise TypeError("Bake inputs must be a mapping")
+    if set(inputs) != {"snapshot_path", "artifact_dir", "images", "route"}:
+        raise ValueError("Bake inputs do not match the canonical request")
+    route = inputs["route"]
+    if not isinstance(route, dict):
+        raise TypeError("Bake route must be a frozen mapping")
+    domain = route.get("domain")
+    if domain not in {"COMPOSITOR", "IMAGE", "UV"}:
+        raise ValueError("Unknown Bake route domain: " + str(domain))
+    open_snapshot(inputs)
+    import bpy
 
-    def dispatch(self, operation, inputs, context):
-        if operation == "gpu_probe":
-            import bpy
-
-            context.checkpoint()
-            _minimal_node_types()
-            return {"conformance": True, "backend": "NODE_TREE", "blender": tuple(bpy.app.version)}
-        if operation == "bake":
-            context.checkpoint()
-            if not isinstance(inputs, dict):
-                raise TypeError("Bake inputs must be a mapping")
-            expected_inputs = {"snapshot_path", "artifact_dir", "images", "route"}
-            if set(inputs) != expected_inputs:
-                raise ValueError("Bake inputs do not match the canonical request")
-            route = inputs["route"]
-            if not isinstance(route, dict):
-                raise TypeError("Bake route must be a frozen mapping")
-            domain = route.get("domain")
-            if domain not in {"COMPOSITOR", "IMAGE", "UV"}:
-                raise ValueError("Unknown Bake route domain: " + str(domain))
-            _open_snapshot(inputs)
-            import bpy
-
-            # Saved output nodes must never write to a user's file paths.
-            _disable_file_outputs()
-            scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
-            if scene is not None and bpy.context.window is not None:
-                bpy.context.window.scene = scene
-                if scene.view_layers:
-                    bpy.context.window.view_layer = scene.view_layers[0]
-            context.checkpoint()
-            if domain == "COMPOSITOR":
-                return _compositor(inputs, context)
-            return _shader(inputs, context)
-        if operation == "vectorscope_capture":
-            from .vectorscope_capture import capture
-
-            context.checkpoint()
-            return capture(inputs, context)
-        raise ValueError("Unknown Bake helper operation: " + str(operation))
+    # Saved output nodes must never write to a user's file paths.
+    disable_file_outputs()
+    scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
+    if scene is not None and bpy.context.window is not None:
+        bpy.context.window.scene = scene
+        if scene.view_layers:
+            bpy.context.window.view_layer = scene.view_layers[0]
+    context.checkpoint()
+    if domain == "COMPOSITOR":
+        return _compositor(inputs, context)
+    return _shader(inputs, context)
 
 
-def create():
-    return BakeWorker()
 
 
-__all__ = ("BakeWorker", "create")

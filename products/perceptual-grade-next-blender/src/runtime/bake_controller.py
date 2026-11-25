@@ -2,7 +2,6 @@
 
 # pg-book: technical-report/en#next-policy.bake
 
-from contextlib import contextmanager
 import json
 from pathlib import Path
 import threading
@@ -53,32 +52,24 @@ class BakeController:
         self.image_updates = set()
         self.pending_invalidations = set()
         self.pending_reconciliations = set()
-        self.restoring = False
 
-    def start(self):
+    def start(self, *, freeze_snapshot, create_job):
         if self.manager is None:
-            self.manager = BakeManager(self.bpy)
-        elif self.manager.closed:
-            if not self.manager.backend_closed:
-                raise RuntimeError("Previous Bake helper is still retiring")
-            self.manager = BakeManager(self.bpy)
+            self.manager = BakeManager(freeze_snapshot=freeze_snapshot, create_job=create_job)
 
-    def close(self):
+    def begin_shutdown(self):
         if self.manager is not None:
-            try:
-                self.manager.close()
-            except Exception:
-                self.ensure_timer()
-                raise
+            self.manager.begin_shutdown()
+
+    def finish_shutdown(self):
+        if self.manager is not None:
+            self.manager.finish_shutdown()
 
     def stop_timer(self):
         timers = self.bpy.app.timers
-        if self.manager is None or self.manager.backend_closed:
-            self.manager = None
-            if timers.is_registered(self.timer_callback):
-                timers.unregister(self.timer_callback)
-        elif not timers.is_registered(self.timer_callback):
-            timers.register(self.timer_callback, first_interval=0.02, persistent=True)
+        if timers.is_registered(self.timer_callback):
+            timers.unregister(self.timer_callback)
+        self.manager = None
 
     def busy(self, node):
         return self.manager is not None and node.as_pointer() in self.manager.jobs
@@ -117,7 +108,7 @@ class BakeController:
 
     def ensure_timer(self):
         """Keep the foreground bake queue alive after an idle timer retires."""
-        if self.manager is None or self.manager.backend_closed:
+        if self.manager is None:
             return
         try:
             if not self.bpy.app.timers.is_registered(self.timer_callback):
@@ -389,10 +380,7 @@ class BakeController:
         except Exception as error:
             print("Perceptual Grade Bake source cleanup failed:", error)
             reconcile_failed = True
-        if not pending and manager.closed and manager.backend_closed:
-            self.manager = None
-            return None
-        if (pending or reconcile_failed or (manager.closed and not manager.backend_closed)
+        if (pending or reconcile_failed
                 or self.pending_reconciliations or self.pending_invalidations):
             return 0.02
         return 0.5 if keep_observing else None
@@ -681,15 +669,3 @@ class BakeController:
             except Exception as error:
                 self.fail_output(node, str(error))
             self.pending_reconciliations.discard(pointer)
-
-    @contextmanager
-    def restore_sources(self, *, update_view_layer=True):
-        """Drain reconstruction updates before arming restored source revisions."""
-        previous = self.restoring
-        self.restoring = True
-        try:
-            yield
-            if update_view_layer:
-                self.bpy.context.view_layer.update()
-        finally:
-            self.restoring = previous

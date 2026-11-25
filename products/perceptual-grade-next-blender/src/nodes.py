@@ -92,11 +92,14 @@ from .runtime.image_publication import (
 )
 from .runtime import bake_graph
 from .runtime import bake_controller
+from .runtime.capture_helper import CaptureHelperBackend
+from .runtime.capture_snapshot import freeze_snapshot
 from .runtime.lifecycle import LifecycleCoordinator
 from .runtime import bake_routes
 from .runtime.bank_publication import run_bank_publication
-from .runtime.vectorscope import ScopeRuntime
-from . import localization, vectorscope_ui
+from .scopes.vectorscope import ui as vectorscope_ui
+from .scopes.vectorscope.runtime import ScopeRuntime
+from . import localization
 
 
 SHADER_TREE = "ShaderNodeTree"
@@ -136,6 +139,8 @@ _lifecycle = LifecycleCoordinator()
 _preparation_runtime = None
 _grade_preparer = None
 _grade_resources = None
+_capture_helper = None
+_restoring_capture_sources = False
 _preparation_sources = {}
 _gesture_state = gesture_policy.new()
 _gesture_node_serial = count(1)
@@ -290,6 +295,14 @@ def _fail_bake_output(node, error):
 
 
 def _bake_tick():
+    if _bake.manager is not None and _bake.manager.closed:
+        if _capture_helper is not None:
+            try:
+                _close_capture_helper()
+            except Exception as error:
+                print("Perceptual Grade capture helper shutdown failed:", error)
+                return 0.1
+        return None
     if _lifecycle.reset_pending:
         return 0.02
     return _bake.tick()
@@ -298,6 +311,20 @@ def _bake_tick():
 def invalidate_source(image):
     vectorscope_ui.invalidate(None, (image,))
     return _bake.invalidate_source(image)
+
+
+@contextmanager
+def _restore_capture_sources(*, update_view_layer=True):
+    """Drain reconstruction updates before arming capture source watches."""
+    global _restoring_capture_sources
+    previous = _restoring_capture_sources
+    _restoring_capture_sources = True
+    try:
+        yield
+        if update_view_layer:
+            bpy.context.view_layer.update()
+    finally:
+        _restoring_capture_sources = previous
 
 
 def _prepare_bake_kernels(node, upstream_grades):
@@ -4120,7 +4147,7 @@ def _startup_reconcile_tick():
         return 0.02
     if not hasattr(bpy.data, "node_groups"):
         return 0.1
-    with _bake.restore_sources():
+    with _restore_capture_sources():
         _cleanup_conversion_backups()
         _rebuild_output_registry()
         _ensure_all_kernels()
@@ -4193,7 +4220,7 @@ def _release_lifecycle_resources():
 
 def _repair_lifecycle_outputs(recovery):
     with _grade_resources.gate.commit():
-        with _bake.restore_sources():
+        with _restore_capture_sources():
             _cleanup_conversion_backups()
             _rebuild_output_registry()
             _clear_frame_color_claims(bpy.context.scene)
@@ -4294,7 +4321,7 @@ def _prepare_render_frame(gate, ticket):
         raise RuntimeError("Render frame changed before Grade preflight")
     # An evaluated render scene can advance while the original ID still holds
     # the previous frame's RNA values. Set the ticket time before reading them.
-    with (_bake.restore_sources(update_view_layer=False)
+    with (_restore_capture_sources(update_view_layer=False)
           if _lifecycle.reset_pending else nullcontext()):
         scene.frame_set(request.frame, subframe=float.fromhex(request.subframe))
     if ticket.failure_authorized:
@@ -4549,9 +4576,9 @@ def _depsgraph_update_post(_scene, _depsgraph=None):
         except (AttributeError, ReferenceError, RuntimeError, TypeError):
             # An iterator failure must not discard notifications already read.
             pass
-    if changed_ids and not _bake.restoring:
+    if changed_ids and not _restoring_capture_sources:
         _bake.mark_sources(changed_ids)
-    if scope_ids and not _bake.restoring:
+    if scope_ids and not _restoring_capture_sources:
         vectorscope_ui.invalidate(_scene, scope_ids)
     try:
         working_space = _working_space()
@@ -5038,9 +5065,13 @@ def _draw_color_notice(layout, label, tooltip):
     op.detail = localization.tr(tooltip)
 
 
+def _grade_publication_gate():
+    return None if _grade_resources is None else _grade_resources.gate
+
+
 _bake = bake_controller.BakeController(
     bpy,
-    gate=lambda: None if _grade_resources is None else _grade_resources.gate,
+    gate=_grade_publication_gate,
     nodes=_all_grade_nodes,
     prepare_kernels=_prepare_bake_kernels,
     wrapper=_bake_wrapper,
@@ -6387,8 +6418,22 @@ def _scope_preview_roles(node, signature):
     return parameter_bank_images(primary)
 
 
+def _close_capture_helper():
+    global _capture_helper
+    _bake.begin_shutdown()
+    vectorscope_ui.begin_shutdown()
+    if _capture_helper is not None:
+        _capture_helper.close()
+    _bake.finish_shutdown()
+    vectorscope_ui.finish_shutdown()
+    _capture_helper = None
+
+
 def register():
-    global _preparation_runtime, _grade_preparer, _grade_resources
+    global _preparation_runtime, _grade_preparer, _grade_resources, _capture_helper
+    if _bake.manager is not None and _bake.manager.closed:
+        # Blender can mark the extension disabled after a failed unregister.
+        unregister()
     retrying_preparation_runtime = (
         _preparation_runtime is not None and _preparation_runtime.closed
     )
@@ -6446,7 +6491,10 @@ def register():
             _preparation_runtime.register_polled_lane(
                 "lut", StackHelperBackend(), progressive=True
             )
-        _bake.start()
+        if _capture_helper is None:
+            _capture_helper = CaptureHelperBackend()
+        snapshot = partial(freeze_snapshot, bpy)
+        _bake.start(freeze_snapshot=snapshot, create_job=_capture_helper.create_job)
         for cls in classes:
             if cls not in _registered_classes:
                 if not cls.is_registered:
@@ -6464,8 +6512,9 @@ def register():
                 _registered_menus.append(record)
         _register_handlers()
         vectorscope_ui.register(lambda: ScopeRuntime(
-            bpy, _bake.manager._snapshot, _scope_linear_settings, _working_space,
-            gate=_bake.gate, upstream_ready=_scope_upstream_ready,
+            snapshot, _scope_linear_settings, _working_space,
+            create_job=_capture_helper.create_job, gate=_grade_publication_gate,
+            upstream_ready=_scope_upstream_ready,
             grade_signature=_settings_signature_for, preview_roles=_scope_preview_roles,
         ), begin=_begin_gizmo_gesture, edit=_edit_gizmo_gesture,
             finish=_end_color_gesture, cancel=_cancel_color_gesture,
@@ -6499,12 +6548,16 @@ def unregister():
         # acknowledge existing readers and make a later retry safe.
         _grade_resources.gate.reset()
     # Retain request ownership and callbacks if the helper has not retired.
+    try:
+        _close_capture_helper()
+    except Exception:
+        _bake.ensure_timer()
+        raise
     errors = []
     try:
         vectorscope_ui.unregister()
     except Exception as exc:
         errors.append(exc)
-    _bake.close()
     if _preparation_runtime is not None:
         _preparation_runtime.close()
         _preparation_runtime = None

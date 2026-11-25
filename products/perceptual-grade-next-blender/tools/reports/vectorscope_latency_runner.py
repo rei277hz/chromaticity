@@ -73,10 +73,10 @@ class Session:
         )
         extension = importlib.import_module("bl_ext.pg_vectorscope_timing.perceptual_grade")
         self.nodes = importlib.import_module(extension.__name__ + ".nodes")
-        self.ui = importlib.import_module(extension.__name__ + ".vectorscope_ui")
-        self.analysis = importlib.import_module(extension.__name__ + ".vectorscope")
+        self.ui = importlib.import_module(extension.__name__ + ".scopes.vectorscope.ui")
+        self.analysis = importlib.import_module(extension.__name__ + ".scopes.vectorscope.analysis")
         self.capture = importlib.import_module(
-            extension.__name__ + ".runtime.vectorscope_capture"
+            extension.__name__ + ".scopes.vectorscope.capture"
         )
         self.reducer_selection = config["reducer"]
         errors = []
@@ -184,7 +184,7 @@ class Session:
         for node in tree.nodes:
             node.select = node == grade
         self.region = next(region for region in self.area.regions if region.type == "WINDOW")
-        self.key = self.ui._key(self.window, self.area)
+        self.key = self.ui.editor.key(self.window, self.area)
 
     def display(self):
         with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):

@@ -1,4 +1,4 @@
-"""One lifecycle-owned helper lane for native Grade image captures."""
+"""Lifecycle-owned helper lane for isolated Bake and scope captures."""
 
 # pg-book: technical-report/en#next-policy.bake
 
@@ -10,7 +10,9 @@ from time import perf_counter_ns
 from .execution import HelperRuntime
 
 
-class BakeHelperBackend:
+class CaptureHelperBackend:
+    """Create capture jobs bound to the runtime that accepted each request."""
+
     def __init__(self):
         self.runtime = None
         self.probe = None
@@ -25,7 +27,7 @@ class BakeHelperBackend:
             self.probe = None
         self.runtime = HelperRuntime(
             package=Path(__file__).resolve().parent.parent,
-            worker_module="runtime.bake_worker",
+            worker_module="runtime.capture_worker",
             role="bake",
         )
         self.probe = self.runtime.start_probe()
@@ -35,7 +37,7 @@ class BakeHelperBackend:
         previous = self.runtime
         started = perf_counter_ns() if profile else None
         self._ensure_runtime()
-        job = BakeHelperJob(self, inputs, operation, profile=profile)
+        job = CaptureHelperJob(self.runtime, self.probe, inputs, operation, profile=profile)
         if profile:
             job.helper_reused = self.runtime is previous and self.runtime.gpu_ready
             job.probe_started = perf_counter_ns()
@@ -48,13 +50,14 @@ class BakeHelperBackend:
             return
         self.runtime.close()
         if not self.runtime.physical_terminal():
-            raise RuntimeError("Bake helper has not physically retired")
+            raise RuntimeError("Capture helper has not physically retired")
         self.probe = self.runtime = None
 
 
-class BakeHelperJob:
-    def __init__(self, backend, inputs, operation="bake", *, profile=False):
-        self.backend = backend
+class CaptureHelperJob:
+    def __init__(self, runtime, probe, inputs, operation="bake", *, profile=False):
+        self.runtime = runtime
+        self.probe = probe
         self.inputs = dict(inputs)
         self.operation = operation
         self.handle = None
@@ -69,19 +72,18 @@ class BakeHelperJob:
 
     def advance(self):
         _require_main_thread()
-        runtime = self.backend.runtime
         if self.cancelled and self.handle is None:
-            raise CancelledError("Bake was cancelled before helper submission")
+            raise CancelledError("Capture was cancelled before helper submission")
         if self.handle is None:
-            if not self.backend.probe.poll():
+            if not self.probe.poll():
                 return None
-            self.backend.probe.result()
+            self.probe.result()
             if self.timings is None:
-                self.handle = runtime.submit(self.operation, self.inputs)
+                self.handle = self.runtime.submit(self.operation, self.inputs)
             else:
                 self.submit_started = perf_counter_ns()
                 self.record("helper_probe_wait", self.probe_started, self.submit_started)
-                self.handle = runtime.submit(self.operation, self.inputs, profile=True)
+                self.handle = self.runtime.submit(self.operation, self.inputs, profile=True)
                 self.record("helper_submit", self.submit_started, perf_counter_ns())
         if not self.handle.poll():
             return None
@@ -103,4 +105,7 @@ class BakeHelperJob:
 
 def _require_main_thread():
     if current_thread() is not main_thread():
-        raise RuntimeError("Bake helper transport must be polled on Blender's main thread")
+        raise RuntimeError("Capture helper transport must be polled on Blender's main thread")
+
+
+__all__ = ("CaptureHelperBackend", "CaptureHelperJob")

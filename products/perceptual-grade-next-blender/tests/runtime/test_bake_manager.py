@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import importlib
 from importlib.resources import files
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -19,10 +20,13 @@ class Job:
     def __init__(self, inputs):
         self.result = {"request_signature": inputs["route"]["request_signature"]}
         self.cancel_calls = 0
-        self.retired = False
+        self.finished = False
 
     def advance(self):
-        return self.result if self.retired else None
+        return self.result if self.finished else None
+
+    def retired(self):
+        return self.finished
 
     def cancel(self):
         self.cancel_calls += 1
@@ -32,8 +36,6 @@ class Backend:
     def __init__(self):
         self.jobs = []
         self.close_calls = 0
-        self.close_error = None
-        self.on_close = lambda: None
 
     def create_job(self, inputs):
         job = Job(inputs)
@@ -42,11 +44,8 @@ class Backend:
 
     def close(self):
         self.close_calls += 1
-        self.on_close()
-        if self.close_error is not None:
-            raise self.close_error
         for job in self.jobs:
-            job.retired = True
+            job.finished = True
 
 
 class BakeManagerTests(unittest.TestCase):
@@ -60,6 +59,9 @@ class BakeManagerTests(unittest.TestCase):
         sys.path.insert(0, cls.directory.name)
         cls.module = importlib.import_module("bake_manager_test.runtime.bake_manager")
         cls.worker = importlib.import_module("bake_manager_test.runtime.bake_worker")
+        cls.capture_host = importlib.import_module("bake_manager_test.runtime.capture_host")
+        cls.capture_snapshot = importlib.import_module("bake_manager_test.runtime.capture_snapshot")
+        cls.capture_images = importlib.import_module("bake_manager_test.runtime.capture_images")
 
     @classmethod
     def tearDownClass(cls):
@@ -71,7 +73,6 @@ class BakeManagerTests(unittest.TestCase):
 
     def setUp(self):
         self.backend = Backend()
-        self.manager = self.module.BakeManager(object(), self.backend)
         self.signatures = {}
         self.events = []
         self.busy = False
@@ -90,9 +91,9 @@ class BakeManagerTests(unittest.TestCase):
                 stream.write(b"frozen scene")
             return root, path, []
 
-        patcher = patch.object(self.manager, "_snapshot", side_effect=snapshot)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.manager = self.module.BakeManager(
+            freeze_snapshot=snapshot, create_job=self.backend.create_job,
+        )
 
     def node(self, number):
         self.signatures[number] = "source-" + str(number)
@@ -126,7 +127,7 @@ class BakeManagerTests(unittest.TestCase):
 
     def complete(self, job=None, result=None):
         job = self.backend.jobs[-1] if job is None else job
-        job.retired = True
+        job.finished = True
         if result is not None:
             job.result = result
         return self.manager.poll()
@@ -180,13 +181,12 @@ class BakeManagerTests(unittest.TestCase):
             images=(image,),
             libraries=Libraries(),
         )
-        manager = self.module.BakeManager(SimpleNamespace(data=data), Backend())
         with patch.object(Path, "open", side_effect=AssertionError("payload scan")), \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
-            root, snapshot, records = manager._snapshot({
+            root, snapshot, records = self.capture_snapshot.freeze_snapshot(SimpleNamespace(data=data), {
                 "scene": "Scene", "images": ({"image_key": ("Source", None)},) * 2,
             })
-        self.addCleanup(lambda: manager._remove_files(root))
+        self.addCleanup(shutil.rmtree, root)
         self.assertTrue(snapshot.is_file())
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["image_key"], ("Source", None))
@@ -208,11 +208,11 @@ class BakeManagerTests(unittest.TestCase):
 
         bpy = SimpleNamespace(ops=SimpleNamespace(wm=Wm()))
         with patch.dict(sys.modules, {"bpy": bpy}), \
-                patch.object(self.worker, "_minimal_node_types"), \
-                patch.object(self.worker, "_restore_images") as restore, \
+                patch.object(self.capture_host, "register_snapshot_node_types"), \
+                patch.object(self.capture_host, "restore_images") as restore, \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
-            self.worker._open_snapshot({"snapshot_path": str(snapshot), "images": [],
-                                         "route": {"images": []}})
+            self.capture_host.open_snapshot({"snapshot_path": str(snapshot), "images": [],
+                                             "route": {"images": []}})
         restore.assert_called_once_with([], [])
 
     def test_worker_restores_finite_sidecar_without_checksum_scan(self):
@@ -236,21 +236,21 @@ class BakeManagerTests(unittest.TestCase):
         occurrence = dict(image_key=image_key, owner=("material", ("Material", None)),
                           node_name="Texture", group_path=(), reader_path=())
         record = dict(image_key=image_key, pixels_path=str(payload), width=2, height=1,
-                      **self.worker.image_format(image))
+                      **self.capture_images.image_format(image))
         with patch.dict(sys.modules, {"bpy": bpy}), \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
-            self.worker._restore_images([record], (occurrence,))
+            self.capture_host.restore_images([record], (occurrence,))
         np.testing.assert_equal(written[0], np.full(6, 0.5, dtype=np.float32))
 
         np.save(payload, np.full((1, 2, 3), np.nan, dtype=np.float32), allow_pickle=False)
         with patch.dict(sys.modules, {"bpy": bpy}), \
                 self.assertRaisesRegex(ValueError, "nonfinite"):
-            self.worker._restore_images([record], (occurrence,))
+            self.capture_host.restore_images([record], (occurrence,))
 
         with patch.dict(sys.modules, {"bpy": bpy}), \
                 self.assertRaisesRegex(ValueError, "different Image"):
             source.node_tree.nodes["Texture"].image = SimpleNamespace(name="Source")
-            self.worker._restore_images([record], (occurrence,))
+            self.capture_host.restore_images([record], (occurrence,))
         self.assertEqual(len(written), 1)
 
     def test_worker_result_does_not_hash_output_artifact(self):
@@ -276,7 +276,7 @@ class BakeManagerTests(unittest.TestCase):
         image = Image()
         with patch.dict(sys.modules, {"bpy": bpy}), \
                 patch.object(self.worker, "_new_image", return_value=image), \
-                patch.object(self.worker, "_configure_linear"), \
+                patch.object(self.worker, "configure_linear"), \
                 patch.object(Path, "open", side_effect=AssertionError("payload scan")), \
                 patch.object(Path, "read_bytes", side_effect=AssertionError("payload scan")):
             result = self.worker._result(
@@ -488,30 +488,28 @@ class BakeManagerTests(unittest.TestCase):
         self.assertFalse(self.manager.jobs)
         self.assertFalse(self.events)
 
-    def test_close_waits_for_backend_and_preserves_active_ownership_on_failure(self):
+    def test_shutdown_preserves_active_ownership_until_borrowed_job_retires(self):
         active = self.request(self.node(1))
         self.manager.poll()
         queued = self.request(self.node(2))
-        self.backend.on_close = lambda: self.assertTrue(active["root"].is_dir())
-        self.backend.close_error = RuntimeError("helper still owns native work")
-        with self.assertRaisesRegex(RuntimeError, "native work"):
-            self.manager.close()
+        self.manager.begin_shutdown()
+        with self.assertRaisesRegex(RuntimeError, "has not retired"):
+            self.manager.finish_shutdown()
         self.assertTrue(self.manager.closed)
-        self.assertFalse(self.manager.backend_closed)
-        self.assertIs(self.manager.close_error, self.backend.close_error)
         self.assertIs(self.manager.active, active)
         self.assertEqual(tuple(self.manager.jobs), (1,))
+        self.assertTrue(active["root"].exists())
         self.assertFalse(queued["root"].exists())
+        self.assertEqual(self.backend.jobs[-1].cancel_calls, 1)
         with self.assertRaisesRegex(RuntimeError, "closed"):
             self.request(self.node(3))
-        self.backend.close_error = None
-        self.manager.close()
-        self.assertTrue(self.manager.backend_closed)
+        self.backend.close()
+        self.manager.finish_shutdown()
         self.assertFalse(active["root"].exists())
         self.assertFalse(self.manager.jobs)
         self.assertIsNone(self.manager.active)
-        self.manager.close()
-        self.assertEqual(self.backend.close_calls, 2)
+        self.manager.finish_shutdown()
+        self.assertEqual(self.backend.close_calls, 1)
 
 
 if __name__ == "__main__":

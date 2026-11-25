@@ -171,9 +171,9 @@
         "products/perceptual-grade-next-blender/tests/installed/runner.py",
         "products/perceptual-grade-next-blender/tests/installed/stack_ui_checks.py",
         "products/perceptual-grade-next-blender/src/policy/vectorscope.py",
-        "products/perceptual-grade-next-blender/src/runtime/vectorscope.py",
-        "products/perceptual-grade-next-blender/src/runtime/vectorscope_capture.py",
-        "products/perceptual-grade-next-blender/src/vectorscope.py",
+        "products/perceptual-grade-next-blender/src/scopes/vectorscope/runtime.py",
+        "products/perceptual-grade-next-blender/src/scopes/vectorscope/capture.py",
+        "products/perceptual-grade-next-blender/src/scopes/vectorscope/analysis.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py",
         "products/perceptual-grade-next-blender/tests/installed/test_vectorscope_native.py"
       ],
@@ -460,7 +460,7 @@
         "products/perceptual-grade-next-blender/src/runtime/bake_freshness.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_manager.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_controller.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_helper.py",
+        "products/perceptual-grade-next-blender/src/runtime/capture_helper.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_graph.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_routes.py",
         "products/perceptual-grade-next-blender/src/runtime/bake_worker.py",
@@ -533,8 +533,8 @@
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/policy/vectorscope.py",
-        "products/perceptual-grade-next-blender/src/runtime/vectorscope.py",
-        "products/perceptual-grade-next-blender/src/runtime/vectorscope_policy.py"
+        "products/perceptual-grade-next-blender/src/scopes/vectorscope/runtime.py",
+        "products/perceptual-grade-next-blender/src/scopes/vectorscope/policy.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py",

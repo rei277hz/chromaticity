@@ -147,7 +147,10 @@ python_test(
 
 python_test(
     name = "bake_worker_runtime",
-    srcs = ["runtime/test_bake_worker.py"],
+    srcs = [
+        "runtime/test_bake_worker.py",
+        "runtime/test_capture_helper.py",
+    ],
     base_module = "tests.perceptual_grade_blender",
     resources = {
         "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",

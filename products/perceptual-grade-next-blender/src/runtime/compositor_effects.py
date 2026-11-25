@@ -1,6 +1,6 @@
 """Scene compositor roots across the supported Blender versions."""
 
-from .bake_images import datablock_key
+from .capture_images import datablock_key
 
 
 def compositor_occurrences(scene, *, mode=None):

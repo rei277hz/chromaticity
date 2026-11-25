@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from .color_core.modcam16 import HK, encode_cones
-from .kernel.prepare import nits_to_j, prepare_tone
+from ...color_core.modcam16 import HK, encode_cones
+from ...kernel.prepare import nits_to_j, prepare_tone
 
 
 PLOT_MAX = float(nits_to_j(4000.0))

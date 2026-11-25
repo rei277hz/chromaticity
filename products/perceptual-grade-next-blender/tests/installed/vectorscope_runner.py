@@ -23,8 +23,8 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_vectorscope.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
-vectorscope = importlib.import_module(extension.__name__ + ".vectorscope")
-vectorscope_ui = importlib.import_module(extension.__name__ + ".vectorscope_ui")
+vectorscope = importlib.import_module(extension.__name__ + ".scopes.vectorscope.analysis")
+vectorscope_ui = importlib.import_module(extension.__name__ + ".scopes.vectorscope.ui")
 drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
 pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui)
 errors = []
@@ -109,8 +109,8 @@ image.colorspace_settings.name = "Non-Color"
 image.alpha_mode = "CHANNEL_PACKED"
 paint(RED)
 
-backend = vectorscope_ui._runtime.backend
-create_job = backend.create_job
+runtime = vectorscope_ui._runtime
+create_job = runtime.create_job
 
 
 def track_helper_job(inputs, **kwargs):
@@ -132,7 +132,7 @@ def track_helper_job(inputs, **kwargs):
 
 
 appearance_samples = [None]
-backend.create_job = track_helper_job
+runtime.create_job = track_helper_job
 
 tree = bpy.data.node_groups.new(TREE_NAME, nodes.COMPOSITOR_TREE)
 tree.interface.new_socket(name="Color", in_out="OUTPUT", socket_type="NodeSocketColor")
@@ -166,16 +166,16 @@ space.node_tree = tree
 space.show_region_ui = True
 region = next(item for item in area.regions if item.type == "WINDOW")
 pointer.bind(window, area, region)
-draw_tone = vectorscope_ui._draw_tone
+draw_tone = vectorscope_ui.display._draw_tone
 
 
-def track_tone_draw(box, state, key, linear, tone):
-    draw_tone(box, state, key, linear, tone)
+def track_tone_draw(box, state, key, linear, tone, selected):
+    draw_tone(box, state, key, linear, tone, selected)
     if state is not None and state.status == "current" and state.tone_histogram is not None:
         report["tone_gizmo_drawn"] = True
 
 
-vectorscope_ui._draw_tone = track_tone_draw
+vectorscope_ui.display._draw_tone = track_tone_draw
 
 
 def checkpoint(step):
@@ -324,7 +324,7 @@ def check_additive_trace_pixels():
             gpu.state.blend_set("ALPHA")
             framebuffer = gpu.state.active_framebuffer_get()
             framebuffer.clear(color=(background, background, background, 1.0))
-            vectorscope_ui._draw_trace((-1, -1, 2, 2), trace, key)
+            vectorscope_ui.display._draw_trace((-1, -1, 2, 2), trace, key)
             assert gpu.state.blend_get() == "ALPHA"
             pixels = np.asarray(framebuffer.read_color(0, 0, width, height, 4, 0, "FLOAT"))
             actual = pixels.reshape(height, width, 4)[height // 2, (4, 12, 20, 28, 36), :3]
@@ -333,7 +333,7 @@ def check_additive_trace_pixels():
         gpu.state.depth_test_set(saved_depth)
         gpu.state.viewport_set(*saved_viewport)
         gpu.state.scissor_set(*saved_scissor)
-        vectorscope_ui._TEXTURES.pop(key, None)
+        vectorscope_ui.display._TEXTURES.pop(key, None)
         offscreen.free()
 
     log_density = np.log1p(65535 * mass[0] / mass.sum()) / np.log(65536)
@@ -392,7 +392,7 @@ def exercise_gizmo_controls():
         ("MOUSEMOVE", "NOTHING", "away", 3), ("MOUSEMOVE", "NOTHING", "target", 3),
     ], probe_calls
     assert pointer.settings(grade) == baseline
-    assert pointer.ui._DRAGS.get(pointer.window.as_pointer()) is None
+    assert pointer.ui._interaction.drags.get(pointer.window.as_pointer()) is None
     assert pointer.nodes._gesture_token(pointer.window.as_pointer()) is None
     report["hover_exhaustion_before_press"] = True
 
@@ -669,8 +669,8 @@ def exercise_drags():
     restored_tree = bpy.data.node_groups[TREE_NAME]
     assert pointer.settings(restored_tree.nodes[NODE_NAME]) == baseline
     assert not keyframes(restored_tree), "Undo left Auto Key curves from the drag"
-    gizmo_key = vectorscope_ui._key(window, area)
-    assert gizmo_key in vectorscope_ui._ENABLED, "Undo hid the Gizmo"
+    gizmo_key = vectorscope_ui.editor.key(window, area)
+    assert gizmo_key in vectorscope_ui._editors, "Undo hid the Gizmo"
     yield from wait_for(lambda: current(RED), "Undo did not restore the vectorscope")
     report["per_node_drag"] = True
     report["source_keys_undone"] = True
@@ -714,7 +714,7 @@ def exercise_animated_frame_cancel():
             lambda: nodes._gesture_token(window_key) is None and pointer.peak() is not None,
             "Frame change did not cancel the drag and refresh the scope",
         )
-        assert window_key not in vectorscope_ui._DRAGS
+        assert window_key not in vectorscope_ui._interaction.drags
         pointer.event("LEFTMOUSE", "RELEASE", (24, 20))
         yield .1
         animated_end = (grade.source_x, grade.source_y)

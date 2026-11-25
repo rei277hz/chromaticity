@@ -51,12 +51,38 @@
         "effects": "step(state, event)[1]"
       },
       "assert": "effects.fail == (state.active and state.same_source and state.exact and not event.success) and (event.success or not effects.publish)"
+    },
+    {
+      "name": "display_current_requires_publication_and_live_source",
+      "variables": {
+        "published": "bool",
+        "revision_matches": "bool",
+        "source_valid": "bool"
+      },
+      "assert": "display_current(published, revision_matches, source_valid) == (published and revision_matches and source_valid)"
+    },
+    {
+      "name": "preview_current_requires_matching_live_receipt",
+      "variables": {
+        "active": "bool",
+        "revision_matches": "bool",
+        "source_valid": "bool"
+      },
+      "assert": "preview_current(active, revision_matches, source_valid) == (active and revision_matches and source_valid)"
     }
   ],
   "witnesses": [
     {
       "name": "lagging_same_source_preview_is_reachable",
       "assert": "publication(True, True, True, False, False) == Effects(True, False, False)"
+    },
+    {
+      "name": "current_display_is_reachable",
+      "assert": "display_current(True, True, True)"
+    },
+    {
+      "name": "current_preview_is_reachable",
+      "assert": "preview_current(True, True, True)"
     }
   ],
   "mutations": [
@@ -76,6 +102,24 @@
       "replacement": "True",
       "detects": [
         "property.superseded_success_cannot_overwrite_newer_display"
+      ]
+    },
+    {
+      "name": "display_ignores_live_context",
+      "function": "display_current",
+      "target": "published and revision_matches and source_valid",
+      "replacement": "published and revision_matches",
+      "detects": [
+        "property.display_current_requires_publication_and_live_source"
+      ]
+    },
+    {
+      "name": "preview_ignores_revision",
+      "function": "preview_current",
+      "target": "active and revision_matches and source_valid",
+      "replacement": "active and source_valid",
+      "detects": [
+        "property.preview_current_requires_matching_live_receipt"
       ]
     }
   ]

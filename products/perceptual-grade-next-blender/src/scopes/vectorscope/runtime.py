@@ -11,14 +11,14 @@ import shutil
 import threading
 import time
 
-from .. import appearance_scope, tone_scope, vectorscope as analysis
-from ..kernel.prepare import PreparedLinear, prepare_linear
-from ..kernel.settings import ToneSettings
-from . import vectorscope_policy as policy
-from .bake_helper import BakeHelperBackend
-from . import bake_routes
-from .vectorscope_capture import capture_loaded_image
-from .publication import PublicationDeferred
+import numpy as np
+
+from ...kernel.prepare import PreparedLinear, prepare_linear
+from ...kernel.settings import ToneSettings
+from ...runtime.publication import PublicationDeferred
+from . import analysis, appearance_scope, policy, routes, tone_scope
+from .appearance_preview import AppearancePreview, PreviewUnavailable
+from .capture import capture_loaded_image
 
 
 MAX_CAPTURE_BYTES = 512 * 512 * 4 * 4
@@ -65,6 +65,40 @@ def _editor_key(key):
 
 
 @dataclass(frozen=True)
+class _Editor:
+    binding: tuple
+    frame: tuple
+    stage: str
+    dragging: bool
+
+
+@dataclass(frozen=True)
+class DisplayState:
+    rgba: np.ndarray | None
+    status: str
+    error: str | None
+    tone_histogram: np.ndarray | None = None
+    appearance: appearance_scope.AppearanceScope | None = None
+    appearance_status: str | None = None
+    appearance_error: str | None = None
+
+    @property
+    def brightness(self):
+        return None if self.rgba is None else self.rgba[..., 3]
+
+
+@dataclass(frozen=True)
+class WhiteDragReceipt:
+    editor: object
+    binding: tuple
+    frame: tuple
+    capture_signature: str
+    source_generation: int
+    source_epoch: int
+    linear_witness: str
+
+
+@dataclass(frozen=True)
 class _ScopeWatch:
     images: frozenset
     mesh_witnesses: object
@@ -80,11 +114,11 @@ class _ScopeWatch:
 class ScopeRuntime:
     """Capture evaluated Grade inputs and appearance outside the draw callback."""
 
-    def __init__(self, bpy, snapshot_scope, linear_settings, working_space,
-                 backend=None, *, gate=None, upstream_ready=None, grade_signature=None,
+    def __init__(self, snapshot_scope, linear_settings, working_space, *, create_job,
+                 gate=None, upstream_ready=None, grade_signature=None,
                  preview_roles=None, preview_backend=None):
         self.snapshot_scope = snapshot_scope
-        self.backend = backend or BakeHelperBackend()
+        self.create_job = create_job
         self.linear_settings = linear_settings
         self.working_space = working_space
         self.gate = gate
@@ -92,20 +126,20 @@ class ScopeRuntime:
         self.grade_signature = grade_signature
         self.preview_roles = preview_roles
         self.preview_backend = preview_backend
-        self.preview_warmed = False
-        self.preview_unavailable = False
-        self.appearance_previews = {}
+        self.preview_unavailable = None
         self.state = policy.State()
         self.payloads = {}
         self.displays = {}
         self.samples = OrderedDict()
         self.sample_bytes = 0
         self.active = None
+        self._shutting_down = False
+        self.editors = {}
+        self.revisions = {}
         self.source_epochs = {}
         self.epoch = count(1)
         self.dependencies = {}
         self.watches = {}
-        self.targets = {}
         self._observations = threading.Lock()
         self._main_thread = threading.main_thread()
         self.timing = None
@@ -128,6 +162,10 @@ class ScopeRuntime:
 
     def _clock(self):
         return time.perf_counter_ns() if self.timing is not None else None
+
+    def _revision(self, key):
+        with self._observations:
+            return self.revisions.get(key, 0)
 
     @staticmethod
     def _key(node_editor_key):
@@ -157,12 +195,15 @@ class ScopeRuntime:
             for stage, started, finished in timings:
                 self._record_timing(stage, started, finished, ticket)
         self._apply(effects, samples=samples, trace=trace, capture=event.ticket)
+        return effects
 
     def _apply(self, effects, *, samples=None, trace=None, capture=None):
         for key in effects.clear:
             self.displays.pop(key, None)
         if effects.retain_samples is not None:
             self._remember_samples(effects.retain_samples, samples)
+        if effects.publish_preview is not None:
+            self.displays[effects.publish_preview.key] = trace
         if effects.publish is not None:
             ticket = effects.publish
             started = self._clock()
@@ -206,109 +247,132 @@ class ScopeRuntime:
     @staticmethod
     def _mesh_witness(mesh):
         try:
-            return bake_routes.vectorscope_mesh_witness(mesh)
+            return routes.vectorscope_mesh_witness(mesh)
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             return None
 
-    def observe(self, node_editor_key, context, node, viewport, *, tone: ToneSettings | None = None):
-        """Record the visible Linear or Tone demand and return its immutable display."""
-        return self._observe(self._key(node_editor_key), context, node, viewport, tone)
+    def has_editor(self, key):
+        """Return whether the host still owns an observed editor binding."""
+        key = self._key(key)
+        with self._observations:
+            return key in self.editors
 
-    def observe_appearance(self, node_editor_key, context, node, viewport, *, dragging=False):
-        """Record the Tone tab's independent final appearance demand."""
-        editor = self._key(node_editor_key)
-        key = _AppearanceKey(editor)
-        if not dragging:
-            self.appearance_previews.pop(editor, None)
-            trace, status, error = self._observe(key, context, node, viewport, None)
-            if status == "current" and self.preview_roles is not None:
+    def observe_editor(self, key, context, node, viewport=None, *, frame, stage,
+                       dragging, tone=None, viewport_for=None, tone_for=None):
+        """Reconcile one editor's input and appearance demands on the host timer."""
+        if self._shutting_down:
+            return None
+        key = self._key(key)
+        editor = _Editor(self._target(node), frame, stage, dragging)
+        with self._observations:
+            previous = self.editors.get(key)
+        if previous is not None and (previous.binding != editor.binding
+                                     or previous.frame[0] != frame[0]):
+            self.release(key)
+        with self._observations:
+            self.editors[key] = editor
+        appearance = _AppearanceKey(key)
+        appearance_enabled = (stage == "TONE" and not getattr(node, "pg_use_bake", False)
+                              and not getattr(node, "mute", False))
+        input_revision = self._revision(key)
+        appearance_revision = self._revision(appearance)
+        try:
+            if viewport_for is not None:
+                viewport = viewport_for()
+            if tone_for is not None:
+                tone = tone_for()
+        except Exception as error:
+            self._unavailable(key, error, input_revision)
+            if appearance_enabled:
+                self._unavailable(appearance, error, appearance_revision)
+            return self.display_state(key, node, frame=frame, stage=stage, dragging=dragging)
+        self._observe(key, context, node, viewport, tone)
+
+        if not appearance_enabled:
+            if (policy.demand_for(self.state, appearance) is not None
+                    or policy.preview_for(self.state, appearance) is not None):
+                self._release(appearance)
+        elif dragging:
+            if policy.demand_for(self.state, appearance) is not None:
+                self._withdraw_capture(appearance)
+            self._observe_appearance_preview(key, node)
+        else:
+            self._observe(appearance, context, node, viewport, None)
+            if (policy.status(self.state, appearance, self._revision(appearance))[0] == "current"
+                    and self.preview_roles is not None):
                 self._warm_preview()
-            return (trace if status == "current" else None), status, error
-
-        # Withdrawing the exact demand also cancels an in-flight appearance
-        # capture. The regular Tone input demand stays live throughout the drag.
-        if key in self.payloads:
-            self._release(key)
-        if getattr(node, "pg_use_bake", False):
-            return None, "bake", None
-        if getattr(node, "mute", False):
-            return None, "unavailable", "Appearance requires an unmuted Grade"
-        return self._observe_appearance_preview(editor, node)
+        return self.display_state(key, node, frame=frame, stage=stage, dragging=dragging)
 
     def _observe_appearance_preview(self, editor, node):
-        updating = (None, "updating", None)
+        key = _AppearanceKey(editor)
         inputs = self._preview_inputs(editor, node)
         if inputs is None or self.preview_roles is None or self.grade_signature is None:
-            return updating
+            self._dispatch(policy.Event("preview_withdraw", key=key))
+            return
         demand, samples = inputs
         signature = self.grade_signature(node)
-        if signature is None:
-            return updating
-        roles = self.preview_roles(node, signature)
+        roles = None if signature is None else self.preview_roles(node, signature)
         if roles is None:
-            return updating
-        revision = (demand.capture_signature, signature)
-        previous = self.appearance_previews.get(editor)
-        if previous is not None and previous[0] == revision:
-            return previous[1], "preview", None
+            self._dispatch(policy.Event("preview_withdraw", key=key))
+            return
+        revision = self._revision(key)
+        receipt = policy.Preview(key, revision, demand.capture_signature, signature)
+        effects = self._dispatch(policy.Event("preview_request", preview=receipt))
+        if effects.evaluate_preview is None:
+            return
+        self._evaluate_preview(effects.evaluate_preview, demand, samples, roles, node)
 
-        if not self._warm_preview():
-            return updating
+    def _evaluate_preview(self, receipt, demand, samples, roles, node):
+        started = self._clock()
         try:
-            started = self._clock()
+            self._require_preview()
             pixels = self.preview_backend.evaluate(
                 samples, roles, input_receipt=demand.capture_signature,
             )
-            if pixels is None:
-                return updating
             trace = appearance_scope.analyze(pixels)
-            current = self._preview_inputs(editor, node)
-            if (current is None or current[0] != demand
-                    or self.grade_signature(node) != signature):
-                return updating
-        except Exception:
-            self._disable_preview()
-            return updating
-        self.appearance_previews[editor] = revision, trace
-        self._record_timing("appearance_preview", started, self._clock(), demand,
-                            {"samples": pixels.size // 4})
-        return trace, "preview", None
+        except Exception as error:
+            self._dispatch(policy.Event("preview_result", preview=receipt,
+                                        revision=self._revision(receipt.key), error=str(error)))
+            return
+        current = self._preview_inputs(receipt.key.editor, node)
+        if (current is None or current[0] != demand
+                or self.grade_signature(node) != receipt.grade_signature):
+            self._dispatch(policy.Event("preview_withdraw", key=receipt.key))
+            return
+        effects = self._dispatch(policy.Event("preview_result", preview=receipt,
+                                             revision=self._revision(receipt.key), success=True),
+                                 trace=trace)
+        if effects.publish_preview is not None:
+            self._record_timing("appearance_preview", started, self._clock(), demand,
+                                {"samples": pixels.size // 4})
+
+    def _require_preview(self):
+        if self.preview_unavailable is not None:
+            raise PreviewUnavailable(self.preview_unavailable)
+        if self.preview_backend is None:
+            self.preview_backend = AppearancePreview()
+        try:
+            self.preview_backend.warm()
+        except PreviewUnavailable as error:
+            self.preview_unavailable = str(error)
+            raise
 
     def _warm_preview(self):
         """Compile the optional preview backend outside pointer-motion handling."""
-        if self.preview_unavailable:
-            return False
         try:
-            if self.preview_backend is None:
-                from ..appearance_preview import AppearancePreview
-
-                self.preview_backend = AppearancePreview()
-            if not self.preview_warmed:
-                self.preview_backend.warm()
-                self.preview_warmed = True
-            return True
+            self._require_preview()
         except Exception:
-            self._disable_preview()
-            return False
-
-    def _disable_preview(self):
-        backend = self.preview_backend
-        self.preview_backend = None
-        self.preview_warmed = False
-        self.preview_unavailable = True
-        if backend is not None:
-            try:
-                backend.close()
-            except Exception:
-                pass
+            # A drag reports evaluation failure against its own preview receipt.
+            pass
 
     def _preview_inputs(self, editor, node):
         payload = self.payloads.get(editor)
         if (not isinstance(payload, _Payload) or payload.tone is None
-                or policy.status(self.state, editor)[0] != "current"):
+                or policy.status(self.state, editor, self._revision(editor))[0] != "current"):
             return None
         with self._observations:
-            if (self.targets.get(editor) != self._target(node)
+            observed = self.editors.get(editor)
+            if (observed is None or observed.binding != self._target(node)
                     or self.source_epochs.get(editor) != payload.source_epoch):
                 return None
         demand = next(item for item in self.state.desired if item.key == editor)
@@ -319,6 +383,7 @@ class ScopeRuntime:
         if threading.current_thread() is not self._main_thread:
             raise RuntimeError("Vectorscope observation must run on Blender's main thread")
         appearance = isinstance(key, _AppearanceKey)
+        revision = self._revision(key)
         try:
             if appearance and getattr(node, "pg_use_bake", False):
                 self._release(key)
@@ -333,14 +398,13 @@ class ScopeRuntime:
                              "upstream_grades": upstream, "watch": watch}
             if appearance:
                 route_options["scope_capture"] = "appearance"
-            route = bake_routes.describe_vectorscope(node, context, viewport, **route_options)
-            selection = self._selection(node)
+            route = routes.describe_vectorscope(node, context, viewport, **route_options)
+            selection = self._selection(node), self._target(node)
             pointers = frozenset(
                 int(item.as_pointer()) for item in dependencies
                 if getattr(item, "as_pointer", None) is not None
             )
             with self._observations:
-                self.targets[key] = self._target(node)
                 self.dependencies[key] = pointers
                 previous_watch = self.watches.get(key)
                 epoch = self.source_epochs.get(key)
@@ -399,7 +463,8 @@ class ScopeRuntime:
             previous = next((item for item in self.state.desired if item.key == key), None)
             changed = (previous is None or previous.capture_signature != capture_signature
                        or previous.analysis_signature != analysis_signature
-                       or previous.source_signature != source_signature)
+                       or previous.source_signature != source_signature
+                       or previous.revision != revision)
             ready = self.upstream_ready is None or self.upstream_ready(tuple(upstream))
             if changed:
                 capture_started = self._clock()
@@ -422,29 +487,27 @@ class ScopeRuntime:
                 self._dispatch(policy.Event(
                     "request", key=key, capture_signature=capture_signature,
                     source_signature=source_signature, analysis_signature=analysis_signature,
-                    cache_available=samples is not None, ready=ready,
+                    cache_available=samples is not None, ready=ready, revision=revision,
                 ), trace=trace, timings=timings)
             elif ready == (key in self.state.waiting):
                 self._dispatch(policy.Event(
                     "request", key=key, capture_signature=capture_signature,
                     source_signature=source_signature, analysis_signature=analysis_signature,
-                    ready=ready,
+                    ready=ready, revision=revision,
                 ))
         except Exception as error:
-            return self.unavailable(key, error)
+            self._unavailable(key, error, revision)
 
-        return self._display_state(key)
-
-    def drag_capture(self, key, node):
-        """Identify the input capture while Linear edits update its analysis."""
-        key = self._key(key)
+    def _white_drag_receipt(self, key, node, frame):
         demand = next((item for item in self.state.desired if item.key == key), None)
         payload = self.payloads.get(key)
         if (demand is None or not isinstance(payload, _Payload) or payload.tone is not None
                 or key in self.state.waiting):
             return None
         with self._observations:
-            if (self.targets.get(key) != self._target(node)
+            editor = self.editors.get(key)
+            if (editor is None or editor.frame != frame or editor.stage != "LINEAR"
+                    or editor.binding != self._target(node)
                     or self.source_epochs.get(key) != payload.source_epoch):
                 return None
         linear, space = self.linear_settings(node), self.working_space()
@@ -452,15 +515,17 @@ class ScopeRuntime:
             linear.exposure, linear.balance, linear.spread, linear.heading,
             linear.matrix, space,
         ))
-        return demand.capture_signature, payload.source_epoch, witness
+        return WhiteDragReceipt(key, self._target(node), frame, demand.capture_signature,
+                                demand.source_generation, payload.source_epoch, witness)
 
-    def drag_inputs(self, key, node):
+    def begin_white_drag(self, key, node, *, frame):
         """Expose the exact, immutable samples behind the current Linear plot."""
         key = self._key(key)
-        capture = self.drag_capture(key, node)
-        if capture is None or policy.status(self.state, key)[0] != "current":
+        capture = self._white_drag_receipt(key, node, frame)
+        if (capture is None
+                or policy.status(self.state, key, self._revision(key))[0] != "current"):
             return None
-        signature, _epoch, _witness = capture
+        signature = capture.capture_signature
         samples = self.samples.get(signature)
         if samples is None:
             return None
@@ -468,26 +533,55 @@ class ScopeRuntime:
         demand = next(item for item in self.state.desired if item.key == key)
         if demand.analysis_signature != self._analysis_signature(signature, linear, space, None):
             return None
-        return samples, linear, space
+        return capture, samples, linear, space
+
+    def white_drag_current(self, receipt, node, *, frame, stage):
+        """Check the frozen source and controls while the drag edits source white."""
+        return (stage == "LINEAR"
+                and self._white_drag_receipt(receipt.editor, node, frame) == receipt)
 
     def _analysis_signature(self, capture_signature, linear, space, tone):
         return self._digest((capture_signature, linear, space, tone))
 
-    def _display_state(self, key):
-        status, error = policy.status(self.state, key)
-        if status == "error":
-            return None, status, error
-        display = self.displays.get(key)
+    def display_state(self, key, node, *, frame, stage, dragging):
+        """Read display receipts against live context without resolving a route."""
+        key = self._key(key)
+        appearance = _AppearanceKey(key)
+        with self._observations:
+            editor = self.editors.get(key)
+            revision = self.revisions.get(key, 0)
+            appearance_revision = self.revisions.get(appearance, 0)
+        plot = self.displays.get(key)
         payload = self.payloads.get(key)
-        if (display is not None and isinstance(payload, _Payload)
-                and (display.ndim == 1) != (payload.tone is not None)):
-            return None, status, None
-        return display, status, None
+        space_matches = (not isinstance(payload, _Payload)
+                         or payload.space == self.working_space())
+        tone = stage == "TONE"
+        readout = policy.project(
+            self.state, key, appearance,
+            binding_matches=(editor is not None and editor.binding == self._target(node)
+                             and editor.stage == stage and editor.frame[0] == frame[0]),
+            source_valid=(editor is not None and frame == editor.frame and space_matches),
+            tone=tone, compatible=plot is not None and (plot.ndim == 1) == tone,
+            revision=revision, appearance_revision=appearance_revision,
+            mode_matches=editor is not None and dragging == editor.dragging,
+            dragging=dragging, muted=getattr(node, "mute", False),
+            baked=getattr(node, "pg_use_bake", False),
+        )
+        if readout is None:
+            return None
+        input_plot = readout.input
+        plot = plot if input_plot.show_plot else None
+        appearance_plot = readout.appearance
+        if appearance_plot is None:
+            return DisplayState(plot, input_plot.status, input_plot.error)
+        trace = self.displays.get(appearance) if appearance_plot.show_plot else None
+        return DisplayState(None, input_plot.status, input_plot.error, plot, trace,
+                            appearance_plot.status, appearance_plot.error)
 
     def record_draw(self, key, trace):
         if self.timing is None or self.displays.get(key) is not trace:
             return
-        status, _error = policy.status(self.state, key)
+        status, _error = policy.status(self.state, key, self._revision(key))
         if status != "current":
             return
         ticket = next((item for item in self.state.desired if item.key == key), None)
@@ -515,7 +609,7 @@ class ScopeRuntime:
                 inputs = {"snapshot_path": str(snapshot), "images": images,
                           "route": payload.route}
                 profile = {} if self.timing is None else {"profile": True}
-                job = self.backend.create_job(inputs, operation="vectorscope_capture", **profile)
+                job = self.create_job(inputs, operation="vectorscope_capture", **profile)
                 self.active = (ticket, job, root)
                 self._dispatch(policy.Event("started", ticket=ticket))
                 return
@@ -529,6 +623,8 @@ class ScopeRuntime:
                                      "capture_height": rgba.shape[0]})
             self._dispatch(policy.Event(
                 "capture_result", ticket=ticket, success=True,
+                revision=self._revision(ticket.key),
+                allow_lagging=not isinstance(ticket.key, _AppearanceKey),
             ), samples=rgba, trace=trace)
         except PublicationDeferred:
             if root is not None:
@@ -539,7 +635,8 @@ class ScopeRuntime:
                 shutil.rmtree(root, ignore_errors=True)
             self.active = None
             self._dispatch(policy.Event(
-                "capture_result", ticket=ticket, success=False, error=str(error),
+                "capture_result", ticket=ticket, error=str(error),
+                revision=self._revision(ticket.key),
             ))
 
     def poll(self):
@@ -578,7 +675,8 @@ class ScopeRuntime:
         self.active = None
         self._dispatch(policy.Event(
             "capture_result", ticket=ticket, success=failure is None,
-            error=failure,
+            error=failure, revision=self._revision(ticket.key),
+            allow_lagging=not isinstance(ticket.key, _AppearanceKey),
         ), samples=rgba, trace=trace)
         return bool(self.state.queued)
 
@@ -603,6 +701,7 @@ class ScopeRuntime:
                 if watch is None:
                     if dependencies & identifiers.keys():
                         self.source_epochs[key] = next(self.epoch)
+                        self._mark_source_changed(key)
                         affected.append(key)
                     continue
 
@@ -645,6 +744,7 @@ class ScopeRuntime:
 
                 if invalidated:
                     self.source_epochs[key] = next(self.epoch)
+                    self._mark_source_changed(key)
                     affected.append(key)
                 if current_meshes != watch.mesh_witnesses:
                     self.watches[key] = _ScopeWatch(
@@ -655,6 +755,30 @@ class ScopeRuntime:
                         watch.has_render_layers,
                     )
         return tuple(dict.fromkeys(_editor_key(key) for key in affected))
+
+    def _mark_source_changed(self, key):
+        """Dirty the source receipt and its paired appearance receipt."""
+        self.revisions[key] = self.revisions.get(key, 0) + 1
+        if isinstance(key, _AppearanceKey):
+            return
+        appearance = _AppearanceKey(key)
+        editor = self.editors.get(key)
+        if editor is not None and editor.stage == "TONE":
+            self.revisions[appearance] = self.revisions.get(appearance, 0) + 1
+
+    def frame_changed(self, scene_pointer):
+        """Invalidate all demands belonging to a scene before frame evaluation."""
+        affected = []
+        with self._observations:
+            for key, editor in self.editors.items():
+                if editor.frame[0] != scene_pointer:
+                    continue
+                self.revisions[key] = self.revisions.get(key, 0) + 1
+                appearance = _AppearanceKey(key)
+                if editor.stage == "TONE":
+                    self.revisions[appearance] = self.revisions.get(appearance, 0) + 1
+                affected.append(_editor_key(key))
+        return tuple(dict.fromkeys(affected))
 
     @staticmethod
     def _covered_shader_dependency(pointer, watch):
@@ -680,31 +804,37 @@ class ScopeRuntime:
             return ()
         with self._observations:
             keys = []
-            for key, target in self.targets.items():
-                if pointer not in target:
+            for key, editor in self.editors.items():
+                if pointer not in editor.binding:
                     continue
-                if isinstance(key, _AppearanceKey):
-                    keys.append(key.editor)
-                else:
-                    payload = self.payloads.get(key)
-                    if not (appearance_only or tone_only) or (payload is not None
-                                                              and payload.tone is not None):
-                        keys.append(key)
-            return tuple(dict.fromkeys(keys))
+                appearance = _AppearanceKey(key)
+                tone = editor.stage == "TONE"
+                input_changed = not appearance_only and (not tone_only or tone)
+                if input_changed:
+                    self.revisions[key] = self.revisions.get(key, 0) + 1
+                if tone:
+                    self.revisions[appearance] = self.revisions.get(appearance, 0) + 1
+                if input_changed or tone:
+                    keys.append(key)
+            return tuple(keys)
 
-    def _forget_observation(self, key):
+    def _forget_observation(self, key, *, release_binding=False):
         self.payloads.pop(key, None)
         with self._observations:
             self.dependencies.pop(key, None)
             self.watches.pop(key, None)
             self.source_epochs.pop(key, None)
-            self.targets.pop(key, None)
+            if release_binding:
+                if not isinstance(key, _AppearanceKey):
+                    self.editors.pop(key, None)
+                self.revisions.pop(key, None)
 
-    def unavailable(self, node_editor_key, error):
+    def _unavailable(self, node_editor_key, error, revision=None):
         key = self._key(node_editor_key)
+        current_revision = self._revision(key) if revision is None else revision
         self._forget_observation(key)
-        self._dispatch(policy.Event("unavailable", key=key, error=str(error)))
-        return self._display_state(key)
+        self._dispatch(policy.Event("unavailable", key=key, error=str(error),
+                                    revision=current_revision))
 
     def release(self, node_editor_key):
         key = self._key(node_editor_key)
@@ -713,10 +843,13 @@ class ScopeRuntime:
 
     def release_appearance(self, node_editor_key):
         editor = self._key(node_editor_key)
-        self.appearance_previews.pop(editor, None)
         self._release(_AppearanceKey(editor))
 
     def _release(self, key):
+        self._forget_observation(key, release_binding=True)
+        self._dispatch(policy.Event("release", key=key))
+
+    def _withdraw_capture(self, key):
         self._forget_observation(key)
         self._dispatch(policy.Event("release", key=key))
 
@@ -725,28 +858,40 @@ class ScopeRuntime:
         self.payloads.clear()
         self.samples.clear()
         self.sample_bytes = 0
-        self.appearance_previews.clear()
         if self.preview_backend is not None:
             self.preview_backend.close()
             self.preview_backend = None
-        self.preview_warmed = False
-        self.preview_unavailable = False
+        self.preview_unavailable = None
         with self._observations:
             self.dependencies.clear()
             self.watches.clear()
             self.source_epochs.clear()
-            self.targets.clear()
+            self.editors.clear()
+            self.revisions.clear()
 
-    def close(self):
+    def begin_shutdown(self):
+        """Withdraw all demand before the borrowed job owner is stopped."""
+        if self._shutting_down:
+            return
+        self._shutting_down = True
         self.reset()
-        active = self.active
-        self.backend.close()
-        if active is not None:
-            ticket, _job, root = active
+
+    def finish_shutdown(self):
+        """Forget borrowed capture state after its owner has retired jobs."""
+        if self.active is not None:
+            ticket, job, root = self.active
+            retired = getattr(job, "retired", None)
+            if not callable(retired) or not retired():
+                raise RuntimeError("Cannot finish scope shutdown before capture retirement")
             if root is not None:
                 shutil.rmtree(root, ignore_errors=True)
             self.active = None
-            self._dispatch(policy.Event("capture_result", ticket=ticket))
+            self._dispatch(policy.Event(
+                "capture_result", ticket=ticket,
+                allow_lagging=not isinstance(ticket.key, _AppearanceKey),
+            ))
+        self.payloads.clear()
+        self.displays.clear()
 
 
 __all__ = ("ScopeRuntime",)

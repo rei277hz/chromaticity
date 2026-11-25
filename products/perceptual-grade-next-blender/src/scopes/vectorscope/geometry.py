@@ -4,13 +4,18 @@ Drawing and pointer handling consume these values so the visual and input
 domains cannot drift apart when the editor is resized or scaled.
 """
 
+from functools import lru_cache
 import math
 
-from .vectorscope import CHROMA_LIMIT, color_bar_targets
+from ...kernel.prepare import prepare_tone
+from .analysis import CHROMA_LIMIT, color_bar_targets
+from .tone_scope import PLOT_MAX
 
 
 _TARGETS = {label: (cb, cr) for label, cb, cr in color_bar_targets()}
-_HANDLE_TARGETS = {"cr": "R", "yb": "B"}
+AXIS_LABELS = {"cr": "R", "yb": "B"}
+SLIDER_RANGES = {"exposure": (-6., 6.), "cr_balance": (-2., 2.),
+                 "yb_balance": (-2., 2.), "fit": (-2., 2.)}
 DEFAULT_LINEAR_SIZE = 300.
 DEFAULT_TONE_SIZE = (500., 340.)
 MIN_LINEAR_SIZE = 160.
@@ -41,6 +46,21 @@ def scope_targets(rect):
     """Return the six fixed 75% Rec.709 target positions in screen pixels."""
     return {label: _scope_point(rect, cb, cr)
             for label, (cb, cr) in _TARGETS.items()}
+
+
+@lru_cache(maxsize=4)
+def tone_model(tone):
+    return prepare_tone(tone)
+
+
+def curve_point(rect, source, target):
+    x, y, width, height = rect
+    return x + source / PLOT_MAX * width, y + min(1., max(0., target / PLOT_MAX)) * height
+
+
+def tone_anchor_levels(model):
+    # The first knot is the origin. The four following knots are editable.
+    return model.source[1:], model.target[1:]
 
 
 def layout(stage, width, height, scale=1.0, position=(24.0, 24.0), size=None):
@@ -188,7 +208,7 @@ def resize(stage, rect, bounds, handle, dx, dy, scale):
 
 
 def _handle_polar(rect, axis, spread, heading):
-    cb, cr = _TARGETS[_HANDLE_TARGETS[axis]]
+    cb, cr = _TARGETS[AXIS_LABELS[axis]]
     base_radius = math.hypot(cb, cr) / CHROMA_LIMIT * rect[2] * .5
     radius = base_radius * (1 + spread / 100)
     angle = math.atan2(cr, cb) + math.radians(heading)
@@ -209,7 +229,7 @@ def handle_positions(rect, linear, scale=1.0):
     radius = rect[2] * .5
     center = (rect[0] + radius, rect[1] + radius)
     positions = {}
-    for axis, spread, heading in zip(_HANDLE_TARGETS, linear.spread, linear.heading):
+    for axis, spread, heading in zip(AXIS_LABELS, linear.spread, linear.heading):
         _, distance, angle = _handle_polar(rect, axis, spread, heading)
         distance = min(distance, radius)
         positions[axis] = (center[0] + distance * math.cos(angle),

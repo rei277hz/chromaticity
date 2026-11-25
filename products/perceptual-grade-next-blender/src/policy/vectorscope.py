@@ -43,3 +43,13 @@ def publication(success: bool, active: bool, same_source: bool,
                 exact: bool, display_newer: bool) -> Effects:
     """Authorize current results or a same-source lagging preview."""
     return step(State(active, same_source, exact, display_newer), Event(success))[1]
+
+
+def display_current(published: bool, revision_matches: bool, source_valid: bool) -> bool:
+    """Authorize a display as current only for the latest valid revision."""
+    return published and revision_matches and source_valid
+
+
+def preview_current(active: bool, revision_matches: bool, source_valid: bool) -> bool:
+    """Authorize a preview completion only for its still-current demand."""
+    return active and revision_matches and source_valid

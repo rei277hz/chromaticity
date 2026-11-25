@@ -4,11 +4,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .color_core.linear import rgb_to_xyz
-from .color_core.modcam16 import encode_cones, signed_hk
-from .kernel.prepare import prepare_linear
+from ...color_core.linear import rgb_to_xyz
+from ...color_core.modcam16 import encode_cones, signed_hk
+from ...kernel.prepare import prepare_linear
 from .tone_scope import PLOT_MAX
-from .vectorscope import normalize_histogram, splat_components
+from .analysis import normalize_histogram, splat_components
 
 
 LIGHTNESS_KNEE = 100.

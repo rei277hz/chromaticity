@@ -6,10 +6,10 @@ import threading
 
 import numpy as np
 
-from .kernel.boundary import prepare_boundary
-from .kernel.node_templates import shader_source
-from .kernel.prepare import GAMMA, viewing
-from .kernel.stage2_parameters import (
+from ...kernel.boundary import prepare_boundary
+from ...kernel.node_templates import shader_source
+from ...kernel.prepare import GAMMA, viewing
+from ...kernel.stage2_parameters import (
     PARAMETER_CONTENT_SIGNATURE,
     PARAMETER_ROLE_SHAPES,
     PARAMETER_ROLES,
@@ -27,6 +27,10 @@ _ROLE_SAMPLERS = {
     "web_toe": "grade_web_toe",
     "adaptance": "grade_adaptance",
 }
+
+
+class PreviewUnavailable(RuntimeError):
+    """The active GPU cannot run the appearance compute shader."""
 
 
 class AppearancePreview:
@@ -59,7 +63,7 @@ class AppearancePreview:
 
         gpu.init()
         if not gpu.capabilities.compute_shader_support_get():
-            raise RuntimeError("Appearance preview requires GPU compute shader support")
+            raise PreviewUnavailable("Appearance preview requires GPU compute shader support")
         fl, aw = viewing(203.)
         boundary = prepare_boundary(fl, aw, GAMMA)
         source = shader_source(boundary=boundary)

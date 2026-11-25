@@ -1532,7 +1532,7 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     # Reject a missing exact image before native bake and preserve the selected
     # artifact, receipt, and verification state.
     manager = nodes._bake.manager
-    original_snapshot = manager._snapshot
+    original_snapshot = manager.freeze_snapshot
 
     def snapshot_with_missing_source(route):
         root, snapshot, images = original_snapshot(route)
@@ -1540,12 +1540,12 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
         return root, snapshot, images
 
     try:
-        manager._snapshot = snapshot_with_missing_source
+        manager.freeze_snapshot = snapshot_with_missing_source
         nodes._bake.request(restored_uv, restored_uv_context)
         wait_bake(restored_uv)
         assert restored_uv.get(nodes.bake_controller.BAKE_ERROR)
     finally:
-        del manager._snapshot
+        manager.freeze_snapshot = original_snapshot
     assert_shader_uses_image(restored_uv, legacy_image)
     assert_shader_uses_image(legacy_reader, legacy_image)
     np.testing.assert_array_equal(legacy_image.pixels[:], legacy_pixels)

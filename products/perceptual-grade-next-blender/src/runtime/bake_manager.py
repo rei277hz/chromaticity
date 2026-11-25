@@ -5,16 +5,9 @@
 from collections import deque
 from concurrent.futures import CancelledError
 from contextlib import nullcontext
-from pathlib import Path
 import shutil
-import tempfile
-import uuid
-
-import numpy as np
 
 from ..policy import bake as bake_policy
-from .bake_helper import BakeHelperBackend
-from .bake_images import image_format, resolve_datablocks, route_datablock
 from .publication import PublicationDeferred
 
 
@@ -34,16 +27,14 @@ class BakeManager:
     result until a later poll; callbacks must not enter a second admission.
     """
 
-    def __init__(self, bpy, backend=None):
-        self.bpy = bpy
-        self.backend = backend or BakeHelperBackend()
+    def __init__(self, *, freeze_snapshot, create_job):
+        self.freeze_snapshot = freeze_snapshot
+        self.create_job = create_job
         self.queue = deque()
         self.publication_queue = deque()
         self.active = None
         self.jobs = {}
         self.closed = False
-        self.backend_closed = False
-        self.close_error = None
 
     @staticmethod
     def _node_key(node):
@@ -54,54 +45,6 @@ class BakeManager:
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             pass
         return id(node)
-
-    def _snapshot(self, route):
-        root = Path(tempfile.mkdtemp(prefix="pg-next-bake-"))
-        try:
-            snapshot = root / "snapshot.blend"
-            scene = route_datablock(self.bpy, self.bpy.data.scenes, route, "scene")
-            if scene is None:
-                raise RuntimeError("Bake scene disappeared before snapshot")
-            ids = {scene}
-            owner_kind = route.get("owner_kind")
-            if owner_kind == "material":
-                owner = route_datablock(self.bpy, self.bpy.data.materials, route, "owner")
-            elif owner_kind == "world":
-                owner = route_datablock(self.bpy, self.bpy.data.worlds, route, "owner")
-            else:
-                owner = scene
-            if owner is not None:
-                ids.add(owner)
-            obj = route_datablock(self.bpy, self.bpy.data.objects, route, "object")
-            if obj is not None:
-                ids.add(obj)
-            self.bpy.data.libraries.write(
-                str(snapshot), ids, path_remap="ABSOLUTE", fake_user=True,
-            )
-            image_keys = {
-                tuple(descriptor["image_key"]) for descriptor in route.get("images", ())
-            }
-            source_images = resolve_datablocks(
-                self.bpy, self.bpy.data.images, image_keys,
-            )
-            images = []
-            for key, image in source_images.items():
-                width, height = (int(value) for value in image.size)
-                channels = int(image.channels)
-                if min(width, height) < 1 or width * height * max(channels, 4) * 4 > 512 * 1024 * 1024:
-                    raise MemoryError("Bake source Image exceeds the pixel budget")
-                values = np.empty(width * height * channels, dtype=np.float32)
-                image.pixels.foreach_get(values)
-                path = root / ("image-" + uuid.uuid4().hex + ".npy")
-                np.save(path, values.reshape(height, width, channels), allow_pickle=False)
-                images.append(dict(
-                    image_key=key, width=width, height=height, pixels_path=str(path),
-                    **image_format(image),
-                ))
-            return root, snapshot, images
-        except BaseException:
-            shutil.rmtree(root, ignore_errors=True)
-            raise
 
     @staticmethod
     def _notify_failure(entry, error):
@@ -144,7 +87,7 @@ class BakeManager:
         if current_signature(node, route) != signature:
             raise RuntimeError("Bake inputs changed before the request was accepted")
 
-        root, snapshot, images = self._snapshot(route)
+        root, snapshot, images = self.freeze_snapshot(route)
         try:
             inputs = {
                 "snapshot_path": str(snapshot),
@@ -322,7 +265,7 @@ class BakeManager:
                 continue
             self.active = entry
             try:
-                entry["job"] = self.backend.create_job(entry["inputs"])
+                entry["job"] = self.create_job(entry["inputs"])
             except Exception as error:
                 self.active = None
                 effects = self._event(entry, bake_policy.Event(
@@ -382,8 +325,7 @@ class BakeManager:
 
     def poll(self):
         if self.closed:
-            self.close()
-            return not self.backend_closed
+            return bool(self.jobs)
         if self.active is None:
             self._start_next()
         entry = self.active
@@ -398,21 +340,18 @@ class BakeManager:
             self._retry_publications()
         return self.active is not None or bool(self.queue) or bool(self.publication_queue)
 
-    def close(self):
-        """Synchronously close the bounded helper and preserve ownership on failure."""
-        if self.backend_closed:
-            return
+    def begin_shutdown(self):
+        """Stop accepting requests and withdraw work before the helper closes."""
         if not self.closed:
             self.closed = True
             self._withdraw_all("close")
-        try:
-            self.backend.close()
-        except Exception as error:
-            self.close_error = error
-            self.backend_closed = False
-            raise
-        self.close_error = None
-        self.backend_closed = True
+
+    def finish_shutdown(self):
+        """Release the remaining snapshot after the capture helper has retired."""
+        if not self.closed:
+            raise RuntimeError("Bake shutdown has not started")
+        if self.active is not None and not self.active["job"].retired():
+            raise RuntimeError("Bake capture job has not retired")
         for entry in tuple(self.jobs.values()):
             effects = self._event(entry, bake_policy.Event(
                 "cancelled",

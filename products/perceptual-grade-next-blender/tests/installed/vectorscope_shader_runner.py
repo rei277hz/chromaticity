@@ -22,7 +22,7 @@ bpy.context.preferences.extensions.repos.new(
 )
 extension = importlib.import_module("bl_ext.pg_vectorscope_shader.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".nodes")
-vectorscope_ui = importlib.import_module(extension.__name__ + ".vectorscope_ui")
+vectorscope_ui = importlib.import_module(extension.__name__ + ".scopes.vectorscope.ui")
 drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
 pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui)
 errors = []
@@ -85,8 +85,7 @@ tree.links.new(shader.outputs[0], output.inputs["Surface"])
 obj.data.materials.append(material)
 
 runtime = vectorscope_ui._runtime
-backend = runtime.backend
-create_job = backend.create_job
+create_job = runtime.create_job
 capture_jobs = []
 
 
@@ -95,7 +94,7 @@ def track_capture(inputs, **kwargs):
     return create_job(inputs, **kwargs)
 
 
-backend.create_job = track_capture
+runtime.create_job = track_capture
 
 camera_data = bpy.data.cameras.new("Vectorscope shader camera")
 camera_data.type = "ORTHO"

@@ -23,7 +23,7 @@ class VectorscopeCaptureTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, directory.name)
         cls.addClassCleanup(sys.path.remove, directory.name)
-        cls.capture = importlib.import_module(package_name + ".runtime.vectorscope_capture")
+        cls.capture = importlib.import_module(package_name + ".scopes.vectorscope.capture")
 
     def test_fractional_cells_integrate_alpha_and_straight_rgb(self):
         pixels = np.zeros((3, 5, 4), dtype=np.float32)

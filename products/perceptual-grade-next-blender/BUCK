@@ -41,6 +41,11 @@ RUNTIME_ENTRYPOINTS = {
     for path in glob([RUNTIME_PREFIX + "**/*.py"])
 }
 
+SCOPE_ENTRYPOINTS = {
+    path[len(PREFIX):]: path
+    for path in glob([PREFIX + "scopes/**/*.py"])
+}
+
 source_tree(
     name = "sources",
     srcs = SOURCES,
@@ -587,14 +592,22 @@ invariant_proof(
     required_mutations = [
         "unmatched_receipt_is_admitted",
         "superseded_capture_overwrites_newer_display",
+        "display_ignores_live_context",
+        "preview_ignores_revision",
     ],
     required_properties = [
         "unmatched_or_different_source_receipt_is_inert",
         "current_requires_exact_success",
         "superseded_success_cannot_overwrite_newer_display",
         "only_exact_failure_is_visible",
+        "display_current_requires_publication_and_live_source",
+        "preview_current_requires_matching_live_receipt",
     ],
-    required_witnesses = ["lagging_same_source_preview_is_reachable"],
+    required_witnesses = [
+        "lagging_same_source_preview_is_reachable",
+        "current_display_is_reachable",
+        "current_preview_is_reachable",
+    ],
     requirements = "requirements/vectorscope.inv",
     runtime_source = "policy/vectorscope.py",
     source = POLICY_PREFIX + "vectorscope.py",
@@ -635,7 +648,7 @@ extension_tree(
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
         "README.md": "README.md",
-    } | POLICY_ENTRYPOINTS | RUNTIME_ENTRYPOINTS,
+    } | POLICY_ENTRYPOINTS | RUNTIME_ENTRYPOINTS | SCOPE_ENTRYPOINTS,
     visibility = ["PUBLIC"],
     deps = [
         ":kernel_runtime_bundle",

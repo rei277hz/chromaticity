@@ -15,6 +15,8 @@ import numpy as np
 
 
 class VectorscopeTests(unittest.TestCase):
+    FRAME = (91, 1, 0.)
+
     @classmethod
     def setUpClass(cls):
         directory = tempfile.TemporaryDirectory(prefix="pg-vectorscope-unit-")
@@ -25,13 +27,39 @@ class VectorscopeTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, directory.name)
         cls.addClassCleanup(sys.path.remove, directory.name)
-        cls.policy = importlib.import_module(package_name + ".runtime.vectorscope_policy")
-        cls.runtime = importlib.import_module(package_name + ".runtime.vectorscope")
-        cls.analysis = importlib.import_module(package_name + ".vectorscope")
-        cls.appearance_scope = importlib.import_module(package_name + ".appearance_scope")
-        cls.tone_scope = importlib.import_module(package_name + ".tone_scope")
-        cls.appearance_preview = importlib.import_module(package_name + ".appearance_preview")
+        scope = package_name + ".scopes.vectorscope."
+        cls.policy = importlib.import_module(scope + "policy")
+        cls.runtime = importlib.import_module(scope + "runtime")
+        cls.analysis = importlib.import_module(scope + "analysis")
+        cls.appearance_scope = importlib.import_module(scope + "appearance_scope")
+        cls.tone_scope = importlib.import_module(scope + "tone_scope")
+        cls.appearance_preview = importlib.import_module(scope + "appearance_preview")
+        cls.white_drag = importlib.import_module(scope + "white_drag")
         cls.kernel = importlib.import_module(package_name + ".kernel")
+
+    def observe(self, runtime, node, *, key=1, tone=None, dragging=False, frame=None):
+        return runtime.observe_editor(
+            key, None, node, frame=self.FRAME if frame is None else frame,
+            stage="LINEAR" if tone is None else "TONE", dragging=dragging, tone=tone,
+        )
+
+    def observe_appearance(self, runtime, node, *, key=1, dragging=False, frame=None,
+                           tone=None):
+        state = runtime.observe_editor(
+            key, None, node, frame=self.FRAME if frame is None else frame,
+            stage="TONE", dragging=dragging,
+            tone=self.kernel.ToneSettings() if tone is None else tone,
+        )
+        return self.appearance_result(state)
+
+    @staticmethod
+    def input_result(state):
+        plot = state.rgba if state.rgba is not None else state.tone_histogram
+        return plot, state.status, state.error
+
+    @staticmethod
+    def appearance_result(state):
+        return state.appearance, state.appearance_status, state.appearance_error
 
     def request(self, state, capture, *, key=1, source="source", analysis=None,
                 cached=False, ready=True):
@@ -223,13 +251,13 @@ class VectorscopeTests(unittest.TestCase):
                 return root, root / "snapshot.blend", []
 
             runtime = self.runtime.ScopeRuntime(
-                None, snapshot, lambda _node: self.kernel.LinearSettings(),
-                lambda: "Linear Rec.709", backend=backend,
+                snapshot, lambda _node: self.kernel.LinearSettings(),
+                lambda: "Linear Rec.709", create_job=backend.create_job,
             )
-            with (patch.object(self.runtime.bake_routes, "describe_vectorscope", return_value=route),
+            with (patch.object(self.runtime.routes, "describe_vectorscope", return_value=route),
                   patch.object(self.runtime, "capture_loaded_image", return_value=None)):
-                runtime.observe(1, None, nodes[0], None)
-                runtime.observe(2, None, nodes[1], None)
+                self.observe(runtime, nodes[0])
+                self.observe(runtime, nodes[1], key=2)
                 self.assertEqual(backend.create_job.call_count, 0)
                 self.assertTrue(runtime.poll())
                 self.assertTrue(runtime.poll())
@@ -245,7 +273,7 @@ class VectorscopeTests(unittest.TestCase):
                 self.assertEqual(backend.create_job.call_count, 2)
                 self.assertFalse(runtime.poll())
                 self.assertFalse(roots[1].exists())
-                trace, status, error = runtime.observe(2, None, nodes[1], None)
+                trace, status, error = self.input_result(self.observe(runtime, nodes[1], key=2))
                 self.assertIsNotNone(trace)
                 self.assertEqual((status, error), ("current", None))
 
@@ -253,37 +281,39 @@ class VectorscopeTests(unittest.TestCase):
         pixels = np.ones((2, 2, 4), dtype=np.float32)
         backend = Mock()
         tree = self.changed_id(100, "CompositorNodeTree")
-        node = self.changed_id(1, "Grade", id_data=tree)
+        node = self.changed_id(1, "Grade", id_data=tree, pg_use_bake=True)
         runtime = self.runtime.ScopeRuntime(
-            None, Mock(), lambda _node: self.kernel.LinearSettings(),
-            lambda: "Linear Rec.709", backend=backend,
+            Mock(), lambda _node: self.kernel.LinearSettings(),
+            lambda: "Linear Rec.709", create_job=backend.create_job,
         )
         route = {"owner_kind": "compositor", "capture_signature": "frame one",
                  "source_signature": "source"}
         tone = self.kernel.ToneSettings()
         edited = replace(tone, input_nits=(*tone.input_nits[:3], 400.))
-        with (patch.object(self.runtime.bake_routes, "describe_vectorscope", return_value=route),
+        with (patch.object(self.runtime.routes, "describe_vectorscope", return_value=route),
               patch.object(self.runtime, "capture_loaded_image", return_value=pixels) as capture):
-            self.assertEqual(runtime.observe(1, None, node, None), (None, "updating", None))
+            self.assertEqual(self.input_result(self.observe(runtime, node)),
+                             (None, "updating", None))
             self.assertFalse(runtime.poll())
             self.assertEqual(runtime.tone_changed(node), ())
 
-            first, status, error = runtime.observe(1, None, node, None, tone=tone)
+            first, status, error = self.input_result(self.observe(runtime, node, tone=tone))
             self.assertEqual((status, error), ("current", None))
             self.assertEqual(first.shape, (128,))
             self.assertEqual(runtime.tone_changed(node), (1,))
             self.assertEqual(runtime.linear_changed(node), (1,))
-            self.assertIsNone(runtime.drag_inputs(1, node))
+            self.assertIsNone(runtime.begin_white_drag(1, node, frame=self.FRAME))
 
-            second, status, error = runtime.observe(1, None, node, None, tone=edited)
+            second, status, error = self.input_result(self.observe(runtime, node, tone=edited))
             self.assertEqual((status, error), ("current", None))
             self.assertFalse(np.array_equal(second, first))
 
             route["capture_signature"] = "frame two"
-            self.assertEqual(runtime.observe(1, None, node, None), (None, "updating", None))
+            self.assertEqual(self.input_result(self.observe(runtime, node)),
+                             (None, "updating", None))
             self.assertEqual(capture.call_count, 1)
             self.assertFalse(runtime.poll())
-            trace, status, error = runtime.observe(1, None, node, None)
+            trace, status, error = self.input_result(self.observe(runtime, node))
             self.assertEqual(trace.shape[-1], 4)
             self.assertEqual((status, error), ("current", None))
             self.assertEqual(capture.call_count, 2)
@@ -295,22 +325,24 @@ class VectorscopeTests(unittest.TestCase):
         backend = Mock()
         backend.create_job.return_value = job
         tree = self.changed_id(100, "CompositorNodeTree")
-        node = self.changed_id(1, "Grade", id_data=tree)
+        node = self.changed_id(1, "Grade", id_data=tree, pg_use_bake=True)
         runtime = self.runtime.ScopeRuntime(
-            None, lambda _route: (None, "snapshot.blend", []),
-            lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709", backend=backend,
+            lambda _route: (None, "snapshot.blend", []),
+            lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
+            create_job=backend.create_job,
         )
         route = {"owner_kind": "compositor", "capture_signature": "frame",
                  "source_signature": "source"}
         tone = self.kernel.ToneSettings()
-        with (patch.object(self.runtime.bake_routes, "describe_vectorscope", return_value=route),
+        with (patch.object(self.runtime.routes, "describe_vectorscope", return_value=route),
               patch.object(self.runtime, "capture_loaded_image", return_value=None)):
-            self.assertEqual(runtime.observe(1, None, node, None), (None, "updating", None))
+            self.assertEqual(self.input_result(self.observe(runtime, node)),
+                             (None, "updating", None))
             self.assertTrue(runtime.poll())
-            self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
+            self.assertEqual(self.input_result(self.observe(runtime, node, tone=tone)),
                              (None, "updating", None))
             self.assertFalse(runtime.poll())
-            histogram, status, error = runtime.observe(1, None, node, None, tone=tone)
+            histogram, status, error = self.input_result(self.observe(runtime, node, tone=tone))
             self.assertEqual(histogram.shape, (128,))
             self.assertEqual((status, error), ("current", None))
             backend.create_job.assert_called_once()
@@ -328,33 +360,33 @@ class VectorscopeTests(unittest.TestCase):
         ready = Mock(side_effect=lambda grades: not grades)
         signature = Mock(return_value="initial Grade")
         runtime = self.runtime.ScopeRuntime(
-            None, lambda _route: (None, "snapshot.blend", []),
+            lambda _route: (None, "snapshot.blend", []),
             lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
-            backend=backend, upstream_ready=ready, grade_signature=signature,
+            create_job=backend.create_job, upstream_ready=ready, grade_signature=signature,
         )
         tone = self.kernel.ToneSettings()
 
         def describe(*_args, scope_capture="input", **_kwargs):
             return dict(route, scope_capture=scope_capture)
 
-        with (patch.object(self.runtime.bake_routes, "describe_vectorscope", side_effect=describe),
+        with (patch.object(self.runtime.routes, "describe_vectorscope", side_effect=describe),
               patch.object(self.runtime, "capture_loaded_image", return_value=pixels) as direct):
-            runtime.observe(1, None, node, None, tone=tone)
-            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+            self.observe(runtime, node, tone=tone)
+            self.assertEqual(self.observe_appearance(runtime, node, tone=tone),
                              (None, "updating", None))
             ready.assert_called_with((node,))
             self.assertTrue(runtime.poll())
             self.assertTrue(runtime.poll())
             backend.create_job.assert_not_called()
-            histogram, status, _error = runtime.observe(1, None, node, None, tone=tone)
+            histogram, status, _error = self.input_result(self.observe(runtime, node, tone=tone))
             self.assertEqual(status, "current")
 
             ready.side_effect = None
             ready.return_value = True
-            runtime.observe_appearance(1, None, node, None)
+            self.observe_appearance(runtime, node, tone=tone)
             self.assertTrue(runtime.poll())
             self.assertFalse(runtime.poll())
-            plot, status, error = runtime.observe_appearance(1, None, node, None)
+            plot, status, error = self.observe_appearance(runtime, node, tone=tone)
             self.assertEqual((status, error), ("current", None))
             self.assertIsInstance(plot, self.appearance_scope.AppearanceScope)
             request = backend.create_job.call_args.args[0]
@@ -363,21 +395,143 @@ class VectorscopeTests(unittest.TestCase):
 
             signature.return_value = "Grade with Warp edit"
             self.assertEqual(runtime.appearance_changed(node), (1,))
-            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+            self.assertEqual(self.observe_appearance(runtime, node, tone=tone),
                              (None, "updating", None))
-            self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
+            self.assertEqual(self.input_result(self.observe(runtime, node, tone=tone)),
                              (histogram, "current", None))
             self.assertTrue(runtime.poll())
             job.advance.side_effect = RuntimeError("Capture failed")
             self.assertFalse(runtime.poll())
-            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+            self.assertEqual(self.observe_appearance(runtime, node, tone=tone),
                              (None, "error", "Capture failed"))
 
             node.pg_use_bake = True
-            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+            self.assertEqual(self.observe_appearance(runtime, node, tone=tone),
                              (None, "bake", None))
-            self.assertEqual(runtime.observe(1, None, node, None, tone=tone),
+            self.assertEqual(self.input_result(self.observe(runtime, node, tone=tone)),
                              (histogram, "current", None))
+
+    def test_dirty_appearance_completion_cannot_publish(self):
+        pixels = np.ones((2, 2, 4), dtype=np.float32)
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree)
+        job = Mock()
+        job.advance.return_value = {"rgba": pixels}
+        runtime = self.runtime.ScopeRuntime(
+            lambda _route: (None, "snapshot.blend", []),
+            lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
+            create_job=Mock(return_value=job), grade_signature=Mock(return_value="Grade"),
+        )
+        route = {"owner_kind": "compositor", "capture_signature": "frame",
+                 "source_signature": "source"}
+        tone = self.kernel.ToneSettings()
+
+        def readout(selected=node, *, frame=self.FRAME, stage="TONE"):
+            return runtime.display_state(1, selected, frame=frame, stage=stage, dragging=False)
+
+        with (patch.object(self.runtime.routes, "describe_vectorscope", return_value=route),
+              patch.object(self.runtime, "capture_loaded_image", return_value=pixels)):
+            self.observe(runtime, node, tone=tone)
+            self.assertTrue(runtime.poll())
+            self.assertTrue(runtime.poll())
+            self.assertEqual(runtime.appearance_changed(node), (1,))
+            self.assertFalse(runtime.poll())
+            self.assertEqual(self.appearance_result(readout()), (None, "updating", None))
+            self.assertEqual(readout().status, "current")
+            self.assertIsNone(runtime.displays.get(self.runtime._AppearanceKey(1)))
+
+            self.observe(runtime, node, tone=tone)
+            self.assertTrue(runtime.poll())
+            self.assertFalse(runtime.poll())
+            self.assertEqual(readout().appearance_status, "current")
+            self.assertIsNone(readout(stage="LINEAR"))
+            self.assertIsNone(readout(self.changed_id(2, "Grade", id_data=tree)))
+            self.assertEqual(readout(frame=(self.FRAME[0], 2, 0.)).appearance_status, "updating")
+            self.assertEqual(runtime.frame_changed(self.FRAME[0]), (1,))
+            state = readout()
+            self.assertEqual(state.status, "updating")
+            self.assertIsNotNone(state.tone_histogram)
+            self.assertEqual(self.appearance_result(state), (None, "updating", None))
+
+    def test_route_error_keeps_editor_bound_and_retries(self):
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree)
+        runtime = self.runtime.ScopeRuntime(
+            Mock(), lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
+            create_job=Mock(),
+        )
+        route = {"owner_kind": "compositor", "capture_signature": "frame",
+                 "source_signature": "source"}
+        with patch.object(self.runtime.routes, "describe_vectorscope",
+                          side_effect=[ValueError("Busy viewport"), route]):
+            self.assertEqual(self.input_result(self.observe(runtime, node)),
+                             (None, "error", "Busy viewport"))
+            self.assertTrue(runtime.has_editor(1))
+            self.assertEqual(runtime.linear_changed(node), (1,))
+            state = runtime.display_state(1, node, frame=self.FRAME, stage="LINEAR", dragging=False)
+            self.assertEqual(self.input_result(state), (None, "updating", None))
+            self.assertEqual(self.input_result(self.observe(runtime, node)),
+                             (None, "updating", None))
+
+    def test_white_drag_receipt_survives_own_edit_until_source_changes(self):
+        pixels = np.ones((2, 2, 4), dtype=np.float32)
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree)
+        image = self.changed_id(4, "Image")
+        linear = Mock(return_value=self.kernel.LinearSettings())
+        runtime = self.runtime.ScopeRuntime(Mock(), linear, lambda: "Linear Rec.709", create_job=Mock())
+
+        def describe(*_args, dependencies, **_kwargs):
+            dependencies.append(image)
+            return {"owner_kind": "compositor", "capture_signature": "frame",
+                    "source_signature": "source"}
+
+        with (patch.object(self.runtime.routes, "describe_vectorscope", side_effect=describe),
+              patch.object(self.runtime, "capture_loaded_image", return_value=pixels)):
+            self.observe(runtime, node)
+            self.assertFalse(runtime.poll())
+            receipt, samples, _settings, _space = runtime.begin_white_drag(1, node, frame=self.FRAME)
+            self.assertFalse(samples.flags.writeable)
+            linear.return_value = replace(linear.return_value, source_xy=(0.32, 0.33))
+            self.assertEqual(runtime.linear_changed(node), (1,))
+            self.assertIsNone(runtime.begin_white_drag(1, node, frame=self.FRAME))
+            self.assertTrue(runtime.white_drag_current(receipt, node, frame=self.FRAME, stage="LINEAR"))
+            self.observe(runtime, node)
+            self.assertTrue(runtime.white_drag_current(receipt, node, frame=self.FRAME, stage="LINEAR"))
+            self.assertEqual(runtime.invalidate(None, (image,)), (1,))
+            self.assertFalse(runtime.white_drag_current(receipt, node, frame=self.FRAME, stage="LINEAR"))
+
+    def test_shutdown_preserves_snapshot_until_capture_retires(self):
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree)
+        job = Mock()
+        job.retired.return_value = False
+        route = {"owner_kind": "compositor", "capture_signature": "frame",
+                 "source_signature": "source"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "capture"
+            root.mkdir()
+            runtime = self.runtime.ScopeRuntime(
+                lambda _route: (root, root / "snapshot.blend", []),
+                lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
+                create_job=Mock(return_value=job),
+            )
+            with (patch.object(self.runtime.routes, "describe_vectorscope", return_value=route),
+                  patch.object(self.runtime, "capture_loaded_image", return_value=None)):
+                self.observe(runtime, node)
+                self.assertTrue(runtime.poll())
+            runtime.begin_shutdown()
+            runtime.begin_shutdown()
+            job.cancel.assert_called_once_with()
+            with self.assertRaisesRegex(RuntimeError, "before capture retirement"):
+                runtime.finish_shutdown()
+            self.assertTrue(root.is_dir())
+            self.assertIsNotNone(runtime.active)
+            job.retired.return_value = True
+            runtime.finish_shutdown()
+            self.assertFalse(root.exists())
+            self.assertIsNone(runtime.active)
+            self.assertIsNone(runtime.state.active)
 
     def test_appearance_preview_waits_for_current_input_and_grade(self):
         pixels = np.ones((2, 2, 4), dtype=np.float32)
@@ -392,9 +546,9 @@ class VectorscopeTests(unittest.TestCase):
         backend = Mock()
         backend.create_job.return_value = job
         runtime = self.runtime.ScopeRuntime(
-            None, lambda _route: (None, "snapshot.blend", []),
+            lambda _route: (None, "snapshot.blend", []),
             lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
-            backend=backend, grade_signature=signature, preview_roles=roles,
+            create_job=backend.create_job, grade_signature=signature, preview_roles=roles,
             preview_backend=preview,
         )
         frame = "first frame"
@@ -404,12 +558,12 @@ class VectorscopeTests(unittest.TestCase):
                     "source_signature": frame, "scope_capture": scope_capture}
 
         def dragging():
-            return runtime.observe_appearance(1, None, node, None, dragging=True)
+            return self.observe_appearance(runtime, node, dragging=True)
 
         def input_observation():
-            return runtime.observe(1, None, node, None, tone=self.kernel.ToneSettings())
+            return self.observe(runtime, node, tone=self.kernel.ToneSettings())
 
-        with (patch.object(self.runtime.bake_routes, "describe_vectorscope", side_effect=describe),
+        with (patch.object(self.runtime.routes, "describe_vectorscope", side_effect=describe),
               patch.object(self.runtime, "capture_loaded_image", return_value=pixels)):
             input_observation()
             runtime.poll()
@@ -442,11 +596,11 @@ class VectorscopeTests(unittest.TestCase):
             self.assertEqual(dragging(), (None, "bake", None))
             node.pg_use_bake = False
 
-            self.assertEqual(runtime.observe_appearance(1, None, node, None),
+            self.assertEqual(self.observe_appearance(runtime, node, dragging=False),
                              (None, "updating", None))
             runtime.poll()
             runtime.poll()
-            self.assertEqual(runtime.observe_appearance(1, None, node, None)[1], "current")
+            self.assertEqual(self.observe_appearance(runtime, node, dragging=False)[1], "current")
             self.assertEqual(backend.create_job.call_count, 1)
             runtime.reset()
             preview.close.assert_called_once()
@@ -460,7 +614,7 @@ class VectorscopeTests(unittest.TestCase):
         self.assertEqual(first.dtype, np.float32)
 
     def make_runtime(self, watch, dependencies):
-        runtime = self.runtime.ScopeRuntime(None, None, None, None, backend=object())
+        runtime = self.runtime.ScopeRuntime(None, None, None, create_job=Mock())
         runtime.dependencies = {1: frozenset(dependencies)}
         runtime.watches = {1: watch}
         runtime.source_epochs = {1: next(runtime.epoch)}
@@ -499,7 +653,7 @@ class VectorscopeTests(unittest.TestCase):
                            False, False, "material", False)
         runtime = self.make_runtime(watch, (pointer,))
         mesh = self.changed_id(pointer, "Mesh", witness="before")
-        with patch.object(self.runtime.bake_routes, "vectorscope_mesh_witness",
+        with patch.object(self.runtime.routes, "vectorscope_mesh_witness",
                           side_effect=lambda value: value.witness):
             self.assertEqual(runtime.invalidate(None, (mesh,)), ())
             self.assertEqual(runtime.source_epochs[1], 1)
@@ -800,7 +954,7 @@ class VectorscopeTests(unittest.TestCase):
         settings = self.kernel.LinearSettings()
         rgba = np.array([[[0.18, 0.18, 0.18, 1.0]]])
         for space in ("Linear Rec.709", "Linear Rec.2020", "ACEScg"):
-            drag = self.analysis.WhiteDrag.from_capture(rgba, settings, space)
+            drag = self.white_drag.WhiteDrag.from_capture(rgba, settings, space)
             self.assertIsNotNone(drag)
             for direction in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 with self.subTest(space=space, direction=direction):
@@ -816,10 +970,10 @@ class VectorscopeTests(unittest.TestCase):
         settings = self.kernel.LinearSettings()
         rgba = np.full((16, 16, 4), 0.18)
         rgba[..., 3] = 1.0
-        expected = self.analysis.WhiteDrag.from_capture(rgba, settings, space)
+        expected = self.white_drag.WhiteDrag.from_capture(rgba, settings, space)
         self.assertIsNotNone(expected)
         rgba[0, 0] = (1.0, 0.0, 0.0, 1.0)
-        drag = self.analysis.WhiteDrag.from_capture(rgba, settings, space)
+        drag = self.white_drag.WhiteDrag.from_capture(rgba, settings, space)
         rgba[:] = 0.0
         self.assertIsNotNone(drag)
         np.testing.assert_allclose(drag.move(settings, 15, 10, 200),
@@ -830,16 +984,16 @@ class VectorscopeTests(unittest.TestCase):
         settings = self.kernel.LinearSettings()
         rgba = np.array([[[0.18, 0.18, 0.18, 1.0]]])
         override = replace(settings, matrix=np.eye(3))
-        self.assertIsNone(self.analysis.WhiteDrag.from_capture(rgba, override, space))
+        self.assertIsNone(self.white_drag.WhiteDrag.from_capture(rgba, override, space))
         for pixel in ((0.18, 0.18, 0.18, 0.0), (0.0, 0.0, 0.0, 1.0),
                       (np.nan, 0.18, 0.18, 1.0), (100.0, 0.0, 0.0, 1.0)):
             with self.subTest(pixel=pixel):
-                self.assertIsNone(self.analysis.WhiteDrag.from_capture(np.array([[pixel]]), settings, space))
+                self.assertIsNone(self.white_drag.WhiteDrag.from_capture(np.array([[pixel]]), settings, space))
 
     def test_white_drag_finds_visible_pixel_missed_by_sparse_grid(self):
         rgba = np.zeros((32, 32, 4), dtype=np.float64)
         rgba[0, 0] = (1.0, 0.0, 0.0, 1.0)
-        drag = self.analysis.WhiteDrag.from_capture(
+        drag = self.white_drag.WhiteDrag.from_capture(
             rgba, self.kernel.LinearSettings(), "Linear Rec.709")
         self.assertIsNotNone(drag)
         np.testing.assert_array_equal(drag._rgb, ((1.0, 0.0, 0.0),))
@@ -848,16 +1002,16 @@ class VectorscopeTests(unittest.TestCase):
         rgba = np.array([[[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0],
                           [0.0, 0.0, 1.0, 1.0]]])
         settings = self.kernel.LinearSettings()
-        with patch.object(self.analysis, "_robust_squared_distances",
+        with patch.object(self.white_drag, "_robust_squared_distances",
                           return_value=np.array((10.0, 7.0, 8.0))):
-            drag = self.analysis.WhiteDrag.from_capture(rgba, settings, "Linear Rec.709")
+            drag = self.white_drag.WhiteDrag.from_capture(rgba, settings, "Linear Rec.709")
         self.assertIsNotNone(drag)
         np.testing.assert_array_equal(drag._rgb, ((0.0, 1.0, 0.0),))
 
     def test_white_drag_keeps_long_moves_in_cat16_domain(self):
         settings = self.kernel.LinearSettings()
         rgba = np.array([[[0.003, 0.003, 0.003, 1.0]]])
-        drag = self.analysis.WhiteDrag.from_capture(rgba, settings, "Linear Rec.709")
+        drag = self.white_drag.WhiteDrag.from_capture(rgba, settings, "Linear Rec.709")
         self.assertIsNotNone(drag)
         points = tuple(drag.move(settings, 1000 * dx, 1000 * dy, 100)
                        for dx, dy in ((1, 1), (1, -1), (-1, 1), (-1, -1)))

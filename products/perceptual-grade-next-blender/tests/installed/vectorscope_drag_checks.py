@@ -90,18 +90,21 @@ class ScopePointer:
         self._acknowledged = None
         self._started = time.monotonic()
         router_cls = nodes.PG_OT_gesture_router
-        modal, press_plot, cancel_drag = router_cls.modal, ui._press_plot, ui._cancel_drag
+        interaction_cls = ui.Interaction
+        modal = router_cls.modal
+        press_plot = interaction_cls._press_plot
+        cancel_drag = interaction_cls._cancel_drag
         self._originals = [
             (router_cls, "modal", modal),
-            (ui, "_press_plot", press_plot),
-            (ui, "_cancel_drag", cancel_drag),
+            (interaction_cls, "_press_plot", press_plot),
+            (interaction_cls, "_cancel_drag", cancel_drag),
         ]
 
         def trace_modal(router, context, event):
             if (self.window is None or router.window_key != self.window.as_pointer()
                     or event.type not in self._EVENTS):
                 return modal(router, context, event)
-            before = ui._DRAGS.get(router.window_key)
+            before = ui._interaction.drags.get(router.window_key)
             area, region = context.area, context.region
             entry = self._record(
                 "router", type=event.type, value=event.value, xy=(event.mouse_x, event.mouse_y),
@@ -124,7 +127,7 @@ class ScopePointer:
                 if entry["xy"] == injected["xy"]:
                     injected["admission"] = entry["admission"]
             result = modal(router, context, event)
-            after = ui._DRAGS.get(router.window_key)
+            after = ui._interaction.drags.get(router.window_key)
             entry["result"] = sorted(result)
             if after is not before:
                 if after is not None:
@@ -137,18 +140,18 @@ class ScopePointer:
                 self._acknowledged = entry
             return result
 
-        def trace_press_plot(window, event):
-            result = press_plot(window, event)
+        def trace_press_plot(interaction, window, event):
+            result = press_plot(interaction, window, event)
             if window == self.window:
-                key = ui._key(window, self.area)
+                key = ui.editor.key(window, self.area)
                 tree = getattr(self.area.spaces.active, "edit_tree", None)
                 active = None if tree is None else tree.nodes.active
-                region = next(iter(ui._view_regions(self.area)), None)
-                enabled = key in ui._ENABLED
+                region = next(iter(ui.editor.view_regions(self.area)), None)
+                preferences = ui._editors.get(key)
                 box = None
-                if not result and enabled and region is not None:
-                    box = ui._gizmo_layout(self.area, region, key)
-                drag = ui._DRAGS.get(key[0])
+                if not result and preferences is not None and region is not None:
+                    box = ui.editor.layout(self.area, region, preferences)
+                drag = interaction.drags.get(key[0])
                 injected = self._injected
                 if (injected is not None and injected["type"] == event.type
                         and injected["value"] == event.value
@@ -156,7 +159,8 @@ class ScopePointer:
                     injected["hit"] = result
                 self._record(
                     "hit_test", hit=result, xy=(event.mouse_x, event.mouse_y),
-                    enabled=enabled, stage=ui._stage(key),
+                    enabled=preferences is not None,
+                    stage=None if preferences is None else preferences.stage,
                     fixture_active_node=None if active is None else active.name,
                     fixture_active_node_selected=None if active is None else active.select,
                     local_xy=(event.mouse_x - region.x, event.mouse_y - region.y)
@@ -168,18 +172,18 @@ class ScopePointer:
                 )
             return result
 
-        def trace_cancel_drag(window_key, *, before_frame_change=False):
+        def trace_cancel_drag(interaction, window_key, *, before_frame_change=False):
             if self.window is not None and window_key == self.window.as_pointer():
-                drag = ui._DRAGS.get(window_key)
+                drag = interaction.drags.get(window_key)
                 if drag is not None:
                     self._record("cancel_drag", control=drag.mode, token=drag.token,
                                  before_frame_change=before_frame_change)
-            return cancel_drag(window_key, before_frame_change=before_frame_change)
+            return cancel_drag(interaction, window_key, before_frame_change=before_frame_change)
 
         # Blender captures the Python callback when the operator is registered.
         router_cls.modal = trace_modal
-        ui._press_plot = trace_press_plot
-        ui._cancel_drag = trace_cancel_drag
+        interaction_cls._press_plot = trace_press_plot
+        interaction_cls._cancel_drag = trace_cancel_drag
 
     def bind(self, window, area, region):
         self.window, self.area, self.region = window, area, region
@@ -203,7 +207,7 @@ class ScopePointer:
         return entry
 
     def event(self, kind, value, delta=(0, 0)):
-        x, y, side = self.ui._plot_rect(self.area, self.region)
+        x, y, side = self.plot_rect()
         self.event_at(kind, value, (x + side / 2 + delta[0], y + side / 2 + delta[1]))
 
     def event_at(self, kind, value, point, *, phase=None, attempt=None):
@@ -269,19 +273,28 @@ class ScopePointer:
             return f"Gizmo router did not finish handling {event}"
         return "Gizmo router handled press without creating a drag"
 
-    def control_point(self, control, node):
-        with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):
-            box = self.ui._gizmo_layout(self.area, self.region)
+    def box(self):
+        editor = self.ui.editor
+        preferences = self.ui._editors[editor.key(self.window, self.area)]
+        box = editor.layout(self.area, self.region, preferences)
         assert box is not None
+        return box
+
+    def plot_rect(self):
+        return tuple(map(round, self.box()["scope"][:3]))
+
+    def control_point(self, control, node):
+        box = self.box()
+        geometry = self.ui.editor.geometry
         if control in ("cr", "yb"):
             linear = self.settings(node).linear
-            return self.ui.geometry.handle_positions(box["scope"], linear, box["scale"])[control]
+            return geometry.handle_positions(box["scope"], linear, box["scale"])[control]
         if control.startswith("resize_"):
             x, y, width, height = box["resize_grips"][control.removeprefix("resize_")]
             return x + width / 2, y + height / 2
         if control == "curve":
-            tone = self.ui._tone_model(self.settings(node).tone)
-            return self.ui._curve_point(box["curve"], tone.source[-1], tone.target[-1])
+            tone = geometry.tone_model(self.settings(node).tone)
+            return geometry.curve_point(box["curve"], tone.source[-1], tone.target[-1])
         x, y, width, height = box[control]
         return x + width / 2, y + height / 2
 
@@ -322,7 +335,7 @@ class ScopePointer:
             self._delivery_failure(move), control, move["xy"], target_moves)
         press = self.event_at("LEFTMOUSE", "PRESS", point)
         deadline = time.monotonic() + 5
-        while ((drag := self.ui._DRAGS.get(window_key)) is None
+        while ((drag := self.ui._interaction.drags.get(window_key)) is None
                or self._acknowledged is None or "created_drag" not in self._acknowledged):
             assert time.monotonic() < deadline, (self._delivery_failure(press), control, press["xy"])
             yield .05
@@ -346,33 +359,32 @@ class ScopePointer:
             "Gizmo did not own its hovered handle", control, self._acknowledged,
         )
         window_key = self.window.as_pointer()
-        assert self.ui._HOVER_CURSORS[window_key][1] == self.ui._control_cursor(
-            self.ui._stage(self.ui._key(self.window, self.area)), control)
-        with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):
-            box = self.ui._gizmo_layout(self.area, self.region)
+        assert self.ui._interaction.hover_cursors[window_key][1] == "SCROLL_XY"
+        box = self.box()
         outside = (box["rect"][0] - 15, box["rect"][1] + box["rect"][3] / 2)
         injected = self.event_at("MOUSEMOVE", "NOTHING", outside)
         deadline = time.monotonic() + 5
         while self._acknowledged is None:
             assert time.monotonic() < deadline, "Gizmo did not restore the pointer outside its panel"
             yield .05
-        assert self._injected is injected and window_key not in self.ui._HOVER_CURSORS
+        assert self._injected is injected and window_key not in self.ui._interaction.hover_cursors
 
     def resize_control(self, control, node, delta):
-        key = self.ui._key(self.window, self.area)
-        initial = self.ui._SIZES.get(self.ui._size_key(key))
+        key = self.ui.editor.key(self.window, self.area)
+        preferences = self.ui._editors[key]
+        initial = preferences.sizes.get(preferences.stage)
         point = self.control_point(control, node)
         yield from self.press_at(point, control, node)
         self.event_at("MOUSEMOVE", "NOTHING",
                       tuple(value + change for value, change in zip(point, delta)))
         deadline = time.monotonic() + 5
-        while self.ui._SIZES.get(self.ui._size_key(key)) == initial:
+        while preferences.sizes.get(preferences.stage) == initial:
             assert time.monotonic() < deadline, ("Gizmo resize did not change size", control)
             yield .05
         self.event_at("LEFTMOUSE", "RELEASE",
                       tuple(value + change for value, change in zip(point, delta)))
         yield .05
-        return self.ui._SIZES[self.ui._size_key(key)]
+        return preferences.sizes[preferences.stage]
 
     def drag_control(self, control, node, delta, *, cancel=False):
         start = self.control_point(control, node)
@@ -415,7 +427,7 @@ class ScopePointer:
         return int(cb), int(cr)
 
     def press(self):
-        x, y, side = self.ui._plot_rect(self.area, self.region)
+        x, y, side = self.plot_rect()
         yield from self.press_at((x + side / 2, y + side / 2))
 
     def inert_drag(self, delta=(0, 0)):

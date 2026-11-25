@@ -6,7 +6,11 @@ from uuid import uuid4
 
 import numpy as np
 
-from .bake_images import route_datablock
+from ...runtime import effective_grade_graph
+from ...runtime.capture_host import (
+    compositor_root, configure_linear, disable_file_outputs, open_snapshot,
+)
+from ...runtime.capture_images import route_datablock
 
 
 MAX_CAPTURE_EDGE = 512
@@ -99,28 +103,26 @@ def _expose_output(tree, parents, source, socket_type, prefix):
 
 def _appearance_outputs(root, group_path, node_name):
     """Expose the hidden final-appearance tap through private group copies."""
-    from ..kernel.node_templates import (
+    from ...kernel.node_templates import (
         KERNEL_QUALITY, SLOT_SCOPE_APPEARANCE, SLOT_SCOPE_APPEARANCE_ALPHA,
         TEMPLATE_SLOT,
     )
-    from . import bake_graph
-
     tree, parents, target = _occurrence(root, group_path, node_name)
     kernel = target.node_tree
     if target.mute or kernel is None:
         raise ValueError("Vectorscope appearance capture requires a live full Grade node")
-    if kernel.get(bake_graph.WRAPPER):
-        if not bake_graph.structure_valid(kernel):
+    if kernel.get(effective_grade_graph.WRAPPER):
+        if not effective_grade_graph.wrapper_structure_valid(kernel):
             raise ValueError("Vectorscope Bake wrapper is incomplete")
         shader = kernel.bl_idname == "ShaderNodeTree"
         controls = (node.inputs[0 if shader else "Switch"] for node in kernel.nodes
-                    if node.get(bake_graph.SELECTOR))
+                    if node.get(effective_grade_graph.SELECTOR))
         if any(control.is_linked or control.default_value for control in controls):
             raise ValueError("Vectorscope appearance capture cannot read an active Bake output")
         target.node_tree = kernel.copy()
         parents.append((tree, target))
         tree = target.node_tree
-        target = bake_graph.marked(tree, bake_graph.LIVE)
+        target = effective_grade_graph.marked(tree, effective_grade_graph.LIVE)
         kernel = target.node_tree
     if (kernel.get("_perceptual_grade_stage2_complete") is not True
             or kernel.get(KERNEL_QUALITY) not in (None, "full")):
@@ -321,11 +323,9 @@ def _read_buffer(image):
 def _raw_compositor_image(route, scene):
     """Resolve the connected Image when Blender uses its raw channels."""
     import bpy
-    from .bake_worker import _compositor_root
-
     if route.get("scope_capture") == "appearance":
         return None
-    tree = _compositor_root(bpy, scene, route)
+    tree = compositor_root(bpy, scene, route)
     for name in tuple(route.get("group_path", ())):
         group = tree.nodes.get(str(name))
         if group is None or group.node_tree is None or group.mute:
@@ -405,10 +405,8 @@ def _render(scene, route, context):
 
 def _compositor_capture(route, scene, context):
     import bpy
-    from .bake_worker import _compositor_root, _configure_linear
-
     started = context.start_timing()
-    root = _compositor_root(bpy, scene, route)
+    root = compositor_root(bpy, scene, route)
     tree = root.copy()
     path, target = route.get("group_path", ()), route["node_name"]
     if route.get("scope_capture") == "appearance":
@@ -430,7 +428,7 @@ def _compositor_capture(route, scene, context):
         endpoint, item = _output_node(tree, directory, "scope_" + token + "_")
         tree.links.new(output, endpoint.inputs[item.name])
         _install_tree(scene, tree)
-        _configure_linear(scene)
+        configure_linear(scene)
         context.finish_timing("capture_setup", started)
         with context.measure("capture_render"):
             _render(scene, route, context)
@@ -573,8 +571,6 @@ def _shader_owner(route):
 
 def _shader_capture(route, scene, view_layer, context):
     import bpy
-    from .bake_worker import _configure_linear
-
     started = context.start_timing()
     owner = _shader_owner(route)
     if owner is None or owner.node_tree is None:
@@ -589,7 +585,7 @@ def _shader_capture(route, scene, view_layer, context):
     scene.render.resolution_x, scene.render.resolution_y = width, height
     scene.render.use_border = False
     scene.render.use_multiview = False
-    _configure_linear(scene)
+    configure_linear(scene)
 
     token = uuid4().hex
     color_name, mask_name = "PGVectorscopeColor_" + token, "PGVectorscopeMask_" + token
@@ -644,8 +640,6 @@ def _shader_capture(route, scene, view_layer, context):
 def capture(inputs, context):
     """Capture and return a bounded `{rgba: float32[height,width,4]}` sample."""
     import bpy
-    from .bake_worker import _disable_file_outputs, _open_snapshot
-
     expected = {"snapshot_path", "images", "route"}
     if (not isinstance(inputs, dict)
             or set(inputs) not in (expected, expected | {"artifact_dir"})):
@@ -656,7 +650,7 @@ def capture(inputs, context):
     if route.get("scope_capture", "input") not in {"input", "appearance"}:
         raise ValueError("Vectorscope capture kind is not supported")
     with context.measure("capture_snapshot_open"):
-        _open_snapshot(inputs)
+        open_snapshot(inputs)
     scene = route_datablock(bpy, bpy.data.scenes, route, "scene")
     if scene is None:
         raise ValueError("Vectorscope capture scene is absent")
@@ -669,7 +663,7 @@ def capture(inputs, context):
         if bpy.context.window is not None:
             bpy.context.window.view_layer = view_layer
         scene.frame_set(int(route["frame"]), subframe=float(route.get("subframe", 0.0)))
-        _disable_file_outputs()
+        disable_file_outputs()
     context.checkpoint()
 
     kind = str(route.get("owner_kind", "")).lower()
