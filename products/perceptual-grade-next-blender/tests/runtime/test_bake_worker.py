@@ -20,7 +20,8 @@ class BakeWorkerBackendTests(unittest.TestCase):
         with zipfile.ZipFile(files("tests.perceptual_grade_blender") / "extension.zip") as archive:
             archive.extractall(package)
         sys.path.insert(0, cls.directory.name)
-        cls.module = importlib.import_module("bake_worker_test.runtime.bake_worker")
+        cls.module = importlib.import_module("bake_worker_test.features.bake.worker")
+        cls.capture_worker = importlib.import_module("bake_worker_test.runtime.capture_worker")
 
     @classmethod
     def tearDownClass(cls):
@@ -48,11 +49,11 @@ class BakeWorkerBackendTests(unittest.TestCase):
             context=SimpleNamespace(window=None),
         )
         with patch.dict(sys.modules, {"bpy": bpy}), \
-                patch.object(self.module, "_open_snapshot") as open_snapshot, \
+                patch.object(self.module, "open_snapshot") as open_snapshot, \
                 patch.object(self.module, "route_datablock", return_value=None), \
                 patch.object(self.module, "_shader", return_value="shader") as shader, \
                 patch.object(self.module, "_compositor", return_value="compositor") as compositor:
-            worker = self.module.BakeWorker()
+            worker = self.capture_worker.create()
             self.assertEqual(worker.dispatch("bake", inputs, context), "shader")
             self.assertEqual(
                 worker.dispatch("bake", compositor_inputs, context), "compositor")
@@ -63,10 +64,10 @@ class BakeWorkerBackendTests(unittest.TestCase):
 
     def test_bake_dispatch_rejects_legacy_operations_and_inputs(self):
         context = SimpleNamespace(checkpoint=lambda: None)
-        worker = self.module.BakeWorker()
+        worker = self.capture_worker.create()
         for operation in ("native_bake", "shader_bake", "compositor_bake"):
             with self.subTest(operation=operation):
-                with self.assertRaisesRegex(ValueError, "Unknown Bake helper operation"):
+                with self.assertRaisesRegex(ValueError, "Unknown capture helper operation"):
                     worker.dispatch(operation, {}, context)
 
         inputs = {"artifact_dir": "/artifacts", "images": [], "route": {"domain": "IMAGE"}}

@@ -27,9 +27,10 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_compositor.perceptual_grade")
-nodes = importlib.import_module(extension.__name__ + ".nodes")
+nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
 stage2_bindings = importlib.import_module(extension.__name__ + ".kernel.stage2_bindings")
 parameter_layout = importlib.import_module(extension.__name__ + ".kernel.stage2_parameters")
+grade_publisher = importlib.import_module(extension.__name__ + ".features.grade.publisher")
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append
@@ -51,7 +52,7 @@ def trace_grade_publication(*args, **kwargs):
 
 
 nodes._publish_grade_parameters = trace_grade_publication
-_run_bank_publication = nodes.run_bank_publication
+_run_bank_publication = grade_publisher.run_bank_publication
 
 
 def trace_bank_publication(*args, **kwargs):
@@ -62,7 +63,7 @@ def trace_bank_publication(*args, **kwargs):
     return result
 
 
-nodes.run_bank_publication = trace_bank_publication
+grade_publisher.run_bank_publication = trace_bank_publication
 
 # A spatially varying image is essential: constant results use float32 even in
 # AUTO and would conceal the half-precision intermediate overflow regression.

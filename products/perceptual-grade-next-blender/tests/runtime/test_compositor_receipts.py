@@ -20,7 +20,7 @@ class CompositorReceiptTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, str(root))
         cls.module = importlib.import_module(
-            "grade_compositor_receipts_test.runtime.compositor_receipts")
+            "grade_compositor_receipts_test.features.grade.compositor_receipts")
 
     @classmethod
     def tearDownClass(cls):

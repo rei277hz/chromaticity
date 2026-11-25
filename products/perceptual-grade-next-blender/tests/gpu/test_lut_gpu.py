@@ -16,7 +16,7 @@ from color_tools.kernel.settings import ColorSettings, LinearSettings, Settings,
 from color_tools.lut_gpu import StackGPUBackend
 from color_tools.perceptual_grade_reference import grading, model
 from color_tools.perceptual_grade_reference.cube_guard import guard as cube_guard
-from color_tools.runtime.grade_preparation import GradePreparer
+from color_tools.features.grade.preparation import GradePreparer
 from tools.perceptual_grade.reports.native import NativeFixture
 from tools.perceptual_grade.reports import oracle
 from tools.perceptual_grade.reports.full_cases import guard_before_scale_grade

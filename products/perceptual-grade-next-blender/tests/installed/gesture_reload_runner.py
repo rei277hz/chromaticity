@@ -29,7 +29,7 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_gesture_reload.perceptual_grade")
-nodes = importlib.import_module(extension.__name__ + ".nodes")
+nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
 stage2_bindings = importlib.import_module(extension.__name__ + ".kernel.stage2_bindings")
 errors = []
 assert addon_utils.enable(extension.__name__, default_set=True,

@@ -113,7 +113,11 @@ class BakeRouteTests(unittest.TestCase):
         with zipfile.ZipFile(files("tests.perceptual_grade_blender") / "extension.zip") as archive:
             archive.extractall(package)
         sys.path.insert(0, str(root))
-        cls.module = importlib.import_module("grade_bake_routes_test.runtime.bake_routes")
+        cls.module = importlib.import_module(
+            "grade_bake_routes_test.features.bake.routes")
+        cls.graph = importlib.import_module("grade_bake_routes_test.runtime.capture_graph")
+        cls.wrapper = importlib.import_module("grade_bake_routes_test.runtime.effective_grade_graph")
+        cls.scope = importlib.import_module("grade_bake_routes_test.features.vectorscope.routes")
         cls.color_ui = importlib.import_module("grade_bake_routes_test.kernel.color_ui")
 
     @classmethod
@@ -278,8 +282,8 @@ class BakeRouteTests(unittest.TestCase):
             with self.subTest(second_enabled=enabled):
                 self.grade.pg_stack_entries[1].enabled = enabled
                 first = self.module.describe(self.grade, self.context)
-                with patch.object(self.module, "STACK_COMPOSITION_SCHEMA",
-                                  self.module.STACK_COMPOSITION_SCHEMA + 1):
+                with patch.object(self.graph, "STACK_COMPOSITION_SCHEMA",
+                                  self.graph.STACK_COMPOSITION_SCHEMA + 1):
                     revised = self.module.describe(self.grade, self.context)
                 for key in ("request_signature", "receipt_signature"):
                     self.assertEqual(first[key] != revised[key], enabled, key)
@@ -291,8 +295,8 @@ class BakeRouteTests(unittest.TestCase):
                                      for _ in range(2)]
         link(upstream, "Color", self.grade, "Color")
         first = self.module.describe(self.grade, self.context)
-        with patch.object(self.module, "STACK_COMPOSITION_SCHEMA",
-                          self.module.STACK_COMPOSITION_SCHEMA + 1):
+        with patch.object(self.graph, "STACK_COMPOSITION_SCHEMA",
+                          self.graph.STACK_COMPOSITION_SCHEMA + 1):
             revised = self.module.describe(self.grade, self.context)
         for key in ("request_signature", "receipt_signature"):
             self.assertNotEqual(first[key], revised[key], key)
@@ -309,7 +313,7 @@ class BakeRouteTests(unittest.TestCase):
 
         first.direction = "INVERSE"
         single_inverse = self.module.describe(self.grade, self.context)
-        with patch.object(self.module, "STACK_INVERSE_SCHEMA", self.module.STACK_INVERSE_SCHEMA + 1):
+        with patch.object(self.graph, "STACK_INVERSE_SCHEMA", self.graph.STACK_INVERSE_SCHEMA + 1):
             revised = self.module.describe(self.grade, self.context)
             first.direction = "FORWARD"
             self.assertEqual(single_forward, self.module.describe(self.grade, self.context))
@@ -376,7 +380,7 @@ class BakeRouteTests(unittest.TestCase):
                 upstream = self.make_grade(self.tree, name=kind)
                 owner = upstream.pg_grade
                 upstream.bl_idname = kind
-                if kind in self.module.PER_NODE_TYPES:
+                if kind in self.graph.PER_NODE_TYPES:
                     upstream.pg_grade = None
                     upstream.__dict__.update(vars(owner.pg_linear))
                     upstream.__dict__.update(vars(owner.pg_tone))
@@ -496,7 +500,7 @@ class BakeRouteTests(unittest.TestCase):
         link(first, "Alpha", self.grade, "Alpha")
         obj = self.mesh()
         dependencies = []
-        with patch.object(self.module, "_image_state", wraps=self.module._image_state) as image_state:
+        with patch.object(self.graph, "_image_state", wraps=self.graph._image_state) as image_state:
             route = self.module.describe(self.grade, self.context, dependencies=dependencies)
         self.assertEqual(image_state.call_count, 1)
         self.assertEqual([item.session_uid for item in dependencies],
@@ -628,8 +632,9 @@ class BakeRouteTests(unittest.TestCase):
         self.blocked("source_udim")
 
     def test_cache_geometry_is_rejected(self):
+        obj = self.mesh(modifiers=(SimpleNamespace(type="MESH_SEQUENCE_CACHE", cache_file=None),))
+        self.graph.geometry_observation(obj)
         self.mapped_texture()
-        self.mesh(modifiers=(SimpleNamespace(type="MESH_SEQUENCE_CACHE", cache_file=None),))
         self.blocked("mesh_cache")
 
     def test_shader_to_rgb_is_rejected_and_eevee_uv_bakes_are_allowed(self):
@@ -852,10 +857,10 @@ class BakeRouteTests(unittest.TestCase):
         upstream.pg_bake_image[self.module.BAKE_DOMAIN] = "IMAGE"
         link(upstream, "Color", self.grade, "Color")
         upstream.node_tree = Tree("Managed upstream bake")
-        upstream.node_tree[self.module.bake_graph.WRAPPER] = 1
+        upstream.node_tree[self.wrapper.WRAPPER] = 1
         reader = Node(upstream.node_tree, "ShaderNodeTexImage", "Baked Image",
                       image=upstream.pg_bake_image)
-        reader[self.module.bake_graph.READER] = 1
+        reader[self.wrapper.READER] = 1
         upstream_grades = []
         first = self.module.describe(self.grade, self.context, upstream_grades=upstream_grades)
         self.assertEqual(first["images"][0]["reader_path"], ("Baked Image",))
@@ -929,10 +934,10 @@ class BakeRouteTests(unittest.TestCase):
         upstream.pg_bake_image = Image("Stored bake")
         upstream.pg_bake_image[self.module.BAKE_DOMAIN] = "IMAGE"
         upstream.node_tree = Tree("Managed bake wrapper")
-        upstream.node_tree[self.module.bake_graph.WRAPPER] = 1
+        upstream.node_tree[self.wrapper.WRAPPER] = 1
         reader = Node(upstream.node_tree, "ShaderNodeTexImage", "Baked Image",
                       image=upstream.pg_bake_image)
-        reader[self.module.bake_graph.READER] = 1
+        reader[self.wrapper.READER] = 1
         uv = Node(self.tree, "ShaderNodeUVMap", outputs=(("UV", None),))
         link(uv, "UV", upstream, "Vector")
         link(upstream, "Color", self.grade, "Color")
@@ -1042,9 +1047,9 @@ class BakeRouteTests(unittest.TestCase):
         context = SimpleNamespace(scene=self.scene, object=None,
                                   space_data=SimpleNamespace(id=self.scene, node_tree=tree, path=()))
 
-        before = self.module.describe_vectorscope(target, context)
+        before = self.scope.describe_vectorscope(target, context)
         user.frame_offset += 1
-        after = self.module.describe_vectorscope(target, context)
+        after = self.scope.describe_vectorscope(target, context)
         self.assertEqual(before["source_signature"], after["source_signature"])
         self.assertNotEqual(before["capture_signature"], after["capture_signature"])
 
@@ -1069,7 +1074,7 @@ class BakeRouteTests(unittest.TestCase):
             with self.subTest(kind=grade.bl_idname):
                 grade.inputs.get("Color").type = "RGBA"
                 dependencies = []
-                route = self.module.describe_vectorscope(
+                route = self.scope.describe_vectorscope(
                     grade, context, dependencies=dependencies,
                 )
                 self.assertIsNone(route["object_key"])
@@ -1090,10 +1095,10 @@ class BakeRouteTests(unittest.TestCase):
         )
         link(self.grade, "Color", shader, "Base Color")
         link(shader, "BSDF", output, "Surface")
-        self.assertTrue(self.module._vectorscope_coverage_invariant(self.material, self.grade))
+        self.assertTrue(self.scope._vectorscope_coverage_invariant(self.material, self.grade))
 
         shader.inputs.get("Alpha").default_value = 0.5
-        self.assertFalse(self.module._vectorscope_coverage_invariant(self.material, self.grade))
+        self.assertFalse(self.scope._vectorscope_coverage_invariant(self.material, self.grade))
 
     def test_saved_compositor_bake_resolves_original_effect_after_selection(self):
         tree = Tree("Bake Graph", "CompositorNodeTree")

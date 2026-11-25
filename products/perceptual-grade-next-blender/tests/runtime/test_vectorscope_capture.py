@@ -23,7 +23,7 @@ class VectorscopeCaptureTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, directory.name)
         cls.addClassCleanup(sys.path.remove, directory.name)
-        cls.capture = importlib.import_module(package_name + ".runtime.vectorscope_capture")
+        cls.capture = importlib.import_module(package_name + ".features.vectorscope.capture")
 
     def test_fractional_cells_integrate_alpha_and_straight_rgb(self):
         pixels = np.zeros((3, 5, 4), dtype=np.float32)
@@ -76,3 +76,14 @@ class VectorscopeCaptureTests(unittest.TestCase):
         self.assertEqual(reduced.shape, (1, 2, 4))
         np.testing.assert_array_equal(reduced[..., :3], pixels)
         np.testing.assert_array_equal(reduced[..., 3], 1)
+
+    def test_shader_appearance_unweights_signed_coordinates_and_rejects_invalid_samples(self):
+        rgba = np.array([[[6.0, -3.0, 0.5, 1.0], [0.0, 0.0, 0.0, 1.0]]],
+                        dtype=np.float32)
+        alpha = np.array([[0.25, 0.0]], dtype=np.float32)
+        coverage = np.array([[0.75, 1.0]], dtype=np.float32)
+
+        result = self.capture._resolve_shader_aovs(rgba, alpha, coverage, appearance=True)
+
+        np.testing.assert_array_equal(result, [[[24.0, -12.0, 2.0, 0.25],
+                                                [0.0, 0.0, 0.0, 0.0]]])

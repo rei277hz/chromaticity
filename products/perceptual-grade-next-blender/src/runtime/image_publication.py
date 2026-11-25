@@ -5,7 +5,7 @@ from typing import Optional
 
 import numpy as np
 
-from ..policy import bank_publication as policy
+from ..features.grade.policy import bank_publication as policy
 
 
 def pack_image_for_save(image, *, generated, pack):

@@ -161,6 +161,12 @@ def output_guard(g,state):
     return _output_projection(g,state,data,t,deficit,e,square)
 
 
+def returned_appearance(g, result):
+    """Encode the actual AP1 guard result, including its endpoint and fallback colors."""
+    # The AP1/cone basis preserves equal channels in both directions.
+    return g.encode_cones(_native(g, result.native_color, _boundary(g).inverse))
+
+
 def _retained_tone_responses(g,tone):
     """Retain the raw basis only when Color and H-K are semantic identities."""
     # Without authored Color changes, nonnegative post-Tone energy never

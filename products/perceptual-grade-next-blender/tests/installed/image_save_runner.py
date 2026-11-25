@@ -17,7 +17,7 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_image_save.perceptual_grade")
-nodes = importlib.import_module("bl_ext.pg_image_save.perceptual_grade.nodes")
+nodes = importlib.import_module("bl_ext.pg_image_save.perceptual_grade.features.grade.host")
 stage2_bindings = importlib.import_module(extension.__name__ + ".kernel.stage2_bindings")
 errors = []
 assert addon_utils.enable(
@@ -257,7 +257,8 @@ np.testing.assert_array_equal(inactive_web.pixels[:], expected_web)
 original_invalidation = nodes._invalidate_grade_parameters
 original_dispatch = nodes._dispatch
 original_publication = nodes._publish_grade_parameters
-for fail_invalidation in (False, True):
+original_selector_setter = nodes._set_parameter_selector
+for fail_invalidation, fail_restore in ((False, False), (True, False), (True, True)):
     image = assert_clean_shared_image(users)
     image.use_fake_user = True
     previous_banks = parameter_banks(shader)
@@ -269,7 +270,9 @@ for fail_invalidation in (False, True):
     previous_signature = image.get(nodes.PARAMETER_SIGNATURE)
     previous_pixels = np.asarray(image.pixels[:], dtype=np.float32)
     previous_kernels = tuple(nodes._kernel_for_node(node).as_pointer() for node in users)
+    previous_active = nodes._read_parameter_selector(nodes._kernel_for_node(shader))
     tag_attempts, installation_receipts, invalidation_errors = [], [], []
+    skipped_restores = []
 
     def observing_invalidation(candidate):
         primary = parameter_image(shader)
@@ -300,9 +303,17 @@ for fail_invalidation in (False, True):
         invalidation_errors.extend(error for _nodes, error in result)
         return result
 
+    def dropping_selector_restore(kernel, bank):
+        if kernel.bl_idname == nodes.SHADER_TREE and bank == previous_active:
+            skipped_restores.append(kernel.as_pointer())
+        else:
+            original_selector_setter(kernel, bank)
+
     nodes._invalidate_grade_parameters = observing_invalidation
     nodes._dispatch = observing_dispatch
     nodes._publish_grade_parameters = observing_publication
+    if fail_restore:
+        nodes._set_parameter_selector = dropping_selector_restore
     try:
         grade.pg_linear.exposure += 0.0625
         reconcile()
@@ -310,6 +321,7 @@ for fail_invalidation in (False, True):
         nodes._invalidate_grade_parameters = original_invalidation
         nodes._dispatch = original_dispatch
         nodes._publish_grade_parameters = original_publication
+        nodes._set_parameter_selector = original_selector_setter
     assert len(tag_attempts) == (1 if fail_invalidation else len(nodes.PARAMETER_ROLES)), tag_attempts
     assert image.get(nodes.PARAMETER_SIGNATURE) == previous_signature
     np.testing.assert_array_equal(image.pixels[:], previous_pixels)
@@ -318,6 +330,14 @@ for fail_invalidation in (False, True):
         assert not installation_receipts, installation_receipts
         assert any("simulated Grade image invalidation failure" in str(error)
                    for error in invalidation_errors), invalidation_errors
+        if fail_restore:
+            assert skipped_restores == [previous_kernels[0]], skipped_restores
+            assert any(
+                isinstance(error, ExceptionGroup) and any(
+                    "Grade bank selector restoration readback" in str(cause)
+                    for cause in error.exceptions
+                ) for error in invalidation_errors
+            ), invalidation_errors
         for node in users:
             state = nodes._node_stores[node.as_pointer()]["state"]
             assert not nodes.node_policy.output_allowed(state)
@@ -458,8 +478,8 @@ def failing_upload(target, pixels):
         raise RuntimeError("transaction upload failed")
 
 
-def failing_presenter(records, signature, error, quality="full"):
-    result = original_presenter(records, signature, error, quality)
+def failing_presenter(records, signature, error, quality="full", *, recovery=None):
+    result = original_presenter(records, signature, error, quality, recovery=recovery)
     presented.extend(record["node"].as_pointer() for record in records)
     if len(presented) == 1:
         raise RuntimeError("transaction presenter failed")
@@ -531,8 +551,8 @@ def failing_returned_upload(target, pixels):
         raise RuntimeError("returned-path upload failed")
 
 
-def returning_presenter(records, signature, error, quality="full"):
-    result = original_presenter(records, signature, error, quality)
+def returning_presenter(records, signature, error, quality="full", *, recovery=None):
+    result = original_presenter(records, signature, error, quality, recovery=recovery)
     returned_presented.extend(record["node"].as_pointer() for record in records)
     if len(returned_presented) == 1:
         return result + (RuntimeError("returned presenter failure"),)

@@ -43,7 +43,8 @@ class BakeFreshnessTests(unittest.TestCase):
         with zipfile.ZipFile(files("tests.perceptual_grade_blender") / "extension.zip") as archive:
             archive.extractall(package)
         sys.path.insert(0, cls.directory.name)
-        cls.module = importlib.import_module("bake_freshness_test.runtime.bake_freshness")
+        cls.module = importlib.import_module(
+            "bake_freshness_test.features.bake.freshness")
 
     @classmethod
     def tearDownClass(cls):

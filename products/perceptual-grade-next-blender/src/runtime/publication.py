@@ -101,6 +101,7 @@ class PublicationGate:
     def callback(self):
         """Mark a render/compositor callback as active while it records events."""
         with self._lock:
+            self._epoch += 1
             self._callbacks += 1
         try:
             yield
@@ -237,6 +238,8 @@ class PublicationGate:
             if self._committing or self._callbacks or self._evaluations:
                 raise PublicationDeferred(
                     "Cannot reset publication state during an active evaluation")
+            self._epoch += 1
+            epoch = self._epoch
             tickets = tuple(self._preflight_queue)
             self._preflight_queue.clear()
             if self._preflight_active is not None:
@@ -247,6 +250,16 @@ class PublicationGate:
         for ticket in tickets:
             ticket.fail(error)
             ticket.deliver()
+        return epoch
+
+    def quiescent_since(self, epoch):
+        """Check tracked activity since a reset already verified host quiescence."""
+        if threading.current_thread() is not threading.main_thread():
+            return False
+        with self._lock:
+            return (self._epoch == epoch and not self._committing and not self._callbacks
+                    and not self._evaluations and not self._preflight_queue
+                    and self._preflight_active is None)
 
     def _activity_reason(self, *, render_preflight_job=None) -> Optional[str]:
         try:

@@ -16,24 +16,33 @@ class PolicyCoverageTests(unittest.TestCase):
         }}
 
     def test_every_policy_module_requires_evidence(self):
-        entries = {"policy/__init__.py": b"", "policy/node.py": b"", "policy/helper.py": b""}
-        verify_policy_coverage(entries, self.manifest("policy/node.py", "policy/helper.py"))
+        entries = {
+            "policy/__init__.py": b"",
+            "policy/helper.py": b"",
+            "features/grade/policy/node.py": b"",
+        }
+        verify_policy_coverage(entries, self.manifest(
+            "policy/helper.py", "features/grade/policy/node.py"))
         with self.assertRaisesRegex(ValueError, "missing=.*helper"):
-            verify_policy_coverage(entries, self.manifest("policy/node.py"))
-        entries["policy/new_policy.py"] = b""
-        with self.assertRaisesRegex(ValueError, "missing=.*new_policy"):
-            verify_policy_coverage(entries, self.manifest("policy/node.py", "policy/helper.py"))
+            verify_policy_coverage(entries, self.manifest(
+                "features/grade/policy/node.py"))
+        entries["features/bake/policy.py"] = b""
+        with self.assertRaisesRegex(ValueError, "missing=.*features/bake/policy"):
+            verify_policy_coverage(entries, self.manifest(
+                "policy/helper.py", "features/grade/policy/node.py"))
 
     def test_unshipped_evidence_and_empty_coverage_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "extra=.*old"):
-            verify_policy_coverage({"policy/node.py": b""},
-                                   self.manifest("policy/node.py", "policy/old.py"))
+            verify_policy_coverage({"features/grade/policy/node.py": b""},
+                                   self.manifest("features/grade/policy/node.py",
+                                                 "policy/old.py"))
         with self.assertRaises(ValueError):
             verify_policy_coverage({"policy/__init__.py": b""}, self.manifest())
 
     def test_multiple_requirement_sets_can_cover_one_source(self):
-        verify_policy_coverage({"policy/node.py": b""},
-                               self.manifest("policy/node.py", "policy/node.py"))
+        verify_policy_coverage({"features/grade/policy/node.py": b""},
+                               self.manifest("features/grade/policy/node.py",
+                                             "features/grade/policy/node.py"))
 
     def test_failed_coverage_removes_stale_package_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:

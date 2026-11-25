@@ -53,7 +53,7 @@ bpy.context.preferences.extensions.repos.new(
 with _timings.operation("extension imports"):
     extension = importlib.import_module("bl_ext.pg_grade_smoke.perceptual_grade")
     nodes = importlib.import_module(
-        "bl_ext.pg_grade_smoke.perceptual_grade.nodes"
+        "bl_ext.pg_grade_smoke.perceptual_grade.features.grade.host"
     )
     node_library = importlib.import_module(
         "bl_ext.pg_grade_smoke.perceptual_grade.kernel"

@@ -111,7 +111,7 @@ class BankedResourceTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, str(root))
         cls.module = importlib.import_module(
-            "grade_banked_resources_test.runtime.grade_resources"
+            "grade_banked_resources_test.features.grade.resources"
         )
         cls.stage2 = importlib.import_module(
             "grade_banked_resources_test.kernel.stage2_bindings"

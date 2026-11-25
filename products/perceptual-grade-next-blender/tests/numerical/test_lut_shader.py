@@ -9,7 +9,7 @@ import numpy as np
 from color_tools.kernel.settings import Settings
 from color_tools.template_build.lut_shader_emitter import grade_source as emit_grade_source
 from color_tools.lut_shader import grade_source
-from color_tools.runtime.grade_preparation import GradePreparer
+from color_tools.features.grade.preparation import GradePreparer
 
 
 class LUTShaderTests(unittest.TestCase):

@@ -3,10 +3,13 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from .graph import Graph, BuiltGrade, TREE_TYPES, count_nodes
+from .graph import FLOAT_MAX, Graph, BuiltGrade, TREE_TYPES, count_nodes
 from .parameter_color import ParameterColorGraph
-from .guard_graph import compositor_stage2_output_guard
+from .guard_graph import compositor_stage2_output_guard, returned_appearance
 from ..kernel.color_prepare import prepare_color
+from ..kernel.node_templates import (
+    SLOT_SCOPE_APPEARANCE, SLOT_SCOPE_APPEARANCE_ALPHA, TEMPLATE_SLOT,
+)
 from ..kernel.stage2_parameters import (
     MATRIX_RED_SLOT, MATRIX_BLUE_SLOT, MATRIX_NEUTRAL_SLOT,
     TONE_SCALARS_SLOT, TONE_DOMAIN_SLOT, OUTPUT_MATRIX_ROW_SLOTS,
@@ -221,6 +224,31 @@ class ParameterBindings:
         ))
 
 
+def _scope_tap(graph, decoded, source_color, alpha):
+    """Leave a private, manifest-validated output tap for the scope helper."""
+    appearance = returned_appearance(graph, decoded)
+    values = (appearance.J_A, appearance.a, appearance.b)
+    shader = graph.tree.bl_idname == "ShaderNodeTree"
+    valid = decoded.valid
+    observed = (*values, alpha)
+    if shader:
+        observed = (*observed, *graph.split(source_color), *graph.split(decoded.color))
+    for value in observed:
+        valid = graph.mul(valid, graph.lt(graph.abs(value), FLOAT_MAX))
+    opacity = graph.mul(valid, graph.maximum(0., graph.minimum(1., alpha)))
+    opacity.node[TEMPLATE_SLOT] = SLOT_SCOPE_APPEARANCE_ALPHA
+
+    kind = "ShaderNodeCombineColor" if shader else "CompositorNodeCombineColor"
+    packed = graph.node(kind, "Scope final appearance")
+    packed.mode = "RGB"
+    for value, name in zip(values, ("Red", "Green", "Blue")):
+        clean = graph.maximum(-65504., graph.minimum(65504., value))
+        # Shader AOVs average subpixel samples before readback. Weight the
+        # coordinates by opacity now and recover the straight values there.
+        graph.connect(graph.mul(clean, opacity) if shader else clean, packed.inputs[name])
+    packed[TEMPLATE_SLOT] = SLOT_SCOPE_APPEARANCE
+
+
 def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,
                        name="Perceptual Grade", diagnostics=False,
                        parameter_images=None, parameter_image=None,
@@ -299,6 +327,7 @@ def build_stage2_group(prepared, tree_type="ShaderNodeTree", *,
             graph.connect(decoded.color, restore.inputs["Image"])
             graph.connect(alpha, restore.inputs["Alpha"])
             color = restore.outputs["Image"]
+        _scope_tap(graph, decoded, source.outputs["Color"], alpha)
         graph.connect(color, output.inputs["Color"])
         if tree_type == "ShaderNodeTree" or diagnostics:
             graph.connect(alpha, output.inputs["Alpha"])

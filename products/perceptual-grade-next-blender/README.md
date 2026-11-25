@@ -403,10 +403,13 @@ Measure continuous Stack Tone LUT publication with:
 buck2 run //products/perceptual-grade-next-blender/tools/reports:stack_lut_timing -- --output-dir /tmp/perceptual-grade-stack-timing
 ```
 
-The extension ZIP uses `src/__init__.py` directly as its root entrypoint and
-places the product's `nodes.py` beside it. Product-owned state-machine policies
-are packaged under `policy/`; shared library dependencies remain separate
-root-level packages in the archive.
+The extension ZIP uses `src/__init__.py` directly as its root entrypoint.
+`application.py` composes the host callback router with Grade lifecycle, while
+feature packages own Grade, Bake, interaction, and Vectorscope functionality.
+Feature-owned runtime code and state-machine policies are packaged alongside
+those features. Shared kernel and runtime dependencies remain separate
+root-level packages in the archive. See [ARCHITECTURE.md](ARCHITECTURE.md) for
+the ownership map and the development path for new feature work.
 
 The `node_templates` Buck target runs the canonical emitters in pinned Blender
 5.2.4 and produces `kernel/node_templates.blend`, its runtime index

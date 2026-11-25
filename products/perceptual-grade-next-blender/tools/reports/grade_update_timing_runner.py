@@ -53,7 +53,7 @@ def main():
     enabled = addon_utils.enable(extension.__name__, default_set=False, handle_error=errors.append)
     if enabled is not extension or errors:
         raise RuntimeError("Could not enable the packaged extension: " + repr(errors))
-    nodes = importlib.import_module(extension.__package__ + ".nodes")
+    nodes = importlib.import_module(extension.__package__ + ".features.grade.host")
     parameter_bindings = importlib.import_module(
         extension.__package__ + ".kernel.stage2_bindings")
     if not callable(getattr(nodes, "_write_grade_parameters", None)):
@@ -195,10 +195,11 @@ def main():
         original_receive = nodes._handle_preparation_result
 
         def timed_receive(source, preparation_signature, prepared, error,
-                          quality="full", lane="grade", admitted=False, playback_session=None):
+                          quality="full", lane="grade", admitted=False,
+                          playback_session=None, *, recovery=None):
             before = time.perf_counter()
             result = original_receive(source, preparation_signature, prepared, error,
-                                      quality, lane, admitted, playback_session)
+                                      quality, lane, admitted, playback_session, recovery=recovery)
             if lane == "grade":
                 report["received_results"].append({
                     "at_seconds": stamp(), "duration_seconds": time.perf_counter() - before,

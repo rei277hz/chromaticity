@@ -1,5 +1,6 @@
 """Drive direct and evaluated compositor Color inputs through Blender's GUI."""
 
+from dataclasses import replace
 import addon_utils
 import importlib
 import json
@@ -21,9 +22,11 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=repository,
 )
 extension = importlib.import_module("bl_ext.pg_vectorscope.perceptual_grade")
-nodes = importlib.import_module(extension.__name__ + ".nodes")
-vectorscope = importlib.import_module(extension.__name__ + ".vectorscope")
-vectorscope_ui = importlib.import_module(extension.__name__ + ".vectorscope_ui")
+nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
+vectorscope = importlib.import_module(extension.__name__ + ".features.vectorscope.analysis")
+vectorscope_ui = importlib.import_module(extension.__name__ + ".features.vectorscope.ui")
+drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
+pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui)
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append
@@ -32,10 +35,11 @@ assert not errors and not bpy.app.background, errors
 bpy.context.preferences.edit.use_global_undo = True
 # A saved preferences file suppresses the first-run Quick Setup popup.
 bpy.ops.wm.save_userpref()
-drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
 select = drag_checks["select"]
 keyframes = drag_checks["keyframes"]
+complete_tone_histogram = drag_checks["complete_tone_histogram"]
 encoded_rgb = drag_checks["encoded_rgb"]
+scope_tint = drag_checks["scope_tint"]
 chroma_bin = drag_checks["chroma_bin"]
 complete_trace = drag_checks["complete_trace"]
 assert_solid_trace = drag_checks["assert_solid_trace"]
@@ -105,16 +109,30 @@ image.colorspace_settings.name = "Non-Color"
 image.alpha_mode = "CHANNEL_PACKED"
 paint(RED)
 
-backend = vectorscope_ui._runtime.backend
-create_job = backend.create_job
+runtime = vectorscope_ui._runtime
+create_job = runtime.create_job
 
 
-def track_helper_job(*args, **kwargs):
-    report["helper_jobs"] = report.get("helper_jobs", 0) + 1
-    return create_job(*args, **kwargs)
+def track_helper_job(inputs, **kwargs):
+    field = ("appearance_jobs" if inputs["route"].get("scope_capture") == "appearance"
+             else "helper_jobs")
+    report[field] = report.get(field, 0) + 1
+    job = create_job(inputs, **kwargs)
+    if field == "appearance_jobs":
+        advance = job.advance
+
+        def record_samples():
+            result = advance()
+            if result is not None:
+                appearance_samples[0] = result["rgba"]
+            return result
+
+        job.advance = record_samples
+    return job
 
 
-backend.create_job = track_helper_job
+appearance_samples = [None]
+runtime.create_job = track_helper_job
 
 tree = bpy.data.node_groups.new(TREE_NAME, nodes.COMPOSITOR_TREE)
 tree.interface.new_socket(name="Color", in_out="OUTPUT", socket_type="NodeSocketColor")
@@ -147,17 +165,17 @@ space.pin = True
 space.node_tree = tree
 space.show_region_ui = True
 region = next(item for item in area.regions if item.type == "WINDOW")
-pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui, window, area, region)
-draw_tone = vectorscope_ui._draw_tone
+pointer.bind(window, area, region)
+draw_tone = vectorscope_ui.display._draw_tone
 
 
-def track_tone_draw(box, state, key, linear, tone):
-    draw_tone(box, state, key, linear, tone)
-    if state is not None and state.status == "current" and state.waveforms is not None:
+def track_tone_draw(box, state, key, linear, tone, selected):
+    draw_tone(box, state, key, linear, tone, selected)
+    if state is not None and state.status == "current" and state.tone_histogram is not None:
         report["tone_gizmo_drawn"] = True
 
 
-vectorscope_ui._draw_tone = track_tone_draw
+vectorscope_ui.display._draw_tone = track_tone_draw
 
 
 def checkpoint(step):
@@ -183,6 +201,8 @@ def wait_for(predicate, step, timeout=90.0):
         if now >= next_report:
             report["scope_status"] = None if value is None else value.status
             report["scope_error"] = None if value is None else value.error
+            report["appearance_status"] = None if value is None else value.appearance_status
+            report["appearance_error"] = None if value is None else value.appearance_error
             report["scope_bins"] = (
                 None if value is None or value.brightness is None
                 else int(np.count_nonzero(value.brightness))
@@ -200,6 +220,16 @@ def wait_for(predicate, step, timeout=90.0):
             assert value.status not in {"error", "unavailable"}, (step, value.error)
         assert now < deadline, (step, value)
         yield 0.05
+
+
+def appearance_current(previous=None):
+    value = state()
+    if value is None:
+        return False
+    assert value.appearance_status != "error", value.appearance_error
+    return (value.appearance_status == "current" and value.appearance is not None
+            and value.appearance.rgba[..., 3].any()
+            and (previous is None or not np.array_equal(value.appearance.rgba, previous)))
 
 
 def snapshot():
@@ -256,7 +286,8 @@ def exercise_mixed_trace(previous):
     trace = complete_trace(state())
     active = trace[..., 3] > 0
     actual = trace[active, :3]
-    expected = np.broadcast_to(np.average(code, axis=0, weights=(1.0, 0.25)), actual.shape)
+    expected = np.broadcast_to(scope_tint(np.average(code, axis=0, weights=(1.0, 0.25))),
+                               actual.shape)
     assert np.count_nonzero(active) > 1, "Mixed trace is missing its Gaussian density"
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-5)
     report["mixed_trace_rgb"] = True
@@ -267,15 +298,16 @@ def check_additive_trace_pixels():
     from mathutils import Matrix
 
     background = 0.023
-    mass = np.array([[0.0, 1.0, 1.0, 998.0]])
+    mass = np.array([[0.0, 1.0, 1.0, 1.0, 997.0]])
     measured_rgb = np.array([[0.0, 0.0, 0.0],
                              [0.3, 0.12, 0.06],
                              [0.6, 0.24, 0.12],
+                             [0.0, 0.0, 0.0],
                              [0.95, 0.95, 0.95]])
     trace = vectorscope.trace_rgba(mass, mass[..., None] * measured_rgb)
     original = trace.copy()
     assert not trace.flags.writeable
-    width, height = 32, 8
+    width, height = 40, 8
     saved_blend = gpu.state.blend_get()
     saved_depth = gpu.state.depth_test_get()
     saved_viewport = gpu.state.viewport_get()
@@ -292,34 +324,103 @@ def check_additive_trace_pixels():
             gpu.state.blend_set("ALPHA")
             framebuffer = gpu.state.active_framebuffer_get()
             framebuffer.clear(color=(background, background, background, 1.0))
-            vectorscope_ui._draw_trace((-1, -1, 2, 2), trace, key)
+            vectorscope_ui.display._draw_trace((-1, -1, 2, 2), trace, key)
             assert gpu.state.blend_get() == "ALPHA"
             pixels = np.asarray(framebuffer.read_color(0, 0, width, height, 4, 0, "FLOAT"))
-            actual = pixels.reshape(height, width, 4)[height // 2, (4, 12, 20, 28), :3]
+            actual = pixels.reshape(height, width, 4)[height // 2, (4, 12, 20, 28, 36), :3]
     finally:
         gpu.state.blend_set(saved_blend)
         gpu.state.depth_test_set(saved_depth)
         gpu.state.viewport_set(*saved_viewport)
         gpu.state.scissor_set(*saved_scissor)
-        vectorscope_ui._TEXTURES.pop(key, None)
+        vectorscope_ui.display._TEXTURES.pop(key, None)
         offscreen.free()
 
     log_density = np.log1p(65535 * mass[0] / mass.sum()) / np.log(65536)
     density = (1.0 - np.exp(-log_density)) / (1.0 - np.exp(-1.0))
-    expected = background + measured_rgb * density[:, None]
+    tint = np.array([scope_tint(color) for color in measured_rgb])
+    expected = background + tint * density[:, None]
     np.testing.assert_allclose(actual, expected, rtol=0, atol=5e-4)
-    previous = background + measured_rgb * log_density[:, None]
+    previous = background + tint * log_density[:, None]
     assert np.all(actual[1:3] > previous[1:3] + 5e-4)
-    np.testing.assert_allclose(actual[1] - background, (actual[2] - background) / 2,
-                               rtol=0, atol=5e-4)
+    np.testing.assert_allclose(actual[1], actual[2], rtol=0, atol=5e-4)
     np.testing.assert_array_equal(trace, original)
     report["additive_trace_pixels"] = True
 
 
 def exercise_gizmo_controls():
     baseline = pointer.settings(grade)
-    exposed = yield from pointer.drag_control("exposure", grade, (0, 25), cancel=True)
+    yield from pointer.hover_control("cr", grade)
+    resized = yield from pointer.resize_control("resize_e", grade, (12, 0))
+    assert resized > 300.
+    report["gizmo_hover_and_resize"] = True
+
+    original_simulate = pointer._simulate_event
+    probe_calls = []
+
+    def drop_target_moves(kind, value, x, y):
+        entry = pointer._injected
+        phase = entry.get("phase")
+        probe_calls.append((kind, value, phase, entry.get("attempt")))
+        if kind == "MOUSEMOVE" and phase == "target":
+            return
+        original_simulate(kind, value, x, y)
+
+    pointer._simulate_event = drop_target_moves
+    exhaustion = None
+    try:
+        yield from pointer.press_at(
+            pointer.control_point("exposure", grade), "exposure", grade,
+        )
+    except AssertionError as error:
+        exhaustion = error
+    finally:
+        pointer._simulate_event = original_simulate
+
+    assert exhaustion is not None, "Dropped target moves unexpectedly reached the press"
+    details = exhaustion.args[0]
+    assert isinstance(details, tuple) and len(details) == 4, exhaustion.args
+    message, control, _xy, target_attempts = details
+    assert message.startswith("Gizmo router ") and "move" in message, details
+    assert control == "exposure", details
+    assert [(entry["phase"], entry["attempt"]) for entry in target_attempts] == [
+        ("target", 1), ("target", 2), ("target", 3),
+    ], target_attempts
+    assert probe_calls == [
+        ("MOUSEMOVE", "NOTHING", "away", 1), ("MOUSEMOVE", "NOTHING", "target", 1),
+        ("MOUSEMOVE", "NOTHING", "away", 2), ("MOUSEMOVE", "NOTHING", "target", 2),
+        ("MOUSEMOVE", "NOTHING", "away", 3), ("MOUSEMOVE", "NOTHING", "target", 3),
+    ], probe_calls
+    assert pointer.settings(grade) == baseline
+    assert pointer.ui._interaction.drags.get(pointer.window.as_pointer()) is None
+    assert pointer.nodes._gesture_token(pointer.window.as_pointer()) is None
+    report["hover_exhaustion_before_press"] = True
+
+    dropped_targets = []
+    retried_targets = []
+
+    def drop_first_target(kind, value, x, y):
+        entry = pointer._injected
+        if kind == "MOUSEMOVE" and entry.get("phase") == "target":
+            if entry["attempt"] == 1:
+                dropped_targets.append(entry)
+                return
+            retried_targets.append(entry)
+        original_simulate(kind, value, x, y)
+
+    pointer._simulate_event = drop_first_target
+    try:
+        exposed = yield from pointer.drag_control("exposure", grade, (0, 25), cancel=True)
+    finally:
+        pointer._simulate_event = original_simulate
     assert exposed.linear.exposure > baseline.linear.exposure
+    assert len(dropped_targets) == 1, dropped_targets
+    assert any(entry["phase"] == "target" and entry["attempt"] >= 2
+               and entry.get("received_xy") == entry["xy"]
+               and entry.get("admission") == "current"
+               for entry in retried_targets), retried_targets
+    assert pointer.settings(grade) == baseline
+    report["hover_retry_acknowledged"] = True
     balanced = yield from pointer.drag_control("cr_balance", grade, (0, 25), cancel=True)
     assert balanced.linear.balance[0] < baseline.linear.balance[0]
     balanced = yield from pointer.drag_control("yb_balance", grade, (25, 0), cancel=True)
@@ -335,17 +436,21 @@ def exercise_gizmo_controls():
     yield from pointer.click_control("tone_tab", grade)
     yield from wait_for(
         lambda: (value := state()) is not None and value.status == "current"
-        and value.waveforms is not None,
-        "Tone Gizmo did not publish waveforms",
+        and value.tone_histogram is not None,
+        "Tone Gizmo did not publish its histogram",
     )
-    before = state().waveforms
-    assert before.before.any() and before.after.any()
+    histogram = complete_tone_histogram(state())
     yield from wait_for(lambda: report.get("tone_gizmo_drawn"), "Tone Gizmo failed to draw", 5.)
+    yield from wait_for(appearance_current, "Tone Gizmo did not publish final appearance")
+    original_appearance = state().appearance.rgba
+    adjusted = yield from pointer.drag_control("exposure", grade, (25, 0), cancel=True)
+    assert adjusted.linear.exposure > baseline.linear.exposure
     adjusted = yield from pointer.drag_control("curve", grade, (20, 0), cancel=True)
     assert adjusted.tone.input_nits[3] > baseline.tone.input_nits[3]
     assert adjusted.tone.input_nits[:3] == baseline.tone.input_nits[:3]
-    adjusted = yield from pointer.drag_control("fit", grade, (35, 0), cancel=True)
+    adjusted = yield from pointer.drag_control("fit", grade, (0, 35), cancel=True)
     assert adjusted.tone.fit > baseline.tone.fit
+    yield from exercise_fit_reset()
     with bpy.context.temp_override(window=window, area=area, region=region):
         assert bpy.ops.perceptual_grade.gizmo_set_peak(
             peak_nits="2000", node_pointer=str(grade.as_pointer()),
@@ -353,15 +458,106 @@ def exercise_gizmo_controls():
         ) == {"FINISHED"}
     yield from wait_for(
         lambda: (value := state()) is not None and value.status == "current"
-        and value.waveforms is not None and value.waveforms is not before,
-        "Peak edit did not update Tone waveforms",
+        and value.tone_histogram is not None and value.tone_histogram is not histogram,
+        "Peak edit did not update the Tone histogram",
     )
     assert pointer.settings(grade).tone.peak_nits == 2000
+    yield from wait_for(lambda: appearance_current(original_appearance),
+                        "Peak edit did not update final appearance")
+    tone_appearance = state().appearance.rgba
+    tone_histogram = complete_tone_histogram(state())
+    appearance_jobs = report.get("appearance_jobs", 0)
+    grade.web_chroma_1_0 = -2.
+    grade.web_chroma_2_0 = -2.
+    yield from wait_for(lambda: appearance_current(tone_appearance),
+                        "Warp edit did not update final appearance")
+    assert report.get("appearance_jobs", 0) > appearance_jobs
+    assert state().status == "current" and state().tone_histogram is tone_histogram
+    grade.web_chroma_1_0 = 0.
+    grade.web_chroma_2_0 = 0.
+
+    # With a non-default peak, R resets Highlights to the current output target.
+    before = pointer.settings(grade)
+    point = pointer.control_point("curve", grade)
+    yield from pointer.press_at(point, "curve", grade)
+    yield from pointer.reset_drag_at(point)
+    reset_settings = pointer.settings(grade)
+    assert reset_settings.linear == before.linear
+    assert reset_settings.tone.input_nits[:3] == before.tone.input_nits[:3]
+    assert abs(reset_settings.tone.input_nits[3] - 2000.) < .05
+    pointer.event_at("LEFTMOUSE", "RELEASE", point)
+    yield from wait_for(lambda: nodes._gesture_token(window.as_pointer()) is None,
+                        "Highlights reset gesture did not finish", 5.)
+    assert pointer.settings(grade) == reset_settings
+    report["highlight_reset_to_peak"] = True
+    grade.input_highlights = before.tone.input_nits[3]
     grade.peak_nits = "1000"
+
+    # Guarded black and white must be sampled at the returned endpoints.
+    paint((-1., -1., -1., .25))
+    yield from wait_for(
+        lambda: (appearance_current()
+                 and np.allclose(appearance_samples[0][..., :3], 0.)
+                 and np.allclose(appearance_samples[0][..., 3], .25, atol=1e-6)),
+        "Final appearance did not sample guarded black",
+    )
+    np.testing.assert_allclose(appearance_samples[0][..., 3], .25, atol=1e-6)
+    black_appearance = state().appearance.rgba
+    paint((2048., 2048., 2048., .75))
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.appearance_status == "current"
+        and value.appearance is not None and value.appearance.rgba is not black_appearance
+        and value.appearance.overflow_fraction == 1.,
+        "Final appearance did not report guarded white overflow",
+    )
+    white = appearance_samples[0]
+    assert np.all(white[..., 0] > 100.)
+    np.testing.assert_allclose(white[..., 1:3], 0., atol=.02)
+    np.testing.assert_allclose(white[..., 3], .75, atol=1e-6)
+    report["appearance_tone_warp_and_endpoints"] = True
+    paint(RED)
     yield from pointer.click_control("linear_tab", grade)
     yield from wait_for(lambda: current(RED), "Linear trace did not return from Tone")
     assert report.get("helper_jobs", 0) == 0
     report["tone_gizmo_controls"] = True
+
+
+def exercise_fit_reset():
+    window_key = window.as_pointer()
+    grade.fit = .75
+    before = pointer.settings(grade)
+    reset = replace(before, tone=replace(before.tone, fit=0.))
+    start = pointer.control_point("fit", grade)
+    yield from pointer.press_at(start, "fit", grade)
+    assert nodes._gesture_token(window_key) is None
+    yield from pointer.reset_drag_at(start)
+    assert nodes._gesture_token(window_key) is not None
+    assert pointer.settings(grade) == reset
+    pointer.event_at("LEFTMOUSE", "RELEASE", start)
+    yield from wait_for(lambda: nodes._gesture_token(window_key) is None,
+                        "Fit reset gesture did not finish", 5.)
+    assert pointer.settings(grade) == reset
+    report["fit_reset_before_motion"] = True
+
+    grade.fit = before.tone.fit
+    yield from pointer.press_at(start, "fit", grade)
+    end = start[0], start[1] + 35
+    pointer.event_at("MOUSEMOVE", "NOTHING", end)
+    yield from wait_for(lambda: grade.fit > before.tone.fit,
+                        "Fit drag did not move before reset", 5.)
+    yield from pointer.reset_drag_at(end)
+    assert pointer.settings(grade) == reset
+    continued = end[0], end[1] - 16
+    pointer.event_at("MOUSEMOVE", "NOTHING", continued)
+    yield from wait_for(lambda: grade.fit < 0., "Fit drag did not rebase on reset", 5.)
+    pointer.event_at("ESC", "PRESS", continued)
+    pointer.event_at("ESC", "RELEASE", continued)
+    pointer.event_at("LEFTMOUSE", "RELEASE", continued)
+    yield from wait_for(lambda: nodes._gesture_token(window_key) is None,
+                        "Fit reset gesture did not cancel", 5.)
+    assert pointer.settings(grade) == before
+    report["fit_reset_continues_and_cancels"] = True
+    grade.fit = reset.tone.fit
 
 
 def exercise_drags():
@@ -473,8 +669,12 @@ def exercise_drags():
     restored_tree = bpy.data.node_groups[TREE_NAME]
     assert pointer.settings(restored_tree.nodes[NODE_NAME]) == baseline
     assert not keyframes(restored_tree), "Undo left Auto Key curves from the drag"
+    gizmo_key = vectorscope_ui.editor.key(window, area)
+    assert gizmo_key in vectorscope_ui._editors, "Undo hid the Gizmo"
+    yield from wait_for(lambda: current(RED), "Undo did not restore the vectorscope")
     report["per_node_drag"] = True
     report["source_keys_undone"] = True
+    report["undo_preserved_gizmo"] = True
 
 
 def exercise_animated_frame_cancel():
@@ -514,7 +714,7 @@ def exercise_animated_frame_cancel():
             lambda: nodes._gesture_token(window_key) is None and pointer.peak() is not None,
             "Frame change did not cancel the drag and refresh the scope",
         )
-        assert window_key not in vectorscope_ui._DRAGS
+        assert window_key not in vectorscope_ui._interaction.drags
         pointer.event("LEFTMOUSE", "RELEASE", (24, 20))
         yield .1
         animated_end = (grade.source_x, grade.source_y)
@@ -548,10 +748,10 @@ def scenario():
     checkpoint("native Linear and Tone Gizmo controls")
     yield from exercise_gizmo_controls()
 
-    grade.exposure = 1.0
-    yield from wait_for(lambda: current(RED, 1.0), "Linear exposure did not move the red peak")
+    grade.exposure = -6.0
+    yield from wait_for(lambda: current(RED, -6.0), "Linear exposure did not move the red peak")
     exposed_state, exposed = snapshot()
-    assert_solid_trace(exposed_state, RED, 1.0)
+    assert_solid_trace(exposed_state, RED, -6.0)
     report["linear_edit_refreshed"] = not np.array_equal(initial, exposed)
     assert report["linear_edit_refreshed"]
     grade.exposure = 0.0
@@ -636,6 +836,7 @@ def advance():
         assert time.monotonic() - started < 285.0, "Vectorscope acceptance exceeded its budget"
         return next(sequence)
     except StopIteration:
+        pointer.close()
         cleanup()
         report["passed"] = True
         checkpoint("passed")
@@ -643,7 +844,9 @@ def advance():
         return None
     except BaseException:
         report["error"] = traceback.format_exc()
+        report["pointer_trace"] = pointer.diagnostics()
         try:
+            pointer.close()
             cleanup()
         except BaseException as error:
             report["cleanup_error"] = str(error)

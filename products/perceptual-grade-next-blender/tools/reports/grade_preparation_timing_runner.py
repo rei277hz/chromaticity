@@ -17,9 +17,9 @@ def main():
     config = json.loads(config_path.read_text(encoding="utf8"))
     report_path = Path(config["report"])
     sys.path.insert(0, config["package_root"])
-    nodes = importlib.import_module("perceptual_grade.nodes")
+    nodes = importlib.import_module("perceptual_grade.features.grade.host")
     settings_module = importlib.import_module("perceptual_grade.kernel.settings")
-    prep_module = importlib.import_module("perceptual_grade.runtime.grade_preparation")
+    prep_module = importlib.import_module("perceptual_grade.features.grade.preparation")
     template_module = importlib.import_module("perceptual_grade.kernel.node_templates")
     Settings = settings_module.Settings
     LinearSettings = settings_module.LinearSettings

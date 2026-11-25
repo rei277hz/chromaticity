@@ -20,7 +20,7 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_render_layers.perceptual_grade")
-nodes = importlib.import_module(extension.__name__ + ".nodes")
+nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append

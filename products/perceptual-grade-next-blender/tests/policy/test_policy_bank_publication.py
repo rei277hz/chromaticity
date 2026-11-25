@@ -1,6 +1,6 @@
 import unittest
 
-from policy.bank_publication import (
+from color_tools.features.grade.policy.bank_publication import (
     Effects, Event, State, finish_save_packing, new,
     request_save_packing, step,
 )

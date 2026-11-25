@@ -61,12 +61,24 @@ An invalid wrapper can authorize eviction, never another native deletion. Native
 counts and host identities remain observations rather than a duplicate Python
 ownership ledger.
 
+File load, undo, and redo fence ordinary Grade work before Blender replaces
+data. The lifecycle coordinator reopens admission after it releases retained
+resources and reconciles the output registry and node presentation. A
+temporary publication conflict schedules another attempt. An unexpected
+failure authorizes visible error output and leaves recovery pending. A render
+preflight admitted by an active render lease can reconcile its scene and
+frame while the global fence is pending. A render may use banks verified
+against its settings. It reports an error if recovery needs to update banks
+also attached to nodes outside the preflight. The preflight's permission
+expires when it ends or a newer lifecycle begins.
+
 Parameter publication stages and packs the inactive bank before selecting it.
 A damaged active bank requires a confirmed error output before repair. Delivery
-requires a successful selector readback. A selection or delivery failure restores
-the selector and fails closed for the source's current users. During file save,
-the bank policy authorizes packing dirty generated parameter images. The save
-handler verifies that Blender reports a packed file and a clean image before
+requires a successful selector readback. A selection or delivery failure attempts
+selector restoration, checks the Blender readback, and fails closed for the
+source's current users. During file save, the bank policy authorizes packing
+dirty generated parameter images. The save handler verifies that Blender
+reports a packed file and a clean image before
 accepting a successful pack.
 
 Bake policy bounds accepted requests and authorizes enqueue, helper start,
