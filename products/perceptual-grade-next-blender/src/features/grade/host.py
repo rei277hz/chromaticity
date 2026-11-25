@@ -136,6 +136,7 @@ _lifecycle = LifecycleCoordinator()
 _preparation_runtime = None
 _grade_preparer = None
 _grade_resources = None
+_shutdown_admission = None
 _restoring_capture_sources = False
 _preparation_sources = {}
 _gesture_state = gesture_policy.new()
@@ -2646,13 +2647,23 @@ def _invalidate_node_stores():
 
 
 def _reset_node_stores():
+    global _shutdown_admission
+    quiescence_epoch = None
     if _grade_resources is not None:
-        _grade_resources.gate.reset()
+        gate = _grade_resources.gate
+        if (_shutdown_admission is not None
+                and _shutdown_admission[0] is gate
+                and gate.quiescent_since(_shutdown_admission[1])):
+            quiescence_epoch = _shutdown_admission[1]
+        else:
+            quiescence_epoch = gate.reset()
+            if _shutdown_admission is not None:
+                _shutdown_admission = (gate, quiescence_epoch)
     failures = _lifecycle.begin((_invalidate_node_stores,))
     if failures:
         raise ExceptionGroup("Could not reset Grade node stores", failures)
     if _grade_resources is not None:
-        _grade_resources.clear()
+        _grade_resources.clear(quiescence_epoch=quiescence_epoch)
     _retire_displaced_lifecycle_kernels()
     _lifecycle.reset()
 
@@ -6084,8 +6095,11 @@ def registration_cleanup_needed():
 
 
 def close_admission():
+    global _shutdown_admission
+    _shutdown_admission = None
     if _grade_resources is not None:
-        _grade_resources.gate.reset()
+        gate = _grade_resources.gate
+        _shutdown_admission = (gate, gate.reset())
 
 
 def _timer_registered(callback):
@@ -6145,6 +6159,7 @@ def _scope_preview_roles(node, signature):
 
 def _register():
     global _preparation_runtime, _grade_preparer, _grade_resources
+    global _shutdown_admission
     if _host_callbacks is None:
         raise RuntimeError("Grade registration must be started by the application")
     if _bake.manager is not None and _bake.manager.closed:
@@ -6231,6 +6246,7 @@ def _register():
         if not _timer_registered(_frame_reconcile_tick):
             _register_host_timer(_frame_reconcile_tick, first_interval=0.1,
                                  persistent=True)
+        _shutdown_admission = None
     except Exception as registration_error:
         raise
 

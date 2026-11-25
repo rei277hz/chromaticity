@@ -66,6 +66,19 @@ class PublicationGateTests(unittest.TestCase):
                     self.fail("nested publication was admitted")
         self.assertFalse(gate.blocked())
 
+    def test_reset_receipt_tracks_new_host_callbacks(self):
+        gate, _running, _manager = self.gate()
+        epoch = gate.reset()
+        self.assertTrue(gate.quiescent_since(epoch))
+
+        with gate.callback():
+            self.assertFalse(gate.quiescent_since(epoch))
+
+        self.assertFalse(gate.quiescent_since(epoch))
+        epoch = gate.reset()
+        gate.evaluation_started("render", 17)
+        self.assertFalse(gate.quiescent_since(epoch))
+
     def test_defers_for_jobs_interface_lock_and_modal_bake_readers(self):
         for job in self.module.JOBS:
             with self.subTest(job=job):

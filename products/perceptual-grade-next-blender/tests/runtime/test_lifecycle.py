@@ -224,7 +224,7 @@ class AddonShutdownTests(unittest.TestCase):
         with patch.dict(sys.modules, {self.vectorscope_module_name: module}):
             with self.assertRaisesRegex(RuntimeError, "draw handler still active"):
                 runtime.unregister()
-            self.assertTrue(runtime._shutdown_pending)
+            self.assertEqual(runtime._shutdown_phase, "feature_teardown")
             self.assertIn(runtime._shutdown_retry, runtime.callbacks.bpy.app.timers.callbacks)
             self.assertIsNone(runtime._shutdown_retry())
 
@@ -237,12 +237,43 @@ class AddonShutdownTests(unittest.TestCase):
             "bake.finish_shutdown",
             "scope.finish_shutdown",
         ])
-        self.assertEqual(events.count("grade.close_admission"), 2)
-        self.assertEqual(events.count("bake.begin_shutdown"), 2)
-        self.assertEqual(events.count("scope.begin_shutdown"), 2)
+        self.assertEqual(events.count("grade.close_admission"), 1)
+        self.assertEqual(events.count("bake.begin_shutdown"), 1)
+        self.assertEqual(events.count("scope.begin_shutdown"), 1)
         self.assertIsNone(runtime.grade)
         self.assertIsNone(runtime.bake)
-        self.assertFalse(runtime._shutdown_pending)
+        self.assertIsNone(runtime._shutdown_phase)
+
+    def test_capture_retry_resumes_after_completed_admission(self):
+        events = []
+        scope = types.SimpleNamespace(
+            begin_shutdown=lambda: events.append("scope.begin_shutdown"),
+            finish_shutdown=lambda: events.append("scope.finish_shutdown"),
+            unregister=lambda: events.append("scope.unregister"),
+        )
+        runtime, module = self.make_runtime(events, scope)
+        capture_helper = runtime.capture_helper
+        grade = runtime.grade
+        grade.close_admission = Mock(
+            side_effect=lambda: events.append("grade.close_admission")
+        )
+        runtime.capture_helper.close = Mock(
+            side_effect=(RuntimeError("capture helper is still active"), None)
+        )
+
+        with patch.dict(sys.modules, {self.vectorscope_module_name: module}):
+            with self.assertRaisesRegex(RuntimeError, "capture helper is still active"):
+                runtime.unregister()
+            self.assertEqual(runtime._shutdown_phase, "capture_retirement")
+            self.assertIn(runtime._shutdown_retry, runtime.callbacks.bpy.app.timers.callbacks)
+            self.assertIsNone(runtime._shutdown_retry())
+
+        grade.close_admission.assert_called_once_with()
+        capture_helper.close.assert_called_with()
+        self.assertEqual(events.count("bake.begin_shutdown"), 1)
+        self.assertEqual(events.count("scope.begin_shutdown"), 1)
+        self.assertIsNone(runtime._shutdown_phase)
+        self.assertIsNone(runtime.grade)
 
     def test_admission_failure_schedules_retry_before_other_features_start(self):
         events = []
@@ -260,7 +291,7 @@ class AddonShutdownTests(unittest.TestCase):
         with patch.dict(sys.modules, {self.vectorscope_module_name: module}):
             with self.assertRaisesRegex(RuntimeError, "publication gate is busy"):
                 runtime.unregister()
-            self.assertTrue(runtime._shutdown_pending)
+            self.assertEqual(runtime._shutdown_phase, "grade_admission")
             self.assertIn(runtime._shutdown_retry, runtime.callbacks.bpy.app.timers.callbacks)
             self.assertIsNone(runtime._shutdown_retry())
 
@@ -268,4 +299,4 @@ class AddonShutdownTests(unittest.TestCase):
         self.assertEqual(events.count("bake.begin_shutdown"), 1)
         self.assertEqual(events.count("scope.begin_shutdown"), 1)
         self.assertIsNone(runtime.grade)
-        self.assertFalse(runtime._shutdown_pending)
+        self.assertIsNone(runtime._shutdown_phase)

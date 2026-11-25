@@ -25,9 +25,10 @@ bpy.context.preferences.extensions.repos.new(
 extension = importlib.import_module("bl_ext.pg_stack_helper.perceptual_grade")
 nodes = importlib.import_module("bl_ext.pg_stack_helper.perceptual_grade.features.grade.host")
 errors = []
-assert addon_utils.enable(
-    extension.__name__, default_set=False, handle_error=errors.append
-) is extension
+enabled = addon_utils.enable(
+    extension.__name__, default_set=False, handle_error=errors.append,
+)
+assert enabled is extension, errors
 assert not errors, errors
 
 
@@ -116,9 +117,10 @@ try:
     assert nodes._load_post in bpy.app.handlers.load_post
     assert nodes._preparation_tick() is None
 
-    assert addon_utils.enable(
+    enabled = addon_utils.enable(
         extension.__name__, default_set=False, handle_error=errors.append,
-    ) is extension
+    )
+    assert enabled is extension, errors
     assert not errors, errors
     assert runtime.physical_terminal()
     assert nodes._preparation_runtime is not preparation_runtime

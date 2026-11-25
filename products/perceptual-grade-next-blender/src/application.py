@@ -9,7 +9,7 @@ class AddonRuntime:
         self.grade = None
         self.bake = None
         self.capture_helper = None
-        self._shutdown_pending = False
+        self._shutdown_phase = None
         self._shutdown_retry = self._retry_unregister
         self._retrying_shutdown = False
 
@@ -18,7 +18,8 @@ class AddonRuntime:
         from .features.grade import host as grade
 
         if (self.grade is not None
-                and (self._shutdown_pending or self.grade.registration_cleanup_needed())):
+                and (self._shutdown_phase is not None
+                     or self.grade.registration_cleanup_needed())):
             self.unregister()
         if self.capture_helper is None:
             self.capture_helper = CaptureHelperBackend()
@@ -40,19 +41,32 @@ class AddonRuntime:
     def unregister(self):
         if self.grade is None:
             return
-        self._shutdown_pending = True
+        if self._shutdown_phase is None:
+            self._shutdown_phase = "grade_admission"
         try:
             from .features.vectorscope import ui as vectorscope
 
-            self.grade.close_admission()
-            if self.bake is not None:
-                self.bake.begin_shutdown()
-            vectorscope.begin_shutdown()
-            if self.capture_helper is not None:
-                self.capture_helper.close()
-            if self.bake is not None:
-                self.bake.finish_shutdown()
-            vectorscope.finish_shutdown()
+            if self._shutdown_phase == "grade_admission":
+                self.grade.close_admission()
+                self._shutdown_phase = "bake_begin"
+            if self._shutdown_phase == "bake_begin":
+                if self.bake is not None:
+                    self.bake.begin_shutdown()
+                self._shutdown_phase = "vectorscope_begin"
+            if self._shutdown_phase == "vectorscope_begin":
+                vectorscope.begin_shutdown()
+                self._shutdown_phase = "capture_retirement"
+            if self._shutdown_phase == "capture_retirement":
+                if self.capture_helper is not None:
+                    self.capture_helper.close()
+                self._shutdown_phase = "bake_finish"
+            if self._shutdown_phase == "bake_finish":
+                if self.bake is not None:
+                    self.bake.finish_shutdown()
+                self._shutdown_phase = "vectorscope_finish"
+            if self._shutdown_phase == "vectorscope_finish":
+                vectorscope.finish_shutdown()
+                self._shutdown_phase = "feature_teardown"
         except Exception as error:
             self._schedule_shutdown_retry(error)
             raise
@@ -84,7 +98,7 @@ class AddonRuntime:
         else:
             self.grade = None
             self.bake = None
-            self._shutdown_pending = False
+            self._shutdown_phase = None
             return
         self._schedule_shutdown_retry(failure)
         raise failure

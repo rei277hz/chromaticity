@@ -343,15 +343,17 @@ class GradeResources:
         self.pending.clear()
         self._resources.clear()
 
-    def release_lifecycle_images(self):
-        if not self.gate.quiescent():
+    def release_lifecycle_images(self, *, quiescence_epoch=None):
+        quiescent = (self.gate.quiescent() if quiescence_epoch is None else
+                     self.gate.quiescent_since(quiescence_epoch))
+        if not quiescent:
             raise PublicationDeferred(
                 "Cannot release Grade parameter banks while native readers are active"
             )
         self._lifecycle_images.clear()
 
-    def clear(self):
-        self.release_lifecycle_images()
+    def clear(self, *, quiescence_epoch=None):
+        self.release_lifecycle_images(quiescence_epoch=quiescence_epoch)
         self.pending.clear()
         self._resources.clear()
 
