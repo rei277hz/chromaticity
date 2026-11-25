@@ -7,12 +7,10 @@ navigation, static KaTeX markup, print media, and the print or EPUB stylesheet.
 There is no second Markdown renderer, and generated documents are not edited
 by hand.
 
-The books are maintained for the latest Perceptual Grade. The Technical Report's
-model chapters follow the current reference, and the User Manual describes Next
-node workflows and its numeric Stage 3 controls. Some report engineering
-chapters and recorded measurements still describe 1.23.2 and are identified
-accordingly. The title pages do not label the whole collection as 1.23.2. The
-manual retains a labeled legacy ZIP link and does not offer a Next ZIP.
+The books describe the current Perceptual Grade model and products. The
+Technical Report covers the analytic reference, Blender runtime, and Resolve
+DCTL chain. The bilingual User Manual describes Blender workflows and retains
+one clearly labeled archived extension ZIP.
 
 ## Build and Check
 
@@ -44,7 +42,7 @@ manifest hash.
 The Technical Report's numerical plots are static PGFPlots SVGs shared with its
 website edition. Their text is outlined for consistent rendering across browsers,
 WeasyPrint PDF, and EPUB readers; image alt text and captions provide context.
-The original recorded LUT reports remain downloadable with their source data.
+Generated plots use the current model and declared source data.
 
 The PDFs use full Tinos and Noto Serif SC font files from a pinned Google Fonts
 revision. Noto's full variable source is instantiated at weights 400 and 700
@@ -66,8 +64,8 @@ The optional `:review` target renders the Chinese User Manual's cover and pages
 containing “场景工作空间” (“Scene working spaces”), together with their
 adjacent pages, to PNG using pinned PDFium. Its `review.json` records the PDF
 hash and physical page numbers. This is a raster review without OCR.
-The `:policy_review` target renders every page of the English Next policy
-chapter in the Technical Report, using its PDF outline to select the chapter
+The `:policy_review` target renders every page of the Blender runtime policies chapter
+in the Technical Report, using its PDF outline to select the chapter
 boundaries.
 The `:policy_preview` target renders one policy or workflow diagram per A4 page
 at the same maximum size used in the report. Check these proofs for readable
@@ -81,9 +79,8 @@ without rebuilding the whole book.
 
 The `:chart_review` target renders the English Technical Report's numerical-chart
 pages at 144 dpi. It matches generated HTML figure IDs to PDF destinations, so
-the selection follows pagination changes. It also includes the page after each historical placement
-chart to review candidate keys that flow over a page boundary. The manifests
-record each chart, figure ID, PDF hash, and physical page number.
+the selection follows pagination changes. The manifests record each chart,
+figure ID, PDF hash, and physical page number.
 Both PDF builds and tests use `PAR_APPEND_LD_LIBRARY_PATH` to preserve the
 pinned Pango/HarfBuzz libraries through Buck's Python launcher.
 

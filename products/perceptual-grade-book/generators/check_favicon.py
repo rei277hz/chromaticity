@@ -37,7 +37,7 @@ def main():
             assert tile.size==(512,512) and tile.mode=='RGB'
             assert tile.crop((128,128,384,384)).tobytes()==source.convert('RGB').tobytes()
             assert 2*128**2 < (512*.4)**2
-            assert tile.getpixel((0,0))==source.getpixel((0,0))
+            assert tile.getpixel((0,0))==source.convert('RGB').getpixel((0,0))
         manifest=json.loads((root/'original/site.webmanifest').read_text())
         assert [x['purpose'] for x in manifest['icons']]==['any','any','maskable']
         assert [x['sizes'] for x in manifest['icons']]==['192x192','512x512','512x512']

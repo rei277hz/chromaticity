@@ -1,6 +1,6 @@
 # Scene working spaces
 
-Next uses a fixed D65 Grade reference white. The Linear panel displays
+The extension uses a fixed D65 Grade reference white. The Linear panel displays
 **Working White: D65** as a disabled value; it is not a Grade setting that can
 be changed in this product version. The source-white xy controls remain
 available for the creative Stage 1 correction.
@@ -19,7 +19,7 @@ an implementation boundary and does not change the Grade's fixed D65
 appearance reference.
 
 Changing a working space can require new graph data. If graph preparation or
-recovery fails, Next shows a visible magenta result that preserves alpha and
+recovery fails, the extension shows a visible magenta result that preserves alpha and
 blocks rendering until the current kernel is repaired. See [evaluation and
 interpolation](https://rei277hz.github.io/perceptual-grade/technical/en/theory/lut.html) for the LUT coordinates and [Linear](linear.md)
 for input decoding and Stage 1 controls.

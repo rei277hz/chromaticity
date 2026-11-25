@@ -2,46 +2,22 @@
 
 The two-book collection is published at
 [rei277hz.github.io/perceptual-grade/](https://rei277hz.github.io/perceptual-grade/).
-It contains two books maintained for the **latest Perceptual Grade**. The
-bilingual User Manual contains the introduction and user guides in English and
-Simplified Chinese. The English-only Technical Report contains the theory and
-development chapters. The report's model chapters follow
-`libraries/perceptual-grade-reference`, including Stage 3 Adaptance → H–K
-repair → common positive Scale. The manual describes Next node workflows;
-some Technical Report engineering chapters and recorded measurements still
-describe the preserved 1.23.2 release. Each current or historical
-profile is identified; archived downloads and recorded measurements retain
-their original meaning. The Technical Report includes the **Next Blender policy
-machines** chapter, which follows current Next policies and adapters. Next
-provides the full numeric Stage 3 J, C, Adaptance, and Warp controls; the
-draggable Warp diagram is deferred.
+The bilingual User Manual covers Blender workflows. The English Technical
+Report covers the shared analytic model, Blender runtime, and Resolve DCTL
+product. Both follow Perceptual Grade's current controls and implementation
+contracts.
 
-Next is the implementation source of truth for Blender behavior: its source,
-requirements, and tests define supported routes, lifecycle, failure handling,
-and host boundaries. The analytic reference remains authoritative for model
-mathematics. Observable implementation changes must update the corresponding
-Technical Report section and its evidence. The remaining 1.23.2 report narrative,
-downloads, media, measurements, legacy generators, manifests, and
-preservation checks are temporary migration material. The eventual migration
-will remove all of it once Next coverage replaces it; the current archive is
-kept intact until that coordinated removal is complete.
+`libraries/perceptual-grade-reference` is authoritative for model mathematics.
+The Blender and DCTL sources, requirements, and tests define their respective
+host behavior. The Technical Report records source and test evidence for
+observable implementation claims. Its chapter audit checks coverage and
+comment references; reviewers check that the prose matches the implementation.
 
-`technical-report-audit.json` records every Technical Report chapter's scope,
-source and test evidence, policy anchors, and remaining legacy replacement work.
-The Next target
-`//products/perceptual-grade-next-blender/tests:technical_report_audit` checks
-chapter coverage, evidence paths, and source-to-report references from declared
-source inputs. It stays outside the installed extension and does not render the
-book or validate legacy products. The check establishes coverage and reference
-integrity; reviewers still check that the prose describes the implemented
-behavior. Update the manifest when adding chapters or policies, changing their
-scope, or moving their evidence.
+The manual retains one archived extension download. Its exact bytes, checksum,
+and embedded license are preserved. No other superseded product material is
+part of the book.
 
-Submit [issues](https://github.com/rei277hz/perceptual-grade/issues) to the
-downstream project and [pull requests](https://github.com/rei277hz/chromaticity/pulls)
-to this development repository. Both books' GitHub toolbars link here.
-
-## Build, preview, and test
+## Build and preview
 
 Run from the monorepo root:
 
@@ -54,158 +30,67 @@ buck2 build --remote-only '//products/perceptual-grade-book:user-manual[epub]' -
 buck2 build --remote-only '//products/perceptual-grade-book:technical-report[pdf]' --show-output
 buck2 build --remote-only '//products/perceptual-grade-book:technical-report[epub]' --show-output
 buck2 run --remote-only //products/perceptual-grade-book:preview -- --port 8080
-buck2 test --remote-only //products/perceptual-grade-book/tests:book //products/perceptual-grade-book/tests:publish
-buck2 test --remote-only //products/perceptual-grade-book/print:print //products/perceptual-grade-book/print:epub
 ```
 
-The root alias builds the combined site. It contains the English and Simplified
-Chinese User Manual and the English Technical Report. The `html` output is its
-deployable directory; `:archive[zip]` produces one `perceptual-grade-site.zip`
-with stable ordering, fixed ZIP timestamps and permissions, and a SHA256 report.
-The preview serves the built site at `http://127.0.0.1:8080/`. Build actions
-use the configured Buck2 remote execution platform; preview and publishing run
-locally.
+The root alias builds the combined site with `/manual/en/`, `/manual/zh-Hans/`,
+and `/technical/en/`. The archive contains that deployable site with stable
+ordering and timestamps. The preview serves the site at
+`http://127.0.0.1:8080/`. The PDF and EPUB outputs use the same authored
+chapters and do not modify the deployable site.
 
-The `:user-manual[pdf]` and `:user-manual[epub]` outputs contain separate
-English and Simplified Chinese editions. The corresponding
-`:technical-report[pdf]` and `:technical-report[epub]` outputs contain the
-English report. PDF is fixed-page A4; EPUB is reflowable. These targets do not
-modify the deployable site. The print builder consumes the combined `:site`
-output. See [the print workflow](print/README.md) for layout ownership and
-review guidance.
+The Technical Report audit is available through
+`//products/perceptual-grade-next-blender/tests:technical_report_audit` and
+checks chapter coverage, source evidence, and report references in product
+comments. The manual audit is available through
+`//products/perceptual-grade-next-blender/tests:handbook_audit` and checks the
+published user-facing scope and static media. Both are Buck targets.
 
-Buck2 builds mdBook 0.5.4 from the central
-[Rust dependency graph](../../third_party/rust/README.md). Separate actions
-regenerate numerical and photographic figures, composed screenshots, demo and
-introductory WebPs, favicons, and manifests from declared source inputs. The
-11 generated numerical plots combine current-reference Linear, Tone, driver,
-and H–K calculations with explicitly historical Concentration, LUT examples,
-and benchmark data. Python produces the data and a pinned XeLaTeX/PGFPlots
-toolchain renders outlined-text SVGs. Each figure records its model scope and
-source hashes. Four recorded LUT-study plots are redrawn from archived
-measurements. These charts appear in the English Technical Report and use the
-same SVGs in its site, PDF, and EPUB editions.
-The publication includes [chart sources and plotted data](https://rei277hz.github.io/perceptual-grade/downloads/chart-sources.zip)
-for inspection and reuse, with candidate keys beside the historical plots.
-Photos, screenshots, and D2 diagrams retain their existing producers. Pinned
-Python/TeX dependencies and bundled FFmpeg are build inputs; a clean build needs
-neither the sibling legacy checkout nor locally installed tools.
+## Figures and diagrams
 
-The renderer preserves the manual's English and Simplified Chinese editions,
-language selection, Chinese search, part numbering, print pages, themes,
-equations, and historical Markdown report downloads. Fonts and KaTeX load from
-version-pinned jsDelivr URLs. KaTeX script and stylesheet references include
-integrity hashes. Buck verifies the pinned CDN resources while preparing the
-configuration and license notices; font and KaTeX payloads are absent from the
-deployment ZIP. Media are served locally. Reading equations and loading the
-chosen fonts require access to the CDN.
-
-The User Manual retains a clearly labeled legacy 1.23.2 extension ZIP link and
-does not offer a Next extension ZIP. Book publication excludes demo and intro
-animations, their stills, and animation provenance from the site, deployment
-ZIP, PDF, and EPUB. The `generators:demos` and `generators:intro` targets and
-source recordings remain available for future video work. The Next-scoped
-`//products/perceptual-grade-next-blender/tests:handbook_audit` consumes the
-published artifacts to check the manual's scope, retained legacy link, and
-static-image contract.
-
-The Technical Report is currently English-only. Its D2 policy diagrams are
-static SVGs with embedded fonts, generated with the pinned D2 distribution
-through Buck2. State diagrams use ELK, and workflow traces use D2's built-in
-sequence layout. Use ELK for graph layouts; the renderer records its layout and
-spacing flags in the provenance manifest:
+Numerical figures derive from the current analytic reference. D2 policy
+diagrams are authored in `docs/book/diagrams/` and generated as accessible
+static SVGs through Buck2:
 
 ```sh
 buck2 build --remote-only //products/perceptual-grade-book/diagrams:assets --show-output
-```
-
-Edit the diagram sources in `docs/book/diagrams/` and their accessible titles in
-`diagrams/figures.json`. Outputs and provenance stay in Buck2 artifacts; no
-installed D2 or checked-in generated SVG is used. A pinned Chromium/Playwright
-check measures the rendered text after embedded fonts load. Overlapping labels
-fail the diagram action, blocking the site, PDF, and EPUB until the source is
-repaired. Its results and tool versions are recorded in the same provenance.
-Each state-machine box names one phase or one derived configuration. A double
-border marks an absorbing state; retain literal phase names, including
-`terminal`. Keep explanatory notes in the chapter and put conditions on edges.
-
-Use `# pg-book: technical-report/en#next-policy.node-output` in Python comments
-to refer to a stable book section. An explicit `<a id="next-policy.node-output"></a>`
-immediately after the target heading declares the identifier; chapter filenames
-and heading text can change without changing the comment. The resolver checks
-the original Markdown and generated HTML and reports both source locations and
-published/local URLs. Only real comments are read; strings and docstrings are
-ignored. Identifiers must be unique within a book and language.
-
-```sh
 buck2 build --remote-only //products/perceptual-grade-book:book_refs --show-output
-buck2 test --remote-only //products/perceptual-grade-book/tests:book_refs //products/perceptual-grade-book/tests:book_refs_integration
 ```
 
-The resolver scans the declared Next Blender Python sources and writes
-`book-refs.json` and `book-refs.txt`. The supported editions are
-`technical-report/en`, `user-manual/en`, and `user-manual/zh-Hans`.
-Start `:preview -- --port 8080` through `buck2 run --remote-only` to follow the
-local URLs. Keep explicit anchors after their headings so print and EPUB
-chapter boundaries retain them with the right section.
-Grouped sequence diagrams show events, returned effects, Blender operations,
-and receipts through `opt`, `loop`, `alt`/`else`, and `par` workflow fragments.
-
-The [Bake section](docs/book/src/development/next-policies.md#next-policy.bake)
-connects the request reducer to native Grade/Stack evaluation and managed Image
-publication. Its phase and sequence diagrams are `09-bake.d2` and
-`09-bake-sequence.d2`; queue admission and output selection remain stateless
-decisions in the prose, rather than additional state diagrams.
+Use stable `grade-policy.*` anchors in comments such as
+`# pg-book: technical-report/en#grade-policy.node-output`. The source-reference
+resolver checks the authored Markdown and generated HTML. Anchor identifiers
+must be unique within each book and language. Published policy URLs use the
+same identifiers.
 
 ## Sources and generated resources
 
 | Path | Ownership |
 | --- | --- |
-| `docs/book/` | Maintained Markdown, navigation, theme, source artwork, and archived reports. |
-| `print/` | Derived PDF and EPUB pipeline, print themes, and edition front matter. |
-| `docs/data/`, `docs/media/` | Figure settings, recorded measurements, screenshots, and original recordings. |
-| `generators/` | Build-time producers using the current reference for current theory and isolated legacy inputs for historical illustrations. |
-| `cdn/` | Pinned CDN configuration, resource verification, and license assembly. |
-| `historical/`, `historical-manifest.json` | Immutable historical downloads and their SHA256 inventory. |
-| `tools/` | Assembly, rendering, validation, archive, preview, and publishing adapters. |
+| `docs/book/` | English report and bilingual manual sources, themes, and authored artwork. |
+| `docs/data/`, `docs/media/` | Current figure inputs, host captures, and recordings. |
+| `generators/` | Buck producers for current figures, screenshots, icons, and static media. |
+| `diagrams/` | Current policy-diagram rendering, accessibility checks, and provenance. |
+| `historical/` | The one checksum-verified archived ZIP. |
+| `print/` | Derived PDF and EPUB pipeline, themes, and edition front matter. |
+| `tools/` | Assembly, reference resolution, rendering, archive, preview, and publication adapters. |
 
-`:book_inputs` combines authored content, generated resources, dependency
-notices, and historical downloads, then projects independent `user-manual/`
-and `technical-report/` mdBook roots. The corresponding named subtargets expose
-each tree. Each input path has one owner: overlapping inputs fail before
-rendering. Missing or altered historical downloads also fail. Markdown edits
-and changed recording or figure inputs flow through ordinary Buck2 builds
-without refreshing a frozen documentation hash inventory. Generated provenance uses stable source
-identifiers and records input and output hashes; no checked-in rendered
-snapshot is consumed.
-
-The supplied `perceptual_grade-v1.23.2-20261101.zip`, historical DCTL files,
-translation-review CSV, and historical license remain archived bytes. The
-book pipeline does not build a current extension to replace them. These
-preservation guarantees last until the coordinated legacy retirement. Historical
-benchmark and engineering measurements are retained as data, rather than rerun
-on each builder. Historical attachment hashes and generator provenance remain explicit inputs.
-
-Tests cover source assembly, edited chapters, missing or overlapping inputs,
-generated provenance, manual language editions, the English-only report, local
-links and fragments, CDN references, historical download bytes, and deterministic
-archive metadata. The book build and its tests remain independent of current
-product proof targets.
+`:book_inputs` projects the authored manual and report into separate mdBook
+roots. Generated resources have explicit producers and provenance. The
+publication archive contains HTML, local static assets, and the single archived
+ZIP. Fonts and KaTeX load from pinned CDN URLs; the print editions package the
+fonts they require.
 
 ## Publish to the local website checkout
 
-The downstream repository is the local Git checkout that receives the built
-output, by default `~/workspace/rei277hz.github.io/`. The downstream site is its
-`perceptual-grade/` directory:
+The default destination is
+`~/workspace/rei277hz.github.io/perceptual-grade/`:
 
 ```sh
 buck2 run --remote-only //products/perceptual-grade-book:publish
 ```
 
-This builds `:archive[zip]` through the configured execution platform and then
-runs the publisher locally. After validating the completed ZIP, the publisher
-replaces every file and directory under the destination. The parent checkout's
-`.git` and other site directories are preserved. To select another destination,
-append `-- --destination /path/to/website/site-directory`. The destination must
-be a direct child of an existing Git worktree and cannot contain its own `.git`.
-Committing and pushing the website remain separate operations.
+The publisher validates the completed archive and replaces the contents of the
+book-site directory while preserving the parent checkout's `.git` and sibling
+directories. To choose another destination, append
+`-- --destination /path/to/website/site-directory`. Committing and pushing the
+website remain separate operations.

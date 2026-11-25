@@ -1,44 +1,28 @@
-"""Author current-reference figures and explicitly historical PGFPlots studies."""
+"""Author Perceptual Grade reference and current LUT figures."""
 
 import argparse
-import html
 import math
 from pathlib import Path
 import shutil
-import statistics
 
 import numpy as np
 
-from pg_book_legacy.model import linear as lm, tone as tm, color as cm, lut
-from color_tools.perceptual_grade_reference import appearance as ra, grading as rg, model as rm, responses as rr
+from color_tools.perceptual_grade_reference import grading as rg, model as rm, responses as rr
 from color_tools.perceptual_grade_core.model import hk_guard as hg
 from color_tools.color_core import scaled
-from pg_book_generators import historical_figures
-from pg_book_generators.figure_common import benchmark_data, manifest, write_json
+from color_tools.kernel import lut
+from pg_book_generators.figure_common import manifest, write_json
 
 
 COLORS = ("bookblue", "bookorange", "bookgreen", "bookpurple")
 SERIES = tuple(color + "," + style for color, style in
                zip(COLORS, ("solid", "dashed", "dashdotted", "densely dotted")))
 FIT_VALUES = (-1, 0, 2, 4)
-CURRENT_FIGURES = frozenset({
-    "linear-basis", "tone-curves", "tone-saturation", "color-tone-weights",
-    "color-drivers", "guard-boundary", "guard-energy",
-})
 TONES = ("Shadows", "Midtones", "White", "Highlights")
 GROUP_BEGIN = (r"\begin{groupplot}[book axis,width=70mm,height=55mm,"
                r"group style={group size=2 by 1,horizontal sep=12mm}]")
-SCATTER_BEGIN = (r"\begin{groupplot}[book axis,width=70mm,height=55mm,"
-                 r"group style={group size=2 by 1,horizontal sep=22mm}]")
 GROUP_END = r"\end{groupplot}"
 LEGEND_BELOW = r"legend style={at={(0.5,-0.28)},anchor=north,legend columns=1}"
-
-
-def tex_text(value):
-    replacements = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$",
-                    "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
-                    "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
-    return "".join(replacements.get(character, character) for character in str(value))
 
 
 class Author:
@@ -68,8 +52,8 @@ class Author:
             "\\input{plot-style.tex}\n\\begin{document}\n\\begin{tikzpicture}\n"
             + "\n".join(body)
             + "\n\\end{tikzpicture}\n\\end{document}\n", encoding="utf-8")
-        scope = "current-reference" if name in CURRENT_FIGURES else "historical"
-        self.figures.append({"id": name, "title": title, "description": description, "scope": scope})
+        self.figures.append({"id": name, "title": title, "description": description,
+                             "scope": "current-reference"})
 
 
 def line(table, y="y", label=None, options="", x="x"):
@@ -91,7 +75,7 @@ def panel(options):
     return r"\nextgroupplot[" + options + "]"
 
 
-def numeric_figures(author, benchmark, fragments):
+def numeric_figures(author):
     tone = rg.Tone(rg.ToneSettings())
     H = np.linspace(0, 100 * float(tone.nits_to_j(4000)), 600)
 
@@ -192,23 +176,6 @@ def numeric_figures(author, benchmark, fragments):
     author.plot("color-drivers", "Chroma and opponent driver responses",
                 "Low and high chroma drivers at fixed H weight distinct color ranges. Signed opponent drivers choose opposite sides of the hue wheel.", body)
 
-    angles = np.linspace(0, 2 * np.pi, 500)
-    ab = 20 * np.stack([np.cos(angles), np.sin(angles)], axis=-1)
-    columns = {"x": np.rad2deg(angles)}
-    for index, value in enumerate((0, 0.25, 0.75)):
-        result = cm.hue_concentration(ab, np.broadcast_to([value, 0], ab.shape))
-        angle = np.unwrap(np.arctan2(result[:, 1], result[:, 0]))
-        columns[f"angle{index}"] = np.rad2deg(angle)
-        columns[f"spacing{index}"] = np.gradient(angle, angles)
-    concentration = author.table("color-hue-concentration", **columns)
-    body = [GROUP_BEGIN, panel(r"xlabel={Input hue (degrees)},ylabel={Output hue (degrees)},title={Concentration around $+a$}," + LEGEND_BELOW)]
-    body.extend(line(concentration, f"angle{index}", f"Concentration {value}", SERIES[index]) for index, value in enumerate((0, 0.25, 0.75)))
-    body.append(panel(r"xlabel={Input hue (degrees)},ylabel={Local spacing ratio},title={Continuous hue ordering}"))
-    body.extend(line(concentration, f"spacing{index}", options=SERIES[index]) for index in range(3))
-    body.append(GROUP_END)
-    author.plot("color-hue-concentration", "Hue concentration and angular spacing",
-                "Unwrapped output hue and its numerical angular derivative show how concentrations 0, 0.25 and 0.75 gather hues while preserving ordering.", body)
-
     C = np.linspace(0, 180, 650)
     requested = np.stack([np.full_like(C, 50), C, np.zeros_like(C)], axis=-1)
     reference_energy = rr.hk_energy(50., 20.)
@@ -243,145 +210,59 @@ def numeric_figures(author, benchmark, fragments):
 
     grid_values = lut.axis()
     grid = author.table("lut-input-grid", x=np.arange(lut.SIZE), y=grid_values)
-    # Include the first vertex above the zoom window so clipping preserves the
-    # boundary-crossing segment without transforming distant points in TeX.
     zoom_count = min(lut.SIZE, int(np.searchsorted(grid_values, 0.25, side="right")) + 1)
     grid_zoom = author.table("lut-input-grid-zoom", x=np.arange(zoom_count), y=grid_values[:zoom_count])
-    body = [GROUP_BEGIN, panel(r"xlabel={Grid index},ylabel={Linear ACEScg component},title={65 samples / $0\ldots128$}"),
+    body = [GROUP_BEGIN, panel(r"xlabel={Grid index},ylabel={Linear ACEScg component},title={65 samples / $0\ldots1024$}"),
             line(grid, options="bookblue,mark=*,mark size=0.8pt"),
-            panel(r"xlabel={Grid index},ylabel={Linear RGB component},title={Density near black},xmin=0,xmax=64,ymin=-0.025,ymax=0.25"),
+            panel(r"xlabel={Grid index},ylabel={Linear ACEScg component},title={Density near black},xmin=0,xmax=64,ymin=-0.025,ymax=0.25"),
             line(grid_zoom, options="bookblue,mark=*,mark size=0.8pt"),
             coordinates(((0, 0), (64, 0)), "bookgray,no marks,forget plot"), GROUP_END]
     author.plot("lut-input-grid", "Native AP1 input samples",
-                "The same 65-point input axis is shown at full 0 to 128 range and with a near-black vertical zoom from -0.025 to 0.25.", body)
-    x = np.linspace(0.01, 0.99, 500)
-    decoder = author.table("lut-decode", x=x, y=lut.decode(x))
-    lo, hi = 0.03, 0.12
-    points = np.linspace(lo, hi, 200)
-    fraction = (points - lo) / (hi - lo)
-    interpolation = author.table("lut-interpolation", x=points, affine=2.4 * points - 0.1,
-                                 physical=(1 - fraction) * (2.4 * lo - 0.1) + fraction * (2.4 * hi - 0.1))
-    body = [GROUP_BEGIN, panel(r"xlabel={Shaped coordinate},ylabel={Linear ACEScg component},title={Nonuniform cell address}"),
-            line(decoder, options="bookblue"),
-            panel(r"xlabel={Linear component},ylabel={Output component},title={Affine reproduction},"
-                  r"xticklabel style={/pgf/number format/fixed,/pgf/number format/precision=2}," + LEGEND_BELOW),
-            line(interpolation, "affine", "Affine reference", "bookblue"),
-            line(interpolation, "physical", "Physical-cell interpolation", "bookorange,dashed"), GROUP_END]
-    author.plot("lut-interpolation", "Shaping and physical-cell interpolation",
-                "The input shaper locates a nonuniform cell. Physical linear-RGB fractions reproduce the affine reference, so the two curves coincide.", body)
+                "The current 65-point AP1 axis spans 0 to 1024. The second panel enlarges its near-black interval.", body)
 
-    labels = ("Shader / small", "Shader / full", "Compositor")
-    lines = ["| Workload | Method | Preparation (s) | Median render (s) |", "| --- | --- | ---: | ---: |"]
-    benchmark_tables = []
-    for index, method in enumerate(("LUT", "DIRECT")):
-        selected = [next(row for row in benchmark["cases"] if row["workload"] == workload and row["method"] == method)
-                    for workload in ("shader-small", "shader-full", "compositor-full")]
-        benchmark_tables.append(author.table("render-benchmark-" + method.lower(),
-            x=np.arange(3) + (index - 0.5) * 0.34,
-            render=[statistics.median(row["render_seconds"]) for row in selected],
-            preparation=[row["prepare_seconds"] for row in selected]))
-        for label, row in zip(labels, selected):
-            lines.append(f"| {label} | {method} | {row['prepare_seconds']:.3f} | {statistics.median(row['render_seconds']):.3f} |")
-    body = [GROUP_BEGIN]
-    for metric, title in (("render", "Steady render"), ("preparation", "Graph and grade preparation")):
-        body.append(panel(r"ylabel={Seconds},ymin=0,xmin=-0.6,xmax=2.6,"
-                          r"xtick={0,1,2},xticklabels={Small shader,Full shader,Compositor},"
-                          r"x tick label style={rotate=25,anchor=east},title={" + title + "}," + LEGEND_BELOW))
-        for index, (table, label) in enumerate(zip(benchmark_tables, ("Baked LUT", "Direct"))):
-            body.append(line(table, metric, label, COLORS[index] + ",ybar,solid,area legend,bar width=6pt,fill=" + COLORS[index]))
-    body.append(GROUP_END)
-    status = "ILLUSTRATIVE DATA: replace with workstation measurements" if benchmark["status"] == "illustrative" else "Measured on " + benchmark["environment"]["device"]
-    body.append(r"\node[anchor=south,font=\small] at ([yshift=7mm]current bounding box.north) {" + tex_text(status) + "};")
-    author.plot("render-benchmark", "Workload and preparation comparison", status + ". Median render time and preparation time compare Baked LUT and Direct for three workloads.", body)
-    label = "Illustrative data. These values demonstrate the reporting layout." if benchmark["status"] == "illustrative" else "Workstation measurements. See the linked JSON for settings and every trial."
-    (fragments / "benchmark.md").write_text(label + "\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
-    sample, sample_energy = rg.guard(np.array([50., 80., 0.]), rr.hk_energy(50., 80.), reference_energy)
+    cell = 20
+    cell_points = np.linspace(grid_values[cell], grid_values[cell + 1], 200)
+    shaped_position = lut.CELLS * np.log1p(cell_points / lut.KAPPA) / lut.LOG_RANGE
+    shaped_fraction = shaped_position - cell
+    physical_fraction = ((cell_points - grid_values[cell]) /
+                         (grid_values[cell + 1] - grid_values[cell]))
+    interpolation = author.table("lut-interpolation", x=cell_points,
+                                 shaped=shaped_fraction, physical=physical_fraction)
+    address_points = np.linspace(lut.MINIMUM, lut.MAXIMUM, 500)
+    address = author.table("lut-address", x=address_points,
+                           y=lut.CELLS * np.log1p(address_points / lut.KAPPA) / lut.LOG_RANGE)
+    body = [GROUP_BEGIN, panel(r"xlabel={Linear ACEScg component},ylabel={Fraction across cell},title={Address versus interpolation coordinate}," + LEGEND_BELOW),
+            line(interpolation, "shaped", "Shaped index fraction", "bookblue"),
+            line(interpolation, "physical", "Physical RGB fraction", "bookorange,dashed"),
+            panel(r"xlabel={Linear ACEScg component},ylabel={Shaped cell index},title={Address across the LUT domain}," + LEGEND_BELOW),
+            line(address, options="bookgreen"), GROUP_END]
+    author.plot("lut-interpolation", "Shaping and physical-cell interpolation",
+                "The logarithmic address selects a nonuniform cell. Interpolation uses the input's physical fraction within that cell.", body)
     return {"model": "perceptual-grade-reference", "reference_nits": tone.reference,
             "peak_nits": tone.peak, "shadow_ratio": rg.LOW_Y, "tone_targets": tone.target.tolist(),
             "chroma_drivers": {"p": 2, "s0": 75 * rg.CHROMA_CROSSOVER, "Cn": 2.},
-            "guard_sample_50_80": sample.tolist(), "guard_sample_energy": float(sample_energy)}
-
-
-def historical_plots(author, data, fragments):
-    historical_figures.write_tables(data, author.root)
-    for study, key, title in (("shaper", "shaper_errors", "Shaper finalists"),
-                              ("domain128", "domain_errors", "Domain-128 finalists")):
-        body = [SCATTER_BEGIN]
-        for metric, x_label, y_metric, y_label in (
-            ("scene_p99", "Scene RGB p99", "display_p99", r"Rendered $\Delta E_{\mathrm{ITP}}$ p99" if study == "shaper" else "Encoded RGB p99"),
-            ("scene_rms", "Scene RGB RMS", "display_p99" if study == "shaper" else "display_rms", r"Rendered $\Delta E_{\mathrm{ITP}}$ p99" if study == "shaper" else "Encoded RGB RMS"),
-        ):
-            body.append(panel("xlabel={" + x_label + "},ylabel={" + y_label + "},title={"
-                              + ("p99 tradeoff" if metric == "scene_p99" else "RMS tradeoff")
-                              + r"},enlargelimits=0.17,legend style={at={(0.5,-0.28)},anchor=north,legend columns=3}"))
-            for index, row in enumerate(data[key]):
-                color = {"Rec2020": "bookblue", "AP1_ACES": "bookgreen", "AP1_D65": "bookorange", "Rec2020_D65": "bookblue"}[row["basis"]]
-                if study == "shaper":
-                    color = COLORS[index % len(COLORS)]
-                marker = "star" if row["selected"] else "x" if row["baseline"] else ("*", "square*", "triangle*", "diamond*", "pentagon*")[index % 5]
-                size = "3.2pt" if row["selected"] else "2.5pt" if row["baseline"] else "1.6pt"
-                # Metric-specific names keep the two scatter panels independent.
-                metric_table = author.table(f"lut-{study}-{row['id']}-{metric}", x=[row[metric]], y=[row[y_metric]])
-                body.append(line(metric_table, label=row["id"], options=f"{color},only marks,mark={marker},mark size={size}"))
-        body.append(GROUP_END)
-        author.plot("lut-" + study + "-errors", title + " error tradeoffs",
-                    ("Recorded full-finalist shaper scores. " if study == "shaper" else "Recorded full-finalist scores rounded to eight decimal places in the domain-128 report. ")
-                    + "Candidate IDs identify the key below. Stars mark the selected candidate and crosses mark the historical baseline.", body)
-
-        rows = ["| ID | Candidate | Role |", "| --- | --- | --- |"]
-        for row in data[key]:
-            name = html.escape(row["name"]).replace("_", "_<wbr>")
-            role = "Selected" if row["selected"] else "Baseline" if row["baseline"] else "Finalist"
-            rows.append(f"| {row['id']} | <code>{name}</code> | {role} |")
-        (fragments / ("lut-" + study + "-key.md")).write_text("\n".join(rows) + "\n", encoding="utf-8")
-
-    for study, key, title in (("shaper", "shaper_axes", "Shaper sample placement"),
-                              ("domain128", "domain_axes", "Domain-128 sample placement")):
-        body = [GROUP_BEGIN]
-        for branch, panel_title in (("negative", "Negative branch"), ("positive", "Positive branch")):
-            body.append(panel(r"xlabel={Vertex index away from zero},ylabel={Channel magnitude},ymode=log,title={"
-                              + panel_title + "}," + LEGEND_BELOW))
-            for index, record in enumerate(data[key]):
-                if branch == "negative" and not record["negative_branch"]:
-                    continue
-                table = f"tables/lut-{study}-{record['id']}-{branch}.dat"
-                role = " selected" if record["selected"] else " baseline" if record["baseline"] else ""
-                body.append(line(table, "magnitude", record["id"] + role,
-                                 SERIES[index] + ",mark=*,mark size=0.8pt", x="index"))
-        body.append(GROUP_END)
-        author.plot("lut-" + study + "-placement", title,
-                    "Negative and positive vertex magnitudes are indexed away from zero on logarithmic axes. Zero is omitted; native AP1 has no negative branch. Candidate IDs match the error-chart key."
-                    if study == "domain128" else
-                    "Original and selected shaper grids show negative and positive vertex magnitudes on logarithmic axes. Zero is omitted and each branch is indexed away from zero.", body)
+            "lut_size": lut.SIZE, "lut_minimum": lut.MINIMUM, "lut_maximum": lut.MAXIMUM,
+            "lut_kappa": lut.KAPPA}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    for argument in ("data", "historical", "style", "output-dir"):
+    for argument in ("style", "output-dir"):
         parser.add_argument("--" + argument, type=Path, required=True)
     args = parser.parse_args(argv)
     author = Author(args.output_dir)
-    fragments = args.output_dir / "fragments"
-    fragments.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(args.style, args.output_dir / "plot-style.tex")
-    benchmark = benchmark_data(args.data / "benchmark.json")
-    numerical = numeric_figures(author, benchmark, fragments)
-    inputs = [args.historical / name for name in
-              ("shaper.zip", "shaper-selection.json", "domain-report.md", "domain-selection.json")]
-    historical = historical_figures.load_historical_figures(*inputs)
-    historical_plots(author, historical, fragments)
+    numerical = numeric_figures(author)
     write_json(args.output_dir / "numerical-data.json", numerical)
     write_json(args.output_dir / "figures.json", {"figures": author.figures})
     manifest(args.output_dir,
-             [args.data / "benchmark.json", args.style, Path(__file__), Path(historical_figures.__file__),
-              *inputs, *(Path(module.__file__) for module in (lm, tm, cm, lut, ra, rg, rm, rr, hg, scaled))],
-             "Perceptual Grade current-reference and historical numerical tables and PGFPlots sources",
-             {"docs/data": args.data, "historical": args.historical,
-              "plot-style": args.style.parent, "generators": Path(__file__).parent,
-              "legacy": Path(lm.__file__).parent.parent,
+             [args.style, Path(__file__), *(Path(module.__file__) for module in (rg, rm, rr, hg, scaled, lut))],
+             "Perceptual Grade reference and Blender LUT figures and PGFPlots sources",
+             {"plot-style": args.style.parent, "generators": Path(__file__).parent,
               "reference": Path(rg.__file__).parent,
               "shared-model": Path(hg.__file__).parent,
-              "color-core": Path(scaled.__file__).parent})
+              "color-core": Path(scaled.__file__).parent,
+              "blender-kernel": Path(lut.__file__).parent})
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Audit the published handbook as documentation of the current Next product."""
+"""Audit the published handbook as documentation of Perceptual Grade."""
 
 from io import BytesIO
 from importlib.resources import files
@@ -51,8 +51,8 @@ class HandbookAuditTests(unittest.TestCase):
             for name in ("src", "zh-Hans"):
                 (root / name / "guide").mkdir(parents=True)
                 (root / name / "README.md").write_text(
-                    'Next Legacy Blender download 旧版 Blender 下载 '
-                    'perceptual_grade-v1.23.2-20261101.zip '
+                    'Perceptual Grade archived Blender package 归档的 Blender 扩展 '
+                    'archived-blender-extension.zip '
                     '[Next download](downloads/next.zip)', encoding="utf-8",
                 )
             with self.assertRaisesRegex(ValueError, "another install ZIP"):

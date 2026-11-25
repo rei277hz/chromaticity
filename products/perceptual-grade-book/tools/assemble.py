@@ -1,4 +1,4 @@
-"""Assemble authored book editions, generated assets, and historical downloads."""
+"""Assemble authored book editions, generated assets, and the frozen ZIP."""
 
 import argparse
 import hashlib
@@ -12,8 +12,7 @@ BOOKS = {
     "user-manual": {
         "title": "Perceptual Grade User Manual",
         "description": (
-            "A bilingual guide to using Perceptual Grade. Some interface and "
-            "workflow chapters describe the preserved 1.23.2 release."
+            "A bilingual guide to using Perceptual Grade."
         ),
         "summary_sources": {
             "en": "src/SUMMARY.md",
@@ -154,16 +153,19 @@ def _validate_chapters(book):
 
 
 def verify_historical(historical, manifest):
-    """Only published attachments are frozen; chapters are normal editable inputs."""
+    """Validate the one preserved ZIP package; chapters remain editable inputs."""
     specification = json.loads(Path(manifest).read_text(encoding="utf-8"))
     if specification.get("schema") != 1:
-        raise ValueError("Expected schema 1 historical attachment manifest")
+        raise ValueError("Expected schema 1 archive package manifest")
     expected = specification["files"]
+    if (len(expected) != 1
+            or any(PurePosixPath(filename).suffix.lower() != ".zip" for filename in expected)):
+        raise ValueError("Historical inventory must contain exactly one ZIP package")
     for filename in expected:
         relative = PurePosixPath(filename)
         if (relative.is_absolute() or ".." in relative.parts
                 or str(relative) != filename or filename in ("", ".")):
-            raise ValueError(f"Invalid historical manifest path: {filename}")
+            raise ValueError(f"Invalid archive manifest path: {filename}")
     actual = _inventory(historical)
     missing = sorted(expected.keys() - actual.keys())
     extra = sorted(actual.keys() - expected.keys())
@@ -171,7 +173,7 @@ def verify_historical(historical, manifest):
                      if expected[name] != actual[name])
     if missing or extra or changed:
         raise ValueError(
-            f"Historical inventory mismatch: missing={missing}, extra={extra}, changed={changed}"
+            f"Archive inventory mismatch: missing={missing}, extra={extra}, changed={changed}"
         )
     return specification
 

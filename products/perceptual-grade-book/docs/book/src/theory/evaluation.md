@@ -1,28 +1,67 @@
 # Evaluation and interpolation
 
-The current analytic reference is `libraries/perceptual-grade-reference`. Its Stage 3 evaluates lightness/chroma rows → Warp hue/chroma and positive Scale selection → selective Adaptance → H–K repair → Scale on the repaired state. The archived 1.23.2 DCTL and frozen Blender product retain their historical controls and ordering. Next Blender now exposes the reference Stage 3 numeric controls and follows the guard-before-Scale order.
+The analytic reference in `libraries/perceptual-grade-reference` defines the
+appearance transform and its forward and inverse contracts. Product adapters
+prepare that model for their host. Blender binds prepared data to native Grade
+graphs and bakes complete Grade Stacks into sampled cubes. The Resolve DCTL
+chain evaluates its stages serially in scene-linear XYZ and signed cone
+coordinates.
 
 ## From appearance to RGB
 
-H–K repair belongs inside Stage 3. It uses frozen post-Tone reference energy and runs after Adaptance, before Scale. For a repaired point, Scale sends \((a,b,E)\) to \((\lambda a,\lambda b,\lambda^2E)\), with \(\lambda>0\). The saturation-pad point \((a,b)/\sqrt{C^2+|E|}\) stays fixed. On the nonnegative-H repair branch, \(E\ge0\); its scaled H–K height is \(\sqrt{\lambda^2E+66\lambda C}\), increasing strictly for every nonblack point.
+In the reference, Stage 3 applies the tonal J/C controls and Warp, then
+selective Adaptance, H–K repair, and common positive Scale. For a repaired
+point, Scale sends \((a,b,E)\) to \((\lambda a,\lambda b,\lambda^2E)\), with
+\(\lambda>0\). The saturation-pad point
+\((a,b)/\sqrt{C^2+|E|}\) remains fixed. On the nonnegative-H repair branch,
+\(E\ge0\), and the resulting H–K height increases strictly for every
+nonblack point.
 
-`Model.grade_state` returns this repaired, scaled appearance. A forward→inverse Stack handoff carries it directly, bypassing only RGB cube projection. `release_state(..., guard=False)` decodes the supplied state; `guard=True` applies only the export cube guard. H–K repair is not idempotent and must not be repeated at export or when drawing the pad.
+`Model.grade_state` returns this repaired, scaled appearance. A
+forward-to-inverse Stack handoff carries it directly without RGB projection.
+`release_state(..., guard=False)` decodes the supplied state;
+`guard=True` applies the reference export-cube guard. H–K repair is not
+idempotent and is not repeated at RGB export.
 
-The export cube guard checks the actual decoder and native AP1 RGB cube \([0,1024]^3\). For interior positive energy, it holds \(J_A\) and hue while reducing chroma until decoding is legal. Nonpositive energy exports black; energy at or above the cube-white endpoint exports cube white. Decoder trials with response magnitude at or beyond the pole at 400 are rejected. This projection can change saturation after the pad's appearance-space guarantee, and is lossy.
+The Resolve chain has its own stage boundary. Warp applies Scale, then XYZ
+Output performs H–K repair before decoding to scene-linear XYZ D65. This
+product-specific order is described in [Architecture and runtime](../development/architecture.md)
+and in the [forward and inverse specification](../development/forward-inverse-math.md).
 
-The [bounded H–K guard](hk-guard.md) gives the repair equations, signed-energy treatment and separate export policy. The reference inverse evaluates the complete forward function, including repair before Scale and final cube containment, for every candidate. It does not nest a standalone H–K inverse inside that search; see the [reference inverse contract](../development/forward-inverse-math.md#20-the-reference-inverse).
+The reference export guard checks the actual decoder and native AP1 RGB cube
+\([0,1024]^3\). For interior positive energy, it holds \(J_A\) and hue while
+reducing chroma until decoding is legal. Nonpositive energy exports black;
+energy at or above the cube-white endpoint exports cube white. Decoder trials
+at or beyond the response pole at 400 are rejected. This projection can change
+saturation after the appearance-space guarantee and is lossy.
 
 ## Approximate the complete function
 
-A LUT samples the complete function of its selected profile. Input repair, Stage 3 H–K repair and RGB cube containment are deliberate parts of that function; finite sampling and interpolation add approximation error. Agreement between two samplers therefore does not establish agreement with the analytic grade.
+A sampled table approximates the complete function of its selected product
+path. Input-coordinate conversion, the grading stages, and output containment
+are part of that function. Sampling and interpolation add their own error, so
+agreement between two samplers does not establish agreement with the analytic
+model.
 
-[Direct and sampled evaluation](lut.md) describes the native AP1 input grid, input repair, physical-linear-RGB interpolation and the different table profiles. The recorded plots and measurements identify the older implementations that produced them; they do not validate the corrected Warp ordering.
+The [direct and sampled evaluation chapter](lut.md) describes the Blender
+Stack grid, its physical-linear-RGB interpolation, and prepared Grade data.
+The Resolve DCTL chain uses analytic stage code rather than a Stack LUT.
 
-## Keep the result tied to its settings
+## Keep results tied to their settings
 
-A completed table is valid only for the settings and model that produced it. Its signature includes model version, size, sampling space, address constants and every control that changes the function. A changed function requires a replacement table.
+A completed Blender resource is valid only for the settings and model that
+produced it. Its signature includes the model version, sampling configuration,
+and every control that changes the function. A changed function requires a
+replacement resource.
 
-- **A stale table must never be presented as current.** A last-good result may remain visible with an updating indication. If the current kernel cannot be built or recovered, fail visibly with magenta output preserving alpha.
-- **A preview is identified as a preview.** A coarse table may update during interaction, while final rendering requires the completed current result. The 33³ grid uses every other 65³ coordinate. Reference baking reuses the shared samples; the Next GPU helper evaluates the two resolutions separately.
+- **A stale table is never presented as current.** A last-good result may
+  remain visible with an updating indication. If the current kernel cannot be
+  built or recovered, the product shows an error and alpha-preserving magenta
+  output.
+- **A preview is identified as a preview.** A coarse table can update during
+  interaction, while final rendering requires the completed current result.
+  Blender's Stack uses 33³ and 65³ tables.
 
-The [Next Blender policy machines](../development/next-policies.md) document the current product's publication and render-preflight contract. The [runtime architecture](../development/architecture.md) and legacy inverse implementation sections retain historical behavior under their stated scope.
+The [runtime policies](../development/policies.md) document publication,
+reconciliation, and render-preflight contracts. The [runtime architecture](../development/architecture.md)
+describes how each product evaluates the model.

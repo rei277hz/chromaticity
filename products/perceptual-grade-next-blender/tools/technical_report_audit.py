@@ -11,9 +11,9 @@ from pg_book_build.book_refs import comment_references, source_anchors
 
 
 PRODUCT = "products/perceptual-grade-next-blender"
-SCOPES = frozenset({"next", "reference", "legacy", "mixed", "shared"})
+SCOPES = frozenset({"blender", "reference", "shared"})
 POLICY_KINDS = frozenset({"production", "comparison", "mixed", "conceptual"})
-CONCEPTUAL = frozenset({"next-policy.overview", "next-policy.contract"})
+CONCEPTUAL = frozenset({"grade-policy.overview", "grade-policy.contract"})
 
 
 def _text(value, label):
@@ -87,12 +87,6 @@ def audit_report(manifest, docs, roots):
             raise ValueError(f"Invalid chapter scope: {name}")
         _text(chapter.get("review"), f"{name}.review")
         _paths(chapter.get("evidence"), f"{name}.evidence", roots)
-        remaining = chapter.get("remaining_work")
-        if (not isinstance(remaining, list)
-                or (chapter["scope"] in {"legacy", "mixed"} and not remaining)):
-            raise ValueError(f"{name}: legacy/mixed scope needs remaining_work")
-        for item in remaining:
-            _text(item, f"{name}.remaining_work")
         path = source_root / ("report/README.md" if name == "README.md" else name)
         for anchor in source_anchors(path.read_text(encoding="utf-8"), name):
             identifier = anchor["anchor"]
@@ -101,7 +95,7 @@ def audit_report(manifest, docs, roots):
             anchors[identifier] = name
 
     policies = _records(manifest.get("policies"), "anchor", "policy")
-    expected_policies = {name for name in anchors if name.startswith("next-policy.")}
+    expected_policies = {name for name in anchors if name.startswith("grade-policy.")}
     if policies.keys() != expected_policies:
         raise ValueError(f"Policy anchor coverage: missing={sorted(expected_policies - policies.keys())}, "
                          f"extra={sorted(policies.keys() - expected_policies)}")

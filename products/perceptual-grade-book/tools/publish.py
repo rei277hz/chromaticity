@@ -69,10 +69,15 @@ def _archive_contents(bundle):
         "index.html", ".nojekyll", "site-manifest.json",
         "manual/index.html", "manual/en/index.html", "manual/zh-Hans/index.html",
         "technical/en/index.html",
-        "downloads/perceptual_grade-v1.23.2-20261101.zip",
     )}
     if not required <= contents.keys():
         raise ValueError("Site ZIP is missing required publication files")
+    frozen_packages = {path for path in contents
+                       if len(path.parts) == 2 and path.parts[0] == "downloads"
+                       and path.name.startswith("archived-blender-extension")
+                       and path.suffix == ".zip"}
+    if frozen_packages != {PurePosixPath("downloads/archived-blender-extension.zip")}:
+        raise ValueError("Site ZIP must contain exactly one frozen product ZIP")
     manifest_path = PurePosixPath("site-manifest.json")
     manifest = json.loads(bundle.read(contents[manifest_path]))
     if (not isinstance(manifest, dict) or manifest.get("schema") != 1

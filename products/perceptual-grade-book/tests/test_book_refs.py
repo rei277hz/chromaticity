@@ -12,21 +12,21 @@ class CommentReferenceTests(unittest.TestCase):
     def test_only_comments_are_references(self):
         source = '''"""# pg-book: technical-report/en#ignored.docstring"""
 text = "# pg-book: technical-report/en#ignored.string"
-# pg-book: technical-report/en#next-policy.node-output
+# pg-book: technical-report/en#grade-policy.node-output
 value = 1  # pg-book: user-manual/zh-Hans#manual.workflow
 '''
         result = book_refs.comment_references(source, "example.py")
         self.assertEqual([(item["code_line"], item["reference"]) for item in result], [
-            (3, "technical-report/en#next-policy.node-output"),
+            (3, "technical-report/en#grade-policy.node-output"),
             (4, "user-manual/zh-Hans#manual.workflow"),
         ])
 
     def test_bad_markers_fail_at_the_comment(self):
         for comment in (
-                "# pg-book: next-policy.node-output",
-                "# pg-book: technical-report/en#next-policy.node-output trailing words",
-                "# See pg-book: technical-report/en#next-policy.node-output",
-                "# pg-book: technical-report/en#next-policy..node-output"):
+                "# pg-book: grade-policy.node-output",
+                "# pg-book: technical-report/en#grade-policy.node-output trailing words",
+                "# See pg-book: technical-report/en#grade-policy.node-output",
+                "# pg-book: technical-report/en#grade-policy..node-output"):
             with self.subTest(comment=comment), self.assertRaisesRegex(ValueError, "example.py:2: malformed"):
                 book_refs.comment_references("value = 1\n" + comment, "example.py")
 
@@ -93,14 +93,14 @@ class BookReferenceTests(unittest.TestCase):
         self.write(self.book / "zh-Hans/README.md", '# 用户手册\n\n<a id="manual.introduction"></a>\n')
         self.write(self.book / "src/report/README.md", '# Report\n\n<a id="report.introduction"></a>\n')
         self.write(self.book / "src/development/policies.md",
-                   '# Policies\n\n## Node output\n\n<a id="next-policy.node-output"></a>\n')
+                   '# Policies\n\n## Node output\n\n<a id="grade-policy.node-output"></a>\n')
         self.write(self.site / "manual/en/index.html", '<h1>Manual</h1><a id="manual.introduction"></a>')
         self.write(self.site / "manual/zh-Hans/index.html", '<h1>手册</h1><a id="manual.introduction"></a>')
         self.write(self.site / "technical/en/index.html", '<h1>Report</h1><a id="report.introduction"></a>')
         self.write(self.site / "technical/en/development/policies.html",
-                   '<h1>Policies</h1><h2>Node output</h2><a id="next-policy.node-output"></a>')
+                   '<h1>Policies</h1><h2>Node output</h2><a id="grade-policy.node-output"></a>')
         self.write(self.sources / "src/policy/node.py",
-                   '# pg-book: technical-report/en#next-policy.node-output\n')
+                   '# pg-book: technical-report/en#grade-policy.node-output\n')
 
     @staticmethod
     def write(path, text):
@@ -118,9 +118,9 @@ class BookReferenceTests(unittest.TestCase):
         self.assertEqual(target["heading_line"], 3)
         self.assertEqual(target["code"], "products/perceptual-grade-next-blender/src/policy/node.py")
         self.assertEqual(target["site_path"],
-                         "technical/en/development/policies.html#next-policy.node-output")
+                         "technical/en/development/policies.html#grade-policy.node-output")
         self.assertEqual(target["published_url"],
-                         "https://rei277hz.github.io/perceptual-grade/technical/en/development/policies.html#next-policy.node-output")
+                         "https://rei277hz.github.io/perceptual-grade/technical/en/development/policies.html#grade-policy.node-output")
         output = self.root / "output"
         book_refs.write_report(report, output)
         self.assertEqual(json.loads((output / "book-refs.json").read_text()), report)
@@ -133,13 +133,13 @@ class BookReferenceTests(unittest.TestCase):
         self.write(self.book / "src/report/SUMMARY.md",
                    "# Summary\n[Report](README.md)\n- [Runtime](development/runtime.md)\n")
         self.write(self.book / "src/development/runtime.md",
-                   '# Runtime\n\n## Current installation\n\n<a id="next-policy.node-output"></a>\n')
+                   '# Runtime\n\n## Current installation\n\n<a id="grade-policy.node-output"></a>\n')
         self.write(self.site / "technical/en/development/runtime.html",
-                   '<h1>Runtime</h1><h2>Current installation</h2><a id="next-policy.node-output"></a>')
+                   '<h1>Runtime</h1><h2>Current installation</h2><a id="grade-policy.node-output"></a>')
         target = self.resolve()["references"][0]
         self.assertEqual((self.sources / "src/policy/node.py").read_text(), old_marker)
         self.assertEqual(target["heading"], "Current installation")
-        self.assertEqual(target["site_path"], "technical/en/development/runtime.html#next-policy.node-output")
+        self.assertEqual(target["site_path"], "technical/en/development/runtime.html#grade-policy.node-output")
 
     def test_report_introduction_uses_original_source_path(self):
         self.write(self.sources / "src/policy/node.py", '# pg-book: technical-report/en#report.introduction\n')
@@ -164,14 +164,14 @@ class BookReferenceTests(unittest.TestCase):
             self.resolve()
 
     def test_duplicate_source_anchor_fails(self):
-        self.write(self.book / "src/report/README.md", '# Report\n\n<a id="next-policy.node-output"></a>\n')
-        self.write(self.site / "technical/en/index.html", '<a id="next-policy.node-output"></a>')
+        self.write(self.book / "src/report/README.md", '# Report\n\n<a id="grade-policy.node-output"></a>\n')
+        self.write(self.site / "technical/en/index.html", '<a id="grade-policy.node-output"></a>')
         with self.assertRaisesRegex(ValueError, "duplicate book anchor"):
             self.resolve()
 
     def test_missing_or_duplicate_generated_anchor_fails(self):
         for content in ('<h1>Policies</h1>',
-                        '<a id="next-policy.node-output"></a><a id="next-policy.node-output"></a>'):
+                        '<a id="grade-policy.node-output"></a><a id="grade-policy.node-output"></a>'):
             self.write(self.site / "technical/en/development/policies.html", content)
             with self.subTest(content=content), self.assertRaisesRegex(ValueError, "exactly one"):
                 self.resolve()

@@ -3,59 +3,47 @@
   "chapters": [
     {
       "path": "README.md",
-      "scope": "mixed",
-      "review": "Sets the analytic reference as mathematical authority, identifies Next policy coverage and the current bilingual Next manual, and distinguishes the retained 1.23.2 download and downstream snapshot.",
+      "scope": "shared",
+      "review": "Introduces the shared model, Blender extension, and Resolve DCTL implementations and links the bilingual Blender manual and Technical Report.",
       "evidence": [
         "products/perceptual-grade-next-blender/README.md",
         "products/perceptual-grade-next-blender/src/features/grade/host.py"
-      ],
-      "remaining_work": [
-        "Remove the 1.23.2 download and snapshot statements when the complete legacy-content retirement is carried out."
       ]
     },
     {
       "path": "theory/linear.md",
-      "scope": "mixed",
-      "review": "The chapter follows the analytic reference matrix model and identifies older product white and UI behavior separately.",
+      "scope": "shared",
+      "review": "Specifies Linear correction in the analytic model and documents its Blender controls and matrix preparation.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/grading.py",
         "products/perceptual-grade-next-blender/src/kernel/prepare.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_preparation.py"
-      ],
-      "remaining_work": [
-        "Remove archived-product white-control comparisons as part of the v1.23.2 content retirement."
       ]
     },
     {
       "path": "theory/structure.md",
-      "scope": "mixed",
-      "review": "Defines appearance coordinates from the analytic reference and labels archived product controls and historical entry behavior separately from Next.",
+      "scope": "reference",
+      "review": "Defines the signed appearance coordinates and the reference state carried between grading stages.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/model.py",
         "libraries/perceptual-grade-reference/src/appearance.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_reference.py"
-      ],
-      "remaining_work": [
-        "Remove the archived 1.23.2 control and entry-behavior comparisons when replacing legacy report content."
       ]
     },
     {
       "path": "theory/tone.md",
-      "scope": "mixed",
-      "review": "Explains analytic-reference Tone behavior and explicitly separates the frozen products' target and effective-parameter rules.",
+      "scope": "shared",
+      "review": "Explains the saturation-preserving Tone curve, landmark construction, and product-specific evaluation boundaries.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/grading.py",
         "products/perceptual-grade-next-blender/src/kernel/tone_ui.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_tone_ui.py"
-      ],
-      "remaining_work": [
-        "Remove 1.23.2 target constants and product comparison material when retiring v1.23.2 contents."
       ]
     },
     {
       "path": "theory/color.md",
-      "scope": "mixed",
-      "review": "Defines the analytic-reference Color operators and Next's numeric Stage 3 path, including exact Adaptance cardinal support, stable reflected-H differences, and Adaptance followed by H-K repair and Scale. Documents the product's 4-degree cyclic authoring boundary, ownership/restoration claims, unique lifted-angle projection with a float32 storage allowance, and radial Adaptance admission, while marking old DCTL and Blender controls as a separate legacy profile.",
+      "scope": "shared",
+      "review": "Defines current Color J/C, Adaptance, Warp, H-K repair, and Scale behavior, including the distinct Resolve and Blender export orders.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/warp.py",
         "products/perceptual-grade-next-blender/src/kernel/color_prepare.py",
@@ -71,15 +59,12 @@
         "products/perceptual-grade-next-blender/tests/numerical/test_stage2_parameters.py",
         "products/perceptual-grade-next-blender/tests/native/test_color_templates.py",
         "products/perceptual-grade-next-blender/tests/native/test_full.py"
-      ],
-      "remaining_work": [
-        "Remove the legacy control section and archived DCTL links during complete v1.23.2 retirement."
       ]
     },
     {
       "path": "theory/evaluation.md",
-      "scope": "mixed",
-      "review": "Separates current reference and Next guard-before-Scale evaluation from frozen product profiles, including signed-energy transport, separately evaluated Next preview/final grids, and publication/render-preflight policy.",
+      "scope": "shared",
+      "review": "Describes direct and prepared evaluation, Stack sampling, carried appearance state, and product boundary behavior.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/grading.py",
         "products/perceptual-grade-next-blender/tools/template_build/color_graph.py",
@@ -87,28 +72,22 @@
         "products/perceptual-grade-next-blender/tests/native/test_full.py",
         "products/perceptual-grade-next-blender/src/policy/render_preflight.py",
         "products/perceptual-grade-next-blender/tests/policy/test_policy_render_preflight.py"
-      ],
-      "remaining_work": [
-        "Remove frozen 1.23.2 evaluation comparisons and legacy implementation cross-links when that material is retired."
       ]
     },
     {
       "path": "theory/hk-guard.md",
-      "scope": "mixed",
-      "review": "Documents the reference guard and identifies the archived retain-C experiment and frozen product ordering as historical evidence.",
+      "scope": "shared",
+      "review": "Specifies bounded H-K repair and its mathematical guarantees at reference, Blender, and Resolve boundaries.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/cube_guard.py",
         "products/perceptual-grade-next-blender/src/kernel/lut.py",
         "products/perceptual-grade-next-blender/tests/native/test_guards.py"
-      ],
-      "remaining_work": [
-        "Remove v1.23.2 DCTL/native-node comparisons and legacy implementation records as part of the full retirement."
       ]
     },
     {
       "path": "theory/lut.md",
-      "scope": "mixed",
-      "review": "Separates the reference sampler and sample-reuse contract from Next boundary behavior and independently evaluated preview/final phases, documents the five-role Stage 3 publication bundle with its fixed schema 6 32,768-cell Adaptance layout and byte contract, and marks older production grids and measurements as historical.",
+      "scope": "shared",
+      "review": "Describes the Blender Grade Stack grid, tetrahedral interpolation, prepared resources, and approximation reporting.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/cube.py",
         "products/perceptual-grade-next-blender/src/kernel/lut.py",
@@ -118,28 +97,22 @@
         "products/perceptual-grade-next-blender/tests/numerical/test_stage2_parameters.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_lut.py",
         "products/perceptual-grade-next-blender/tests/gpu/test_lut_gpu.py"
-      ],
-      "remaining_work": [
-        "Remove frozen 1.23.2 sampler and production-profile material; review older sampling-study archives separately during the same retirement."
       ]
     },
     {
       "path": "development/architecture.md",
-      "scope": "legacy",
-      "review": "The chapter is explicitly labeled as 1.23.2 architecture guidance; Next behavior is documented in the policy chapter and product README.",
+      "scope": "blender",
+      "review": "Documents current Blender feature ownership, runtime composition, lifecycle coordination, and publication boundaries.",
       "evidence": [
         "products/perceptual-grade-next-blender/src/features/grade/host.py",
         "products/perceptual-grade-next-blender/src/runtime/preparation.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_preparation_runtime.py"
-      ],
-      "remaining_work": [
-        "Replace the 1.23.2 runtime, Grade ownership, scopes, and graph architecture with current Next architecture, then remove the legacy-only chapter material."
       ]
     },
     {
-      "path": "development/next-policies.md",
-      "scope": "next",
-      "review": "Documents current Next policy machines and adapters, including Color authoring claims/effects, signature/undo separation, frame/Peak lifecycle, and the existing resource policy's undo-retention branch. Describes six manifest-validated persistent fallback variants, policy-authorized fake-user protection, retained historical helpers, and failed-unpublished cleanup; resource state/sequence diagrams include retention. Scalar proof boundaries remain separate from numerical and native lifetime acceptance. Existing coverage includes complete five-role Stage 2/3 publication, fixed schema 6 Adaptance storage, fresh link indexing, compositor recalculation, exact template receipts and measured assets, finite routing, semantic J_A carry, conditional legal projection, and native Image/UV bake freshness. Defines explicit custom-RNA backing-key presence and reset/rollback restoration inside existing authoring boundaries. Adds the live Linear vectorscope policy, capture gate, Rec.709 density analysis, source invalidation, and superseded-result evidence.",
+      "path": "development/policies.md",
+      "scope": "blender",
+      "review": "Documents current Blender policy machines and effect consumers for Grade authoring, lifecycle, rendering, baking, interaction, and Vectorscope.",
       "evidence": [
         "products/perceptual-grade-next-blender/src/features/grade/policy/color_authoring.py",
         "products/perceptual-grade-next-blender/src/features/grade/requirements/color_authoring.inv",
@@ -176,65 +149,52 @@
         "products/perceptual-grade-next-blender/src/features/vectorscope/analysis.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py",
         "products/perceptual-grade-next-blender/tests/installed/test_vectorscope_native.py"
-      ],
-      "remaining_work": []
+      ]
     },
     {
       "path": "development/building.md",
-      "scope": "legacy",
-      "review": "The chapter labels its release-specific build and validation instructions as historical and points to current product documentation.",
+      "scope": "shared",
+      "review": "Documents Buck2 build targets, remote execution, and scoped validation workflows for the book and products.",
       "evidence": [
         "products/perceptual-grade-next-blender/BUCK",
         "products/perceptual-grade-next-blender/README.md",
         "products/perceptual-grade-next-blender/tests/BUCK"
-      ],
-      "remaining_work": [
-        "Replace the 1.23.2 source layout, local build, and test instructions with Next Buck2 and remote-execution workflows, then remove historical commands."
       ]
     },
     {
       "path": "development/contributing.md",
-      "scope": "mixed",
-      "review": "Describes current source ownership and documentation authority while retaining the 1.23.2 downstream snapshot and its legacy workflow.",
+      "scope": "shared",
+      "review": "Explains repository ownership, contribution flow, review expectations, and documentation authority.",
       "evidence": [
         "products/perceptual-grade-next-blender/README.md",
         "products/perceptual-grade-next-blender/tests/packaging/test_policy_coverage.py",
         "products/perceptual-grade-book/tools/book_refs.py"
-      ],
-      "remaining_work": [
-        "Remove the 1.23.2 snapshot and legacy contribution workflow once current Next distribution and usage replace them."
       ]
     },
     {
       "path": "development/contributing-model.md",
-      "scope": "mixed",
-      "review": "Separates analytic-reference equations from the preserved production law and identifies Next policy documentation as the current implementation record.",
+      "scope": "shared",
+      "review": "Explains how model changes move from the analytic reference into Blender and Resolve implementations.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/grading.py",
         "products/perceptual-grade-next-blender/src/kernel/prepare.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_reference.py"
-      ],
-      "remaining_work": [
-        "Remove v1.23.2 stage-control and source-ownership descriptions while retaining current mathematical authority distinctions."
       ]
     },
     {
       "path": "development/localization.md",
-      "scope": "legacy",
-      "review": "The historical banner identifies the old localization layout; Next locale packaging and installed localization tests provide the replacement evidence.",
+      "scope": "blender",
+      "review": "Documents the Blender extension's locale sources, translation conventions, and localization checks.",
       "evidence": [
         "products/perceptual-grade-next-blender/src/locales/en.json",
         "products/perceptual-grade-next-blender/src/locales/zh_HANS.json",
         "products/perceptual-grade-next-blender/tests/installed/test_localization_installed.py"
-      ],
-      "remaining_work": [
-        "Replace the old localization source, compilation, and release workflow with Next localization guidance, then delete the v1.23.2 instructions."
       ]
     },
     {
       "path": "development/documentation.md",
-      "scope": "mixed",
-      "review": "Covers current book authoring, source-to-anchor references, the static publication boundary and retained video producers, while retaining historical authoring and capture instructions. Documents private short-lived browser temporary directories and the Next-scoped long-path regression for diagram font/geometry checking.",
+      "scope": "shared",
+      "review": "Documents book source organization, generated media, cross-book references, and current review workflow.",
       "evidence": [
         "products/perceptual-grade-book/tools/book_refs.py",
         "products/perceptual-grade-book/tools/assemble.py",
@@ -242,15 +202,12 @@
         "products/perceptual-grade-next-blender/tests/packaging/test_handbook_audit.py",
         "products/perceptual-grade-next-blender/README.md",
         "products/perceptual-grade-next-blender/tests/packaging/test_handbook_browser.py"
-      ],
-      "remaining_work": [
-        "Remove legacy manual/runtime capture procedures and replace any remaining v1.23.2 authoring assumptions with the current report workflow."
       ]
     },
     {
       "path": "development/testing.md",
-      "scope": "mixed",
-      "review": "Separates Color authoring proof/runtime/numerical/native acceptance from earlier Stage 3 receipts. Records LTS recursive native undo crashes, exact pinned Blender source links, the inferred raw-ID address-reuse mechanism, and the six-variant fallback-lifetime repair contract without treating pre-repair passing retries as fix evidence. Current native parameter gates preserve all methods and limits: basic parity is 3 ppm, active-Color extreme parity is 5 ppm against equivalent arithmetic, and three outputs face independent 1e-4 oracle gates. Production-template, exact cross-host receipt, effective-Full final-render, and actual live-Viewer half-precision acceptance remain separate. Records the merged-main 62/66 CI result separately from earlier focused receipts, including the missing isolated J_A fixture field, custom-RNA reset/rollback defect, and Chromium Unix-socket path overflow. Records the newly exposed conversion-fixture preparation ordering defect and partial carrier timeout, preserving all task, time, numerical, and normal-exit checks without claiming contention as proven. Separates the passing 66-target remote workspace acceptance, current/LTS lifecycle results, two selected builds, and narrow formatting receipt from the original GitHub run.",
+      "scope": "shared",
+      "review": "Summarizes current numerical, policy, runtime, native-host, and installed-product checks, with each result limited to its stated execution profile.",
       "evidence": [
         "products/perceptual-grade-next-blender/tests/BUCK",
         "products/perceptual-grade-next-blender/src/features/grade/requirements/color_authoring.inv",
@@ -282,43 +239,24 @@
         "products/perceptual-grade-next-blender/tests/installed/conversion_runner.py",
         "products/perceptual-grade-next-blender/tests/installed/stack_ui_checks.py",
         "products/perceptual-grade-next-blender/tests/packaging/test_handbook_browser.py"
-      ],
-      "remaining_work": [
-        "Remove v1.23.2 test procedures and measurements, then replace them with current Next evidence before deleting the legacy sections."
-      ]
-    },
-    {
-      "path": "development/lut-domain-study.md",
-      "scope": "legacy",
-      "review": "Records a historical 1.21.0 sampling experiment, not a current Next implementation contract; the current sampler is covered independently by Next tests.",
-      "evidence": [
-        "products/perceptual-grade-next-blender/src/kernel/lut.py",
-        "products/perceptual-grade-next-blender/tests/numerical/test_lut.py",
-        "libraries/perceptual-grade-reference/src/cube.py"
-      ],
-      "remaining_work": [
-        "Replace this historical study with current-product evidence, then delete the legacy study, figures, downloads, and archive during the coordinated v1.23.2 removal."
       ]
     },
     {
       "path": "development/publishing.md",
-      "scope": "mixed",
-      "review": "Documents the current book-site archive, static-media boundary, legacy ZIP retention and Buck2 publication outputs, then retains the 1.23.2 extension/DCTL release procedure as historical guidance.",
+      "scope": "shared",
+      "review": "Documents book-site publication outputs, archive integrity, static-media rules, and the current publication target.",
       "evidence": [
         "products/perceptual-grade-book/tools/publish.py",
         "products/perceptual-grade-book/tools/assemble.py",
         "products/perceptual-grade-next-blender/tools/handbook_audit.py",
         "products/perceptual-grade-next-blender/tests/packaging/test_handbook_audit.py",
         "products/perceptual-grade-next-blender/README.md"
-      ],
-      "remaining_work": [
-        "Replace v1.23.2 release publication and source-archive instructions with the current distribution process, then remove obsolete release guidance."
       ]
     },
     {
       "path": "development/forward-inverse-math.md",
-      "scope": "mixed",
-      "review": "The specification separates current analytic-reference math and Next prepared Stage 3 adapters from retained 1.23.2 equations, inverse machinery, and implementation evidence by section and profile. Next's authoring boundary adds cyclic hue constraints, provenance outside math signatures, a float32-safe evaluated projection, and radial Adaptance admission without changing the valid-settings reference evaluator.",
+      "scope": "shared",
+      "review": "Specifies forward and inverse contracts for the analytic reference, Blender Stack, and Resolve DCTL chain, including their different export boundaries.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/grading.py",
         "libraries/perceptual-grade-reference/src/inverse.py",
@@ -329,53 +267,44 @@
         "products/perceptual-grade-next-blender/tools/template_build/color_graph.py",
         "products/perceptual-grade-next-blender/tests/native/test_full.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_reference.py"
-      ],
-      "remaining_work": [
-        "Remove the retained v1.23.2 derivation and solver sections, preserving only reference mathematics and implementation claims verified for Next."
       ]
     },
     {
       "path": "reference/credits.md",
-      "scope": "mixed",
-      "review": "Provides shared model, host, and source attributions; DCTL parity, scope statistics, and earlier render controls are explicitly identified as historical rather than Next behavior.",
+      "scope": "shared",
+      "review": "Credits the appearance model, host integrations, technical references, and media sources used by Perceptual Grade.",
       "evidence": [
         "libraries/perceptual-grade-reference/src/model.py",
         "products/perceptual-grade-next-blender/README.md",
         "products/perceptual-grade-book/tools/assemble.py"
-      ],
-      "remaining_work": [
-        "Remove v1.23.2 DCTL and native-extension parity claims and update attribution inventory when legacy implementation material is deleted."
       ]
     },
     {
       "path": "reference/license.md",
-      "scope": "mixed",
-      "review": "States current repository and extension licensing separately from the preserved 1.23.2 distribution and historical licenses.",
+      "scope": "shared",
+      "review": "States repository, product, third-party, and archived-package license terms.",
       "evidence": [
         "products/perceptual-grade-book/tools/assemble.py",
         "products/perceptual-grade-book/tools/publish.py",
         "products/perceptual-grade-next-blender/README.md"
-      ],
-      "remaining_work": [
-        "Remove historical ZIP, DCTL, license, and publication requirements after the v1.23.2 archive is retired from the site."
       ]
     }
   ],
   "policies": [
     {
-      "anchor": "next-policy.overview",
+      "anchor": "grade-policy.overview",
       "kind": "conceptual",
       "sources": [],
       "evidence": []
     },
     {
-      "anchor": "next-policy.contract",
+      "anchor": "grade-policy.contract",
       "kind": "conceptual",
       "sources": [],
       "evidence": []
     },
     {
-      "anchor": "next-policy.color-authoring",
+      "anchor": "grade-policy.color-authoring",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/grade/policy/color_authoring.py",
@@ -391,7 +320,7 @@
       ]
     },
     {
-      "anchor": "next-policy.preparation",
+      "anchor": "grade-policy.preparation",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/policy/preparation.py",
@@ -403,7 +332,7 @@
       ]
     },
     {
-      "anchor": "next-policy.preparation-join",
+      "anchor": "grade-policy.preparation-join",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/grade/preparation.py"
@@ -413,7 +342,7 @@
       ]
     },
     {
-      "anchor": "next-policy.node-output",
+      "anchor": "grade-policy.node-output",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/grade/policy/node.py",
@@ -425,7 +354,7 @@
       ]
     },
     {
-      "anchor": "next-policy.helper",
+      "anchor": "grade-policy.helper",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/policy/helper.py",
@@ -437,7 +366,7 @@
       ]
     },
     {
-      "anchor": "next-policy.bank-publication",
+      "anchor": "grade-policy.bank-publication",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/grade/policy/bank_publication.py",
@@ -452,7 +381,7 @@
       ]
     },
     {
-      "anchor": "next-policy.bake",
+      "anchor": "grade-policy.bake",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/grade/host.py",
@@ -476,7 +405,7 @@
       ]
     },
     {
-      "anchor": "next-policy.resources",
+      "anchor": "grade-policy.resources",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/policy/resources.py",
@@ -491,7 +420,7 @@
       ]
     },
     {
-      "anchor": "next-policy.observer",
+      "anchor": "grade-policy.observer",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/interaction/policy.py"
@@ -502,7 +431,7 @@
       ]
     },
     {
-      "anchor": "next-policy.gesture",
+      "anchor": "grade-policy.gesture",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/interaction/policy.py",
@@ -516,7 +445,7 @@
       ]
     },
     {
-      "anchor": "next-policy.render-preflight",
+      "anchor": "grade-policy.render-preflight",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/policy/render_preflight.py",
@@ -529,7 +458,7 @@
       ]
     },
     {
-      "anchor": "next-policy.vectorscope",
+      "anchor": "grade-policy.vectorscope",
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/vectorscope/authority.py",

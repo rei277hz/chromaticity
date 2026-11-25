@@ -1,10 +1,9 @@
-# Next Blender policy machines
+# Blender runtime policies
 
-<a id="next-policy.overview"></a>
+<a id="grade-policy.overview"></a>
 
-This chapter documents the policy layer in `products/perceptual-grade-next-blender`.
-That product is a separate generation from the historical extension described by
-the other development chapters. The policies are deliberately host-free Python:
+This chapter documents the Blender runtime policy layer in
+`products/perceptual-grade-next-blender`. The policies are host-free Python:
 they observe facts from Blender or a worker, reduce one event at a time, and
 return effects for a runtime consumer to perform. They do not call Blender,
 start threads, write images, or send process commands themselves.
@@ -21,13 +20,13 @@ returns as the next event; synchronous authoring admission needs no completion
 event. This keeps transitions testable while making the side-effect boundary
 explicit.
 
-![The policy and effect-consumer boundary](../assets/illustrations/next-policy/00-policy-layer.svg)
+![The policy and effect-consumer boundary](../assets/illustrations/grade-policy/00-policy-layer.svg)
 
 <p class="figure-caption">Grade settings remain authoritative. Runtime observations enter a pure reducer. Its effects authorize adapter operations, and receipts return as events.</p>
 
 ## What a policy stores
 
-<a id="next-policy.contract"></a>
+<a id="grade-policy.contract"></a>
 
 The design goal is to store independent facts and derive readiness from them.
 The simplification candidates below identify places where the implementation
@@ -90,7 +89,7 @@ policies share a sequence when they participate in the same interaction.
 
 ## Color authoring: ownership before preparation
 
-<a id="next-policy.color-authoring"></a>
+<a id="grade-policy.color-authoring"></a>
 
 `src/features/grade/color_authoring.py` consults the per-handle ownership policy
 before ordinary Grade preparation. The sparse `Claim(origin_handle,
@@ -155,7 +154,7 @@ effective settings feed preparation without changing authored values,
 keyframes, or ownership claims. **Limited** compares raw with effective
 settings and is not an independent persisted validity flag.
 
-![Color authoring and evaluated constraints](../assets/illustrations/next-policy/10-color-authoring-sequence.svg)
+![Color authoring and evaluated constraints](../assets/illustrations/grade-policy/10-color-authoring-sequence.svg)
 
 <p class="figure-caption">The runtime solves geometry and asks the scalar policy for capture or clear permission. One consumer applies the composed settings/claim effects before requesting ordinary preparation. Invalid animated samples produce effective settings without rewriting keys.</p>
 
@@ -165,7 +164,7 @@ position. Runtime and numerical tests cover the cyclic geometry, exact captured
 baselines, push/restore interactions, and evaluation projection. The scalar
 proof, nine numerical checks, and 15 reversible-edit runtime checks pass. Native
 animation, conversion, and provenance-only undo checks also pass on current
-Blender and LTS. The [validation record](testing.md#current-next-color-authoring-validation)
+Blender and LTS. The [Blender validation record](testing.md#blender-extension)
 separately records LTS native undo crashes before the hue checks and the active
 [fallback-lifetime repair](#persistent-fallback-lifetime-and-undo). Earlier
 passing retries do not establish that this separate defect is fixed. The
@@ -173,7 +172,7 @@ earlier Stage 3 receipts do not certify these authoring adapters.
 
 ## Preparation: latest demand, one worker
 
-<a id="next-policy.preparation"></a>
+<a id="grade-policy.preparation"></a>
 
 `src/policy/preparation.py` is used by `src/runtime/preparation.py`. Its state is
 just `desired_signature` and `running_signature`. A request always replaces the
@@ -183,7 +182,7 @@ retire. A preview receipt publishes an intermediate result but does not free the
 running slot. A final receipt for the running signature retires that slot and,
 when a newer request exists, authorizes the newest successor.
 
-![Latest-demand preparation scheduling](../assets/illustrations/next-policy/01-preparation.svg)
+![Latest-demand preparation scheduling](../assets/illustrations/grade-policy/01-preparation.svg)
 
 <p class="figure-caption">A superseded success can still be delivered as a preview. A superseded failure is suppressed, and the latest demand is started after the old worker's final receipt.</p>
 
@@ -214,7 +213,7 @@ moved on.
 
 ### Concurrent Grade preparation
 
-<a id="next-policy.preparation-join"></a>
+<a id="grade-policy.preparation-join"></a>
 
 `src/features/grade/preparation.py` submits three jobs for each immutable Grade
 input before awaiting any of them. Linear, Tone with Color, and boundary
@@ -235,7 +234,7 @@ call before the runtime returns the complete parameter bundle.
 
 ## Node output policy
 
-<a id="next-policy.node-output"></a>
+<a id="grade-policy.node-output"></a>
 
 `src/features/grade/policy/node.py` is the per-node decision layer. The runtime creates and
 updates it from `src/features/grade/host.py` and consumes its effects in `_consume_effects`. The
@@ -397,11 +396,11 @@ kernel, pending presentation may use an identity placeholder. A current error
 selects visible magenta output with alpha preserved; render preflight must not
 release a frame with this error or with merely pending/preview output.
 
-![Node output and installation policy](../assets/illustrations/next-policy/02-node.svg)
+![Node output and installation policy](../assets/illustrations/grade-policy/02-node.svg)
 
 <p class="figure-caption">Presentation is derived from authoritative demand and installation facts. A stale receipt cannot replace a current result, and a preview is never render-ready.</p>
 
-![Preparation and node output workflow](../assets/illustrations/next-policy/01-preparation-node-sequence.svg)
+![Preparation and node output workflow](../assets/illustrations/grade-policy/01-preparation-node-sequence.svg)
 
 <p class="figure-caption">Preparation owns the worker slot, while the node owns presentation. A, B, and C name settings versions; preparation and kernel signatures still have their separate correlations. This trace runs outside a gesture and timeline playback, so an obsolete A cannot replace the retained Z preview. A preview receipt does not retire A. Current C is instantiated from the bundled native template and installed through existing publication effects. Preparation, template, binding, or installation failure selects visible magenta output with alpha preserved.</p>
 
@@ -419,7 +418,7 @@ consumer, including on these state-preserving transitions.
 
 ## Helper process lifecycle
 
-<a id="next-policy.helper"></a>
+<a id="grade-policy.helper"></a>
 
 `src/policy/helper.py` governs one helper process and one physical work slot.
 `runtime/execution.py` translates its effects into process and transport
@@ -440,11 +439,11 @@ dispatch the next queued job. A cancel request keeps the slot occupied until a
 matching final receipt or physical exit. Timeout events carry the deadline
 stage and have an effect only when that stage matches the current phase.
 
-![Helper process lifecycle](../assets/illustrations/next-policy/03-helper.svg)
+![Helper process lifecycle](../assets/illustrations/grade-policy/03-helper.svg)
 
 <p class="figure-caption">Shutdown escalates from a channel shutdown request to terminate, kill, and an explicitly unretired condition. Physical exit settles work before cleanup is attempted.</p>
 
-![Helper process workflow](../assets/illustrations/next-policy/03-helper-sequence.svg)
+![Helper process workflow](../assets/illustrations/grade-policy/03-helper-sequence.svg)
 
 <p class="figure-caption">The process and transport perform only operations requested by helper effects. Cancellation leaves active work owned until its final receipt or physical exit. Shutdown deadlines control escalation; cleanup begins only after exit and completes through its own receipt.</p>
 
@@ -472,7 +471,7 @@ only `closed` has the absorbing-state border.
 
 ## Production bank publication
 
-<a id="next-policy.bank-publication"></a>
+<a id="grade-policy.bank-publication"></a>
 
 `src/features/grade/policy/bank_publication.py` is the active production publication path. The
 parameter-image code in `src/features/grade/host.py` constructs two packed banks, each with five
@@ -529,11 +528,11 @@ retain the existing graph and all ten role image identities. Template append is 
 inside the existing effect, not a new state or permission that bypasses the
 publication gate.
 
-![Production two-bank publication](../assets/illustrations/next-policy/04-bank-publication.svg)
+![Production two-bank publication](../assets/illustrations/grade-policy/04-bank-publication.svg)
 
 <p class="figure-caption">One selector publishes a complete five-role bank for Tone and Stage 3. An invalid active bank first closes output, then repairs both banks. A selection or delivery failure restores the old selector before failing closed.</p>
 
-![Bank publication workflow](../assets/illustrations/next-policy/04-bank-publication-sequence.svg)
+![Bank publication workflow](../assets/illustrations/grade-policy/04-bank-publication-sequence.svg)
 
 <p class="figure-caption">The consumer stages all five roles, reusing only matching clean candidate payloads, before one selector changes. It appends and binds a native template only when the graph needs replacement. Failed selection or delivery restores the old selector before bounded failure-output closure retries.</p>
 
@@ -559,7 +558,7 @@ as they were.
 
 ## Bake requests and managed output
 
-<a id="next-policy.bake"></a>
+<a id="grade-policy.bake"></a>
 
 Bake is a separate production transaction for the shared Grade and Grade Stack
 nodes. Per-Node Grade nodes deliberately have no bake controls: their purpose is
@@ -620,11 +619,11 @@ Image, a successful rebake updates the Image once and synchronizes every
 reader. Rollback likewise synchronizes all readers. Each reader keeps its own
 input receipt.
 
-![Bake request and publication policy](../assets/illustrations/next-policy/09-bake.svg)
+![Bake request and publication policy](../assets/illustrations/grade-policy/09-bake.svg)
 
 <p class="figure-caption">A stale or cancelled request is retired before publication. Publication admission, image commit, activation, and rollback are one fenced transaction. An already published Image remains selectable with a warning when its inputs change.</p>
 
-![Bake request workflow](../assets/illustrations/next-policy/09-bake-sequence.svg)
+![Bake request workflow](../assets/illustrations/grade-policy/09-bake-sequence.svg)
 
 <p class="figure-caption">The helper writes bake.exr in the request's private artifact directory. A changed graph/settings digest or dependency generation before publication discards the artifact. The gate commits a managed float Image, activates the requesting node, and synchronizes shared readers. A publication or activation error restores the ImageSnapshot. Load and undo restore the selection and receipt and rebaseline transient source generations.</p>
 
@@ -788,7 +787,7 @@ managed Image and closes affected readers with visible failure output.
 
 ## Resource adoption and retirement
 
-<a id="next-policy.resources"></a>
+<a id="grade-policy.resources"></a>
 
 `src/policy/resources.py` contains two related decisions. `may_adopt()` is a
 predicate, not a state machine: owner, node, space, completeness, image
@@ -820,11 +819,11 @@ eligible for eviction; a non-live wrapper can be evicted directly. After
 eviction, the policy requires a fresh eligibility observation before native
 removal. This adds a branch to the existing resource policy, not a new machine.
 
-![Resource adoption and retirement](../assets/illustrations/next-policy/06-resources.svg)
+![Resource adoption and retirement](../assets/illustrations/grade-policy/06-resources.svg)
 
 <p class="figure-caption">Adoption is a conjunction predicate. Deletion is a separate receipt sequence with a fresh zero-user and protection check. The retention branch described here ends after its policy-authorized fake-user effect.</p>
 
-![Resource retirement workflow](../assets/illustrations/next-policy/06-resources-sequence.svg)
+![Resource retirement workflow](../assets/illustrations/grade-policy/06-resources-sequence.svg)
 
 <p class="figure-caption">Disposal optionally adds the fencing and detachment prefix to retirement. The consumer obtains native facts again after eviction, so the original zero-user observation cannot by itself authorize native deletion. Undo-retained fallbacks take the retention branch instead.</p>
 
@@ -876,7 +875,7 @@ acyclic traversal. Policy, runtime, template, GUI undo/drag, packaging, and LTS
 animation checks pass, including three concurrent remote LTS undo executions,
 the current/LTS six-variant native pool matrices with false-valued legacy-marker
 cases, an explicit resource-proof report build, and documentation artifact audits. The
-[validation record](testing.md#lts-undo-fallback-lifetime-repair)
+[Blender validation record](testing.md#blender-extension)
 keeps these repair receipts separate from earlier pre-repair passing retries.
 
 **Simplification candidate R1.** The `disposal` and `retirement` entry paths
@@ -900,7 +899,7 @@ release, and undo permission.
 
 ### Observer installation
 
-<a id="next-policy.observer"></a>
+<a id="grade-policy.observer"></a>
 
 The observer state has `current_token` and `pending_token`, plus a monotonically
 allocated serial. The first window observation invokes an installation. During a
@@ -916,13 +915,13 @@ an explicit adapter event with token `None` remains allowed. Handoff also checks
 the captured gesture token and its armed/active phase. After installation, the
 coordinator replays the latest move/finish or requests handoff for a newer gesture.
 
-![Observer handoff policy](../assets/illustrations/next-policy/07-gesture.svg)
+![Observer handoff policy](../assets/illustrations/grade-policy/07-gesture.svg)
 
 <p class="figure-caption">A stale installation or loss receipt has no authority. The current observer stays usable until the pending native installation succeeds.</p>
 
 ### Gesture participation
 
-<a id="next-policy.gesture"></a>
+<a id="grade-policy.gesture"></a>
 
 The coordinator stores `armed`, `active`, and deferred finishing phases for each
 gesture, together with its participating node targets. Movement of at least
@@ -935,17 +934,17 @@ refreshes a changed target. Only the final active participant releases a node.
 Native gestures do not authorize a manual undo checkpoint;
 manual undo is allowed only for an adapter-owned changed gesture.
 
-![Gesture participation in the runtime coordinator](../assets/illustrations/next-policy/07b-gesture-participants.svg)
+![Gesture participation in the runtime coordinator](../assets/illustrations/grade-policy/07b-gesture-participants.svg)
 
 <p class="figure-caption">The policy checks scalar token and phase facts. The runtime remains responsible for collection order, lookup, target filtering, and native event delivery.</p>
 
-![Observer and gesture workflow](../assets/illustrations/next-policy/07-gesture-sequence.svg)
+![Observer and gesture workflow](../assets/illustrations/grade-policy/07-gesture-sequence.svg)
 
 <p class="figure-caption">Observer acknowledgement precedes token promotion. Movement activates participants; finishing waits until the native widget has applied its final value. The coordinator releases a node only when its final active participant finishes, with optional auto-keying and adapter-owned undo handled by its effects.</p>
 
 ## Render preflight
 
-<a id="next-policy.render-preflight"></a>
+<a id="grade-policy.render-preflight"></a>
 
 `src/policy/render_preflight.py` protects the render boundary. A ticket records
 the requested scene pointer, frame, and exact subframe. The gate binds the
@@ -969,11 +968,11 @@ Viewer updates. A Viewer failure is reported separately and retried on a
 later tick. It cannot delay release of a validated render or put unrelated
 Grades into error.
 
-![Render preflight authorization](../assets/illustrations/next-policy/08-render-preflight.svg)
+![Render preflight authorization](../assets/illustrations/grade-policy/08-render-preflight.svg)
 
 <p class="figure-caption">Only the active ticket can publish inside its exclusive scope. Release requires matching scene and time, the exact validated Grade signature, and current output.</p>
 
-![Render preflight workflow](../assets/illustrations/next-policy/08-render-preflight-sequence.svg)
+![Render preflight workflow](../assets/illustrations/grade-policy/08-render-preflight-sequence.svg)
 
 <p class="figure-caption">The render thread waits while the main thread sets the requested scene time, reconciles Grade kernels, then validates the live scene time, signature, and outputs. Only the active ticket may publish while its render has exclusive access. The failure path attempts to install visible error output before delivering the failed ticket.</p>
 
@@ -988,7 +987,7 @@ its own render lease when other activity permits it.
 
 ## Live Grade scopes
 
-<a id="next-policy.vectorscope"></a>
+<a id="grade-policy.vectorscope"></a>
 
 `src/features/vectorscope/` owns the Linear plot, Tone histogram, and Appearance
 Distribution. The runtime reads a small, loaded Compositor Image directly when
@@ -1140,7 +1139,7 @@ This chapter's diagrams link to authored D2 in the repository's
 [`docs/book/diagrams`](https://github.com/rei277hz/chromaticity/tree/main/products/perceptual-grade-book/docs/book/diagrams)
 directory. All figures use the pinned D2 distribution's ELK layout engine.
 The generated figure hashes, layout flags, and renderer pin are recorded in the
-[diagram provenance manifest](../downloads/provenance/next-policy-diagrams.json).
+[diagram provenance manifest](../downloads/provenance/grade-policy-diagrams.json).
 The links below open the policy implementations, formal requirements, and
 runtime consumers.
 

@@ -1,6 +1,6 @@
 # Tone-shaped color operators
 
-Color computes adjustment coefficients from the post-Tone appearance and applies them to fixed incoming color attributes. Lightness and chroma each receive a driver-weighted coefficient; a tonal web shapes hue and chroma, and selective cone Adaptance moves neutral destinations. With the reference's default `hk_guard=True`, H–K repair follows Adaptance and precedes the web's final common Scale. The explicit `hk_guard=False` mode is an unrepaired diagnostic path and is outside the guard guarantees below.
+Color computes adjustment coefficients from the post-Tone appearance and applies them to fixed incoming color attributes. Lightness and chroma each receive a driver-weighted coefficient; a tonal web shapes hue and chroma, and selective cone Adaptance moves neutral destinations. With the reference's default `hk_guard=True`, H–K repair follows Adaptance and precedes the web's final common Scale. The explicit `hk_guard=False` mode is an unrepaired diagnostic path and is outside the guard guarantees below. The equations here specify the analytic reference model; product adapters are described in [Architecture and runtime](../development/architecture.md).
 
 Freeze the post-Tone chroma \(C_0\), signed achromatic energy \(E_0=J_A\lvert J_A\rvert\), and tonal selector \(m=\sqrt{\lvert E_0\rvert+66C_0}\). Coefficient curves, web rows and Adaptance use this nonnegative magnitude. It equals displayed \(H=J_{\mathrm{HK}}\) on the nonnegative achromatic branch; the signed branch can have a different \(H\). These selectors stay fixed while the operators transform the running appearance state.
 
@@ -32,7 +32,7 @@ q_s=\frac{C^2}{C^2+r_s^2\lvert J_A\rvert^2},\qquad r_s=\frac{35}{75}=\frac{s_0}{
 \frac{a}{\sqrt{C^2+4}},\ \frac{b}{\sqrt{C^2+4}}\right]^{\mathsf T}.
 $$
 
-The absolute value in \(r_s\lvert J_A\rvert\) is deliberate. Written as a ratio, the classifier splits on \(\lvert s\rvert\), so a signed color below the achromatic axis keeps the same low/high classification as its positive counterpart. The archived [1.23.2 DCTL source](../downloads/Perceptual-Grade.dctl) used \(\max(J_A,0)\), sending negative achromatic colors with nonzero chroma to the high-chroma driver. The separate DCTL project, frozen Blender 1.23.2 implementation, and retained legacy shared-core kernels use the capacity crossover \(0.4\,U(J_A,h)\). Next and the current analytic reference use the symmetric \(35/75\) law described here. These are distinct implementation profiles; comparisons must identify which law they use.
+The absolute value in \(r_s\lvert J_A\rvert\) is deliberate. Written as a ratio, the classifier splits on \(\lvert s\rvert\), so a signed color below the achromatic axis keeps the same low/high classification as its positive counterpart. The crossover is \(C=(35/75)\lvert J_A\rvert\), independent of hue and RGB gamut capacity. At the crossover the two chroma drivers are equal.
 
 At black, all drivers are zero. Carry \(J_A\) from the appearance encoder through Tone's common scaling, rather than recovering it by subtracting \(66C\) from \(H^2\). Scale the ratio terms before squaring to avoid overflow.
 
@@ -75,10 +75,9 @@ Each row stores three relative controls per handle:
 
 All three arrays are zero at reset, which is the identity. The web is therefore additive in intent but multiplicative in effect, and no single scalar reports its strength.
 
-### Next authoring and animated samples
+### Blender authoring and animated samples
 
-Next adds a product authoring constraint to the strictly ordered mathematical
-web: each neighboring destination hue has a minimum separation
+The web requires strictly ordered destination hues, with a minimum separation
 \(\delta=4^\circ\), including the cyclic seam. In a source-ordered unwrapped
 row, the feasible angles satisfy
 
@@ -87,8 +86,8 @@ $$
 \varphi_0+360^\circ-\varphi_5\ge\delta.
 $$
 
-A direct edit pins the selected handle and pushes its neighbors in the edit
-direction until the row is feasible. A sparse ownership claim records the
+A direct Blender edit pins the selected handle and pushes its neighbors in the
+edit direction until the row is feasible. A sparse ownership claim records the
 originating handle and the displaced handle's return offset. Later edits first
 resolve the current request, then restore claimed offsets subject to the same
 gaps. A blocked restoration retains its claim; taking ownership of a displaced
@@ -111,7 +110,7 @@ Preparation derives this effective row without writing authored values,
 keyframes, or ownership claims. This evaluated projection differs from an
 edit's pinned push-and-return behavior. A **Limited** indication reports an
 effective restriction. The
-[authoring policy](../development/next-policies.md#next-policy.color-authoring)
+[authoring policy](../development/policies.md#grade-policy.color-authoring)
 defines the mutation boundary.
 
 ### Radial law
@@ -176,7 +175,7 @@ $$
 
 \(g_i\) is local and cone-derived. It is not a change of viewing white: CAT16 supplies the cone basis, while the masking and normalization below are creative choices layered on it.
 
-Next limits an invalid finite destination radially: for request
+The Blender authoring adapter limits an invalid finite destination radially: for request
 \(\mathbf d=(a,b)\), it uses \(t\mathbf d\), \(0\le t\le1\), along the same
 ray, with a conservative inward endpoint satisfying all three response
 constraints. This preserves the requested direction instead of clipping the
@@ -195,33 +194,33 @@ $$
 
 so nonblack neutrals have \(v=1\), a chromatic post-Tone state with frozen \(E_0=0\) has \(v=0\), and exact black is untouched. The pixel ratio \(C_0/\lvert J_A\rvert\) equals the independent setting \(R\) at half influence. Raising or lowering \(R\) changes how far the tint extends into saturated color without moving any of the four calibrated Adaptance neutral destinations.
 
-Next's prepared atlas retains the exact support of those cardinal weights.
+The Blender prepared atlas retains the exact support of those cardinal weights.
 Its parameter image carries the four anchors and whether each authored
 Adaptance row is active. The native graph uses those facts to keep a zero
 correction exactly zero in inactive spans and at inactive anchors, even when
 linear atlas interpolation crosses a support boundary. This preserves the
 authored function without a tolerance that could erase a small correction.
 
-For small response changes, Next evaluates response and polynomial differences
+For small response changes, the Blender kernel evaluates response and polynomial differences
 directly and uses rationalized square-root differences to update the carried
 reflected H coordinate. Reconstructing H from separately rounded signed energy
 and chroma can otherwise erase a small correction beside large terms. The
 stable difference form preserves the same model and guard order.
 
-Next also carries the signed achromatic coordinate \(J_A\) explicitly beside
+The Blender kernel also carries the signed achromatic coordinate \(J_A\) explicitly beside
 signed energy. Disabled operators and inactive H–K repair retain it; final
 positive Scale multiplies it by \(\lambda\), alongside \(\lambda^2E\).
 This avoids a redundant square-root round trip through a half-precision energy
 image. It does not infer unchanged state from equal stored energies, since
 underflow can make distinct energies equal. Active H–K repair retains its
-original predicate and equations. Next's production Compositor also retains
+original predicate and equations. The production Compositor also retains
 Tone's raw response basis only when every authored Color family is inactive
 and H–K is provably inactive (`J_A >= 0` or reflected `H < 0`), while keeping
 actual cube legality and endpoint checks. It composes uniform scene-conversion
 rows before spatial decode and conditionally retries an illegal projected
 radius once, rechecking the decoded value before acceptance. These are
 finite-precision output adaptations, not extra creative operators or another
-H–K repair. The [Next policy chapter](../development/next-policies.md) and
+H–K repair. The [policy chapter](../development/policies.md) and
 [testing record](../development/testing.md) give the implementation and live
 GPU Auto/Full acceptance scope.
 
@@ -270,20 +269,7 @@ $$
 H(\lambda)=\sqrt{\lambda^2E+66\lambda C}.
 $$
 
-It increases strictly for every nonblack repaired state; black remains black. Thus changing only Scale cannot move a reference handle inward on this pad in exact arithmetic. The frozen Blender implementation applies Scale before repair and can move its guarded marker. Next's Stage 3 adapters follow the corrected reference order; the full numeric Warp controls expose the stored hue offsets while the draggable diagram remains deferred.
+It increases strictly for every nonblack repaired state; black remains black. Thus changing only Scale cannot move a reference handle inward on this pad in exact arithmetic. The Blender Stage 3 adapter follows the reference order; its numeric Warp controls expose the stored hue offsets, while the draggable diagram remains deferred.
 
-[WarpRepairedScale.lean](https://github.com/rei277hz/chromaticity/blob/main/libraries/perceptual-grade-reference/proofs/PerceptualGrade/WarpRepairedScale.lean) proves the energy law, pad invariance and monotonic lightness. Its repaired-state positivity results require \(H\ge0\) and nonnegative reference energy; strict positivity requires \(H>0\) and positive reference energy. The executable negative-\(H\) bypass is outside that guarantee. These are exact-real statements before cube export, not floating-point or complete-inverse guarantees. A later cube projection can still reduce chroma. Next's native Grade and Stack adapters implement this guard-before-Scale order.
+[WarpRepairedScale.lean](https://github.com/rei277hz/chromaticity/blob/main/libraries/perceptual-grade-reference/proofs/PerceptualGrade/WarpRepairedScale.lean) proves the energy law, pad invariance and monotonic lightness. Its repaired-state positivity results require \(H\ge0\) and nonnegative reference energy; strict positivity requires \(H>0\) and positive reference energy. The executable negative-\(H\) bypass is outside that guarantee. These are exact-real statements before cube export, not floating-point or complete-inverse guarantees. A later cube projection can still reduce chroma. The Blender Grade and Stack adapters implement this guard-before-Scale order.
 
-## Legacy controls
-
-Earlier releases exposed three controls that this part does not describe, because the reference does not implement them:
-
-- **Hue Concentration**, an orientation-preserving circle map that gathers hues toward a chosen direction with no change to \(H\) or \(C\).
-- **Adaptance Strength and Adaptance Fit**, a scalar strength inside a chroma-protection envelope \(\alpha r(C)/(1-\alpha+\alpha r(C))\) with \(r(C)=.25+.75/(1+(C/30)^2)\).
-- **Global low-chroma and high-chroma Hue**, two rotation coefficients weighted by the \(C_{\ell}\) and \(C_h\) drivers.
-
-The 1.23.2 DCTL and Blender release implement all three, and their saved Grades use them. The reference replaced them with the web and the neutral destinations above, which is why saved settings from one are not reinterpreted as the other. Their full equations remain in the archived release documentation and in the retained DCTL oracle.
-
-![Hue concentration and angular spacing](../assets/figures/color-hue-concentration.svg)
-
-<p class="figure-caption">The 1.23.2 Concentration operator. Positive \(a\) concentration gathers nearby hues and expands the opposite side; the local spacing ratio stays positive, preserving its hue order. The reference replaces this operator with the web's angular map.</p>

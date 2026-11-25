@@ -1,4 +1,4 @@
-"""Render the authored Next policy diagrams with the declared D2 distribution."""
+"""Render the authored Perceptual Grade policy diagrams with pinned D2."""
 
 import argparse
 from contextlib import contextmanager
@@ -91,7 +91,7 @@ def render(archive, sources, manifest_path, output, node, chromium, npm, label_c
     actual = {path.name for path in sources.glob("*.d2")}
     if actual != expected or len(expected) != len(figures):
         raise ValueError(f"Diagram sources differ from manifest: {actual ^ expected}")
-    images = output / "src/assets/illustrations/next-policy"
+    images = output / "src/assets/illustrations/grade-policy"
     images.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="pg-book-d2-") as temporary:
         temporary = Path(temporary)
@@ -139,9 +139,9 @@ def render(archive, sources, manifest_path, output, node, chromium, npm, label_c
         "figure_manifest_sha256": digest(manifest_path),
         "renderer_adapter_sha256": digest(Path(__file__)),
         "label_check": label_check,
-        "outputs": {f"assets/illustrations/next-policy/{path.name}": digest(path) for path in sorted(images.glob("*.svg"))},
+        "outputs": {f"assets/illustrations/grade-policy/{path.name}": digest(path) for path in sorted(images.glob("*.svg"))},
     }
-    report = output / "src/downloads/provenance/next-policy-diagrams.json"
+    report = output / "src/downloads/provenance/grade-policy-diagrams.json"
     report.parent.mkdir(parents=True)
     report.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

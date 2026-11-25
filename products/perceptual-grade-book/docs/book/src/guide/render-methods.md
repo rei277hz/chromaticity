@@ -46,12 +46,12 @@ Bake explicitly rejects UDIM/tiled Images, movies and image sequences,
 multiview/multilayer sources, Shader to RGB, movie clips and masks, linked or
 animated cache/Alembic geometry, missing or overlapping UVs, and unsupported
 graph occurrences. Apply unsupported topology-changing or deformation
-modifiers before a UV bake. The [Next bake policy](https://rei277hz.github.io/perceptual-grade/technical/en/development/next-policies.html#next-policy.bake)
+modifiers before a UV bake. The [bake policy](https://rei277hz.github.io/perceptual-grade/technical/en/development/policies.html#grade-policy.bake)
 lists the current route boundaries.
 
 ## Render readiness
 
-Next reconciles derived kernels before rendering. Only a full result for the
+The extension reconciles derived kernels before rendering. Only a full result for the
 current settings signature is render-ready. During interaction a previous
 complete result may remain visible with **Updating**; a failed current result
 shows magenta with alpha preserved and blocks render preflight. Grade Stack

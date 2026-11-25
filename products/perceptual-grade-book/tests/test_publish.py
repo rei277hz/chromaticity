@@ -35,7 +35,7 @@ class PublishTests(unittest.TestCase):
             "manual/en/index.html": b"<h1>User Manual</h1>",
             "manual/zh-Hans/index.html": "<h1>用户手册</h1>".encode(),
             "technical/en/index.html": b"<h1>Technical Report</h1>",
-            "downloads/perceptual_grade-v1.23.2-20261101.zip": bytes(range(256)),
+            "downloads/archived-blender-extension.zip": bytes(range(256)),
         }
 
     def write_archive(self, extra=(), manifest=None):
@@ -134,7 +134,7 @@ class PublishTests(unittest.TestCase):
 
     def test_crc_failure_leaves_existing_site_intact(self):
         self.write_archive()
-        content = self.site["downloads/perceptual_grade-v1.23.2-20261101.zip"]
+        content = self.site["downloads/archived-blender-extension.zip"]
         data = self.archive.read_bytes()
         self.assertIn(content, data)
         self.archive.write_bytes(data.replace(content, content.replace(b"\x80", b"\x81"), 1))
@@ -151,6 +151,11 @@ class PublishTests(unittest.TestCase):
                 })
                 self.assert_rejected_without_changes()
         self.write_archive([("unlisted.txt", b"not in inventory")])
+        self.assert_rejected_without_changes()
+
+    def test_requires_one_frozen_product_archive(self):
+        self.site["downloads/archived-blender-extension-copy.zip"] = b"extra package"
+        self.write_archive()
         self.assert_rejected_without_changes()
 
     def test_rejects_missing_required_files_and_wrong_manifest(self):

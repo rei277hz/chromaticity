@@ -1,4 +1,4 @@
-"""The declared Next Blender references resolve against the real built book."""
+"""The declared Blender references resolve against the real built book."""
 
 import json
 from pathlib import Path, PurePosixPath
@@ -13,10 +13,10 @@ class BuiltBookReferencesTests(unittest.TestCase):
         self.assertTrue(references)
         self.assertGreater(report["source_files_checked"], 20)
         expected_hotspots = {
-            "src/features/grade/policy/node.py": "technical/en/development/next-policies.html#next-policy.node-output",
-            "src/features/grade/bank_publication.py": "technical/en/development/next-policies.html#next-policy.bank-publication",
+            "src/features/grade/policy/node.py": "technical/en/development/policies.html#grade-policy.node-output",
+            "src/features/grade/bank_publication.py": "technical/en/development/policies.html#grade-policy.bank-publication",
             "src/runtime/image_publication.py":
-                "technical/en/development/next-policies.html#next-policy.bake",
+                "technical/en/development/policies.html#grade-policy.bake",
         }
         for suffix, site_path in expected_hotspots.items():
             self.assertTrue(any(item["code"].endswith(suffix)
@@ -26,9 +26,9 @@ class BuiltBookReferencesTests(unittest.TestCase):
                            if item["code"].endswith("src/features/grade/host.py")]
         self.assertTrue(node_references)
         self.assertTrue({item["site_path"] for item in node_references} >= {
-            "technical/en/development/next-policies.html#next-policy.node-output",
-            "technical/en/development/next-policies.html#next-policy.gesture",
-            "technical/en/development/next-policies.html#next-policy.render-preflight",
+            "technical/en/development/policies.html#grade-policy.node-output",
+            "technical/en/development/policies.html#grade-policy.gesture",
+            "technical/en/development/policies.html#grade-policy.render-preflight",
         })
         routes = {
             ("user-manual", "en"): "manual/en",

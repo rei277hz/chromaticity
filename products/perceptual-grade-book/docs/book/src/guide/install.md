@@ -2,11 +2,10 @@
 
 ## Blender extension
 
-The [legacy development ZIP](../downloads/perceptual_grade-v1.23.2-20261101.zip)
-contains Perceptual Grade 1.23.2, not Next. It remains available for users of
-that release. The legacy ZIP is not the Next product described by this manual.
-The handbook site does not distribute a Next extension ZIP. When you have a
-Next package, install it through Blender's Extensions preferences.
+The [archived development ZIP](../downloads/archived-blender-extension.zip)
+is retained as the book's sole extension download. Its interface differs from
+the current workflows described here. Install an extension package through
+Blender's Extensions preferences.
 
 In a Shader or Compositor editor, use **Add → Color → Grade** or **Grade Stack**.
 Select a node and open the **Perceptual Grade** sidebar in the editor's N-panel.
@@ -24,8 +23,8 @@ connect the Grade output to an Emission shader instead.
 
 Set the Image Texture's Color Space to match the source encoding so Blender
 decodes the image correctly. Use the scene's supported working color space for
-the overall node graph; Next supports Linear Rec.709, Linear Rec.2020, and
-ACEScg scene spaces.
+the overall node graph. Perceptual Grade supports Linear Rec.709, Linear Rec.2020,
+and ACEScg scene spaces.
 
 ## Connect an image in Compositing
 
