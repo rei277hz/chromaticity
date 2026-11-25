@@ -15,10 +15,10 @@ from uuid import uuid4
 
 import numpy as np
 
-from .capture_host import (
+from ...runtime.capture_host import (
     compositor_root, configure_linear, disable_file_outputs, open_snapshot,
 )
-from .capture_images import route_datablock
+from ...runtime.capture_images import route_datablock
 
 
 MAX_PIXEL_BYTES = 512 * 1024 * 1024
@@ -369,7 +369,7 @@ def _shader(inputs, context):
     if backend != "CYCLES_CPU":
         raise ValueError("Unknown Shader Bake backend: " + backend)
     if domain == "UV":
-        from .bake_routes import _uv
+        from .routes import _uv
 
         if owner_kind != "material":
             raise ValueError("UV Bake requires a material")

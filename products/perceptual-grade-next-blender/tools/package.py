@@ -10,9 +10,14 @@ from verification.packaging import package, sources
 
 def verify_policy_coverage(entries, manifest):
     """Every shipped policy module must have source-bound build evidence."""
-    expected = {name for name in entries
-                if name.startswith("policy/") and name.endswith(".py")
-                and Path(name).name != "__init__.py"}
+    expected = {
+        name for name in entries
+        if name.endswith(".py") and Path(name).name != "__init__.py"
+        and (name.startswith("policy/") or "/policy/" in name
+             or name in {"features/bake/policy.py",
+                         "features/interaction/policy.py",
+                         "features/vectorscope/authority.py"})
+    }
     if (not isinstance(manifest, dict) or manifest.get("version") != 2
             or not isinstance(manifest.get("machines"), dict)):
         raise ValueError("Invalid policy proof inventory")

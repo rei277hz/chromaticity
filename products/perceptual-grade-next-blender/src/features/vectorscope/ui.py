@@ -14,6 +14,7 @@ _editors = {}
 _last_view = {}
 _runtime = None
 _interaction = None
+_timer_router = None
 _draw_handle = None
 _shutting_down = False
 _pending_redraws = set()
@@ -209,8 +210,13 @@ def _tick():
 
 
 def _ensure_timer():
-    if not bpy.app.background and not bpy.app.timers.is_registered(_tick):
-        bpy.app.timers.register(_tick, first_interval=0.0, persistent=True)
+    if bpy.app.background:
+        return
+    if _timer_router is None:
+        raise RuntimeError("Vectorscope timers require the application router")
+    _timer_router.ensure_timer(
+        "vectorscope", _tick, first_interval=0.0, persistent=True,
+    )
 
 
 def _draw():
@@ -311,8 +317,9 @@ def reset(*, preserve_preferences=False):
 
 
 def register(create_runtime, *, begin, edit, finish, cancel,
-             linear_settings, tone_settings, peak_menu):
-    global _runtime, _interaction, _draw_handle, _shutting_down
+             linear_settings, tone_settings, peak_menu, timer_router):
+    global _runtime, _interaction, _draw_handle, _shutting_down, _timer_router
+    _timer_router = timer_router
     if _runtime is None:
         _runtime = create_runtime()
         callbacks = GestureCallbacks(begin, edit, finish, cancel, linear_settings,
@@ -347,12 +354,28 @@ def unregister():
     if _runtime is not None:
         begin_shutdown()
         finish_shutdown()
-    if bpy.app.timers.is_registered(_tick):
-        bpy.app.timers.unregister(_tick)
+    if _timer_router is None:
+        if _draw_handle is None and not PG_OT_toggle_vectorscope.is_registered:
+            return
+        raise RuntimeError("Vectorscope timers require the application router")
+    errors = []
+    try:
+        _timer_router.unregister_timer("vectorscope", _tick)
+    except Exception as error:
+        errors.append(error)
     if _draw_handle is not None:
-        bpy.types.SpaceNodeEditor.draw_handler_remove(_draw_handle, "WINDOW")
-        _draw_handle = None
+        try:
+            bpy.types.SpaceNodeEditor.draw_handler_remove(_draw_handle, "WINDOW")
+        except Exception as error:
+            errors.append(error)
+        else:
+            _draw_handle = None
     if PG_OT_toggle_vectorscope.is_registered:
-        bpy.utils.unregister_class(PG_OT_toggle_vectorscope)
+        try:
+            bpy.utils.unregister_class(PG_OT_toggle_vectorscope)
+        except Exception as error:
+            errors.append(error)
     _interaction = None
     display.close()
+    if errors:
+        raise ExceptionGroup("Vectorscope teardown failed", errors)

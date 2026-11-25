@@ -21,8 +21,8 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=repository,
 )
 extension = importlib.import_module("bl_ext.pg_vectorscope_shader.perceptual_grade")
-nodes = importlib.import_module(extension.__name__ + ".nodes")
-vectorscope_ui = importlib.import_module(extension.__name__ + ".scopes.vectorscope.ui")
+nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
+vectorscope_ui = importlib.import_module(extension.__name__ + ".features.vectorscope.ui")
 drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
 pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui)
 errors = []

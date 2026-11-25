@@ -34,6 +34,27 @@ POLICY_ENTRYPOINTS = {
     for path in glob([POLICY_PREFIX + "*.py"])
 }
 
+FEATURE_POLICY_SOURCES = {
+    path[len(PREFIX):]: path
+    for path in glob([
+        PREFIX + "features/grade/policy/*.py",
+        PREFIX + "features/bake/policy.py",
+        PREFIX + "features/interaction/policy.py",
+        PREFIX + "features/vectorscope/authority.py",
+        PREFIX + "features/__init__.py",
+        PREFIX + "features/bake/__init__.py",
+        PREFIX + "features/grade/__init__.py",
+        PREFIX + "features/grade/policy/__init__.py",
+        PREFIX + "features/interaction/__init__.py",
+        PREFIX + "features/vectorscope/__init__.py",
+    ])
+}
+
+FEATURE_ENTRYPOINTS = {
+    path[len(PREFIX):]: path
+    for path in glob([PREFIX + "features/**/*.py"])
+}
+
 RUNTIME_PREFIX = PREFIX + "runtime/"
 
 RUNTIME_ENTRYPOINTS = {
@@ -41,9 +62,9 @@ RUNTIME_ENTRYPOINTS = {
     for path in glob([RUNTIME_PREFIX + "**/*.py"])
 }
 
-SCOPE_ENTRYPOINTS = {
+HOST_ENTRYPOINTS = {
     path[len(PREFIX):]: path
-    for path in glob([PREFIX + "scopes/**/*.py"])
+    for path in glob([PREFIX + "host/**/*.py"])
 }
 
 source_tree(
@@ -61,8 +82,10 @@ source_tree(
         "tools/handbook_audit.py",
         "tools/template_build/**/*.py",
         "README.md",
+        "ARCHITECTURE.md",
         "BUCK",
         "requirements/*.inv",
+        "src/features/**/requirements/*.inv",
         "src/locales/*.json",
     ])},
     visibility = ["PUBLIC"],
@@ -185,8 +208,9 @@ python_library(
         "lut_codec.py": PREFIX + "lut_codec.py",
         "lut_shader.py": PREFIX + "lut_shader.py",
         "lut_worker.py": PREFIX + "lut_worker.py",
-        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
-        "runtime/grade_preparation.py": PREFIX + "runtime/grade_preparation.py",
+        "features/__init__.py": PREFIX + "features/__init__.py",
+        "features/grade/__init__.py": PREFIX + "features/grade/__init__.py",
+        "features/grade/preparation.py": PREFIX + "features/grade/preparation.py",
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
@@ -213,10 +237,28 @@ python_library(
 )
 
 python_library(
+    name = "feature_policy_runtime",
+    srcs = FEATURE_POLICY_SOURCES,
+    base_module = "color_tools",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "host_callbacks_runtime",
+    srcs = {
+        "host/__init__.py": PREFIX + "host/__init__.py",
+        "host/callbacks.py": PREFIX + "host/callbacks.py",
+    },
+    base_module = "color_tools",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
     name = "stack_observations_runtime",
     srcs = {
-        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
-        "runtime/stack_observations.py": PREFIX + "runtime/stack_observations.py",
+        "features/__init__.py": PREFIX + "features/__init__.py",
+        "features/grade/__init__.py": PREFIX + "features/grade/__init__.py",
+        "features/grade/stack_observations.py": PREFIX + "features/grade/stack_observations.py",
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
@@ -225,10 +267,11 @@ python_library(
 python_library(
     name = "color_authoring_runtime",
     srcs = {
-        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
-        "runtime/color_authoring.py": PREFIX + "runtime/color_authoring.py",
-        "policy/__init__.py": PREFIX + "policy/__init__.py",
-        "policy/color_authoring.py": PREFIX + "policy/color_authoring.py",
+        "features/__init__.py": PREFIX + "features/__init__.py",
+        "features/grade/__init__.py": PREFIX + "features/grade/__init__.py",
+        "features/grade/color_authoring.py": PREFIX + "features/grade/color_authoring.py",
+        "features/grade/policy/__init__.py": PREFIX + "features/grade/policy/__init__.py",
+        "features/grade/policy/color_authoring.py": PREFIX + "features/grade/policy/color_authoring.py",
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
@@ -238,10 +281,10 @@ python_library(
 python_library(
     name = "gesture_runtime",
     srcs = {
-        "runtime/__init__.py": PREFIX + "runtime/__init__.py",
-        "runtime/gesture_coordinator.py": PREFIX + "runtime/gesture_coordinator.py",
-        "policy/__init__.py": PREFIX + "policy/__init__.py",
-        "policy/gesture.py": PREFIX + "policy/gesture.py",
+        "features/__init__.py": PREFIX + "features/__init__.py",
+        "features/interaction/__init__.py": PREFIX + "features/interaction/__init__.py",
+        "features/interaction/runtime.py": PREFIX + "features/interaction/runtime.py",
+        "features/interaction/policy.py": PREFIX + "features/interaction/policy.py",
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
@@ -249,13 +292,13 @@ python_library(
 
 export_file(
     name = "node_source",
-    src = POLICY_PREFIX + "node.py",
+    src = PREFIX + "features/grade/policy/node.py",
     visibility = ["PUBLIC"],
 )
 
 export_file(
     name = "node_requirements",
-    src = "requirements/node.inv",
+    src = "src/features/grade/requirements/node.inv",
     visibility = ["PUBLIC"],
 )
 
@@ -273,13 +316,13 @@ export_file(
 
 export_file(
     name = "bake_source",
-    src = POLICY_PREFIX + "bake.py",
+    src = PREFIX + "features/bake/policy.py",
     visibility = ["PUBLIC"],
 )
 
 export_file(
     name = "bake_requirements",
-    src = "requirements/bake.inv",
+    src = "src/features/bake/requirements/bake.inv",
     visibility = ["PUBLIC"],
 )
 
@@ -317,7 +360,7 @@ invariant_proof(
         "failed_request_retires_without_publishing",
     ],
     requirements = ":bake_requirements",
-    runtime_source = "policy/bake.py",
+    runtime_source = "features/bake/policy.py",
     source = ":bake_source",
     visibility = ["PUBLIC"],
 )
@@ -375,7 +418,7 @@ invariant_proof(
         "disposed_demand_rejects_correlated_late_receipts",
     ],
     requirements = ":node_requirements",
-    runtime_source = "policy/node.py",
+    runtime_source = "features/grade/policy/node.py",
     source = ":node_source",
     visibility = ["PUBLIC"],
 )
@@ -511,9 +554,9 @@ invariant_proof(
         "observer_can_be_installed",
         "native_gesture_permissions_are_reachable",
     ],
-    requirements = "requirements/gesture.inv",
-    runtime_source = "policy/gesture.py",
-    source = POLICY_PREFIX + "gesture.py",
+    requirements = "src/features/interaction/requirements/gesture.inv",
+    runtime_source = "features/interaction/policy.py",
+    source = PREFIX + "features/interaction/policy.py",
     visibility = ["PUBLIC"],
 )
 
@@ -557,9 +600,9 @@ invariant_proof(
         "damaged_active_bank_is_closed_before_repair",
         "repair_and_final_closure_have_separate_retries",
     ],
-    requirements = "requirements/bank_publication.inv",
-    runtime_source = "policy/bank_publication.py",
-    source = POLICY_PREFIX + "bank_publication.py",
+    requirements = "src/features/grade/requirements/bank_publication.inv",
+    runtime_source = "features/grade/policy/bank_publication.py",
+    source = PREFIX + "features/grade/policy/bank_publication.py",
     visibility = ["PUBLIC"],
 )
 
@@ -581,9 +624,9 @@ invariant_proof(
         "invalid_push_has_no_effect",
     ],
     required_witnesses = ["push_restore_and_takeover_are_reachable"],
-    requirements = "requirements/color_authoring.inv",
-    runtime_source = "policy/color_authoring.py",
-    source = POLICY_PREFIX + "color_authoring.py",
+    requirements = "src/features/grade/requirements/color_authoring.inv",
+    runtime_source = "features/grade/policy/color_authoring.py",
+    source = PREFIX + "features/grade/policy/color_authoring.py",
     visibility = ["PUBLIC"],
 )
 
@@ -608,9 +651,9 @@ invariant_proof(
         "current_display_is_reachable",
         "current_preview_is_reachable",
     ],
-    requirements = "requirements/vectorscope.inv",
-    runtime_source = "policy/vectorscope.py",
-    source = POLICY_PREFIX + "vectorscope.py",
+    requirements = "src/features/vectorscope/requirements/vectorscope.inv",
+    runtime_source = "features/vectorscope/authority.py",
+    source = PREFIX + "features/vectorscope/authority.py",
     visibility = ["PUBLIC"],
 )
 
@@ -648,7 +691,7 @@ extension_tree(
         "blender_manifest.toml": "blender_manifest.toml",
         "LICENSE": "LICENSE",
         "README.md": "README.md",
-    } | POLICY_ENTRYPOINTS | RUNTIME_ENTRYPOINTS | SCOPE_ENTRYPOINTS,
+    } | POLICY_ENTRYPOINTS | RUNTIME_ENTRYPOINTS | FEATURE_ENTRYPOINTS | HOST_ENTRYPOINTS,
     visibility = ["PUBLIC"],
     deps = [
         ":kernel_runtime_bundle",

@@ -1,7 +1,7 @@
 """Adversarial observation ordering for native and adapter-owned gestures."""
 import unittest
 
-from color_tools.runtime import gesture_coordinator as p
+from color_tools.features.interaction import runtime as p
 
 
 class GesturePolicyTests(unittest.TestCase):

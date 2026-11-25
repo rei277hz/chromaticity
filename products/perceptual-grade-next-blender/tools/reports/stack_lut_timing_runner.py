@@ -47,7 +47,7 @@ def main():
                                  handle_error=errors.append)
     if enabled is not extension or errors:
         raise RuntimeError("Could not enable the packaged extension: " + repr(errors))
-    nodes = importlib.import_module(extension.__package__ + ".nodes")
+    nodes = importlib.import_module(extension.__package__ + ".features.grade.host")
     lut_helper = importlib.import_module(extension.__package__ + ".lut_helper")
     helper_runtime = importlib.import_module(
         extension.__package__ + ".runtime.execution"

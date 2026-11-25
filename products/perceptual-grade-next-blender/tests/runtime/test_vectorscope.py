@@ -27,7 +27,7 @@ class VectorscopeTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, directory.name)
         cls.addClassCleanup(sys.path.remove, directory.name)
-        scope = package_name + ".scopes.vectorscope."
+        scope = package_name + ".features.vectorscope."
         cls.policy = importlib.import_module(scope + "policy")
         cls.runtime = importlib.import_module(scope + "runtime")
         cls.analysis = importlib.import_module(scope + "analysis")

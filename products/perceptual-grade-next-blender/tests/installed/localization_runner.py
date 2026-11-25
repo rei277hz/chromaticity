@@ -21,7 +21,7 @@ extension = importlib.import_module(
 )
 addon_utils.enable(extension.__name__, default_set=False)
 nodes = importlib.import_module(
-    "bl_ext.pg_grade_localization.perceptual_grade.nodes"
+    "bl_ext.pg_grade_localization.perceptual_grade.features.grade.host"
 )
 localization = nodes.localization
 assert localization._registered

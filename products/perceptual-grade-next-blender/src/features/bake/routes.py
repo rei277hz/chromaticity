@@ -5,13 +5,13 @@
 from collections.abc import Mapping
 import math
 
-from .capture_graph import (
+from ...runtime.capture_graph import (
     BAKE_DOMAIN, GRADE_TYPES, MAX_PIXEL_BYTES,
     STACK_TYPES, RouteBlocked, Walker, cache_geometry, digest,
     geometry_observation, grade_settings, identity, owner_for_node,
     same, semantic_identity,
 )
-from .capture_images import datablock_key, route_datablock
+from ...runtime.capture_images import datablock_key, route_datablock
 
 SCHEMA = 1
 # Version the persisted digest independently of the worker route payload.
@@ -147,7 +147,8 @@ def _describe(node, context, *, full, dependencies=None, upstream_grades=None):
     compositor = kind == "compositor"
     collected_dependencies = [] if dependencies is not None else None
     walker = Walker(bpy, scene, owner_kind=kind, owner=owner, full=full, compositor=compositor,
-                     compositor_locator=locator, dependencies=collected_dependencies)
+                     compositor_locator=locator, dependencies=collected_dependencies,
+                     validate_geometry=cache_geometry)
     for socket in node.inputs:
         if socket.name in {"Color", "Alpha"}:
             walker.input(socket, parents)

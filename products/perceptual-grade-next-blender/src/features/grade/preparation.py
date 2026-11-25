@@ -10,18 +10,18 @@ import json
 import threading
 import time
 
-from ..kernel.boundary import RESOURCE_SCHEMA, prepare_boundary
-from ..kernel.color_prepare import prepare_color
-from ..kernel.color_resolution import COLOR_RESOLUTION_SCHEMA
-from ..kernel.prepare import (
+from ...kernel.boundary import RESOURCE_SCHEMA, prepare_boundary
+from ...kernel.color_prepare import prepare_color
+from ...kernel.color_resolution import COLOR_RESOLUTION_SCHEMA
+from ...kernel.prepare import (
     GAMMA,
     PreparedGrade,
     prepare_linear,
     prepare_tone,
     viewing,
 )
-from ..kernel.settings import Settings
-from ..kernel.stage2_parameters import prepare_parameters
+from ...kernel.settings import Settings
+from ...kernel.stage2_parameters import prepare_parameters
 
 
 PREPARATION_SCHEMA = 2

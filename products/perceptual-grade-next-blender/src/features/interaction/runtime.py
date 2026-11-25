@@ -5,7 +5,7 @@
 from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
-from ..policy import gesture as policy
+from . import policy
 
 
 @dataclass(frozen=True)

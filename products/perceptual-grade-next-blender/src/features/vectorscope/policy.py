@@ -5,7 +5,7 @@
 from dataclasses import dataclass, replace
 from typing import Optional
 
-from ...policy.vectorscope import display_current, publication, preview_current
+from .authority import display_current, publication, preview_current
 
 
 @dataclass(frozen=True)

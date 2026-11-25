@@ -34,7 +34,7 @@ python_test(
     ],
     base_module = "tests.perceptual_grade_blender",
     deps = [
-        "//products/perceptual-grade-next-blender:policy_runtime",
+        "//products/perceptual-grade-next-blender:feature_policy_runtime",
         "//products/perceptual-grade-next-blender:stack_observations_runtime",
     ],
 )
@@ -67,7 +67,7 @@ python_test(
     name = "policy_bake",
     srcs = ["policy/test_policy_bake.py"],
     base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
+    deps = ["//products/perceptual-grade-next-blender:feature_policy_runtime"],
 )
 
 python_test(
@@ -87,7 +87,7 @@ python_test(
     name = "policy_bank_publication",
     srcs = ["policy/test_policy_bank_publication.py"],
     base_module = "tests.perceptual_grade_blender",
-    deps = ["//products/perceptual-grade-next-blender:policy_runtime"],
+    deps = ["//products/perceptual-grade-next-blender:feature_policy_runtime"],
 )
 
 python_test(
@@ -890,6 +890,16 @@ python_test(
     srcs = ["packaging/test_policy_coverage.py"],
     base_module = "tests.perceptual_grade_blender",
     deps = ["//products/perceptual-grade-next-blender:packager_sources"],
+)
+
+python_test(
+    name = "host_callbacks",
+    srcs = ["runtime/test_host_callbacks.py"],
+    base_module = "tests.perceptual_grade_blender",
+    resources = {
+        "extension.zip": "//products/perceptual-grade-next-blender:extension[zip]",
+    },
+    deps = ["//products/perceptual-grade-next-blender:host_callbacks_runtime"],
 )
 
 python_test(

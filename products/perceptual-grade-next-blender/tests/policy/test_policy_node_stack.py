@@ -1,7 +1,7 @@
 import unittest
 
-from policy.node import Event, new, step
-from color_tools.runtime.stack_observations import (
+from color_tools.features.grade.policy.node import Event, new, step
+from color_tools.features.grade.stack_observations import (
     grade_is_referenced,
     stack_changed,
 )

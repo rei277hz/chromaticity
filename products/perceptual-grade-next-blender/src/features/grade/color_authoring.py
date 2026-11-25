@@ -6,12 +6,12 @@ from dataclasses import dataclass, replace
 import math
 from typing import Optional
 
-from ..kernel.color_resolution import (
+from ...kernel.color_resolution import (
     HUE_MIN_GAP, HUE_REPAIR_GAP, adaptation_context, float32,
     hue_source_angles, limit_adaptance_pair, project_hue_offsets, resolve_settings,
 )
-from ..kernel.settings import Settings
-from ..policy import color_authoring as ownership
+from ...kernel.settings import Settings
+from .policy import color_authoring as ownership
 
 
 @dataclass(frozen=True)

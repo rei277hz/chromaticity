@@ -459,7 +459,8 @@ class Interaction:
 
     def pointer_event(self, window, event):
         """Own pointer input over the overlay and update hover cursors."""
-        if window is None or window.screen is None:
+        if (window is None or window.screen is None
+                or not callable(getattr(window, "as_pointer", None))):
             return False
         window_key = window.as_pointer()
         drag = self.drags.get(window_key)

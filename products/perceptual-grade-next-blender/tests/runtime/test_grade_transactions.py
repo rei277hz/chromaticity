@@ -31,7 +31,7 @@ class GradeTransactionTests(unittest.TestCase):
         sys.path.insert(0, str(root))
         cls.resources = importlib.import_module("grade_transaction_test.runtime.resource_lifecycle")
         cls.publication = importlib.import_module("grade_transaction_test.runtime.image_publication")
-        cls.cache = importlib.import_module("grade_transaction_test.runtime.grade_resources")
+        cls.cache = importlib.import_module("grade_transaction_test.features.grade.resources")
 
     @classmethod
     def tearDownClass(cls):

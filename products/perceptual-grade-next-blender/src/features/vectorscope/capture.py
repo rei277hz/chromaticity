@@ -6,7 +6,6 @@ from uuid import uuid4
 
 import numpy as np
 
-from ...runtime import effective_grade_graph
 from ...runtime.capture_host import (
     compositor_root, configure_linear, disable_file_outputs, open_snapshot,
 )
@@ -102,45 +101,15 @@ def _expose_output(tree, parents, source, socket_type, prefix):
 
 
 def _appearance_outputs(root, group_path, node_name):
-    """Expose the hidden final-appearance tap through private group copies."""
-    from ...kernel.node_templates import (
-        KERNEL_QUALITY, SLOT_SCOPE_APPEARANCE, SLOT_SCOPE_APPEARANCE_ALPHA,
-        TEMPLATE_SLOT,
-    )
+    """Expose Grade's guarded final-appearance tap through private copies."""
+    from ..grade import appearance_endpoint
+
     tree, parents, target = _occurrence(root, group_path, node_name)
-    kernel = target.node_tree
-    if target.mute or kernel is None:
-        raise ValueError("Vectorscope appearance capture requires a live full Grade node")
-    if kernel.get(effective_grade_graph.WRAPPER):
-        if not effective_grade_graph.wrapper_structure_valid(kernel):
-            raise ValueError("Vectorscope Bake wrapper is incomplete")
-        shader = kernel.bl_idname == "ShaderNodeTree"
-        controls = (node.inputs[0 if shader else "Switch"] for node in kernel.nodes
-                    if node.get(effective_grade_graph.SELECTOR))
-        if any(control.is_linked or control.default_value for control in controls):
-            raise ValueError("Vectorscope appearance capture cannot read an active Bake output")
-        target.node_tree = kernel.copy()
-        parents.append((tree, target))
-        tree = target.node_tree
-        target = effective_grade_graph.marked(tree, effective_grade_graph.LIVE)
-        kernel = target.node_tree
-    if (kernel.get("_perceptual_grade_stage2_complete") is not True
-            or kernel.get(KERNEL_QUALITY) not in (None, "full")):
-        raise ValueError("Vectorscope appearance capture requires a live full Grade node")
-    target.node_tree = kernel.copy()
-    kernel = target.node_tree
-    parents.append((tree, target))
-
-    packed = tuple(node for node in kernel.nodes
-                   if node.get(TEMPLATE_SLOT) == SLOT_SCOPE_APPEARANCE)
-    opacity = tuple(node for node in kernel.nodes
-                    if node.get(TEMPLATE_SLOT) == SLOT_SCOPE_APPEARANCE_ALPHA)
-    if len(packed) != 1 or len(opacity) != 1:
-        raise ValueError("Vectorscope Grade has no unique final-appearance endpoint")
-
+    kernel, outputs, grade_parents = appearance_endpoint.resolve(tree, target)
+    parents.extend(grade_parents)
     fields = (
-        (packed[0].outputs[0], "NodeSocketColor", "Appearance "),
-        (_socket(opacity[0].outputs, "Value"), "NodeSocketFloat", "Appearance Alpha "),
+        (outputs[0], "NodeSocketColor", "Appearance "),
+        (outputs[1], "NodeSocketFloat", "Appearance Alpha "),
     )
     return tuple(_expose_output(kernel, parents, source, socket_type, prefix)
                  for source, socket_type, prefix in fields)

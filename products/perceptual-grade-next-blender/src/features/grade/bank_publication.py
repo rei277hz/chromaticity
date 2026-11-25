@@ -5,7 +5,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from ..policy import bank_publication as policy
+from .policy import bank_publication as policy
 
 
 @dataclass(frozen=True)

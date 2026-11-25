@@ -9,12 +9,11 @@ from uuid import uuid4
 
 import numpy as np
 
-from ..policy import bake as bake_policy
-from . import bake_graph, bake_routes
-from .bake_freshness import BakeReceipt, BakeSources
-from .bake_manager import BakeManager
-from .image_publication import ImageSnapshot, write_metadata
-from .publication import PublicationDeferred
+from . import graph as bake_graph, policy as bake_policy, routes as bake_routes
+from .freshness import BakeReceipt, BakeSources
+from .manager import BakeManager
+from ...runtime.image_publication import ImageSnapshot, write_metadata
+from ...runtime.publication import PublicationDeferred
 
 
 BAKE_SCHEMA = 2
@@ -46,6 +45,7 @@ class BakeController:
         self.fail_output = fail_output
         self.block_nodes = block_nodes
         self.timer_callback = timer_callback
+        self.timer_router = None
         self.manager = None
         self.sources = BakeSources()
         self.mode_updates = set()
@@ -57,6 +57,9 @@ class BakeController:
         if self.manager is None:
             self.manager = BakeManager(freeze_snapshot=freeze_snapshot, create_job=create_job)
 
+    def set_timer_router(self, timer_router):
+        self.timer_router = timer_router
+
     def begin_shutdown(self):
         if self.manager is not None:
             self.manager.begin_shutdown()
@@ -66,9 +69,8 @@ class BakeController:
             self.manager.finish_shutdown()
 
     def stop_timer(self):
-        timers = self.bpy.app.timers
-        if timers.is_registered(self.timer_callback):
-            timers.unregister(self.timer_callback)
+        if self.timer_router is not None:
+            self.timer_router.unregister_timer("bake", self.timer_callback)
         self.manager = None
 
     def busy(self, node):
@@ -111,9 +113,11 @@ class BakeController:
         if self.manager is None:
             return
         try:
-            if not self.bpy.app.timers.is_registered(self.timer_callback):
-                self.bpy.app.timers.register(self.timer_callback, first_interval=0.02,
-                                             persistent=True)
+            if self.timer_router is not None:
+                self.timer_router.ensure_timer(
+                    "bake", self.timer_callback, first_interval=0.02,
+                    persistent=True,
+                )
         except (AttributeError, RuntimeError, TypeError):
             return
 

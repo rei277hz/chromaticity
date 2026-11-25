@@ -23,7 +23,7 @@ from bpy.props import (
     StringProperty,
 )
 
-from .kernel import (
+from ...kernel import (
     LinearSettings,
     ColorSettings,
     Settings,
@@ -33,7 +33,7 @@ from .kernel import (
     project_source_white,
     project_source_white_component,
 )
-from .kernel.node_templates import (
+from ...kernel.node_templates import (
     FALLBACK_KERNEL,
     instantiate_grade,
     instantiate_fallback,
@@ -43,63 +43,60 @@ from .kernel.node_templates import (
     validate_grade_template,
     validate_stack_instance,
 )
-from .kernel.stage2_bindings import (
+from ...kernel.stage2_bindings import (
     PARAMETER_IMAGE, PARAMETER_BANK_BINDINGS,
     PARAMETER_ACTIVE_BANK, PARAMETER_GENERATION, PARAMETER_SELECTOR,
     PARAMETER_ROLE,
 )
-from .kernel.stage2_parameters import (
+from ...kernel.stage2_parameters import (
     PARAMETER_SCHEMA, PARAMETER_ROLES, PARAMETER_ROLE_SHAPES,
     prepare_parameters, parameter_bank_images, parameter_bank_pair_images,
     bind_parameter_bank,
 )
-from .kernel.stage2_parameters import (
+from ...kernel.stage2_parameters import (
     PARAMETER_CONTENT_SIGNATURE, parameter_content_signature,
     parameter_image_matches, parameter_bundle_receipt_matches,
     set_parameter_bundle_signature,
 )
-from .lut_gpu import PreparedStack as _PreparedStack
-from .lut_helper import StackHelperBackend
-from .kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
-from .kernel.settings import D65, SPACES, StackEntrySettings, split_stack_entries, stack_directions
-from .kernel.tone_ui import (
+from ...lut_gpu import PreparedStack as _PreparedStack
+from ...lut_helper import StackHelperBackend
+from ...kernel.lut import STACK_COMPOSITION_SCHEMA, STACK_INVERSE_SCHEMA
+from ...kernel.settings import D65, SPACES, StackEntrySettings, split_stack_entries, stack_directions
+from ...kernel.tone_ui import (
     TONE_CHROMA_FIELDS, TONE_CHROMA_LIMITS, TONE_DEFAULTS, TONE_FIELDS,
     TONE_LEVEL_FIELDS, TONE_LIMITS, TONE_PEAKS, clamp_tone_anchor,
 )
-from .kernel.color_ui import (
+from ...kernel.color_ui import (
     COLOR_DEFAULTS as _COLOR_DEFAULTS, COLOR_FIELDS as _COLOR_FIELDS,
 )
-from .kernel.color_resolution import COLOR_RESOLUTION_SCHEMA, resolve_settings
+from ...kernel.color_resolution import COLOR_RESOLUTION_SCHEMA, resolve_settings
 from .policy import node as node_policy
-from .runtime import gesture_coordinator as gesture_policy
-from .runtime import color_authoring
-from .runtime.preparation import PreparationCoordinatorError, PreparationRuntime
-from .runtime.grade_preparation import GradePreparer
-from .runtime.grade_resources import (
+from ..interaction import runtime as gesture_policy
+from . import color_authoring
+from ...runtime.preparation import PreparationCoordinatorError, PreparationRuntime
+from .preparation import GradePreparer
+from .resources import (
     GradeResources, SIGNATURE as PARAMETER_SIGNATURE, OWNER as PARAMETER_OWNER,
     OWNER_NODE as PARAMETER_OWNER_NODE,
     ensure_node_uuid, NODE_UUID,
 )
-from .runtime.publication import PublicationDeferred
-from .runtime.compositor_effects import compositor_occurrences
-from .runtime.compositor_receipts import CompositorReceipts
-from .runtime.resource_lifecycle import run_resource_lifecycle
-from .runtime.node_conversion_animation import NodeAnimationConversion
-from .runtime.stack_observations import grade_is_referenced, stack_changed
-from .runtime.shader_scene import shader_scene_inventory
-from .runtime.image_publication import (
+from ...runtime.publication import PublicationDeferred
+from ...runtime.compositor_effects import compositor_occurrences
+from .compositor_receipts import CompositorReceipts
+from ...runtime.resource_lifecycle import run_resource_lifecycle
+from .conversion import NodeAnimationConversion
+from .stack_observations import grade_is_referenced, stack_changed
+from ...runtime.shader_scene import shader_scene_inventory
+from ...runtime.image_publication import (
     pack_image_for_save, write_metadata,
 )
-from .runtime import bake_graph
-from .runtime import bake_controller
-from .runtime.capture_helper import CaptureHelperBackend
-from .runtime.capture_snapshot import freeze_snapshot
-from .runtime.lifecycle import LifecycleCoordinator
-from .runtime import bake_routes
-from .runtime.bank_publication import run_bank_publication
-from .scopes.vectorscope import ui as vectorscope_ui
-from .scopes.vectorscope.runtime import ScopeRuntime
-from . import localization
+from ...runtime.capture_snapshot import freeze_snapshot
+from ...runtime.lifecycle import LifecycleCoordinator
+from .publisher import GradePublicationOperations, publish_grade_parameters
+from ..bake import controller as bake_controller, graph as bake_graph, routes as bake_routes
+from ..vectorscope import ui as vectorscope_ui
+from ..vectorscope.runtime import ScopeRuntime
+from ... import localization
 
 
 SHADER_TREE = "ShaderNodeTree"
@@ -125,7 +122,7 @@ MENU_TYPES = (
 _syncing = set()
 _registered_classes = []
 _registered_menus = []
-_registered_handlers = []
+_host_callbacks = None
 _reconciling = False
 _last_working_space = None
 _node_stores = {}
@@ -139,7 +136,6 @@ _lifecycle = LifecycleCoordinator()
 _preparation_runtime = None
 _grade_preparer = None
 _grade_resources = None
-_capture_helper = None
 _restoring_capture_sources = False
 _preparation_sources = {}
 _gesture_state = gesture_policy.new()
@@ -296,13 +292,7 @@ def _fail_bake_output(node, error):
 
 def _bake_tick():
     if _bake.manager is not None and _bake.manager.closed:
-        if _capture_helper is not None:
-            try:
-                _close_capture_helper()
-            except Exception as error:
-                print("Perceptual Grade capture helper shutdown failed:", error)
-                return 0.1
-        return None
+        return 0.1
     if _lifecycle.reset_pending:
         return 0.02
     return _bake.tick()
@@ -1603,8 +1593,8 @@ def _record_for(node, desired_signature=None, source=None):
 def _ensure_timer():
     if (_preparation_runtime is not None
             and (_preparation_runtime.pending or (_grade_resources is not None and _grade_resources.pending))
-            and not bpy.app.timers.is_registered(_preparation_tick)):
-        bpy.app.timers.register(_preparation_tick, first_interval=0.0)
+            and not _timer_registered(_preparation_tick)):
+        _register_host_timer(_preparation_tick, first_interval=0.0)
 
 
 # pg-book: technical-report/en#next-policy.node-output
@@ -2079,357 +2069,41 @@ def _set_parameter_selector(kernel, bank):
 
 def _publish_grade_parameters(source, authorized_records, prepared, *, admitted,
                               playback_session=None, recovery=None):
-    """Stage a fixed inactive role bundle, select it, and deliver its generation."""
-    users = tuple(record for record in authorized_records
-                  if record.get("source") is source
-                  and _lifecycle.admits(recovery, record["node"].as_pointer())
-                  and _node_stores.get(record["node"].as_pointer()) is record)
-    if not users:
-        return ()
-    created, context, failures = [], {}, []
-    resource = _grade_resources.resource(users[0]["node"], prepared.space)
-    if recovery is not None and resource.banks is not None:
-        # Shared kernels read the same banks even when their outer nodes have
-        # no runtime records yet after undo or load.
-        for node in _all_grade_nodes():
-            if _lifecycle.admits(recovery, node.as_pointer()):
-                continue
-            kernel = _kernel_for_node(node)
-            if kernel is not None and any(kernel.get(key) in resource.banks
-                                          for key in PARAMETER_BANK_BINDINGS):
-                return _publication_failure(users, RuntimeError(
-                    "Render Grade bank is shared with nodes outside this preflight"
-                ), recovery=recovery)
-    settings = Settings(linear=prepared.linear.settings, tone=prepared.tone.settings,
-                        color=prepared.color.settings, space=prepared.space)
-    values = _snapshot_values(settings)
-    preparation_signature = _preparation_signature(values, prepared.space)
-    old_active = resource.active_bank if resource.active_bank in (0, 1) else 0
-    old_generation = resource.generation if resource.generation is not None else 0
-    generation = _grade_resources.next_generation(resource)
-    active_valid = (resource.banks is None
-                    or _parameter_image_content_matches(resource.banks[old_active]))
-    if playback_session is not None and not active_valid and any(
-            _signature(record["node"].id_data.bl_idname, values, prepared.space)
-            != record["state"].desired_signature
-            for record in users):
-        # A recovery must install the exact demand. An older playback result
-        # cannot repair a corrupt active bank and certify its replacement.
-        return _publication_failure(users, RuntimeError("Grade parameter bank is corrupt"),
-                                    recovery=recovery)
-    context.update(
-        previous_trees=dict(resource.trees),
-        repairing=not active_valid,
-        outer_before=tuple((record["node"], _kernel_for_node(record["node"]))
-                           for record in users),
-        receipt_before=None, metadata_before=(),
+    operations = GradePublicationOperations(
+        bpy=bpy,
+        lifecycle=_lifecycle,
+        node_stores=_node_stores,
+        resources=_grade_resources,
+        all_grade_nodes=_all_grade_nodes,
+        kernel_for_node=_kernel_for_node,
+        snapshot_values=_snapshot_values,
+        preparation_signature=_preparation_signature,
+        signature=_signature,
+        parameter_image_content_matches=_parameter_image_content_matches,
+        parameter_role_receipt_matches=_parameter_role_receipt_matches,
+        write_grade_parameters=_write_grade_parameters,
+        pack_grade_parameters=_pack_grade_parameters,
+        parameter_kernel_structure_valid=_parameter_kernel_structure_valid,
+        build_kernel=_kernel,
+        set_parameter_selector=_set_parameter_selector,
+        read_parameter_selector=_read_parameter_selector,
+        replace_node_kernel=_replace_node_kernel,
+        dispatch=_dispatch,
+        playback_preview=_playback_preview,
+        tag_compositor_outputs=_tag_compositor_outputs,
+        invalidate_grade_parameters=_invalidate_grade_parameters,
+        record_compositor_bindings=_record_compositor_bindings,
+        restore_compositor_bindings=_restore_compositor_bindings,
+        fail_installation=_fail_installation,
+        publication_failure=_publication_failure,
+        retire_kernels=_retire_kernels,
+        remove_parameter_image=_remove_parameter_image,
+        kernel_signature_key=_KERNEL_SIGNATURE,
     )
-
-    def make_image(bank, role):
-        height, width, _channels = PARAMETER_ROLE_SHAPES[role]
-        image = bpy.data.images.new(
-            f"Perceptual Grade {role} bank {bank}",
-            width=width, height=height,
-            alpha=True, float_buffer=True,
-        )
-        image.colorspace_settings.name = "Non-Color"
-        image.alpha_mode = "CHANNEL_PACKED"
-        image.use_half_precision = False
-        image.file_format = "OPEN_EXR"
-        image[PARAMETER_IMAGE] = PARAMETER_SCHEMA
-        image[PARAMETER_ROLE] = role
-        image["_perceptual_grade_image"] = True
-        return image
-
-    def pack_role(image, role, pixels, content_signature, *, force=False):
-        if (not force
-                and _parameter_role_receipt_matches(image, role, content_signature)
-                and parameter_image_matches(image, content_signature, bundle=False)):
-            return True
-        image[PARAMETER_IMAGE] = PARAMETER_SCHEMA
-        image[PARAMETER_ROLE] = role
-        image["_perceptual_grade_image"] = True
-        _write_grade_parameters(image, pixels)
-        _pack_grade_parameters(image)
-        if image.packed_file is None or image.is_dirty:
-            return False
-        image[PARAMETER_CONTENT_SIGNATURE] = content_signature
-        if role != "parameter" and PARAMETER_SIGNATURE in image:
-            del image[PARAMETER_SIGNATURE]
-        return parameter_image_matches(image, content_signature, bundle=False)
-
-    def pack_bank(primary, parameters, content_signatures, signature, *, force=False):
-        role_images = parameter_bank_images(primary)
-        if not all(pack_role(role_images[role], role, parameters.roles[role],
-                             content_signatures[role], force=force)
-                   for role in PARAMETER_ROLES):
-            return False
-        set_parameter_bundle_signature(primary, content_signatures)
-        primary[PARAMETER_SIGNATURE] = signature
-        return True
-
-    def stage(candidate_bank, _errors, *, repair=False):
-        parameters = prepared.parameters or prepare_parameters(prepared)
-        content_signatures = {
-            role: parameter_content_signature(parameters.roles[role])
-            for role in PARAMETER_ROLES
-        }
-        banks = resource.banks
-        fresh = banks is None
-        if fresh:
-            allocated = []
-            try:
-                primaries = []
-                for bank in (0, 1):
-                    role_images = {}
-                    for role in PARAMETER_ROLES:
-                        image = make_image(bank, role)
-                        allocated.append(image)
-                        role_images[role] = image
-                        if not pack_role(image, role, parameters.roles[role],
-                                         content_signatures[role]):
-                            for allocated_image in allocated:
-                                if allocated_image.users == 0:
-                                    bpy.data.images.remove(allocated_image, do_unlink=True)
-                            return {"clean": False}
-                    primaries.append(bind_parameter_bank(role_images))
-                banks = tuple(primaries)
-                # No graph can read this pair yet. Initialize both complete
-                # bundles before either bank can be selected.
-                for primary in banks:
-                    primary[PARAMETER_SIGNATURE] = preparation_signature
-                _grade_resources.set_banks(resource, banks, old_active, old_generation)
-            except BaseException:
-                for image in allocated:
-                    if image.users == 0:
-                        bpy.data.images.remove(image, do_unlink=True)
-                raise
-        elif repair:
-            if (not pack_bank(banks[old_active], parameters, content_signatures,
-                              preparation_signature, force=True)
-                    or not pack_bank(banks[candidate_bank], parameters, content_signatures,
-                                     preparation_signature, force=True)):
-                return {"clean": False}
-        elif not pack_bank(banks[candidate_bank], parameters, content_signatures,
-                           preparation_signature):
-            return {"clean": False}
-
-        kernels = dict(resource.trees)
-        owner, owner_node = _grade_resources.owner(users[0]["node"])
-        tree_types = set(kernels) | {record["node"].id_data.bl_idname for record in users}
-        for tree_type in tree_types:
-            kernel = kernels.get(tree_type)
-            structure_valid = _parameter_kernel_structure_valid(kernel)
-            if not structure_valid:
-                kernel = _kernel(
-                    tree_type, prepared, prepared.space,
-                    _signature(tree_type, values, prepared.space),
-                    banks, old_active, old_generation,
-                )
-                created.append(kernel)
-                kernel[PARAMETER_OWNER] = owner
-                if owner_node is not None:
-                    kernel[PARAMETER_OWNER_NODE] = owner_node
-                kernels[tree_type] = kernel
-                structure_valid = _parameter_kernel_structure_valid(kernel)
-            if not structure_valid:
-                return {"clean": False}
-            # Kernel generations describe the selected bank, which is still
-            # the previous bank until the selector operation succeeds.
-            kernel[PARAMETER_ACTIVE_BANK] = old_active
-            kernel[PARAMETER_GENERATION] = old_generation
-            kernel[PARAMETER_SIGNATURE] = banks[old_active].get(PARAMETER_SIGNATURE)
-        context["kernels"] = kernels
-        context["metadata_before"] = tuple(
-            (kernel, key, kernel.get(key))
-            for kernel in kernels.values()
-            for key in (PARAMETER_ACTIVE_BANK, PARAMETER_GENERATION,
-                        PARAMETER_SIGNATURE, _KERNEL_SIGNATURE)
-        )
-        verified_banks = (banks if fresh or repair else (banks[candidate_bank],))
-        return {"clean": all(
-            _parameter_role_receipt_matches(
-                image, role, content_signatures[role],
-            )
-            for primary in verified_banks
-            for role, image in parameter_bank_images(primary).items()
-        ) and all(
-            primary.get(PARAMETER_SIGNATURE) == preparation_signature
-            and parameter_bundle_receipt_matches(primary)
-            for primary in verified_banks
-        )}
-
-    def select(bank, _errors):
-        kernels = context["kernels"]
-        for kernel in kernels.values():
-            _set_parameter_selector(kernel, bank)
-            kernel[PARAMETER_ACTIVE_BANK] = bank
-            kernel[PARAMETER_GENERATION] = generation
-            kernel[PARAMETER_SIGNATURE] = preparation_signature
-            tree_type = kernel.bl_idname
-            kernel[_KERNEL_SIGNATURE] = _signature(
-                tree_type, values, prepared.space,
-            )
-        for node, _previous in context["outer_before"]:
-            kernel = kernels[node.id_data.bl_idname]
-            if _kernel_for_node(node) != kernel:
-                _replace_node_kernel(node, kernel)
-        selected = {_read_parameter_selector(kernel) for kernel in kernels.values()}
-        if selected != {bank} or any(
-                kernel.get(PARAMETER_ACTIVE_BANK) != bank
-                or kernel.get(PARAMETER_GENERATION) != generation
-                or kernel.get(PARAMETER_SIGNATURE) != preparation_signature
-                or kernel.get(PARAMETER_SIGNATURE)
-                != kernel.get(PARAMETER_BANK_BINDINGS[bank]).get(PARAMETER_SIGNATURE)
-                or kernel.get(_KERNEL_SIGNATURE) != _signature(
-                    kernel.bl_idname, values, prepared.space)
-                for kernel in kernels.values()):
-            raise RuntimeError("Grade parameter selector readback did not match the staged bank")
-        return {"selected_bank": selected.pop()}
-
-    def deliver(candidate_bank, _errors):
-        _grade_resources.publish(resource, candidate_bank, generation)
-        resource.trees = context["kernels"]
-        active_images = parameter_bank_images(resource.image)
-        for role in PARAMETER_ROLES:
-            _invalidate_grade_parameters(active_images[role])
-        context["receipt_before"] = _record_compositor_bindings(users)
-        delivery_errors = []
-        for record in users:
-            event_kind = "recovery_result" if context["repairing"] else "installation_result"
-            delivery_errors.extend(_dispatch(record["node"], node_policy.Event(
-                event_kind, _signature(record["node"].id_data.bl_idname, values, prepared.space),
-                playback_preview=_playback_preview(record, playback_session)),
-                recovery=recovery))
-        if delivery_errors:
-            raise ExceptionGroup("Grade installation delivery failed", delivery_errors)
-        # Scene invalidation can start a live evaluation. Publish its generation
-        # and current policy receipts first so it observes this complete bank.
-        _tag_compositor_outputs(users)
-        return {"delivered": True}
-
-    def restore_selector(bank, _errors):
-        restoration_errors = []
-        kernels = context["kernels"].values()
-        for kernel in kernels:
-            try:
-                _set_parameter_selector(kernel, bank)
-                for key, value in ((PARAMETER_ACTIVE_BANK, old_active),
-                                   (PARAMETER_GENERATION, old_generation)):
-                    write_metadata(((kernel, key, value),))
-            except Exception as error:
-                restoration_errors.append(error)
-        for node, previous in context["outer_before"]:
-            try:
-                if _kernel_for_node(node) != previous:
-                    _replace_node_kernel(node, previous)
-            except Exception as error:
-                restoration_errors.append(error)
-        for entry in context.get("metadata_before", ()):
-            try:
-                write_metadata((entry,))
-            except Exception as error:
-                restoration_errors.append(error)
-        try:
-            _grade_resources.restore(resource, old_active, old_generation)
-            resource.trees = context["previous_trees"]
-        except Exception as error:
-            restoration_errors.append(error)
-        if context.get("receipt_before") is not None:
-            try:
-                _restore_compositor_bindings(context["receipt_before"])
-            except Exception as error:
-                restoration_errors.append(error)
-        selected = set()
-        for kernel in kernels:
-            try:
-                selected.add(_read_parameter_selector(kernel))
-            except Exception as error:
-                restoration_errors.append(error)
-        if selected != {bank}:
-            restoration_errors.append(RuntimeError(
-                f"Grade bank selector restoration readback did not match bank {bank}"
-            ))
-        if restoration_errors:
-            raise ExceptionGroup("Grade bank selector restoration failed", restoration_errors)
-        return {"selected_bank": selected.pop()}
-
-    def fail_closed(_bank, errors):
-        error = errors[0] if errors else RuntimeError("Grade bank publication failed")
-        affected = tuple(record for record in _node_stores.values()
-                         if record.get("source") is source)
-        installation_errors = []
-        for record in affected or users:
-            try:
-                pointer = record["node"].as_pointer()
-                if (not pointer or _node_stores.get(pointer) is not record
-                        or not _lifecycle.admits(recovery, pointer)):
-                    continue
-                installation_errors.extend(_fail_installation(
-                    (record,), None, error, recovery=recovery))
-            except Exception as failure:
-                installation_errors.append(failure)
-        if installation_errors:
-            resource.trees = context.get("kernels", context["previous_trees"])
-            raise ExceptionGroup("Could not establish the Grade error output",
-                                 installation_errors)
-        resource.trees = {}
-        return {"closed": True}
-
-    operations = {
-        "stage": stage,
-        "repair": lambda bank, errors: stage(bank, errors, repair=True),
-        "select": select,
-        "deliver": deliver,
-        "restore_selector": restore_selector,
-        "fail_closed": fail_closed,
-    }
-    publication = run_bank_publication(
-        old_active, operations,
-        admitted=admitted,
-        active_valid=active_valid,
+    return publish_grade_parameters(
+        operations, source, authorized_records, prepared,
+        admitted=admitted, playback_session=playback_session, recovery=recovery,
     )
-    transaction_errors = list(publication.errors)
-
-    if publication.outcome == "committed":
-        previous = [tree for node, tree in context["outer_before"]
-                    if tree != context.get("kernels", {}).get(
-                        node.id_data.bl_idname)]
-        previous.extend(tree for kind, tree in context["previous_trees"].items()
-                        if tree != context["kernels"].get(kind))
-        errors = list(_retire_kernels(previous)) if previous else []
-        errors.extend(_grade_resources.reclaim(resource, _remove_parameter_image))
-        transaction_errors.extend(errors)
-    elif publication.outcome == "failed_closed":
-        if not transaction_errors:
-            transaction_errors.append(RuntimeError(
-                "Grade bank publication ended " + publication.outcome
-            ))
-        previous = [tree for _node, tree in context["outer_before"]]
-        errors = list(_retire_kernels((*created, *previous)))
-        errors.extend(_grade_resources.reclaim(resource, _remove_parameter_image))
-        transaction_errors.extend(errors)
-    else:
-        resource.trees = context.get("kernels", context["previous_trees"])
-        transaction_errors.append(RuntimeError(
-            "Grade bank publication could not establish a reliable output"
-        ))
-
-    diagnostic_nodes = []
-    for record in tuple(_node_stores.values()):
-        if record.get("source") != source:
-            continue
-        try:
-            if record["node"].as_pointer():
-                diagnostic_nodes.append(record["node"])
-        except ReferenceError:
-            continue
-    for error in transaction_errors:
-        failures.append((tuple(diagnostic_nodes), error))
-        message = ("recovered during" if publication.outcome == "committed"
-                   else "failed during")
-        print(f"Perceptual Grade bank publication {message} publication:", error)
-    return tuple(failures)
 
 
 def _packed_parameter_kernel_banks(kernel):
@@ -3723,11 +3397,11 @@ def _consume_gesture_effects(effects):
         if action.kind == "invoke_observer":
             _invoke_gesture_observer(action)
         elif action.kind == "schedule_handoff":
-            bpy.app.timers.register(partial(
+            _register_host_timer(partial(
                 _handoff_gesture_router, action.window_id, action.token,
                 action.gesture_token), first_interval=0.0)
         elif action.kind == "schedule_finish":
-            bpy.app.timers.register(partial(
+            _register_host_timer(partial(
                 _observe_gesture_finish, action.window_id, action.gesture_token),
                 first_interval=0.0)
         elif action.kind == "node_release":
@@ -3841,9 +3515,9 @@ def _ensure_gesture_router_timer():
     """Keep interactive drag observation available across native file loads."""
     if (not bpy.app.background
             and PG_OT_gesture_router in _registered_classes
-            and not bpy.app.timers.is_registered(_gesture_router_tick)):
-        bpy.app.timers.register(_gesture_router_tick, first_interval=0.1,
-                                persistent=True)
+            and not _timer_registered(_gesture_router_tick)):
+        _register_host_timer(_gesture_router_tick, first_interval=0.1,
+                             persistent=True)
 
 
 def _gesture_router_tick():
@@ -4208,8 +3882,8 @@ def _undo_redo_post(*_args):
 
 def _schedule_lifecycle_reconciliation():
     _bake.ensure_timer()
-    if not bpy.app.timers.is_registered(_undo_redo_reconcile_tick):
-        bpy.app.timers.register(_undo_redo_reconcile_tick, first_interval=0.0)
+    if not _timer_registered(_undo_redo_reconcile_tick):
+        _register_host_timer(_undo_redo_reconcile_tick, first_interval=0.0)
 
 
 def _release_lifecycle_resources():
@@ -6337,7 +6011,7 @@ def draw_context_menu(self, context):
 
 
 def _register_handlers():
-    for collection, callback in (
+    bindings = (
         (bpy.app.handlers.load_pre, _load_pre),
         (bpy.app.handlers.load_post, _load_post),
         (bpy.app.handlers.load_post_fail, _load_post),
@@ -6358,29 +6032,80 @@ def _register_handlers():
         (bpy.app.handlers.composite_cancel, _compositor_cancel),
         (bpy.app.handlers.save_pre, _save_pre),
         (bpy.app.handlers.depsgraph_update_post, _depsgraph_update_post),
-    ):
-        if callback not in collection:
-            collection.append(callback)
-        if not any(owned_collection is collection and owned_callback is callback
-                   for owned_collection, owned_callback in _registered_handlers):
-            _registered_handlers.append((collection, callback))
+    )
+    if _host_callbacks is None:
+        raise RuntimeError("Grade host callbacks require the application router")
+    _host_callbacks.register_handlers("grade", bindings)
 
 
 def _unregister_handlers():
     _frame_color_keys.clear()
     _frame_color_invalidations.clear()
-    for collection, callback in reversed(tuple(_registered_handlers)):
-        try:
-            while callback in collection:
-                collection.remove(callback)
-        except ValueError:
-            pass
-        except Exception:
-            continue
-        _registered_handlers[:] = [
-            record for record in _registered_handlers
-            if not (record[0] is collection and record[1] is callback)
-        ]
+    if _host_callbacks is None:
+        raise RuntimeError("Grade host callbacks require the application router")
+    errors = _host_callbacks.unregister_handlers("grade")
+    if errors:
+        raise ExceptionGroup("Grade host handler teardown failed", list(errors))
+
+
+def register(callbacks):
+    global _host_callbacks
+    if callbacks is None:
+        raise TypeError("Grade registration requires the callback router")
+    _host_callbacks = callbacks
+    _bake.set_timer_router(callbacks)
+    _register()
+
+
+def register_bake(create_job):
+    snapshot = partial(freeze_snapshot, bpy)
+    _bake.start(freeze_snapshot=snapshot, create_job=create_job)
+    _bake.ensure_timer()
+    return _bake
+
+
+def register_scope(create_job):
+    if _host_callbacks is None:
+        raise RuntimeError("Grade services must be registered before Vectorscope")
+    snapshot = partial(freeze_snapshot, bpy)
+    vectorscope_ui.register(lambda: ScopeRuntime(
+        snapshot, _scope_linear_settings, _working_space,
+        create_job=create_job, gate=_grade_publication_gate,
+        upstream_ready=_scope_upstream_ready,
+        grade_signature=_settings_signature_for, preview_roles=_scope_preview_roles,
+    ), begin=_begin_gizmo_gesture, edit=_edit_gizmo_gesture,
+        finish=_end_color_gesture, cancel=_cancel_color_gesture,
+        linear_settings=_scope_linear_settings, tone_settings=_scope_tone_settings,
+        peak_menu=_show_gizmo_peak_menu, timer_router=_host_callbacks)
+
+
+def registration_cleanup_needed():
+    return _bake.manager is not None and _bake.manager.closed
+
+
+def close_admission():
+    if _grade_resources is not None:
+        _grade_resources.gate.reset()
+
+
+def _timer_registered(callback):
+    if _host_callbacks is None:
+        raise RuntimeError("Grade host timers require the application router")
+    return _host_callbacks.timer_registered(callback)
+
+
+def _register_host_timer(callback, *, first_interval, persistent=False):
+    if _host_callbacks is None:
+        raise RuntimeError("Grade host timers require the application router")
+    _host_callbacks.ensure_timer(
+        "grade", callback, first_interval=first_interval, persistent=persistent,
+    )
+
+
+def _unregister_timer(callback):
+    if _host_callbacks is None:
+        raise RuntimeError("Grade host timers require the application router")
+    _host_callbacks.unregister_timer("grade", callback)
 
 
 def _scope_upstream_ready(grades):
@@ -6418,22 +6143,12 @@ def _scope_preview_roles(node, signature):
     return parameter_bank_images(primary)
 
 
-def _close_capture_helper():
-    global _capture_helper
-    _bake.begin_shutdown()
-    vectorscope_ui.begin_shutdown()
-    if _capture_helper is not None:
-        _capture_helper.close()
-    _bake.finish_shutdown()
-    vectorscope_ui.finish_shutdown()
-    _capture_helper = None
-
-
-def register():
-    global _preparation_runtime, _grade_preparer, _grade_resources, _capture_helper
+def _register():
+    global _preparation_runtime, _grade_preparer, _grade_resources
+    if _host_callbacks is None:
+        raise RuntimeError("Grade registration must be started by the application")
     if _bake.manager is not None and _bake.manager.closed:
-        # Blender can mark the extension disabled after a failed unregister.
-        unregister()
+        raise RuntimeError("Closed Grade runtime must be removed by the application first")
     retrying_preparation_runtime = (
         _preparation_runtime is not None and _preparation_runtime.closed
     )
@@ -6491,10 +6206,6 @@ def register():
             _preparation_runtime.register_polled_lane(
                 "lut", StackHelperBackend(), progressive=True
             )
-        if _capture_helper is None:
-            _capture_helper = CaptureHelperBackend()
-        snapshot = partial(freeze_snapshot, bpy)
-        _bake.start(freeze_snapshot=snapshot, create_job=_capture_helper.create_job)
         for cls in classes:
             if cls not in _registered_classes:
                 if not cls.is_registered:
@@ -6511,84 +6222,44 @@ def register():
                     menu_type.append(callback)
                 _registered_menus.append(record)
         _register_handlers()
-        vectorscope_ui.register(lambda: ScopeRuntime(
-            snapshot, _scope_linear_settings, _working_space,
-            create_job=_capture_helper.create_job, gate=_grade_publication_gate,
-            upstream_ready=_scope_upstream_ready,
-            grade_signature=_settings_signature_for, preview_roles=_scope_preview_roles,
-        ), begin=_begin_gizmo_gesture, edit=_edit_gizmo_gesture,
-            finish=_end_color_gesture, cancel=_cancel_color_gesture,
-            linear_settings=_scope_linear_settings, tone_settings=_scope_tone_settings,
-            peak_menu=_show_gizmo_peak_menu)
-        if not bpy.app.timers.is_registered(_startup_reconcile_tick):
-            bpy.app.timers.register(_startup_reconcile_tick, first_interval=0.1)
+        if not _timer_registered(_startup_reconcile_tick):
+            _register_host_timer(_startup_reconcile_tick, first_interval=0.1)
         _ensure_gesture_router_timer()
-        if not bpy.app.timers.is_registered(_render_preflight_tick):
-            bpy.app.timers.register(_render_preflight_tick, first_interval=0.02,
-                                    persistent=True)
-        if not bpy.app.timers.is_registered(_frame_reconcile_tick):
-            bpy.app.timers.register(_frame_reconcile_tick, first_interval=0.1,
-                                    persistent=True)
-        _bake.ensure_timer()
+        if not _timer_registered(_render_preflight_tick):
+            _register_host_timer(_render_preflight_tick, first_interval=0.02,
+                                 persistent=True)
+        if not _timer_registered(_frame_reconcile_tick):
+            _register_host_timer(_frame_reconcile_tick, first_interval=0.1,
+                                 persistent=True)
     except Exception as registration_error:
-        try:
-            unregister()
-        except Exception as cleanup_error:
-            raise ExceptionGroup(
-                "Grade node registration and rollback both failed",
-                [registration_error, cleanup_error],
-            ) from registration_error
         raise
 
 
 def unregister():
     global _preparation_runtime, _grade_preparer, _grade_resources
-    if _grade_resources is not None:
-        # Reject a busy shutdown before removing the callbacks that can
-        # acknowledge existing readers and make a later retry safe.
-        _grade_resources.gate.reset()
-    # Retain request ownership and callbacks if the helper has not retired.
-    try:
-        _close_capture_helper()
-    except Exception:
-        _bake.ensure_timer()
-        raise
     errors = []
-    try:
-        vectorscope_ui.unregister()
-    except Exception as exc:
-        errors.append(exc)
     if _preparation_runtime is not None:
         _preparation_runtime.close()
         _preparation_runtime = None
     _clear_gestures()
     try:
-        if bpy.app.timers.is_registered(_render_preflight_tick):
-            bpy.app.timers.unregister(_render_preflight_tick)
+        _unregister_timer(_render_preflight_tick)
     except Exception as exc:
         errors.append(exc)
     try:
-        if bpy.app.timers.is_registered(_startup_reconcile_tick):
-            bpy.app.timers.unregister(_startup_reconcile_tick)
+        _unregister_timer(_startup_reconcile_tick)
     except Exception as exc:
         errors.append(exc)
     try:
-        if bpy.app.timers.is_registered(_gesture_router_tick):
-            bpy.app.timers.unregister(_gesture_router_tick)
+        _unregister_timer(_gesture_router_tick)
     except Exception as exc:
         errors.append(exc)
     try:
-        if bpy.app.timers.is_registered(_frame_reconcile_tick):
-            bpy.app.timers.unregister(_frame_reconcile_tick)
+        _unregister_timer(_frame_reconcile_tick)
     except Exception as exc:
         errors.append(exc)
     try:
-        _bake.stop_timer()
-    except Exception as exc:
-        errors.append(exc)
-    try:
-        if bpy.app.timers.is_registered(_undo_redo_reconcile_tick):
-            bpy.app.timers.unregister(_undo_redo_reconcile_tick)
+        _unregister_timer(_undo_redo_reconcile_tick)
     except Exception as exc:
         errors.append(exc)
     try:
@@ -6597,8 +6268,7 @@ def unregister():
         errors.append(exc)
 
     try:
-        if bpy.app.timers.is_registered(_preparation_tick):
-            bpy.app.timers.unregister(_preparation_tick)
+        _unregister_timer(_preparation_tick)
     except Exception as exc:
         errors.append(exc)
     if _grade_preparer is not None:

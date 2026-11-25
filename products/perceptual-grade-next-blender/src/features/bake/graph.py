@@ -6,7 +6,7 @@ The live kernel is never copied or modified to store a node's bake selection.
 
 # pg-book: technical-report/en#next-policy.bake
 
-from .effective_grade_graph import (
+from ...runtime.effective_grade_graph import (
     DOMAIN, LIVE, OPERATION, READER, SCHEMA, SELECTOR, UV, WRAPPER, live_tree,
     marked, wrapper_structure_valid as structure_valid,
 )
@@ -50,7 +50,7 @@ def image_valid(node, image):
 
 
 def build(node, kernel, *, retire=None):
-    from ..kernel.node_templates import instantiate_wrapper
+    from ...kernel.node_templates import instantiate_wrapper
 
     return instantiate_wrapper(node.id_data.bl_idname, kernel, retire=retire)
 

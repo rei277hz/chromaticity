@@ -21,7 +21,7 @@ class GizmoGeometryTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, directory.name)
         cls.addClassCleanup(sys.path.remove, directory.name)
-        cls.geometry = importlib.import_module(package_name + ".scopes.vectorscope.geometry")
+        cls.geometry = importlib.import_module(package_name + ".features.vectorscope.geometry")
         cls.settings = importlib.import_module(package_name + ".kernel.settings")
 
     def test_linear_layout_has_scope_and_three_rails(self):

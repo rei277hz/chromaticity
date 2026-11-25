@@ -29,7 +29,9 @@ class FallbackPoolTests(unittest.TestCase):
         with zipfile.ZipFile(files("tests.perceptual_grade_blender") / "extension.zip") as archive:
             archive.extractall(package)
         sys.path.insert(0, str(root))
-        cls.node_module = importlib.import_module("grade_fallback_pool_test.nodes")
+        cls.node_module = importlib.import_module(
+            "grade_fallback_pool_test.features.grade.host"
+        )
         cls.node_templates = importlib.import_module("grade_fallback_pool_test.kernel.node_templates")
 
     @classmethod

@@ -5,8 +5,9 @@ from importlib.resources import files
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import zipfile
 
 
@@ -152,3 +153,119 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(coordinator.reset_pending)
         fail_closed.assert_not_called()
         self.assertIsNone(coordinator.reconcile(release, Mock(), fail_closed))
+
+
+class _Timers:
+    def __init__(self):
+        self.callbacks = set()
+
+    def is_registered(self, callback):
+        return callback in self.callbacks
+
+    def register(self, callback, **_kwargs):
+        self.callbacks.add(callback)
+
+    def unregister(self, callback):
+        self.callbacks.remove(callback)
+
+
+class AddonShutdownTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        directory = tempfile.TemporaryDirectory(prefix="grade-addon-lifecycle-")
+        cls.addClassCleanup(directory.cleanup)
+        root = Path(directory.name)
+        package = root / "grade_addon_lifecycle_test"
+        package.mkdir()
+        with zipfile.ZipFile(
+                files("tests.perceptual_grade_blender") / "extension.zip") as archive:
+            archive.extractall(package)
+        sys.path.insert(0, str(root))
+
+        def clear_imports():
+            sys.path.remove(str(root))
+            for name in tuple(sys.modules):
+                if name == package.name or name.startswith(package.name + "."):
+                    del sys.modules[name]
+
+        cls.addClassCleanup(clear_imports)
+        cls.application = importlib.import_module(package.name + ".application")
+        cls.vectorscope_module_name = package.name + ".features.vectorscope"
+
+    def make_runtime(self, events, scope):
+        runtime = self.application.AddonRuntime(types.SimpleNamespace(
+            app=types.SimpleNamespace(timers=_Timers()),
+        ))
+        runtime.grade = types.SimpleNamespace(
+            close_admission=lambda: events.append("grade.close_admission"),
+            unregister=lambda: events.append("grade.unregister"),
+        )
+        runtime.bake = types.SimpleNamespace(
+            begin_shutdown=lambda: events.append("bake.begin_shutdown"),
+            finish_shutdown=lambda: events.append("bake.finish_shutdown"),
+            stop_timer=lambda: events.append("bake.stop_timer"),
+        )
+        runtime.capture_helper = types.SimpleNamespace(
+            close=lambda: events.append("capture.close"),
+        )
+        module = types.ModuleType(self.vectorscope_module_name)
+        module.ui = scope
+        return runtime, module
+
+    def test_cleanup_failure_retries_all_feature_teardown(self):
+        events = []
+        scope = types.SimpleNamespace(
+            begin_shutdown=lambda: events.append("scope.begin_shutdown"),
+            finish_shutdown=lambda: events.append("scope.finish_shutdown"),
+            unregister=Mock(side_effect=(RuntimeError("draw handler still active"), None)),
+        )
+        runtime, module = self.make_runtime(events, scope)
+
+        with patch.dict(sys.modules, {self.vectorscope_module_name: module}):
+            with self.assertRaisesRegex(RuntimeError, "draw handler still active"):
+                runtime.unregister()
+            self.assertTrue(runtime._shutdown_pending)
+            self.assertIn(runtime._shutdown_retry, runtime.callbacks.bpy.app.timers.callbacks)
+            self.assertIsNone(runtime._shutdown_retry())
+
+        self.assertEqual(scope.unregister.call_count, 2)
+        self.assertEqual(events[0:6], [
+            "grade.close_admission",
+            "bake.begin_shutdown",
+            "scope.begin_shutdown",
+            "capture.close",
+            "bake.finish_shutdown",
+            "scope.finish_shutdown",
+        ])
+        self.assertEqual(events.count("grade.close_admission"), 2)
+        self.assertEqual(events.count("bake.begin_shutdown"), 2)
+        self.assertEqual(events.count("scope.begin_shutdown"), 2)
+        self.assertIsNone(runtime.grade)
+        self.assertIsNone(runtime.bake)
+        self.assertFalse(runtime._shutdown_pending)
+
+    def test_admission_failure_schedules_retry_before_other_features_start(self):
+        events = []
+        scope = types.SimpleNamespace(
+            begin_shutdown=lambda: events.append("scope.begin_shutdown"),
+            finish_shutdown=lambda: events.append("scope.finish_shutdown"),
+            unregister=lambda: events.append("scope.unregister"),
+        )
+        runtime, module = self.make_runtime(events, scope)
+        runtime.grade.close_admission = Mock(
+            side_effect=(RuntimeError("publication gate is busy"), None)
+        )
+        grade = runtime.grade
+
+        with patch.dict(sys.modules, {self.vectorscope_module_name: module}):
+            with self.assertRaisesRegex(RuntimeError, "publication gate is busy"):
+                runtime.unregister()
+            self.assertTrue(runtime._shutdown_pending)
+            self.assertIn(runtime._shutdown_retry, runtime.callbacks.bpy.app.timers.callbacks)
+            self.assertIsNone(runtime._shutdown_retry())
+
+        self.assertEqual(grade.close_admission.call_count, 2)
+        self.assertEqual(events.count("bake.begin_shutdown"), 1)
+        self.assertEqual(events.count("scope.begin_shutdown"), 1)
+        self.assertIsNone(runtime.grade)
+        self.assertFalse(runtime._shutdown_pending)

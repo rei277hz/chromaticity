@@ -2,8 +2,8 @@
 import unittest
 from unittest.mock import patch
 
-from color_tools.policy import gesture as policy
-from color_tools.runtime import gesture_coordinator as runtime
+from color_tools.features.interaction import policy
+from color_tools.features.interaction import runtime
 
 
 class GestureDecisionTests(unittest.TestCase):

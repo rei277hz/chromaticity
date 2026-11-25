@@ -20,7 +20,7 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_grade_animation.perceptual_grade")
-nodes = importlib.import_module(extension.__name__ + ".nodes")
+nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
 addon_utils.enable(extension.__name__, default_set=False)
 
 scene = bpy.context.scene

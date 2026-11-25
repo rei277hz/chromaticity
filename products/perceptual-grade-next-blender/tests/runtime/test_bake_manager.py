@@ -57,8 +57,8 @@ class BakeManagerTests(unittest.TestCase):
         with zipfile.ZipFile(files("tests.perceptual_grade_blender") / "extension.zip") as archive:
             archive.extractall(package)
         sys.path.insert(0, cls.directory.name)
-        cls.module = importlib.import_module("bake_manager_test.runtime.bake_manager")
-        cls.worker = importlib.import_module("bake_manager_test.runtime.bake_worker")
+        cls.module = importlib.import_module("bake_manager_test.features.bake.manager")
+        cls.worker = importlib.import_module("bake_manager_test.features.bake.worker")
         cls.capture_host = importlib.import_module("bake_manager_test.runtime.capture_host")
         cls.capture_snapshot = importlib.import_module("bake_manager_test.runtime.capture_snapshot")
         cls.capture_images = importlib.import_module("bake_manager_test.runtime.capture_images")

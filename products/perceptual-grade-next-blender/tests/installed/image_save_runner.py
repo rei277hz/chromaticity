@@ -17,7 +17,7 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_image_save.perceptual_grade")
-nodes = importlib.import_module("bl_ext.pg_image_save.perceptual_grade.nodes")
+nodes = importlib.import_module("bl_ext.pg_image_save.perceptual_grade.features.grade.host")
 stage2_bindings = importlib.import_module(extension.__name__ + ".kernel.stage2_bindings")
 errors = []
 assert addon_utils.enable(

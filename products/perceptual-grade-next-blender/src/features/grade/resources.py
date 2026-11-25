@@ -4,15 +4,15 @@ from dataclasses import dataclass, field
 from typing import Optional
 from uuid import UUID, uuid4
 
-from ..kernel.stage2_bindings import (
+from ...kernel.stage2_bindings import (
     PARAMETER_ACTIVE_BANK, PARAMETER_BANK_BINDINGS, PARAMETER_GENERATION,
 )
-from ..kernel.stage2_parameters import (
+from ...kernel.stage2_parameters import (
     PARAMETER_ROLES, parameter_bank_images, parameter_bank_pair_images,
 )
-from ..kernel.node_templates import grade_parameter_bindings_valid, validate_grade_template
-from ..policy import resources as resource_policy
-from .publication import PublicationDeferred, PublicationGate
+from ...kernel.node_templates import grade_parameter_bindings_valid, validate_grade_template
+from ...policy import resources as resource_policy
+from ...runtime.publication import PublicationDeferred, PublicationGate
 
 
 OWNER = "_perceptual_grade_parameter_owner"

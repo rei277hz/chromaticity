@@ -1,6 +1,6 @@
 import unittest
 
-from policy.node import (
+from color_tools.features.grade.policy.node import (
     Effects,
     Event,
     new,

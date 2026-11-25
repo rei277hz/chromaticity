@@ -169,7 +169,7 @@ def main():
         if addon_utils.enable(extension.__name__, default_set=False,
                               handle_error=errors.append) is not extension or errors:
             raise RuntimeError("Could not enable the installed extension: " + repr(errors))
-        nodes = importlib.import_module(extension.__package__ + ".nodes")
+        nodes = importlib.import_module(extension.__package__ + ".features.grade.host")
         window = bpy.context.window
         if window is None:
             raise RuntimeError("Native Shader display timing requires a Blender window")

@@ -7,7 +7,7 @@
       "review": "Sets the analytic reference as mathematical authority, identifies Next policy coverage and the current bilingual Next manual, and distinguishes the retained 1.23.2 download and downstream snapshot.",
       "evidence": [
         "products/perceptual-grade-next-blender/README.md",
-        "products/perceptual-grade-next-blender/src/nodes.py"
+        "products/perceptual-grade-next-blender/src/features/grade/host.py"
       ],
       "remaining_work": [
         "Remove the 1.23.2 download and snapshot statements when the complete legacy-content retirement is carried out."
@@ -60,10 +60,10 @@
         "libraries/perceptual-grade-reference/src/warp.py",
         "products/perceptual-grade-next-blender/src/kernel/color_prepare.py",
         "products/perceptual-grade-next-blender/src/kernel/color_resolution.py",
-        "products/perceptual-grade-next-blender/src/runtime/color_authoring.py",
+        "products/perceptual-grade-next-blender/src/features/grade/color_authoring.py",
         "products/perceptual-grade-next-blender/src/kernel/stage2_parameters.py",
         "products/perceptual-grade-next-blender/tools/template_build/color_graph.py",
-        "products/perceptual-grade-next-blender/src/nodes.py",
+        "products/perceptual-grade-next-blender/src/features/grade/host.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_color_preparation.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_color_resolution.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_color_authoring.py",
@@ -128,7 +128,7 @@
       "scope": "legacy",
       "review": "The chapter is explicitly labeled as 1.23.2 architecture guidance; Next behavior is documented in the policy chapter and product README.",
       "evidence": [
-        "products/perceptual-grade-next-blender/src/nodes.py",
+        "products/perceptual-grade-next-blender/src/features/grade/host.py",
         "products/perceptual-grade-next-blender/src/runtime/preparation.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_preparation_runtime.py"
       ],
@@ -141,22 +141,22 @@
       "scope": "next",
       "review": "Documents current Next policy machines and adapters, including Color authoring claims/effects, signature/undo separation, frame/Peak lifecycle, and the existing resource policy's undo-retention branch. Describes six manifest-validated persistent fallback variants, policy-authorized fake-user protection, retained historical helpers, and failed-unpublished cleanup; resource state/sequence diagrams include retention. Scalar proof boundaries remain separate from numerical and native lifetime acceptance. Existing coverage includes complete five-role Stage 2/3 publication, fixed schema 6 Adaptance storage, fresh link indexing, compositor recalculation, exact template receipts and measured assets, finite routing, semantic J_A carry, conditional legal projection, and native Image/UV bake freshness. Defines explicit custom-RNA backing-key presence and reset/rollback restoration inside existing authoring boundaries. Adds the live Linear vectorscope policy, capture gate, Rec.709 density analysis, source invalidation, and superseded-result evidence.",
       "evidence": [
-        "products/perceptual-grade-next-blender/src/policy/color_authoring.py",
-        "products/perceptual-grade-next-blender/requirements/color_authoring.inv",
-        "products/perceptual-grade-next-blender/src/runtime/color_authoring.py",
+        "products/perceptual-grade-next-blender/src/features/grade/policy/color_authoring.py",
+        "products/perceptual-grade-next-blender/src/features/grade/requirements/color_authoring.inv",
+        "products/perceptual-grade-next-blender/src/features/grade/color_authoring.py",
         "products/perceptual-grade-next-blender/src/kernel/color_resolution.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_color_authoring.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_color_resolution.py",
         "products/perceptual-grade-next-blender/tests/installed/gesture_undo_runner.py",
         "products/perceptual-grade-next-blender/tests/installed/test_gesture_undo_gui.py",
-        "products/perceptual-grade-next-blender/src/policy/bake.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_routes.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_worker.py",
+        "products/perceptual-grade-next-blender/src/features/bake/policy.py",
+        "products/perceptual-grade-next-blender/src/features/bake/routes.py",
+        "products/perceptual-grade-next-blender/src/features/bake/worker.py",
         "products/perceptual-grade-next-blender/src/kernel/color_ui.py",
         "products/perceptual-grade-next-blender/src/kernel/layouts.py",
         "products/perceptual-grade-next-blender/src/kernel/stage2_parameters.py",
-        "products/perceptual-grade-next-blender/src/runtime/grade_resources.py",
-        "products/perceptual-grade-next-blender/src/runtime/bank_publication.py",
+        "products/perceptual-grade-next-blender/src/features/grade/resources.py",
+        "products/perceptual-grade-next-blender/src/features/grade/bank_publication.py",
         "products/perceptual-grade-next-blender/tools/template_build/color_graph.py",
         "products/perceptual-grade-next-blender/tools/template_build/compositor_output.py",
         "products/perceptual-grade-next-blender/tools/template_build/guard_graph.py",
@@ -170,10 +170,10 @@
         "products/perceptual-grade-next-blender/tests/runtime/test_bake_manager.py",
         "products/perceptual-grade-next-blender/tests/installed/runner.py",
         "products/perceptual-grade-next-blender/tests/installed/stack_ui_checks.py",
-        "products/perceptual-grade-next-blender/src/policy/vectorscope.py",
-        "products/perceptual-grade-next-blender/src/scopes/vectorscope/runtime.py",
-        "products/perceptual-grade-next-blender/src/scopes/vectorscope/capture.py",
-        "products/perceptual-grade-next-blender/src/scopes/vectorscope/analysis.py",
+        "products/perceptual-grade-next-blender/src/features/vectorscope/authority.py",
+        "products/perceptual-grade-next-blender/src/features/vectorscope/runtime.py",
+        "products/perceptual-grade-next-blender/src/features/vectorscope/capture.py",
+        "products/perceptual-grade-next-blender/src/features/vectorscope/analysis.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py",
         "products/perceptual-grade-next-blender/tests/installed/test_vectorscope_native.py"
       ],
@@ -253,7 +253,7 @@
       "review": "Separates Color authoring proof/runtime/numerical/native acceptance from earlier Stage 3 receipts. Records LTS recursive native undo crashes, exact pinned Blender source links, the inferred raw-ID address-reuse mechanism, and the six-variant fallback-lifetime repair contract without treating pre-repair passing retries as fix evidence. Current native parameter gates preserve all methods and limits: basic parity is 3 ppm, active-Color extreme parity is 5 ppm against equivalent arithmetic, and three outputs face independent 1e-4 oracle gates. Production-template, exact cross-host receipt, effective-Full final-render, and actual live-Viewer half-precision acceptance remain separate. Records the merged-main 62/66 CI result separately from earlier focused receipts, including the missing isolated J_A fixture field, custom-RNA reset/rollback defect, and Chromium Unix-socket path overflow. Records the newly exposed conversion-fixture preparation ordering defect and partial carrier timeout, preserving all task, time, numerical, and normal-exit checks without claiming contention as proven. Separates the passing 66-target remote workspace acceptance, current/LTS lifecycle results, two selected builds, and narrow formatting receipt from the original GitHub run.",
       "evidence": [
         "products/perceptual-grade-next-blender/tests/BUCK",
-        "products/perceptual-grade-next-blender/requirements/color_authoring.inv",
+        "products/perceptual-grade-next-blender/src/features/grade/requirements/color_authoring.inv",
         "products/perceptual-grade-next-blender/tests/runtime/test_color_authoring.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_color_resolution.py",
         "products/perceptual-grade-next-blender/tests/installed/test_conversion_installed.py",
@@ -323,7 +323,7 @@
         "libraries/perceptual-grade-reference/src/grading.py",
         "libraries/perceptual-grade-reference/src/inverse.py",
         "products/perceptual-grade-next-blender/src/kernel/color_resolution.py",
-        "products/perceptual-grade-next-blender/src/runtime/color_authoring.py",
+        "products/perceptual-grade-next-blender/src/features/grade/color_authoring.py",
         "products/perceptual-grade-next-blender/tests/numerical/test_color_resolution.py",
         "products/perceptual-grade-next-blender/src/kernel/prepare.py",
         "products/perceptual-grade-next-blender/tools/template_build/color_graph.py",
@@ -378,9 +378,9 @@
       "anchor": "next-policy.color-authoring",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/policy/color_authoring.py",
-        "products/perceptual-grade-next-blender/src/runtime/color_authoring.py",
-        "products/perceptual-grade-next-blender/src/nodes.py"
+        "products/perceptual-grade-next-blender/src/features/grade/policy/color_authoring.py",
+        "products/perceptual-grade-next-blender/src/features/grade/color_authoring.py",
+        "products/perceptual-grade-next-blender/src/features/grade/host.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/runtime/test_color_authoring.py",
@@ -406,7 +406,7 @@
       "anchor": "next-policy.preparation-join",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/runtime/grade_preparation.py"
+        "products/perceptual-grade-next-blender/src/features/grade/preparation.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/runtime/test_grade_preparation.py"
@@ -416,8 +416,8 @@
       "anchor": "next-policy.node-output",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/policy/node.py",
-        "products/perceptual-grade-next-blender/src/nodes.py"
+        "products/perceptual-grade-next-blender/src/features/grade/policy/node.py",
+        "products/perceptual-grade-next-blender/src/features/grade/host.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_node_readiness.py",
@@ -440,8 +440,8 @@
       "anchor": "next-policy.bank-publication",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/policy/bank_publication.py",
-        "products/perceptual-grade-next-blender/src/runtime/bank_publication.py",
+        "products/perceptual-grade-next-blender/src/features/grade/policy/bank_publication.py",
+        "products/perceptual-grade-next-blender/src/features/grade/bank_publication.py",
         "products/perceptual-grade-next-blender/src/runtime/image_publication.py"
       ],
       "evidence": [
@@ -455,15 +455,15 @@
       "anchor": "next-policy.bake",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/nodes.py",
-        "products/perceptual-grade-next-blender/src/policy/bake.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_freshness.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_manager.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_controller.py",
+        "products/perceptual-grade-next-blender/src/features/grade/host.py",
+        "products/perceptual-grade-next-blender/src/features/bake/policy.py",
+        "products/perceptual-grade-next-blender/src/features/bake/freshness.py",
+        "products/perceptual-grade-next-blender/src/features/bake/manager.py",
+        "products/perceptual-grade-next-blender/src/features/bake/controller.py",
         "products/perceptual-grade-next-blender/src/runtime/capture_helper.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_graph.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_routes.py",
-        "products/perceptual-grade-next-blender/src/runtime/bake_worker.py",
+        "products/perceptual-grade-next-blender/src/features/bake/graph.py",
+        "products/perceptual-grade-next-blender/src/features/bake/routes.py",
+        "products/perceptual-grade-next-blender/src/features/bake/worker.py",
         "products/perceptual-grade-next-blender/src/runtime/image_publication.py"
       ],
       "evidence": [
@@ -482,7 +482,7 @@
         "products/perceptual-grade-next-blender/src/policy/resources.py",
         "products/perceptual-grade-next-blender/src/runtime/resource_lifecycle.py",
         "products/perceptual-grade-next-blender/src/runtime/lifecycle.py",
-        "products/perceptual-grade-next-blender/src/nodes.py"
+        "products/perceptual-grade-next-blender/src/features/grade/host.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_resources.py",
@@ -494,7 +494,7 @@
       "anchor": "next-policy.observer",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/policy/gesture.py"
+        "products/perceptual-grade-next-blender/src/features/interaction/policy.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_gesture_decisions.py",
@@ -505,9 +505,9 @@
       "anchor": "next-policy.gesture",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/policy/gesture.py",
-        "products/perceptual-grade-next-blender/src/runtime/gesture_coordinator.py",
-        "products/perceptual-grade-next-blender/src/nodes.py"
+        "products/perceptual-grade-next-blender/src/features/interaction/policy.py",
+        "products/perceptual-grade-next-blender/src/features/interaction/runtime.py",
+        "products/perceptual-grade-next-blender/src/features/grade/host.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_gesture.py",
@@ -521,7 +521,7 @@
       "sources": [
         "products/perceptual-grade-next-blender/src/policy/render_preflight.py",
         "products/perceptual-grade-next-blender/src/runtime/publication.py",
-        "products/perceptual-grade-next-blender/src/nodes.py"
+        "products/perceptual-grade-next-blender/src/features/grade/host.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_render_preflight.py",
@@ -532,9 +532,9 @@
       "anchor": "next-policy.vectorscope",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/policy/vectorscope.py",
-        "products/perceptual-grade-next-blender/src/scopes/vectorscope/runtime.py",
-        "products/perceptual-grade-next-blender/src/scopes/vectorscope/policy.py"
+        "products/perceptual-grade-next-blender/src/features/vectorscope/authority.py",
+        "products/perceptual-grade-next-blender/src/features/vectorscope/runtime.py",
+        "products/perceptual-grade-next-blender/src/features/vectorscope/policy.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py",

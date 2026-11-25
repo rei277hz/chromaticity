@@ -20,7 +20,7 @@ class PackageTests(unittest.TestCase):
         resource = files("tests.perceptual_grade_blender") / "extension.zip"
         with zipfile.ZipFile(resource) as archive:
             names = set(archive.namelist())
-            self.assertTrue({
+            expected = {
                 "__init__.py",
                 "lut_gpu.py",
                 "lut_codec.py",
@@ -28,10 +28,8 @@ class PackageTests(unittest.TestCase):
                 "lut_worker.py",
                 "runtime/__init__.py",
                 "runtime/preparation.py",
-                "runtime/grade_preparation.py",
                 "runtime/resource_lifecycle.py",
                 "runtime/image_publication.py",
-                "runtime/bake_manager.py",
                 "runtime/capture_graph.py",
                 "runtime/capture_helper.py",
                 "runtime/capture_host.py",
@@ -39,22 +37,42 @@ class PackageTests(unittest.TestCase):
                 "runtime/capture_snapshot.py",
                 "runtime/capture_worker.py",
                 "runtime/effective_grade_graph.py",
-                "scopes/__init__.py",
-                "scopes/vectorscope/__init__.py",
-                "scopes/vectorscope/capture.py",
-                "scopes/vectorscope/routes.py",
-                "runtime/bake_worker.py",
-                "runtime/bake_routes.py",
-                "runtime/bake_graph.py",
-                "runtime/gesture_coordinator.py",
+                "host/__init__.py",
+                "host/callbacks.py",
+                "features/__init__.py",
+                "features/bake/__init__.py",
+                "features/bake/controller.py",
+                "features/bake/freshness.py",
+                "features/bake/graph.py",
+                "features/bake/images.py",
+                "features/bake/manager.py",
+                "features/bake/policy.py",
+                "features/bake/routes.py",
+                "features/bake/worker.py",
+                "features/grade/__init__.py",
+                "features/grade/host.py",
+                "features/grade/appearance_endpoint.py",
+                "features/grade/bank_publication.py",
+                "features/grade/color_authoring.py",
+                "features/grade/compositor_receipts.py",
+                "features/grade/conversion.py",
+                "features/grade/preparation.py",
+                "features/grade/publisher.py",
+                "features/grade/resources.py",
+                "features/grade/stack_observations.py",
+                "features/interaction/__init__.py",
+                "features/interaction/policy.py",
+                "features/interaction/runtime.py",
+                "features/vectorscope/__init__.py",
+                "features/vectorscope/authority.py",
+                "features/vectorscope/capture.py",
+                "features/vectorscope/routes.py",
                 "runtime/execution.py",
-                "runtime/stack_observations.py",
                 "runtime/host.py",
                 "runtime/payloads.py",
                 "runtime/transport.py",
                 "runtime/worker.py",
                 "runtime/worker_main.py",
-                "nodes.py",
                 "localization/__init__.py",
                 "localization/locales/en.json",
                 "localization/locales/zh_HANS.json",
@@ -66,11 +84,12 @@ class PackageTests(unittest.TestCase):
                 "policy/__init__.py",
                 "policy/helper.py",
                 "policy/resources.py",
-                "policy/bank_publication.py",
-                "policy/gesture.py",
                 "policy/preparation.py",
-                "policy/node.py",
-                "policy/bake.py",
+                "policy/render_preflight.py",
+                "features/grade/policy/__init__.py",
+                "features/grade/policy/bank_publication.py",
+                "features/grade/policy/color_authoring.py",
+                "features/grade/policy/node.py",
                 "kernel/__init__.py",
                 "kernel/prepare.py",
                 "kernel/lut.py",
@@ -81,7 +100,8 @@ class PackageTests(unittest.TestCase):
                 "kernel/grade_stack.glsl",
                 "color_core/__init__.py",
                 "color_core/linear.py",
-            }.issubset(names))
+            }
+            self.assertTrue(expected.issubset(names), sorted(expected - names))
             self.assertFalse(any(name.startswith("blender_runtime/") for name in names))
             self.assertFalse(any(name.startswith("perceptual_grade_blender/")
                                  for name in names))
@@ -105,7 +125,7 @@ class PackageTests(unittest.TestCase):
                 "technical_report_audit.py",
                 "product_build/technical_report_audit.py",
             }.intersection(names))
-            nodes_source = archive.read("nodes.py")
+            nodes_source = archive.read("features/grade/host.py")
             self.assertNotIn(b"PG_OT_bake_diagnostics", nodes_source)
             self.assertNotIn(b"perceptual_grade.bake_diagnostics", nodes_source)
             self.assertNotIn(b"PG_OT_start_drag_trace", nodes_source)
@@ -166,9 +186,14 @@ class PackageTests(unittest.TestCase):
         report = json.loads((root / "package-report.json").read_text())
         proved = {entry["runtime_source"] for entry in report["machine_proofs"].values()}
         with zipfile.ZipFile(root / "extension.zip") as archive:
-            shipped = {name for name in archive.namelist()
-                       if name.startswith("policy/") and name.endswith(".py")
-                       and name != "policy/__init__.py"}
+            shipped = {
+                name for name in archive.namelist()
+                if name.endswith(".py") and name.rsplit("/", 1)[-1] != "__init__.py"
+                and (name.startswith("policy/") or "/policy/" in name
+                     or name in {"features/bake/policy.py",
+                                 "features/interaction/policy.py",
+                                 "features/vectorscope/authority.py"})
+            }
         self.assertEqual(proved, shipped)
 
 

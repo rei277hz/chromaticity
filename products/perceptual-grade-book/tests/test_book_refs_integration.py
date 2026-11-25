@@ -13,8 +13,8 @@ class BuiltBookReferencesTests(unittest.TestCase):
         self.assertTrue(references)
         self.assertGreater(report["source_files_checked"], 20)
         expected_hotspots = {
-            "src/policy/node.py": "technical/en/development/next-policies.html#next-policy.node-output",
-            "src/runtime/bank_publication.py": "technical/en/development/next-policies.html#next-policy.bank-publication",
+            "src/features/grade/policy/node.py": "technical/en/development/next-policies.html#next-policy.node-output",
+            "src/features/grade/bank_publication.py": "technical/en/development/next-policies.html#next-policy.bank-publication",
             "src/runtime/image_publication.py":
                 "technical/en/development/next-policies.html#next-policy.bake",
         }
@@ -22,7 +22,8 @@ class BuiltBookReferencesTests(unittest.TestCase):
             self.assertTrue(any(item["code"].endswith(suffix)
                                 and item["site_path"] == site_path
                                 for item in references), suffix)
-        node_references = [item for item in references if item["code"].endswith("src/nodes.py")]
+        node_references = [item for item in references
+                           if item["code"].endswith("src/features/grade/host.py")]
         self.assertTrue(node_references)
         self.assertTrue({item["site_path"] for item in node_references} >= {
             "technical/en/development/next-policies.html#next-policy.node-output",

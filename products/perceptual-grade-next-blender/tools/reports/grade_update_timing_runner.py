@@ -53,7 +53,7 @@ def main():
     enabled = addon_utils.enable(extension.__name__, default_set=False, handle_error=errors.append)
     if enabled is not extension or errors:
         raise RuntimeError("Could not enable the packaged extension: " + repr(errors))
-    nodes = importlib.import_module(extension.__package__ + ".nodes")
+    nodes = importlib.import_module(extension.__package__ + ".features.grade.host")
     parameter_bindings = importlib.import_module(
         extension.__package__ + ".kernel.stage2_bindings")
     if not callable(getattr(nodes, "_write_grade_parameters", None)):

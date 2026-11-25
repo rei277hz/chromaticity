@@ -113,10 +113,11 @@ class BakeRouteTests(unittest.TestCase):
         with zipfile.ZipFile(files("tests.perceptual_grade_blender") / "extension.zip") as archive:
             archive.extractall(package)
         sys.path.insert(0, str(root))
-        cls.module = importlib.import_module("grade_bake_routes_test.runtime.bake_routes")
+        cls.module = importlib.import_module(
+            "grade_bake_routes_test.features.bake.routes")
         cls.graph = importlib.import_module("grade_bake_routes_test.runtime.capture_graph")
         cls.wrapper = importlib.import_module("grade_bake_routes_test.runtime.effective_grade_graph")
-        cls.scope = importlib.import_module("grade_bake_routes_test.scopes.vectorscope.routes")
+        cls.scope = importlib.import_module("grade_bake_routes_test.features.vectorscope.routes")
         cls.color_ui = importlib.import_module("grade_bake_routes_test.kernel.color_ui")
 
     @classmethod
@@ -631,8 +632,9 @@ class BakeRouteTests(unittest.TestCase):
         self.blocked("source_udim")
 
     def test_cache_geometry_is_rejected(self):
+        obj = self.mesh(modifiers=(SimpleNamespace(type="MESH_SEQUENCE_CACHE", cache_file=None),))
+        self.graph.geometry_observation(obj)
         self.mapped_texture()
-        self.mesh(modifiers=(SimpleNamespace(type="MESH_SEQUENCE_CACHE", cache_file=None),))
         self.blocked("mesh_cache")
 
     def test_shader_to_rgb_is_rejected_and_eevee_uv_bakes_are_allowed(self):

@@ -20,7 +20,7 @@ class BakeWorkerBackendTests(unittest.TestCase):
         with zipfile.ZipFile(files("tests.perceptual_grade_blender") / "extension.zip") as archive:
             archive.extractall(package)
         sys.path.insert(0, cls.directory.name)
-        cls.module = importlib.import_module("bake_worker_test.runtime.bake_worker")
+        cls.module = importlib.import_module("bake_worker_test.features.bake.worker")
         cls.capture_worker = importlib.import_module("bake_worker_test.runtime.capture_worker")
 
     @classmethod

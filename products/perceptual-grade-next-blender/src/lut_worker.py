@@ -10,7 +10,7 @@ from .kernel import lut
 from .kernel.settings import stack_directions
 from .lut_codec import freeze_prepared, thaw_settings
 from .lut_gpu import StackGPUBackend
-from .runtime.grade_preparation import GradePreparer
+from .features.grade.preparation import GradePreparer
 
 
 class StackWorker:

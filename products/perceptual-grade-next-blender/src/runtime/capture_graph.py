@@ -514,7 +514,6 @@ def _baked_sampler(node, image):
 
 def geometry_observation(obj):
     """Stable mesh metadata for saved receipts. Mesh edits also emit dependency updates."""
-    cache_geometry(obj)
     mesh = getattr(obj, "data", None)
     is_mesh = getattr(obj, "type", None) == "MESH" and mesh is not None
     layers = tuple((str(layer.name), len(layer.data), bool(layer.active_render))
@@ -543,7 +542,8 @@ def instance_observations(inventory):
 
 class Walker:
     def __init__(self, host, scene, *, owner_kind, owner, full, compositor,
-                 compositor_locator, dependencies=None, allow_dynamic_images=False):
+                 compositor_locator, dependencies=None, allow_dynamic_images=False,
+                 validate_geometry=None):
         self.host, self.scene, self.full = host, scene, full
         self.owner = (owner_kind, datablock_key(host, owner))
         self.compositor = compositor
@@ -565,6 +565,7 @@ class Walker:
         self.coordinate_depth = 0
         self.unknown_compositor_extent = False
         self.allow_dynamic_images = allow_dynamic_images
+        self.validate_geometry = validate_geometry
 
     def input(self, socket, parents, *, links=None):
         if links is None:
@@ -780,6 +781,9 @@ class Walker:
             for layer in inventory.view_layers
         )
         objects = inventory.objects
+        if self.validate_geometry is not None:
+            for obj in objects:
+                self.validate_geometry(obj)
         camera = getattr(scene, "camera", None)
         self.add_dependency(camera)
         summary = (semantic_identity(scene), layer_name, layer_overrides,

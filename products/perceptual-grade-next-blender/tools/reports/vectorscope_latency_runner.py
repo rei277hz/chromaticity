@@ -72,11 +72,11 @@ class Session:
             custom_directory=config["repository"],
         )
         extension = importlib.import_module("bl_ext.pg_vectorscope_timing.perceptual_grade")
-        self.nodes = importlib.import_module(extension.__name__ + ".nodes")
-        self.ui = importlib.import_module(extension.__name__ + ".scopes.vectorscope.ui")
-        self.analysis = importlib.import_module(extension.__name__ + ".scopes.vectorscope.analysis")
+        self.nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
+        self.ui = importlib.import_module(extension.__name__ + ".features.vectorscope.ui")
+        self.analysis = importlib.import_module(extension.__name__ + ".features.vectorscope.analysis")
         self.capture = importlib.import_module(
-            extension.__name__ + ".scopes.vectorscope.capture"
+            extension.__name__ + ".features.vectorscope.capture"
         )
         self.reducer_selection = config["reducer"]
         errors = []

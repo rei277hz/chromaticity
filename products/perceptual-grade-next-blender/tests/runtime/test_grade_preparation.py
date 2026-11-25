@@ -24,7 +24,7 @@ class GradePreparationTests(unittest.IsolatedAsyncioTestCase):
         with zipfile.ZipFile(resource) as archive:
             archive.extractall(package)
         sys.path.insert(0, str(root))
-        cls.module = importlib.import_module("grade_components_test.runtime.grade_preparation")
+        cls.module = importlib.import_module("grade_components_test.features.grade.preparation")
         cls.settings = importlib.import_module("grade_components_test.kernel.settings")
 
     @classmethod

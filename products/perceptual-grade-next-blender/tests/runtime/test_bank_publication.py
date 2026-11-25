@@ -20,10 +20,10 @@ class BankPublicationRuntimeTests(unittest.TestCase):
             archive.extractall(package)
         sys.path.insert(0, str(root))
         cls.runner = staticmethod(importlib.import_module(
-            "grade_bank_publication_test.runtime.bank_publication"
+            "grade_bank_publication_test.features.grade.bank_publication"
         ).run_bank_publication)
         cls.result_type = importlib.import_module(
-            "grade_bank_publication_test.runtime.bank_publication"
+            "grade_bank_publication_test.features.grade.bank_publication"
         ).PublicationResult
 
     @classmethod

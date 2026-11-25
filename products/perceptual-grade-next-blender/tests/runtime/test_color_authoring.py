@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from color_tools.kernel.color_resolution import float32, hue_source_angles, resolve_settings
 from color_tools.kernel.settings import ColorSettings, Settings, ToneSettings, WebSettings
-from color_tools.runtime import color_authoring as authoring
+from color_tools.features.grade import color_authoring as authoring
 
 
 class ColorAuthoringTests(unittest.TestCase):
