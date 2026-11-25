@@ -2,12 +2,12 @@
   "schema": 1,
   "metadata": {
     "repository": "rei277hz/chromaticity",
-    "commit": "2063e92afee22ac6a25d8ef48d937b67303565fb",
-    "run_id": "45321869429",
-    "run_number": 65,
+    "commit": "5bd54ac6ad51707d3fd17b69bb54f37f0b8491fc",
+    "run_id": "45603976306",
+    "run_number": 67,
     "run_attempt": 1,
-    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/45321869429",
-    "timestamp": "2026-11-24T04:18:02+00:00"
+    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/45603976306",
+    "timestamp": "2026-11-25T11:53:52+00:00"
   },
   "builds": {
     "passed": 2,
@@ -33,12 +33,14 @@
     "passed": 67,
     "total": 68,
     "outcome": "failed",
-    "exit_code": 32,
+    "exit_code": 3,
     "counts": {
       "failed": 1,
       "passed": 67
     },
-    "issues": [],
+    "issues": [
+      "test-build-report.json: the build command did not report complete success"
+    ],
     "targets": [
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_preparation",
@@ -254,7 +256,7 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:handbook_audit",
-        "status": "passed"
+        "status": "failed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:install_workspace",
@@ -286,7 +288,7 @@
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:vectorscope_native",
-        "status": "failed"
+        "status": "passed"
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:vectorscope_latency",

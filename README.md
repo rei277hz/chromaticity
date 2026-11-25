@@ -1,8 +1,8 @@
 # Linux build and test results
 
-- Commit: `2063e92afee22ac6a25d8ef48d937b67303565fb`
-- Recorded at: 2026-11-24T04:18:02+00:00
-- Run: https://github.com/rei277hz/chromaticity/actions/runs/45321869429
+- Commit: `5bd54ac6ad51707d3fd17b69bb54f37f0b8491fc`
+- Recorded at: 2026-11-25T11:53:52+00:00
+- Run: https://github.com/rei277hz/chromaticity/actions/runs/45603976306
 
 Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.
 
@@ -17,7 +17,7 @@ Run outcome: **passed**. Command exit: `0`.
 
 ## Linux smoke suites: 67/68 passed
 
-Run outcome: **failed**. Command exit: `32`.
+Run outcome: **failed**. Command exit: `3`.
 
 | Target | Result |
 | --- | --- |
@@ -74,7 +74,7 @@ Run outcome: **failed**. Command exit: `32`.
 | `//products/perceptual-grade-next-blender/tests:policy_coverage` | passed |
 | `//products/perceptual-grade-next-blender/tests:package` | passed |
 | `//products/perceptual-grade-next-blender/tests:technical_report_audit` | passed |
-| `//products/perceptual-grade-next-blender/tests:handbook_audit` | passed |
+| `//products/perceptual-grade-next-blender/tests:handbook_audit` | failed |
 | `//products/perceptual-grade-next-blender/tests:install_workspace` | passed |
 | `//products/perceptual-grade-next-blender/tests:installed` | passed |
 | `//products/perceptual-grade-next-blender/tests:installed_animation` | passed |
@@ -82,10 +82,14 @@ Run outcome: **failed**. Command exit: `32`.
 | `//products/perceptual-grade-next-blender/tests:bake_workspace_installed` | passed |
 | `//products/perceptual-grade-next-blender/tests:compositor_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:vectorscope` | passed |
-| `//products/perceptual-grade-next-blender/tests:vectorscope_native` | failed |
+| `//products/perceptual-grade-next-blender/tests:vectorscope_native` | passed |
 | `//products/perceptual-grade-next-blender/tests:vectorscope_latency` | passed |
 | `//products/perceptual-grade-next-blender/tests:compositor_carriers` | passed |
 | `//products/perceptual-grade-next-blender/tests:gesture_undo_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:gesture_drag_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:image_save_gui` | passed |
 | `//products/perceptual-grade-next-blender/tests:stack_helper` | passed |
+
+Reporting notes:
+
+- test-build-report.json: the build command did not report complete success
