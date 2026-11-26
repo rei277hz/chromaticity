@@ -31,9 +31,9 @@ NATIVE_PACKAGES = {
         "sha256": "339eb88f23d72b8f0b7b1aebcefbab6de600d97b88bc6222dd8aad11d2ca9051",
     },
     "libexpat1": {
-        "filename": "libexpat1_2.8.3-1~deb13u1_amd64.deb",
-        "url": "https://deb.debian.org/debian/pool/main/e/expat/libexpat1_2.8.3-1~deb13u1_amd64.deb",
-        "sha256": "38abe0e710a07688e9c149d74536e67cfee0364bdb64dd6d644c32a1cfad389f",
+        "filename": "libexpat1_2.9.0-1~deb13u1_amd64.deb",
+        "url": "https://deb.debian.org/debian/pool/main/e/expat/libexpat1_2.9.0-1~deb13u1_amd64.deb",
+        "sha256": "feff874772cae904ae4d24e917b35664952bec4b4ae9100a4edda5a7fa746832",
     },
     "libfontconfig1": {
         "filename": "libfontconfig1_2.15.0-2.3_amd64.deb",
@@ -101,9 +101,9 @@ NATIVE_PACKAGES = {
         "sha256": "3862c87596f6b4b60fc916395fd69aa10af28a875a8e5c081a8cf30ddd120bd6",
     },
     "libpng16": {
-        "filename": "libpng16-16t64_1.6.48-1+deb13u5_amd64.deb",
-        "url": "https://deb.debian.org/debian/pool/main/libp/libpng1.6/libpng16-16t64_1.6.48-1+deb13u5_amd64.deb",
-        "sha256": "2465b4e9fa85cff54dc10a6da3e64074d8d9292c86e4a8f989b809d6b158e97e",
+        "filename": "libpng16-16t64_1.6.48-1+deb13u6_amd64.deb",
+        "url": "https://deb.debian.org/debian/pool/main/libp/libpng1.6/libpng16-16t64_1.6.48-1+deb13u6_amd64.deb",
+        "sha256": "0f8034d1c2547760430c81e8d87e5d6acd533a3493c80cf76dbecd0343b6773c",
     },
     "libselinux1": {
         "filename": "libselinux1_3.8.1-1_amd64.deb",
