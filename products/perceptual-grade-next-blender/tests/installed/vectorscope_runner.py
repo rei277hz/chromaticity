@@ -479,7 +479,7 @@ def exercise_gizmo_controls():
     np.testing.assert_allclose(gap, .001, atol=1e-6)
     grade.input_white = baseline.tone.input_nits[2]
     grade.input_highlights = 500.
-    yield from exercise_pinned_tone_crossover()
+    yield from exercise_upper_tone_crossover()
     with bpy.context.temp_override(window=window, area=area, region=region):
         assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="2000") == {"FINISHED"}
     assert grade.input_highlights == 2000.
@@ -583,7 +583,7 @@ def exercise_fit_reset():
 
 
 def exercise_saturation_crossover():
-    """Exercise the Appearance Distribution's input crossover handle."""
+    """Exercise the Appearance Distribution's saturation crossover."""
     window_key = window.as_pointer()
     default = grade.saturation_crossover
     grade.saturation_crossover = .7
@@ -601,8 +601,7 @@ def exercise_saturation_crossover():
                         "Saturation crossover drag did not update the sidebar property", 5.)
     edited = grade.saturation_crossover
     old = before.tone.saturation_crossover
-    expected_position = old / (1. + old * old) ** .5 - 24 / width
-    expected_value = expected_position / (1. - expected_position * expected_position) ** .5
+    expected_value = max(0., old - 24 / width)
     assert abs(edited - expected_value) < 1e-6, (edited, expected_value)
     assert pointer.settings(grade) == replace(
         before, tone=replace(before.tone, saturation_crossover=edited),
@@ -631,7 +630,7 @@ def exercise_tone_crossover():
     default = grade.tone_crossover
     default_saturation = grade.saturation_crossover
     grade.saturation_crossover = 0.
-    grade.tone_crossover = 60.
+    grade.tone_crossover = .60
     before = pointer.settings(grade)
     saturation_x, _ = pointer.control_point("saturation_crossover", grade)
     _, tone_y = pointer.control_point("tone_crossover", grade)
@@ -674,31 +673,33 @@ def exercise_tone_crossover():
     report["tone_crossover_reset_and_cancel"] = True
 
 
-def exercise_pinned_tone_crossover():
+def exercise_upper_tone_crossover():
     geometry = vectorscope_ui.editor.geometry
     before = pointer.settings(grade)
     grade.saturation_crossover = 0.
-    grade.tone_crossover = 160.
+    grade.tone_crossover = 1.4
     settings = pointer.settings(grade).tone
     plot = pointer.box()["appearance"]
     peak_j = geometry.tone_peak_j(settings)
     point, pinned = geometry.tone_crossover_point(
-        plot, geometry.tone_model(settings), peak_j, settings.tone_crossover,
+        plot, peak_j, settings.tone_crossover,
     )
-    plot_x, plot_y, _plot_width, plot_height = plot
-    assert pinned and point == (plot_x, plot_y + plot_height)
-    # Both handles occupy the top-left point when the tone guide is pinned.
-    adjusted = yield from pointer.drag_control("tone_crossover", grade, (0, -12), cancel=True)
-    assert adjusted.tone.tone_crossover < 160.
-    assert adjusted.tone.saturation_crossover == 0.
-    _, pinned = geometry.tone_crossover_point(
-        plot, geometry.tone_model(adjusted.tone), peak_j, adjusted.tone.tone_crossover,
-    )
+    _, plot_y, _, plot_height = plot
     assert not pinned
-    assert grade.tone_crossover == 160.
+    assert abs(point[1] - (plot_y + geometry.appearance_scope.lightness_position(140., peak_j)
+                           * plot_height)) < 1e-6
+    # The maximum value maps directly to output-neutral J=140.
+    adjusted = yield from pointer.drag_control("tone_crossover", grade, (0, -12), cancel=True)
+    assert adjusted.tone.tone_crossover < 1.4
+    assert adjusted.tone.saturation_crossover == 0.
+    _, still_pinned = geometry.tone_crossover_point(
+        plot, peak_j, adjusted.tone.tone_crossover,
+    )
+    assert not still_pinned
+    assert pointer.settings(grade).tone.tone_crossover == 1.4
     grade.tone_crossover = before.tone.tone_crossover
     grade.saturation_crossover = before.tone.saturation_crossover
-    report["tone_crossover_pinned_handle"] = True
+    report["tone_crossover_upper_range_drag"] = True
 
 
 def exercise_appearance_chroma_gains():

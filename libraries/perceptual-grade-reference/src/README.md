@@ -41,9 +41,9 @@ RGB adapters.
 | `peak_nits` | `1000` | `500`, `1000`, `2000`, or `4000` |
 | `fit` | `0` | Integers from `-2` through `2` |
 | `muted_gain`, `vivid_gain` | `0` | `[-4, 4]` stops |
-| `saturation_crossover` | `0.45` | `[0, 1]` in raw input saturation `C/abs(J_A)` |
+| `saturation_crossover` | `0.5` | `[0, 0.99]` in compressed saturation coordinates |
 | `shadow_chroma`, `highlight_chroma` | `0` | `[-4, 4]` stops |
-| `tone_crossover` | `45` | `[10, 160]` in `abs(J_A)` units |
+| `tone_crossover` | `0.45` | `[0.1, 1.4]` in normalized output-neutral J units, where `1` means `J=100` |
 
 Source anchors use the D65 / 203-nit neutral conversion with a minimum
 spacing of `0.001` in normalized J. The Tone curve maps the input Highlight
@@ -52,28 +52,32 @@ legacy Tone or driver settings select the legacy path. Combining them with
 explicit `tone_chroma` settings raises an error. The `color` settings for
 Warp and Adaptance work with either path.
 
-For a chroma map with positive endpoint gains L and H, define
-`R(C; L, H, k) = C*(L*k + H*C)/(k + C)`. At `k = 0` it maps to `H*C`.
-At input `j = abs(J_A)`, the Muted/Vivid map uses `L = 2^muted_gain`,
-`H = 2^vivid_gain`, and `k = j*s*sqrt(H/L)` for crossover `s`.
-For positive `j` and `s`, the gain at `C = j*s` is `sqrt(L*H)`.
-At `s = 0`, every chromatic sample receives the Vivid Gain in this map.
-The second map uses `L = 1`, `k = (35/75)*j/9`, and `H = 2^amount`.
-The amount is the Shadow
-or Highlight setting multiplied by cubic smoothstep of the clamped
-distance `abs(j/tone_crossover - 1)` from the crossover. Both maps scale
-`(a,b)` along its original direction and use the original lightness.
+The Saturation Crossover stores the compressed HDR Color Picker coordinate
+`u = s/sqrt(k²+s²)`, where `s=C/abs(J_A)` and `k=34.09902169100728/75`.
+The numerator is the fitted `K` from `//libraries/hdr-color-picker-core:radius_fit`.
+The inverse is `s=k*u/sqrt(1-u²)`. Thus `u=0.5` is raw saturation about
+`0.2625`. For positive output lightness `j`, the Muted/Vivid map uses
+`L = 2^muted_gain`, `H = 2^vivid_gain`, and radial knee
+`j*s*sqrt(H/L)`. At the decoded crossover its gain is `sqrt(L*H)`.
+At `u=0`, every chromatic sample receives Vivid Gain in this map.
 
-Tone takes the resulting height `h = sqrt(J_A^2 + 66*C)`. For black
-parameter `b` converted to normalized J, it compresses `x = h/100` by
+Tone first maps `h = sqrt(J_A^2 + 66*C)` by scaling the signed appearance
+ray. Muted/Vivid and Shadow/Highlight chroma then scale `(a,b)` along their
+original direction at post-Tone `abs(J_A)`. The latter map uses knee
+`(35/75)*j/9`, endpoints `1` and `2^amount`, and an amount formed by cubic
+smoothstep of `abs(j/(100*tone_crossover)-1)`. The crossover is normalized
+output-neutral J, so `0.45` denotes `J=45` on a neutral.
+
+For black parameter `b` converted to normalized J, Tone compresses `x = h/100` by
 `x*(x+b)/(x+2*b)` with identity at `b = 0`. The original softplus
 remap uses this compressed height and the correspondingly compressed
 source anchors. Tone reaches the mapped height by scaling the entire
 signed appearance ray by one positive factor.
 
-Inverse solves the monotone softplus remap for its normalized input. Black
-Compression, the H–K ray scale, and both chroma edits then invert by
-quadratic roots. BakeStack uses the existing float32 `ToneTable` to
+Inverse first undoes both post-Tone radial chroma maps at the unchanged
+post-Tone J coordinate, then solves the monotone softplus remap for its
+normalized input. Black Compression, the H–K ray scale, and both chroma edits
+invert by quadratic roots. BakeStack uses the existing float32 `ToneTable` to
 approximate the softplus inverse with its preparation tolerance of
 `2e-5` relative in normalized curve input. It applies the same quadratic
 steps, then checks candidates with the complete guarded forward grade.
@@ -2177,7 +2181,7 @@ separately.
 | Cardinal tone weights and actual hue sectors | `web_blend_anchors`, `web_s5_clamped_c2`, `web_hue_sector_slope_positive`, `web_hue_join_c2` |
 | Web scale and fixed-tone geometry | `web_signed_saturation_scale`, `web_staged_jacobian_positive`, `web_full_neutral_derivative` |
 | Tone and retained production drivers | `kernel_strictMono`, `tone_strictMono`, `drivers_complement` |
-| Original Unified Chroma and integrated inverse | `unified_radial_strict_mono`, `unified_radial_quadratic`, `unified_radial_inverse_exists`, `unified_radial_stable_inverse`, `unified_black_inverse_exists`, `unified_fitted_inverse_exists`, `unified_tone_curve_inverse_exists`, `unified_chroma_radius_inverse_exists`, `unified_ray_height_unique`, `unified_ray_gain`, `unified_chroma_tone_inverse_exists_unique` |
+| Original Unified Chroma and integrated inverse | `unified_saturation_ratio_nonneg`, `unified_radial_strict_mono`, `unified_radial_quadratic`, `unified_radial_inverse_exists`, `unified_radial_stable_inverse`, `unified_black_inverse_exists`, `unified_fitted_inverse_exists`, `unified_tone_curve_inverse_exists`, `unified_chroma_radius_inverse_exists`, `unified_ray_height_unique`, `unified_ray_gain`, `unified_chroma_tone_inverse_exists_unique` |
 | Retained production 0.4U crossover and driver regions | `membership_bounds`, `membership_scale`, `membership_abs_crossover`, `drivers_crossover`, `capacity_low_driver_gt_high_iff`, `driver_neutral`, `driver_bounds` |
 | Retained production quadratic response and hue-independent neutral derivative | `driver_neutral_quadratic_bound`, `capacity_drivers_neutral_derivative` |
 | Actual-cube projection | `cube_guard_identity`, `cube_guard_idempotent`, `cube_guard_preserves_ja_hue`, `cube_guard_chroma_nonincrease`, `cube_guard_containment` |

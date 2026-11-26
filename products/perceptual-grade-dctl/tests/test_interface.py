@@ -163,15 +163,16 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual({path.name for path in oracle.TONE_FIT_UNIFIED_CHROMA_DIR.iterdir()},
                          {filename(stage, locale) for stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES
                           for locale in LOCALES})
-        stops = (0., -4., 4.)
+        stops = (0., -4., 4., .01)
         limits = {"cMutedGain": stops, "cVividGain": stops,
-                  "cSaturationCrossover": (.45, 0., 1.),
-                  "shadowChroma": stops, "highlightChroma": stops}
+                  "cSaturationCrossover": (.5, 0., .99, .01),
+                  "shadowChroma": stops, "highlightChroma": stops,
+                  "cToneCrossover": (.45, .1, 1.4, .001)}
         for locale in LOCALES:
             with self.subTest(locale=locale):
                 baseline = controls(oracle.source("jc_tone_fit_linear_gain", locale))
                 removed = {"cContrast", "cPivot", "cMuted", "cVivid", "hkInfluence", "remapFit",
-                           "shadowChroma", "highlightChroma"}
+                           "shadowChroma", "highlightChroma", "cToneCrossover"}
                 shared = [item for item in baseline if item["name"] not in removed]
                 self.assertEqual(next(item for item in baseline if item["name"] == "remapFit")["max"], 6.)
                 records = controls(oracle.source("tone_jc", locale))
@@ -186,7 +187,7 @@ class InterfaceTests(unittest.TestCase):
                 self.assertEqual(list(adjustment), list(limits))
                 for name, item in adjustment.items():
                     self.assertEqual(tuple(item[key] for key in ("type", "default", "min", "max", "step")),
-                                     ("DCTLUI_SLIDER_FLOAT", *limits[name], .01))
+                                     ("DCTLUI_SLIDER_FLOAT", *limits[name]))
 
     def test_locales_match_numerically_and_declare_unique_translated_controls(self):
         for stage in ALL_STAGES:

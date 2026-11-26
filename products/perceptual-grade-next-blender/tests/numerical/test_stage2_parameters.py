@@ -237,12 +237,13 @@ class Stage2ParameterTests(unittest.TestCase):
     def test_stage2_packs_unified_chroma_and_black_compression(self):
         tone = ToneSettings(black_compression_nits=.125, muted_gain=-1., vivid_gain=1.,
                             saturation_crossover=.2, shadow_chroma=-.75,
-                            highlight_chroma=1.25, tone_crossover=52.)
+                            highlight_chroma=1.25, tone_crossover=.52)
         prepared = complete(tone=tone)
         pixels = prepare_parameters(prepared).pixels[0]
         self.assertGreater(float(pixels[TONE_SCALARS_SLOT, 0]), 0.)
+        knee = (34.09902169100728 / 35.) * .4 / np.sqrt(1. - .2**2)
         np.testing.assert_array_equal(pixels[TONE_CHROMA_GAIN_SLOT],
-                                      np.float32((.5, 2., .4 / (35. / 75.), 1.)))
+                                      np.float32((.5, 2., knee, 1.)))
         np.testing.assert_array_equal(pixels[TONE_CHROMA_TONE_SLOT], (-.75, 1.25, 52., 1.))
 
     def test_stage2_parameter_validation_accepts_and_bounds_chroma_gain_endpoints(self):
@@ -272,23 +273,52 @@ class Stage2ParameterTests(unittest.TestCase):
             ):
                 PreparedParameters(pixels, fields=prepared.fields)
 
-    def test_raw_saturation_crossover_and_zero_knee(self):
+    def test_compressed_saturation_crossover_and_zero_knee(self):
         settings = ToneSettings(muted_gain=-1., vivid_gain=1.)
-        self.assertEqual(settings.saturation_crossover, .45)
+        self.assertEqual(settings.saturation_crossover, .5)
         ja = np.array((-70., 45.))
-        for crossover in (0., .45, 1.):
+        for crossover in (0., .5, .99):
             with self.subTest(crossover=crossover):
                 prepared = complete(tone=replace(settings, saturation_crossover=crossover))
                 low, high, knee, active = prepare_parameters(prepared).pixels[0, TONE_CHROMA_GAIN_SLOT]
                 self.assertEqual((low, high, active), (.5, 2., 1.))
-                self.assertAlmostEqual(float(knee) * (35. / 75.), 2. * crossover, places=6)
-                chroma = np.abs(ja) * (crossover if crossover else .3)
+                raw_ratio = (34.09902169100728 / 75.) * crossover / np.sqrt(1. - crossover**2)
+                self.assertAlmostEqual(float(knee) * (35. / 75.), 2. * raw_ratio, places=6)
+                chroma = np.abs(ja) * (raw_ratio if crossover else .3)
                 gain = prepared.tone.chroma_gain(ja, chroma)
                 expected = 1. if crossover else 2.
                 np.testing.assert_allclose(gain, expected, rtol=1e-14)
                 output = chroma * gain
                 np.testing.assert_allclose(output * prepared.tone.chroma_gain(ja, output, invert=True),
                                            chroma, rtol=1e-14)
+
+    def test_unified_chroma_runs_after_tone_and_uses_output_neutral_crossover(self):
+        settings = ToneSettings(
+            input_nits=(6., 42., 230., 1250.), fit=1.5,
+            muted_gain=-1.2, vivid_gain=.8, saturation_crossover=.5,
+            shadow_chroma=1.5, highlight_chroma=-1., tone_crossover=.45,
+        )
+        points = np.array(((18., 12., -4.), (72., 34., 16.),
+                           (-35., 8., 11.), (150., -42., 29.)))
+        tone_only_settings = replace(
+            settings, muted_gain=0., vivid_gain=0., shadow_chroma=0., highlight_chroma=0.,
+        )
+        tone_only = complete(tone=tone_only_settings).tone.forward(points)
+        prepared = complete(tone=settings).tone
+        chroma = np.hypot(tone_only[:, 1], tone_only[:, 2])
+        gain = prepared.chroma_gain(tone_only[:, 0], chroma)
+        expected = tone_only.copy()
+        expected[:, 1:] *= gain[:, None]
+        actual = prepared.forward(points)
+        np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
+        np.testing.assert_allclose(prepared.inverse_appearance(actual), points,
+                                   rtol=2e-12, atol=1e-12)
+
+        crossover_chroma = np.array((3., 22., 90.))
+        tonal_only = prepare_tone(replace(settings, muted_gain=0., vivid_gain=0.))
+        np.testing.assert_array_equal(
+            tonal_only.chroma_gain(np.full(3, 45.), crossover_chroma), np.ones(3),
+        )
 
     def test_rejects_incomplete_or_incompatible_snapshot(self):
         prepared = complete()

@@ -93,9 +93,10 @@ __DEVICE__ float3 pg_jc_tone_map(float3 point, PGJCToneCurve curve, float influe
 __DEVICE__ PGValue pg_cone_tone_fit(float3 wire, float blackNits, PGFour levels, int fit,
                                     int peakIndex, float influence, PGFour saturation,
                                     float shadow, float highlight, float crossover, int invert, int chromaMode) {
+    int unified = chromaMode == PG_JC_CHROMA_UNIFIED;
     if (!pg_cone_valid(wire) || !(blackNits >= 0.0f && blackNits <= 2.0f) ||
         !pg_tone_input_valid(levels, fit, peakIndex) || !(influence >= 0.0f && influence <= 1.0f) ||
-        (chromaMode == PG_JC_CHROMA_UNIFIED && fit > 2) ||
+        (unified && fit > 2) ||
         !pg_jc_global_chroma_valid(saturation, shadow, highlight, crossover, chromaMode) || (invert != 0 && invert != 1))
         return pg_value(color_zero3(), 0);
 
@@ -108,14 +109,16 @@ __DEVICE__ PGValue pg_cone_tone_fit(float3 wire, float blackNits, PGFour levels,
     if (!color_finite3(input)) return pg_value(color_zero3(), 0);
 
     float3 point = input;
-    if (!invert && adjustC)
-        point = pg_jc_global_chroma_at_tone(point, saturation, shadow, highlight, crossover, 0, chromaMode);
+    // Unified Chroma uses corrected Tone output lightness in both directions.
+    int chromaFirst = invert == unified;
+    if (chromaFirst && adjustC)
+        point = pg_jc_global_chroma_at_tone(point, saturation, shadow, highlight, crossover, invert, chromaMode);
     if (adjustJ) {
         PGJCToneCurve curve = pg_jc_tone_curve(source, target, pg_tone_nits_to_j(blackNits), fit);
         point = pg_jc_tone_map(point, curve, influence, invert);
     }
-    if (invert && adjustC)
-        point = pg_jc_global_chroma_at_tone(point, saturation, shadow, highlight, crossover, 1, chromaMode);
+    if (!chromaFirst && adjustC)
+        point = pg_jc_global_chroma_at_tone(point, saturation, shadow, highlight, crossover, invert, chromaMode);
     if (point.x == input.x && point.y == input.y && point.z == input.z) return pg_value(wire, 1);
     return pg_cone_wire(point);
 }

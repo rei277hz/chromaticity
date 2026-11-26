@@ -152,7 +152,7 @@ _playback_sessions = {}
 _playback_serial = count(1)
 _frame_color_keys = {}
 _frame_color_invalidations = set()
-_KERNEL_SCHEMA = 8
+_KERNEL_SCHEMA = 9
 _KERNEL_KIND = "_perceptual_grade_kernel"
 _KERNEL_SIGNATURE = "_perceptual_grade_signature"
 _KERNEL_QUALITY = "_perceptual_grade_quality"
@@ -805,9 +805,17 @@ def _tone_settings(settings):
         # Use the same binary32 round-trip as Blender's RNA storage.
         native_default = struct.unpack("f", struct.pack("f", default))[0]
         values.append(default if value == native_default else value)
+    chroma = {}
+    for name, (minimum, maximum) in TONE_CHROMA_LIMITS.items():
+        value = float(getattr(settings, name))
+        for exact in (minimum, maximum, getattr(defaults, name)):
+            if value == struct.unpack("f", struct.pack("f", exact))[0]:
+                value = exact
+                break
+        chroma[name] = value
     return ToneSettings(
         input_nits=tuple(values), fit=float(settings.fit), peak_nits=int(settings.peak_nits),
-        **{name: float(getattr(settings, name)) for name in TONE_CHROMA_FIELDS},
+        **chroma,
     )
 
 

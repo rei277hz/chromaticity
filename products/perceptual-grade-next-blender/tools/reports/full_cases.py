@@ -50,8 +50,8 @@ def grades():
         yield 'web_'+name,linear,tone,ColorSettings(web=WebSettings(**{name:getattr(base.web,name)}))
     _, combined_linear, combined_tone = next(row for row in cases.grades() if row[0] == 'combined')
     active_tone = replace(combined_tone, black_compression_nits=.25,
-        muted_gain=-.3, vivid_gain=.4, saturation_crossover=.45,
-        shadow_chroma=.2, highlight_chroma=-.15, tone_crossover=52.)
+        muted_gain=-.3, vivid_gain=.4, saturation_crossover=.5,
+        shadow_chroma=.2, highlight_chroma=-.15, tone_crossover=.52)
     yield 'all_active',combined_linear,active_tone,base
     yield 'guard_before_scale',linear,tone,guard_before_scale_grade()
     yield 'saturation',linear,tone,saturation_grade()
@@ -84,7 +84,7 @@ def ui_boundaries():
     _, combined_linear, combined_tone = next(row for row in cases.grades() if row[0] == 'combined')
     maximum_tone = replace(combined_tone, fit=2., black_compression_nits=2.,
         muted_gain=-2., vivid_gain=2., saturation_crossover=.05,
-        shadow_chroma=2., highlight_chroma=2., tone_crossover=10.)
+        shadow_chroma=2., highlight_chroma=2., tone_crossover=.1)
     yield 'all_families_max', combined_linear, maximum_tone, maximum_grade()
     yield 'all_families_max_active_tail', combined_linear, maximum_tone, maximum_grade_active_tail()
 

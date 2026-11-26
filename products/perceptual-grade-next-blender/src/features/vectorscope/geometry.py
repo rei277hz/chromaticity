@@ -28,8 +28,6 @@ _RESIZE_GRIP = 8.
 CROSSOVER_HANDLE_RADIUS = 4.
 _CROSSOVER_HIT_RADIUS = CROSSOVER_HANDLE_RADIUS + 1.
 _CROSSOVER_MIN, _CROSSOVER_MAX = TONE_CHROMA_LIMITS["saturation_crossover"]
-_CROSSOVER_LEFT = appearance_scope.saturation_position(_CROSSOVER_MIN)
-_CROSSOVER_RIGHT = appearance_scope.saturation_position(_CROSSOVER_MAX)
 _TONE_CROSSOVER_MIN, _TONE_CROSSOVER_MAX = TONE_CHROMA_LIMITS["tone_crossover"]
 APPEARANCE_GAIN_FIELDS = frozenset((
     "muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma",
@@ -72,9 +70,9 @@ def curve_point(rect, source, target, peak_j):
 
 
 def saturation_crossover_point(rect, value):
-    """Return the guide position for the raw input saturation crossover."""
-    x, y, width, height = rect
-    return (x + appearance_scope.saturation_position(value) * width, y + height)
+    """Return the guide position for the compressed saturation crossover."""
+    x, y, width, _height = rect
+    return (x + value * width, y)
 
 
 def saturation_crossover_hit(rect, value, point, scale):
@@ -86,24 +84,17 @@ def saturation_crossover_hit(rect, value, point, scale):
 
 
 def drag_saturation_crossover(rect, value, dx):
-    """Move the marker in plot space and return the new raw saturation."""
-    if dx == 0.:
-        return value
-    position = float(appearance_scope.saturation_position(value)) + dx / rect[2]
-    if position <= _CROSSOVER_LEFT:
-        return _CROSSOVER_MIN
-    if position >= _CROSSOVER_RIGHT:
-        return _CROSSOVER_MAX
-    return position / math.sqrt(1. - position * position)
+    """Move the marker in plot space and return its compressed coordinate."""
+    position = value + dx / rect[2]
+    return min(_CROSSOVER_MAX, max(_CROSSOVER_MIN, position))
 
 
-def tone_crossover_point(rect, model, peak_j, value):
-    """Return the left-edge marker and overflow state for the neutral crossover."""
+def tone_crossover_point(rect, peak_j, value):
+    """Return the marker for a normalized output-neutral J crossover."""
     x, y, _width, height = rect
-    output = float(model.remap(value))
-    peak = appearance_scope.lightness_max(peak_j)
-    position = 1. if output >= peak else appearance_scope.lightness_position(output, peak_j)
-    return (x, y + float(position) * height), output > peak
+    output = appearance_scope.LIGHTNESS_KNEE * value
+    position = 1. if value >= peak_j else appearance_scope.lightness_position(output, peak_j)
+    return (x, y + float(position) * height), value > peak_j
 
 
 def appearance_crossover_at(rect, tone, point, scale):
@@ -113,7 +104,7 @@ def appearance_crossover_at(rect, tone, point, scale):
     if not contains((x - band, y - band, width + 2 * band, height + 2 * band), point):
         return None
     marker, _pinned = tone_crossover_point(
-        rect, tone_model(tone), tone_peak_j(tone), tone.tone_crossover,
+        rect, tone_peak_j(tone), tone.tone_crossover,
     )
     if math.dist(point, marker) <= band:
         return "tone_crossover"
@@ -134,7 +125,7 @@ def appearance_control_at(rect, tone, point, scale):
     if not contains(rect, point):
         return None
     tone_y = tone_crossover_point(
-        rect, tone_model(tone), tone_peak_j(tone), tone.tone_crossover,
+        rect, tone_peak_j(tone), tone.tone_crossover,
     )[0][1]
     for field, strip in appearance_gain_strips(rect, tone_y, scale).items():
         if contains(strip, point):
@@ -175,18 +166,17 @@ def drag_appearance_gain(rect, field, value, dx):
     return min(high, max(low, value + dx / rect[2] * (high - low)))
 
 
-def drag_tone_crossover(rect, model, peak_j, value, dy):
-    """Follow the displayed neutral output position back to input lightness."""
+def drag_tone_crossover(rect, peak_j, value, dy):
+    """Map vertical plot motion directly to normalized output-neutral J."""
     if dy == 0.:
         return value
-    peak = appearance_scope.lightness_max(peak_j)
-    output = float(model.remap(value))
-    if output >= peak and dy > 0.:
+    if value >= peak_j and dy > 0.:
         return value
-    position = (1. if output >= peak else appearance_scope.lightness_position(output, peak_j))
-    target = position + dy / rect[3]
-    input_value = float(model.inverse(appearance_scope.lightness_at_position(target, peak_j)))
-    return min(_TONE_CROSSOVER_MAX, max(_TONE_CROSSOVER_MIN, input_value))
+    (_marker_x, marker_y), _pinned = tone_crossover_point(rect, peak_j, value)
+    target = (marker_y - rect[1] + dy) / rect[3]
+    output_j = (appearance_scope.lightness_at_position(target, peak_j)
+                / appearance_scope.LIGHTNESS_KNEE)
+    return min(_TONE_CROSSOVER_MAX, max(_TONE_CROSSOVER_MIN, output_j))
 
 
 def tone_anchor_levels(model):

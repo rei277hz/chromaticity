@@ -175,7 +175,7 @@ def global_chroma_controls(unified=False):
         yield from global_shape_sliders((
             ("cMutedGain", 0, -tonal_limit, tonal_limit, 0.01),
             ("cVividGain", 0, -tonal_limit, tonal_limit, 0.01),
-            ("cSaturationCrossover", 0.45, 0.0, 1.0, 0.01),
+            ("cSaturationCrossover", 0.5, 0.0, 0.99, 0.01),
         ))
     else:
         yield from global_shape_sliders((
@@ -184,11 +184,15 @@ def global_chroma_controls(unified=False):
             ("cMuted", 0, -1, 1, 0.01),
             ("cVivid", 0, -1, 1, 0.01),
         ))
-    yield from global_shape_sliders((
+    crossover_limits = (0.45, 0.1, 1.4, 0.001) if unified else (45, 10, 160, 0.1)
+    for control in global_shape_sliders((
         ("shadowChroma", 0, -tonal_limit, tonal_limit, 0.01),
         ("highlightChroma", 0, -tonal_limit, tonal_limit, 0.01),
-        ("cToneCrossover", 45, 10, 160, 0.1),
-    ))
+        ("cToneCrossover", *crossover_limits),
+    )):
+        if unified and control["name"] == "cToneCrossover":
+            control["tooltip_id"] = "tone_fit.tooltip.unifiedToneCrossover"
+        yield control
 
 
 def jc_global_shape_controls(spec):

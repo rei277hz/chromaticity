@@ -1,13 +1,16 @@
 """Check the installed Gizmo layout and vectorscope handle geometry."""
 
 import importlib
+from functools import partial
 from importlib.resources import files
 import math
 import numpy as np
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 import zipfile
 
 
@@ -25,6 +28,7 @@ class GizmoGeometryTests(unittest.TestCase):
         cls.geometry = importlib.import_module(package_name + ".features.vectorscope.geometry")
         cls.appearance_scope = importlib.import_module(
             package_name + ".features.vectorscope.appearance_scope")
+        cls.display = importlib.import_module(package_name + ".features.vectorscope.display")
         cls.settings = importlib.import_module(package_name + ".kernel.settings")
 
     def test_linear_layout_has_scope_and_three_rails(self):
@@ -90,89 +94,75 @@ class GizmoGeometryTests(unittest.TestCase):
 
     def test_saturation_crossover_uses_appearance_axis_at_each_size(self):
         default = self.settings.ToneSettings().saturation_crossover
-        values = (0., default, 1.)
+        self.assertEqual(default, .5)
+        values = (0., default, .99)
         for width, height, scale in ((304, 256, 1.), (1200, 900, 1.), (1600, 1200, 2.)):
             with self.subTest(width=width, height=height, scale=scale):
                 rect = self.geometry.layout("TONE", width, height, scale)["appearance"]
                 x, y, plot_width, plot_height = rect
                 for value in values:
                     marker = self.geometry.saturation_crossover_point(rect, value)
-                    self.assertAlmostEqual(marker[0], x + plot_width * value / math.hypot(1., value))
-                    self.assertEqual(marker[1], y + plot_height)
-                    for point in ((marker[0] + 4 * scale, y + plot_height / 2),
-                                  (marker[0], marker[1] + 4 * scale)):
+                    self.assertAlmostEqual(marker[0], x + plot_width * value)
+                    self.assertEqual(marker[1], y)
+                    direction = 1. if value <= .5 else -1.
+                    for point in ((marker[0] + direction * 4 * scale, y + plot_height / 2),
+                                  (marker[0], marker[1] - 4 * scale)):
                         self.assertTrue(self.geometry.saturation_crossover_hit(rect, value, point, scale))
-                    for point in ((marker[0] + 6 * scale, y + plot_height / 2),
-                                  (marker[0], y - scale)):
+                    for point in ((marker[0] + direction * 6 * scale, y + plot_height / 2),
+                                  (marker[0], y + plot_height + scale)):
                         self.assertFalse(self.geometry.saturation_crossover_hit(rect, value, point, scale))
 
-    def test_saturation_crossover_drag_inverts_axis_and_clamps(self):
+    def test_saturation_crossover_drag_clamps_to_finite_range(self):
         rect = (10., 20., 180., 90.)
         point = self.geometry.saturation_crossover_point
         drag = self.geometry.drag_saturation_crossover
         default = self.settings.ToneSettings().saturation_crossover
-        for start in (0., default, 1.):
-            for end in (0., default, 1.):
+        for start in (0., default, .99):
+            for end in (0., default, .99):
                 with self.subTest(start=start, end=end):
                     self.assertAlmostEqual(drag(rect, start, point(rect, end)[0] - point(rect, start)[0]), end)
         self.assertEqual(drag(rect, default, -180.), 0.)
-        self.assertEqual(drag(rect, default, 180.), 1.)
+        self.assertEqual(drag(rect, default, 180.), .99)
         self.assertEqual(drag(rect, default, 0.), default)
 
-    def test_tone_crossover_neutral_projection_and_display_drag(self):
-        tone = self.settings.ToneSettings(peak_nits=2000., tone_crossover=45.)
+    def test_tone_crossover_uses_normalized_output_lightness_for_position_and_drag(self):
+        tone = self.settings.ToneSettings(peak_nits=2000.)
+        self.assertEqual(tone.tone_crossover, .45)
         rect = self.geometry.layout("TONE", 1200, 900)["appearance"]
-        model = self.geometry.tone_model(tone)
         peak_j = self.geometry.tone_peak_j(tone)
-        marker, pinned = self.geometry.tone_crossover_point(
-            rect, model, peak_j, tone.tone_crossover,
-        )
+        point = self.geometry.tone_crossover_point
+        marker, pinned = point(rect, peak_j, tone.tone_crossover)
         self.assertFalse(pinned)
-        output_j = float(model.remap(tone.tone_crossover))
-        expected_y = rect[1] + self.appearance_scope.lightness_position(output_j, peak_j) * rect[3]
+        expected_y = rect[1] + self.appearance_scope.lightness_position(45., peak_j) * rect[3]
         self.assertAlmostEqual(marker[1], expected_y)
-        for target in (10., 45., 80.):
-            start, _ = self.geometry.tone_crossover_point(
-                rect, model, peak_j, tone.tone_crossover,
-            )
-            end, _ = self.geometry.tone_crossover_point(
-                rect, model, peak_j, target,
-            )
+        for target in (.1, .45, 1., 1.4):
+            end, _ = point(rect, peak_j, target)
             actual = self.geometry.drag_tone_crossover(
-                rect, model, peak_j, tone.tone_crossover, end[1] - start[1],
+                rect, peak_j, tone.tone_crossover, end[1] - marker[1],
             )
-            self.assertAlmostEqual(actual, target, places=3)
+            self.assertAlmostEqual(actual, target)
 
     def test_tone_crossover_pins_above_peak_and_clamps_drag_to_range(self):
-        defaults = self.settings.ToneSettings()
-        tone = self.settings.ToneSettings(
-            input_nits=(*defaults.input_nits[:3], 500.), peak_nits=500., tone_crossover=160.,
-        )
         rect = self.geometry.layout("TONE", 1200, 900)["appearance"]
-        model = self.geometry.tone_model(tone)
-        peak_j = self.geometry.tone_peak_j(tone)
-        marker, pinned = self.geometry.tone_crossover_point(
-            rect, model, peak_j, tone.tone_crossover,
-        )
+        peak_j = 1.3
+        point = self.geometry.tone_crossover_point
+        drag = self.geometry.drag_tone_crossover
+        marker, pinned = point(rect, peak_j, 1.4)
         self.assertTrue(pinned)
         self.assertEqual(marker, (rect[0], rect[1] + rect[3]))
-        moved = self.geometry.drag_tone_crossover(rect, model, peak_j, 160., -12.)
-        self.assertGreaterEqual(moved, 10.)
-        self.assertLess(moved, 160.)
-        self.assertFalse(self.geometry.tone_crossover_point(rect, model, peak_j, moved)[1])
-        self.assertEqual(
-            self.geometry.drag_tone_crossover(rect, model, peak_j, 10., -1000.), 10.,
-        )
-        self.assertEqual(
-            self.geometry.drag_tone_crossover(rect, model, peak_j, 160., 1000.), 160.,
-        )
+        moved = drag(rect, peak_j, 1.4, -12.)
+        self.assertGreaterEqual(moved, .1)
+        self.assertLess(moved, peak_j)
+        self.assertFalse(point(rect, peak_j, moved)[1])
+        self.assertEqual(drag(rect, peak_j, .1, -1000.), .1)
+        self.assertEqual(drag(rect, peak_j, 1.4, 1000.), 1.4)
+        self.assertEqual(drag(rect, 2., .45, 1000.), 1.4)
 
     def test_appearance_crossover_hit_priority_prefers_tone_handle_at_intersection(self):
-        tone = self.settings.ToneSettings(saturation_crossover=0., tone_crossover=45.)
+        tone = self.settings.ToneSettings(saturation_crossover=0.)
         rect = self.geometry.layout("TONE", 1200, 900)["appearance"]
         marker, pinned = self.geometry.tone_crossover_point(
-            rect, self.geometry.tone_model(tone), self.geometry.tone_peak_j(tone),
-            tone.tone_crossover,
+            rect, self.geometry.tone_peak_j(tone), tone.tone_crossover,
         )
         self.assertFalse(pinned)
         self.assertEqual(
@@ -186,12 +176,11 @@ class GizmoGeometryTests(unittest.TestCase):
             ),
             "tone_crossover",
         )
-        other = self.settings.ToneSettings(saturation_crossover=.45, tone_crossover=45.)
+        other = self.settings.ToneSettings()
         other_marker, _ = self.geometry.tone_crossover_point(
-            rect, self.geometry.tone_model(other), self.geometry.tone_peak_j(other),
-            other.tone_crossover,
+            rect, self.geometry.tone_peak_j(other), other.tone_crossover,
         )
-        other_saturation = self.geometry.saturation_crossover_point(rect, .45)
+        other_saturation = self.geometry.saturation_crossover_point(rect, other.saturation_crossover)
         self.assertEqual(
             self.geometry.appearance_control_at(
                 rect, other, (other_saturation[0], other_marker[1]), 1.,
@@ -202,16 +191,14 @@ class GizmoGeometryTests(unittest.TestCase):
     def test_appearance_gain_hover_regions_and_horizontal_priority(self):
         for width, height, scale in ((304, 256, 1.), (1200, 900, 1.), (1600, 1200, 2.)):
             with self.subTest(width=width, height=height, scale=scale):
-                tone = self.settings.ToneSettings(saturation_crossover=.45,
-                                                  tone_crossover=45.)
+                tone = self.settings.ToneSettings()
                 rect = self.geometry.layout("TONE", width, height, scale)["appearance"]
                 x, y, plot_width, plot_height = rect
                 saturation_x, _ = self.geometry.saturation_crossover_point(
                     rect, tone.saturation_crossover,
                 )
                 (_, tone_y), _ = self.geometry.tone_crossover_point(
-                    rect, self.geometry.tone_model(tone),
-                    self.geometry.tone_peak_j(tone), tone.tone_crossover,
+                    rect, self.geometry.tone_peak_j(tone), tone.tone_crossover,
                 )
                 strips = self.geometry.appearance_gain_strips(rect, tone_y, scale)
                 self.assertEqual(strips["shadow_chroma"][3], 5 * scale)
@@ -254,28 +241,61 @@ class GizmoGeometryTests(unittest.TestCase):
                     "tone_crossover",
                 )
 
-    def test_appearance_gain_edge_strips_hide_when_tone_crossover_is_pinned(self):
-        defaults = self.settings.ToneSettings()
-        tone = self.settings.ToneSettings(
-            input_nits=(*defaults.input_nits[:3], 500.), peak_nits=500.,
-            tone_crossover=160.,
-        )
+    def test_appearance_gain_edge_strips_hide_when_tone_guide_intersects_edge(self):
         rect = self.geometry.layout("TONE", 1200, 900)["appearance"]
-        model = self.geometry.tone_model(tone)
-        peak_j = self.geometry.tone_peak_j(tone)
-        marker, pinned = self.geometry.tone_crossover_point(
-            rect, model, peak_j, tone.tone_crossover,
-        )
-        self.assertTrue(pinned)
-        strips = self.geometry.appearance_gain_strips(rect, marker[1], 1.)
+        strips = self.geometry.appearance_gain_strips(rect, rect[1] + rect[3] - 3., 1.)
         self.assertNotIn("highlight_chroma", strips)
         self.assertIn("shadow_chroma", strips)
-        self.assertEqual(
-            self.geometry.appearance_control_at(
-                rect, tone, (rect[0] + rect[2] * .75, rect[1] + rect[3] - 2), 1.,
-            ),
-            "tone_crossover",
-        )
+
+    def test_appearance_draws_background_grid_trace_and_crossover_guides(self):
+        tone = self.settings.ToneSettings()
+        box = self.geometry.layout("TONE", 1200, 900)
+        rect = box["appearance"]
+        x, y, width, height = rect
+        peak_j = self.geometry.tone_peak_j(tone)
+        trace = self.appearance_scope.analyze([[[75., 5., 5., 1.]]], peak_j)
+        state = SimpleNamespace(appearance=trace, appearance_status="current")
+        draw = Mock()
+        display = self.display
+        colors = display._PALETTE
+        with (patch.multiple(display, _fill=draw.fill, _lines=draw.lines, _circle=draw.circle,
+                             _text=draw.text, _draw_trace=draw.trace),
+              patch.object(display.localization, "tr", partial(display.localization.tr, locale="en"))):
+            display._draw_appearance(box, state, "grade", peak_j, tone, "muted_gain")
+
+        self.assertEqual(draw.fill.call_args_list[0].args, (rect, colors["plot"]))
+        self.assertEqual(draw.fill.call_args_list[1].args,
+                         ((x, y, width * .5, height), colors["plot_highlight"]))
+        self.assertGreater(colors["plot_highlight"][0], colors["plot"][0])
+        self.assertEqual(colors["plot_highlight"][3], 1.)
+        names = [call[0] for call in draw.mock_calls]
+        self.assertLess(names.index("fill", 1), names.index("lines"))
+        self.assertLess(names.index("lines"), names.index("trace"))
+
+        grid = draw.lines.call_args_list[0].args
+        self.assertEqual(grid[1], colors["grid"])
+        reference_y = y + height * .8
+        np.testing.assert_allclose(grid[0][6:8], [(x, reference_y), (x + width, reference_y)])
+        ticks = [call.args for call in draw.text.call_args_list if call.args[0] == "1"]
+        self.assertEqual(len(ticks), 2)
+        self.assertTrue(all(tick[4] == colors["muted"] for tick in ticks))
+
+        segments = [call.args[0] for call in draw.lines.call_args_list
+                    if call.args[1][:3] == colors["C"][:3]]
+        marker_x = x + width * .5
+        self.assertEqual(segments[0][:4], [(marker_x, y), (marker_x, y + 5.),
+                                           (marker_x, y + 10.), (marker_x, y + 15.)])
+        radius = self.geometry.CROSSOVER_HANDLE_RADIUS
+        self.assertEqual(set(segments[1]), {(marker_x - radius, y), (marker_x, y + radius),
+                                            (marker_x + radius, y), (marker_x, y - radius)})
+        circle = draw.circle.call_args.args
+        tone_y = self.geometry.tone_crossover_point(rect, peak_j, .45)[0][1]
+        self.assertEqual(circle[:2], ((x, tone_y), radius))
+        self.assertEqual(circle[2][:3], colors["orange"][:3])
+        horizontal = next(call.args[0] for call in draw.lines.call_args_list
+                          if call.args[1][:3] == colors["orange"][:3])
+        self.assertEqual(horizontal[:4], [(x, tone_y), (x + 5., tone_y),
+                                           (x + 10., tone_y), (x + 15., tone_y)])
 
     def test_appearance_gain_drag_and_prepared_tone_accept_full_stop_range(self):
         rect = (0., 0., 200., 100.)

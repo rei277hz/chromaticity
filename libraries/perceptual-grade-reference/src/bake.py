@@ -1,4 +1,4 @@
-"""Reference accelerated Grade kernel with the reference Stage 3 ordering."""
+"""Reference accelerated Grade kernel with post-Tone Unified Chroma."""
 
 import hashlib
 
@@ -52,7 +52,7 @@ class Kernel(_Kernel):
             p = tone_chroma.settings
             controls = (p.muted_gain, p.vivid_gain, p.saturation_crossover,
                         p.shadow_chroma, p.highlight_chroma, p.tone_crossover)
-            key += b"unified-chroma-v2" + np.asarray(controls, dtype="<f8").tobytes()
+            key += b"unified-chroma-v3" + np.asarray(controls, dtype="<f8").tobytes()
             self.identity = self.identity and not tone_chroma.chroma_active
         if output_compression.enabled:
             key += b"output-saturation-v1" + np.asarray(
@@ -73,10 +73,9 @@ class Kernel(_Kernel):
             return super().tone_state(state)
         q = np.asarray(state, dtype="f4")
         ja = _signed_ja(q)
-        q = self._chroma_state(q, ja)
         tone = self.tone
         if not tone.active:
-            return q.copy()
+            return self._chroma_state(q, ja).copy()
 
         chroma = np.hypot(q[..., 1], q[..., 2])
         height = np.hypot(ja, np.sqrt(np.float32(HK) * chroma))
@@ -86,7 +85,8 @@ class Kernel(_Kernel):
         k = self.tone_curve.evaluate(t)
         out = 100 * (np.float32(tone.slope) * t + np.sum(k * self.tone_curve_residual, axis=-1))
         out = np.where(t == 1, np.float32(tone.high), out)
-        return _scale_ray(q, ja, chroma, height, out)
+        q = _scale_ray(q, ja, chroma, height, out)
+        return self._chroma_state(q, _signed_ja(q))
 
     def grade(self, state, tonal=None):
         q = np.asarray(state, dtype=np.float32)
@@ -130,6 +130,7 @@ class Inverse(_Inverse):
             return super().undo_tone(q)
         q = np.asarray(q, dtype="f4")
         ja = _signed_ja(q)
+        q = kernel._chroma_state(q, ja, invert=True)
         tone = kernel.tone
         if tone.active:
             if self.tone_table is None:
@@ -142,5 +143,4 @@ class Inverse(_Inverse):
             original = 100 * compressed * radial_gain(compressed, np.float32(2 * tone.black),
                                                       .5, 1., invert=True)
             q = _scale_ray(q, ja, chroma, height, original)
-            ja = _signed_ja(q)
-        return kernel._chroma_state(q, ja, invert=True).copy()
+        return q.copy()

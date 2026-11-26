@@ -36,6 +36,7 @@ class VectorscopeTests(unittest.TestCase):
         cls.appearance_preview = importlib.import_module(scope + "appearance_preview")
         cls.white_drag = importlib.import_module(scope + "white_drag")
         cls.kernel = importlib.import_module(package_name + ".kernel")
+        cls.modcam16 = importlib.import_module(package_name + ".color_core.modcam16")
         cls.peaks = importlib.import_module(package_name + ".kernel.settings").TONE_PEAKS
 
     def observe(self, runtime, node, *, key=1, tone=None, dragging=False, frame=None):
@@ -898,7 +899,11 @@ class VectorscopeTests(unittest.TestCase):
                 positions = scope.lightness_position(np.linspace(0., maximum, 1025), peak_j)
                 self.assertTrue((np.diff(positions) > 0.).all())
         self.assertEqual(float(scope.saturation_position(0.)), 0.)
-        self.assertAlmostEqual(float(scope.saturation_position(1.)), 1. / np.sqrt(2.))
+        radius_k = self.kernel.settings.SATURATION_AXIS_SCALE
+        self.assertAlmostEqual(float(scope.saturation_position(1.)),
+                               1. / np.hypot(radius_k, 1.))
+        self.assertAlmostEqual(float(scope.saturation_position(radius_k)),
+                               1. / np.sqrt(2.))
         self.assertEqual(float(scope.saturation_position(np.inf)), 1.)
         np.testing.assert_array_equal(scope.saturation_position(np.array([0., np.inf], np.float32)),
                                       [0., 1.])
@@ -1018,6 +1023,26 @@ class VectorscopeTests(unittest.TestCase):
                 np.testing.assert_array_equal(np.flatnonzero(histogram), [0, white_bin])
                 np.testing.assert_array_equal(histogram[[0, white_bin]], [1., 1.25])
                 self.assertFalse(histogram.flags.writeable)
+
+    def test_tone_histogram_uses_post_tone_chroma_and_lightness(self):
+        pixels = np.array([[[.07, .03, .015, 1.], [.015, .12, .025, .5]]])
+        linear = self.kernel.prepare_linear(space="Linear Rec.709")
+        tone = self.kernel.ToneSettings(
+            input_nits=(3., 80., 216., 1200.), muted_gain=4., vivid_gain=4.,
+        )
+        prepared = self.kernel.prepare_tone(tone)
+        cones = pixels[..., :3] @ linear.linear_to_cones.T
+        captured = self.modcam16.encode_cones(cones, constants=(prepared.fl, prepared.aw))
+        points = np.concatenate((captured.ja[..., None], captured.q[..., 1:]), axis=-1)
+        toned = prepared.forward(points)
+        chroma = np.hypot(toned[..., 1], toned[..., 2])
+        lightness = self.modcam16.signed_hk(toned[..., 0], chroma) / 100.
+        expected = np.histogram(lightness, bins=128, range=(0., self.tone_scope.peak_j(tone)),
+                                weights=pixels[..., 3])[0]
+        actual = self.tone_scope.analyze(pixels, linear, tone)
+        np.testing.assert_array_equal(actual, expected)
+        baseline = replace(tone, muted_gain=0., vivid_gain=0.)
+        self.assertFalse(np.array_equal(actual, self.tone_scope.analyze(pixels, linear, baseline)))
 
     @staticmethod
     def linear_pixels(code, alpha):

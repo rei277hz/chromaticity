@@ -376,7 +376,7 @@ def scenario():
     before_chroma = state().appearance.rgba
     tone.muted_gain = -2.0
     tone.shadow_chroma = -2.0
-    tone.tone_crossover = 50.0
+    tone.tone_crossover = .50
     yield from wait_for(lambda: appearance_current(before_chroma),
                         "Shared Shader chroma controls did not refresh final appearance")
     for field, delta in (("saturation_crossover", (32, 0)), ("tone_crossover", (0, 18))):
@@ -402,7 +402,7 @@ def scenario():
         report[field + "_preview_and_capture"] = True
 
     previous_appearance = state().appearance.rgba
-    tone.tone_crossover = 20.0
+    tone.tone_crossover = .20
     yield from wait_for(
         lambda: (value := state()) is not None and value.appearance_status == "preview"
         and value.appearance is not None,

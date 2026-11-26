@@ -307,8 +307,7 @@ class ScopePointer:
         if control == "tone_crossover":
             settings = self.settings(node).tone
             point, _pinned = geometry.tone_crossover_point(
-                box["appearance"], geometry.tone_model(settings),
-                geometry.tone_peak_j(settings), settings.tone_crossover,
+                box["appearance"], geometry.tone_peak_j(settings), settings.tone_crossover,
             )
             return point
         if control in geometry.APPEARANCE_GAIN_FIELDS:
@@ -327,8 +326,7 @@ class ScopePointer:
             rect, tone.saturation_crossover,
         )
         (_tone_x, tone_y), _pinned = self.ui.editor.geometry.tone_crossover_point(
-            rect, self.ui.editor.geometry.tone_model(tone),
-            self.ui.editor.geometry.tone_peak_j(tone), tone.tone_crossover,
+            rect, self.ui.editor.geometry.tone_peak_j(tone), tone.tone_crossover,
         )
         inset = 2.5 * scale
         guide_clearance = 6. * scale

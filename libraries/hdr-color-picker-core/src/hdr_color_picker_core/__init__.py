@@ -11,6 +11,7 @@ from ..color_core import aces2
 
 PICKER_J_PEAK = 217.2768649129496
 AUTHORING_PEAK = 10.0 / 2.03
+# Fitted K from Buck2 rule //libraries/hdr-color-picker-core:radius_fit.
 RADIUS_K = 34.09902169100728
 RADIUS_CUBIC = 0.0
 SURROUND_C = .525

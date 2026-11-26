@@ -8,6 +8,7 @@ import numpy as np
 from ...color_core.linear import rgb_to_xyz
 from ...color_core.modcam16 import encode_cones, signed_hk
 from ...kernel.prepare import prepare_linear
+from ...kernel.settings import SATURATION_AXIS_SCALE
 from .analysis import normalize_histogram, splat_components
 
 
@@ -73,9 +74,9 @@ def lightness_at_position(position, peak_j):
 
 
 def saturation_position(s):
-    """Compress raw C/|J_A| into [0, 1], including the infinite limit."""
+    """Compress raw C/|J_A| into picker coordinates, including infinity."""
     saturation = np.clip(np.asarray(s, dtype=np.float64), 0., np.finfo(np.float64).max)
-    return saturation / np.hypot(1., saturation)
+    return saturation / np.hypot(SATURATION_AXIS_SCALE, saturation)
 
 
 def _palette_anchors():

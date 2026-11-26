@@ -76,6 +76,7 @@ vec4 pg_undo_tone(vec4 q) {
     bool unified=pg_param(PG_P_UNIFIED_CHROMA)!=0.0;
     if(unified) {
         float ja=sign(q.w)*sqrt(abs(q.w));
+        q=pg_unified_chroma(q,ja,true);
         if(pg_param(PG_P_TONE_ACTIVE)!=0.0) {
             float c=pg_hypot(q.yz),h=pg_hypot(vec2(ja,sqrt(66.0*c)));
             if(h==0.0)return q;
@@ -83,9 +84,8 @@ vec4 pg_undo_tone(vec4 q) {
             float compressed=pg_param(PG_P_SPAN)*t;
             float original=100.0*compressed*pg_radial_gain(compressed,2.0*pg_param(PG_P_BLACK),.5,1.0,true);
             q=pg_scale_hk_ray(q,ja,c,h,original);
-            ja=sign(q.w)*sqrt(abs(q.w));
         }
-        return pg_unified_chroma(q,ja,true);
+        return q;
     }
     if(pg_param(PG_P_TONE_ACTIVE)==0.0)return q;
     float j=sqrt(max(q.w,0.0)),c=length(q.yz),h=sqrt(j*j+66.0*c);

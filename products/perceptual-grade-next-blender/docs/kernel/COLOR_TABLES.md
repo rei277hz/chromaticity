@@ -1,21 +1,20 @@
 # Native Color parameter fields
 
-## Current Stage 2/3 contract — 2026-11-24
+## Current Stage 2/3 contract
 
-Next uses field layout schema 7 and parameter schema 5. Stage 2 owns Original
-Unified Chroma before the full H-K Tone curve. Its controls include Black
-Compression, Muted/Vivid, Saturation Crossover, Shadow/Highlight Chroma, and
-Tone Crossover. H-K influence remains fixed at 1.0. Stage 3 retains Warp and
-Adaptance, without tonal J/C or opponent a/b controls. The Tone Gizmo edits
-only the four Tone anchors, Fit, and Peak.
+Next uses field layout schema 7 and parameter schema 6. Stage 2 applies the
+full H–K Tone curve, then Unified Chroma. Its controls include Black Compression,
+Muted/Vivid, the compressed Saturation Crossover, Shadow/Highlight Chroma, and
+the normalized output-neutral C Tone Crossover. H–K influence is fixed at 1.0.
+Stage 3 applies Warp and Adaptance.
 
 The 512 x 1 scalar/Tone image packs two texels of Unified Chroma controls. The
 other three role images contain Web parameters (4097 x 32), Web toes
 (1537 x 1), and Compact Adaptance (8193 x 8). A complete four-role bank is
 3,179,152 bytes. Two banks use 6,358,304 bytes, excluding the shared boundary.
-The Stack uses composition schema 3 and inverse schema 2. Its inverse solves
-Warp, bisects the packed Tone curve, and analytically inverts Black Compression
-and the Unified Chroma radial maps.
+The Stack uses composition schema 5 and inverse schema 3. Its inverse solves
+Warp, analytically inverts the Unified Chroma radial maps, bisects the packed
+Tone curve, and analytically inverts Black Compression.
 
 See [`src/kernel/layouts.py`](../../src/kernel/layouts.py) and
 [`src/kernel/stage2_parameters.py`](../../src/kernel/stage2_parameters.py)

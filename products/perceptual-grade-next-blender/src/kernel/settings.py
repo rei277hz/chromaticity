@@ -5,11 +5,13 @@ LOW_Y = 0.015507796089266005
 D65 = (.3127, .329)
 SPACES = ('Linear Rec.709', 'Linear Rec.2020', 'ACEScg')
 TONE_PEAKS = (500, 1000, 2000, 4000)
+# Picker RADIUS_K / 75; RADIUS_K comes from //libraries/hdr-color-picker-core:radius_fit.
+SATURATION_AXIS_SCALE = 34.09902169100728 / 75.
 TONE_CHROMA_LIMITS = {
     'black_compression_nits': (0., 2.), 'muted_gain': (-4., 4.),
-    'vivid_gain': (-4., 4.), 'saturation_crossover': (0., 1.),
+    'vivid_gain': (-4., 4.), 'saturation_crossover': (0., .99),
     'shadow_chroma': (-4., 4.), 'highlight_chroma': (-4., 4.),
-    'tone_crossover': (10., 160.),
+    'tone_crossover': (.1, 1.4),
 }
 ZERO46 = ((0.,) * 6,) * 4
 ZERO42 = ((0., 0.),) * 4
@@ -34,7 +36,7 @@ class LinearSettings:
 
 @dataclass(frozen=True)
 class ToneSettings:
-    """Original Unified Chroma Tone and chroma controls."""
+    """Tone curve and post-Tone Unified Chroma controls."""
     input_nits: tuple = (LOW_Y*203., .18*203., 203., 1000.)
     fit: float = 0.
     reference_nits: float = 203.
@@ -42,10 +44,10 @@ class ToneSettings:
     black_compression_nits: float = 0.
     muted_gain: float = 0.
     vivid_gain: float = 0.
-    saturation_crossover: float = .45
+    saturation_crossover: float = .5
     shadow_chroma: float = 0.
     highlight_chroma: float = 0.
-    tone_crossover: float = 45.
+    tone_crossover: float = .45
 
     def __post_init__(self):
         object.__setattr__(self, 'input_nits', tuple(self.input_nits))

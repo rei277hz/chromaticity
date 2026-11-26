@@ -20,14 +20,14 @@ class UnifiedChromaDCTLTests(unittest.TestCase):
         controls = dict(inputShadows=2.4, inputMidtones=42., inputWhite=225., inputHighlights=1600.,
                         blackCompression=1.1, cMutedGain=-1.3, cVividGain=1.7,
                         shadowChroma=1.5, highlightChroma=-1.3,
-                        cToneCrossover=35.)
+                        cToneCrossover=.35)
         settings = UnifiedChromaSettings(
             input_nits=(2.4, 42., 225., 1600.), black_compression_nits=1.1,
             muted_gain=-1.3, vivid_gain=1.7,
-            shadow_chroma=1.5, highlight_chroma=-1.3, tone_crossover=35.,
+            shadow_chroma=1.5, highlight_chroma=-1.3, tone_crossover=.35,
         )
         for peak_index, (peak, crossover) in enumerate(((500, 0.), (1000, .45),
-                                                        (2000, .5), (4000, 1.))):
+                                                        (2000, .5), (4000, .99))):
             for fit in (-2, 0, 2):
                 stage = UnifiedChroma(replace(settings, peak_nits=peak, fit=fit,
                                               saturation_crossover=crossover))

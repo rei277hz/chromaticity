@@ -281,7 +281,7 @@ class LUTGPUComputeTests(unittest.TestCase):
             tone=ToneSettings(input_nits=(5., 38., 225., 1200.), fit=1.5,
                               black_compression_nits=.8, muted_gain=-.6, vivid_gain=.4,
                               saturation_crossover=0., shadow_chroma=.35,
-                              highlight_chroma=-.2, tone_crossover=48.),
+                              highlight_chroma=-.2, tone_crossover=.48),
         )
         ids = np.array(((0, 0, 0), (24, 24, 26), (32, 34, 30),
                         (42, 40, 42), (50, 52, 52)))
@@ -307,8 +307,8 @@ class LUTGPUComputeTests(unittest.TestCase):
         grade = Settings(
             linear=LinearSettings(exposure=-6.),
             tone=ToneSettings(
-                muted_gain=-4., vivid_gain=4., saturation_crossover=1.,
-                shadow_chroma=-4., highlight_chroma=4., tone_crossover=10.,
+                muted_gain=-4., vivid_gain=4., saturation_crossover=.99,
+                shadow_chroma=-4., highlight_chroma=4., tone_crossover=.1,
             ),
         )
         receipts, _ = self.bake((grade,))

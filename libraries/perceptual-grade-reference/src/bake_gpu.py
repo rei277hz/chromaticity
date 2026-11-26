@@ -2,6 +2,7 @@
 import numpy as np
 from . import boundary_gpu
 from .grading import CHROMA_CROSSOVER
+from .unified_chroma import _raw_saturation_crossover
 
 
 # One 256-float header shared by forward/inverse shaders. Following rows
@@ -13,7 +14,7 @@ LAYOUT=dict(TONE_ACTIVE=0,BLACK=1,SPAN=2,SLOPE=3,HIGH=4,TONE_WIDTH=5,
     TONE_NORMALIZERS=72,TONE_CONSTANTS=76,COEFF_NORMALIZERS=80,COEFF_CONSTANTS=88,
     ANCHORS=96,LOG_RADII=100,ANGLES=124,LOG_CHROMA=148,HUE_RADIANS=172,LOG_SCALE=196,
     CANONICAL_FIRST=220,CANONICAL_LAST=223,Y_WEIGHTS=226,TONE_TABLE=229,ADAPTANCE_LOG_GAINS=234,
-    UNIFIED_CHROMA=246,MUTED_GAIN=247,VIVID_GAIN=248,SATURATION_CROSSOVER=249,
+    UNIFIED_CHROMA=246,MUTED_GAIN=247,VIVID_GAIN=248,SATURATION_RATIO=249,
     SHADOW_CHROMA=250,HIGHLIGHT_CHROMA=251,CHROMA_TONE_CROSSOVER=252,
     OUTPUT_COMPRESSION=253,OUTPUT_KNEE=254,OUTPUT_SPAN=255)
 HEADER_SIZE=256
@@ -46,7 +47,8 @@ def parameters(kernel):
     if kernel.tone_chroma is not None:
         controls=kernel.tone_chroma.settings
         put('UNIFIED_CHROMA',1.)
-        put('MUTED_GAIN',[controls.muted_gain,controls.vivid_gain,controls.saturation_crossover,
+        put('MUTED_GAIN',[controls.muted_gain,controls.vivid_gain,
+                         _raw_saturation_crossover(controls.saturation_crossover),
                          controls.shadow_chroma,controls.highlight_chroma,controls.tone_crossover])
     put('OUTPUT_COMPRESSION',kernel.output_compression.enabled)
     put('OUTPUT_KNEE',kernel.output_compression.knee)
@@ -198,10 +200,10 @@ vec4 pg_unified_chroma(vec4 q,float ja,bool invert) {
     float c=pg_hypot(q.yz);
     if(c==0.0)return q;
     float lightness=abs(ja),base=PG_CHROMA_CROSSOVER*lightness;
-    float p=pg_param(PG_P_SATURATION_CROSSOVER);
+    float ratio=pg_param(PG_P_SATURATION_RATIO);
     float low=exp2(muted),high=exp2(vivid);
-    float knee=lightness*p*sqrt(high/low);
-    float offset=lightness/pg_param(PG_P_CHROMA_TONE_CROSSOVER)-1.0;
+    float knee=lightness*ratio*sqrt(high/low);
+    float offset=lightness/(100.0*pg_param(PG_P_CHROMA_TONE_CROSSOVER))-1.0;
     float t=min(abs(offset),1.0);
     float stops=offset<0.0?shadow:highlight;
     float tonal=exp2(stops*t*t*(3.0-2.0*t)),gain;
@@ -234,8 +236,8 @@ vec4 pg_scale_hk_ray(vec4 q,float ja,float c,float source_height,float target_he
 vec4 pg_tone(vec4 q) {
     float ja=sign(q.w)*sqrt(abs(q.w));
     bool unified=pg_param(PG_P_UNIFIED_CHROMA)!=0.0;
-    if(unified)q=pg_unified_chroma(q,ja,false);
-    if(pg_param(PG_P_TONE_ACTIVE)==0.0)return q;
+    if(pg_param(PG_P_TONE_ACTIVE)==0.0)
+        return unified?pg_unified_chroma(q,ja,false):q;
     float c=unified?pg_hypot(q.yz):length(q.yz);
     vec2 components=vec2(ja,sqrt(66.0*c));
     float magnitude=unified?pg_hypot(components):length(components);
@@ -245,7 +247,11 @@ vec4 pg_tone(vec4 q) {
     vec4 k=pg_kernels(t,PG_P_TONE_KNOTS,pg_param(PG_P_TONE_WIDTH),PG_P_TONE_NORMALIZERS,PG_P_TONE_CONSTANTS),residual;
     for(int i=0;i<4;i++)residual[i]=pg_param(11+i);
     float h=100.0*(pg_param(3)*t+dot(k,residual));if(t==1.0)h=pg_param(4);
-    if(unified)return pg_scale_hk_ray(q,ja,c,magnitude,h);
+    if(unified) {
+        q=pg_scale_hk_ray(q,ja,c,magnitude,h);
+        ja=sign(q.w)*sqrt(abs(q.w));
+        return pg_unified_chroma(q,ja,false);
+    }
     float gain=pg_div(2.0*h*h,length(vec2(66.0*c,2.0*ja*h))+66.0*c);
     float j=ja*gain;vec2 ab=q.yz*gain;
     return vec4(pg_hk(j,length(ab)),ab,j*abs(j));

@@ -14,10 +14,11 @@ GPU shader or DCTL implementation. Numerical tests and implementation-specific
 validation provide that separate evidence.
 
 `UnifiedChroma.lean` proves that every signed Cartesian appearance triple has
-exactly one preimage under Original Unified Chroma and full H–K Tone. It also
-verifies both stable quadratic branches used to invert the radial maps. The
-theorem applies at the appearance handoff before Warp, repair, and RGB
-boundary mapping.
+exactly one preimage under full H–K Tone followed by Original Unified Chroma.
+It proves the decoded saturation ratio is nonnegative over the supported
+slider range and verifies both stable quadratic branches used to invert the
+radial maps. The theorem applies at the appearance handoff before Warp,
+repair, and RGB boundary mapping.
 
 `WarpRepairedScale.lean` formalizes the corrected reference order: repair after
 Adaptance, then common positive J_A/chroma Scale. It proves the carried-energy

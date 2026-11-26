@@ -18,7 +18,6 @@ from .geometry import (
 from .white_drag import WhiteDrag
 
 if TYPE_CHECKING:
-    from ...kernel.prepare import PreparedTone
     from .runtime import WhiteDragReceipt
 
 
@@ -63,7 +62,6 @@ class _Drag:
     token: int | None = None
     panel_position: tuple | None = None
     panel_size: float | tuple | None = None
-    tone_model: "PreparedTone | None" = None
 
 
 def _tone_hit(rect, point, model, selected, scale, peak_j):
@@ -333,8 +331,6 @@ class Interaction:
             values = white.linear.source_xy
         else:
             values = self._control_values(mode, node, fields) if fields else ()
-        model = (tone_model(self.callbacks.tone_settings(node))
-                 if mode == "tone_crossover" else None)
         if mode in _APPEARANCE_CONTROLS:
             rect = box["appearance"]
         else:
@@ -343,8 +339,7 @@ class Interaction:
         return _Drag(key, editor.binding(node), frame, mode, rect, origin, box["scale"],
                      fields, values, white,
                      panel_position=self.editors[key].position if mode == "header" or resizing else None,
-                     panel_size=self.editors[key].sizes.get(self.editors[key].stage) if resizing else None,
-                     tone_model=model)
+                     panel_size=self.editors[key].sizes.get(self.editors[key].stage) if resizing else None)
 
     def _plot_at(self, window, mouse):
         for area in window.screen.areas:
@@ -426,8 +421,7 @@ class Interaction:
             return (geometry.drag_saturation_crossover(drag.rect, drag.values[0], dx),)
         if drag.mode == "tone_crossover":
             return (geometry.drag_tone_crossover(
-                drag.rect, drag.tone_model, tone_peak_j(drag.tone_model.settings),
-                drag.values[0], dy,
+                drag.rect, tone_peak_j(self.callbacks.tone_settings(node)), drag.values[0], dy,
             ),)
         lo, hi = SLIDER_RANGES[drag.mode]
         vertical = (drag.mode in ("cr_balance", "fit")

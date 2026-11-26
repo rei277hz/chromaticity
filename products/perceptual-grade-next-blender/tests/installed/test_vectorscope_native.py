@@ -101,7 +101,7 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("saturation_crossover_reset_and_cancel"), details)
         self.assertTrue(data.get("saturation_crossover_autokey_undo"), details)
         self.assertTrue(data.get("tone_crossover_reset_and_cancel"), details)
-        self.assertTrue(data.get("tone_crossover_pinned_handle"), details)
+        self.assertTrue(data.get("tone_crossover_upper_range_drag"), details)
         self.assertTrue(data.get("tone_crossover_autokey_undo"), details)
         self.assertTrue(data.get("appearance_chroma_gain_drag_and_vertical_lock"), details)
         self.assertTrue(data.get("appearance_chroma_gain_reset_and_cancel"), details)

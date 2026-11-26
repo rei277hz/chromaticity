@@ -1,8 +1,8 @@
 # Perceptual Grade Gizmo design
 
 The Gizmo shows the Linear controls and vectorscope, plus the Stage 2 Tone
-Curve and Appearance Distribution. Original Unified Chroma controls are
-available in the Stage 2 numeric sidebar while their design is being evaluated.
+Curve and Appearance Distribution. The Stage 2 sidebar and Appearance
+Distribution both provide Unified Chroma controls.
 
 Stage 3 has no J/C contribution or opponent-pad Gizmo. Its numeric controls are
 limited to Warp and selective Adaptance. A future graphical Warp editor remains
@@ -80,27 +80,31 @@ the Grade is displaying a baked RGB texture.
 
 The vertical axis is Lightness with normalized J ticks. The selected peak
 neutral is at the top, while \(J_\mathrm{HK}/100=1\) remains at 80% of the
-height. A single smooth curve maps the full range. The horizontal axis is
-Saturation, with position \(s/\sqrt{1+s^2}\), where \(s=C/|J_A|\). Tick
-labels show the uncompressed saturation from zero to infinity. Black has zero
-saturation.
+height and uses the regular grid style. The horizontal axis follows the HDR
+Color Picker’s saturation compression. The plot position is
+\(s/\sqrt{k^2+s^2}\), where \(s=C/|J_A|\) and \(k=34.09902169100728/75\).
+The numerator is the fitted `K` from `//libraries/hdr-color-picker-core:radius_fit`.
+Ticks display the compressed coordinate. Black is at zero and infinite
+saturation is at the right edge, labeled `1`.
 
-Drag the vertical orange guide to adjust Saturation Crossover. Drag the
-dashed cyan guide or its left handle to adjust C Tone Crossover, where the
-Shadow Chroma and Highlight Chroma contributions reach zero. The cyan guide
-marks where a neutral at that input lightness lands through the Tone curve.
-Its hover readout shows the input value in normalized lightness units. An
-upward arrow marks a crossover above the selected peak. Drag down from the
-top edge to bring it into view. The sidebar covers the full crossover range.
+Drag the dashed cyan guide or the rhombus at its bottom end to adjust
+Saturation Crossover. Its value is the compressed coordinate, with a default
+of `0.5` and range of `0–0.99`. Tone correction runs first, then all four
+chroma controls operate on the corrected appearance. Muted and Vivid gains use
+the compressed saturation coordinate. Drag the dashed orange guide or the
+circle at its left end to adjust C Tone Crossover. It specifies normalized
+output-neutral lightness where Shadow Chroma and Highlight Chroma reach zero,
+with a default of `0.45` and range of `0.1–1.4`. A value of `1` corresponds to
+neutral output J of 100. Gain transitions use post-Tone `abs(J_A)`.
 
 Hover the plot body to highlight C Muted Gain left of the Saturation Crossover
 or C Vivid Gain to its right. The 5 UI-scaled-pixel top and bottom strips select
 Highlight Chroma above C Tone Crossover and Shadow Chroma below it. Crossover
-guides take priority. The highlighted half-plane is filled with translucent
-white, and the readout shows the selected gain in stops. Drag horizontally
-right to increase any of these four gains. One plot-width drag spans `-4` to
-`+4` stops. If C Tone Crossover is pinned to the top, Highlight Chroma remains
-available through the sidebar.
+guides take priority. The selected region has a slightly brighter background
+beneath the grid and trace. Its readout shows the gain in stops. Drag
+horizontally right to increase any of the four gains. One plot-width drag
+spans `-4` to `+4` stops. The sidebar provides Highlight Chroma even when the
+tone guide is too close to the top for its strip.
 
 Opacity shows alpha-weighted density. Each bin's tint follows its weighted
 circular mean hue, with tint strength set by how closely its hues agree.

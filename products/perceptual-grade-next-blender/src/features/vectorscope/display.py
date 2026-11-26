@@ -21,6 +21,7 @@ _PALETTE = {
     name: tuple(int(rgb[index:index + 2], 16) / 255 for index in (0, 2, 4)) + (1.,)
     for name, rgb in {
         "panel": "3d3d3d", "header": "303030", "plot": "282828",
+        "plot_highlight": "393939",
         "outline": "575757", "grid": "404040", "text": "e6e6e6",
         "muted": "aaaaaa", "blue": "265787", "orange": "e87d0d",
         "reference": "9b9b9b", "hdr": "87a3bd",
@@ -330,7 +331,7 @@ def _draw_tone_curve(rect, model, histogram, selected, scale, peak_j):
           8 * scale, _PALETTE["muted"], width, align=.5)
 
 
-def _draw_appearance(box, state, key, peak_j, tone, model, active_control):
+def _draw_appearance(box, state, key, peak_j, tone, active_control):
     rect, scale = box["appearance"], box["scale"]
     x, y, width, height = rect
     top, right = y + height, x + width
@@ -339,45 +340,37 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_control):
     compact = height < 55 * scale
     appearance = None if state is None else state.appearance
     status = None if state is None else state.appearance_status
+    saturation_marker = geometry.saturation_crossover_point(rect, tone.saturation_crossover)
+    tone_marker, above_peak = geometry.tone_crossover_point(rect, peak_j, tone.tone_crossover)
     _fill(rect, _PALETTE["plot"])
+    if active_control in geometry.APPEARANCE_GAIN_FIELDS:
+        highlighted = geometry.appearance_gain_regions(
+            rect, saturation_marker[0], tone_marker[1],
+        )[active_control]
+        if highlighted[2] > 0. and highlighted[3] > 0.:
+            _fill(highlighted, _PALETTE["plot_highlight"])
+
     guide = []
-    saturation_ticks = ((0., "0"), (.5, "0.5"), (1., "1"), (2., "2"), (math.inf, "\u221e"))
-    for value, label in saturation_ticks:
-        px = x + appearance_scope.saturation_position(value) * width
-        if 0. < value < math.inf:
+    for value in (0., .25, .5, .75, 1.):
+        px = x + value * width
+        if 0. < value < 1.:
             guide.extend(((px, y), (px, top)))
-        if not compact or value in (0., 1., math.inf):
-            alignment = 1. if value == math.inf else .5
-            _text(label, px, y - 11 * scale, 8 * scale, _PALETTE["muted"],
+        if not compact or value in (0., .5, 1.):
+            alignment = 0. if value == 0. else 1. if value == 1. else .5
+            _text(f"{value:g}", px, y - 13 * scale, 8 * scale, _PALETTE["muted"],
                   20 * scale, align=alignment)
     lightness_ticks = tuple(
         (tick, y + appearance_scope.lightness_position(
             tick * appearance_scope.LIGHTNESS_KNEE, peak_j) * height)
         for tick in range(math.ceil(peak_j))
     )
-    for tick, py in lightness_ticks[2:]:
+    for _, py in lightness_ticks[1:]:
         guide.extend(((x, py), (right, py)))
     _lines(guide, _PALETTE["grid"], scale, cache=("appearance grid", rect, peak_j))
     if appearance is not None:
         appearance = appearance_scope.rescale(appearance, peak_j)
         _draw_trace(rect, appearance.rgba, (key, "appearance"), additive=False)
 
-    saturation_marker = geometry.saturation_crossover_point(rect, tone.saturation_crossover)
-    tone_marker, above_peak = geometry.tone_crossover_point(
-        rect, model, peak_j, tone.tone_crossover,
-    )
-    if active_control in geometry.APPEARANCE_GAIN_FIELDS:
-        highlighted = geometry.appearance_gain_regions(
-            rect, saturation_marker[0], tone_marker[1],
-        )[active_control]
-        if highlighted[2] > 0. and highlighted[3] > 0.:
-            _fill(highlighted, (1., 1., 1., .12))
-
-    knee = lightness_ticks[1][1]
-    dash = 5 * scale
-    segments = [point for start in np.arange(x, right, 2 * dash)
-                for point in ((start, knee), (min(start + dash, right), knee))]
-    _lines(segments, (*_PALETTE["orange"][:3], .65), scale, cache=("appearance knee", rect))
     _lines(((x, y), (x, top), (x, y), (right, y), (x, top), (right, top),
             (right, top), (right, y)), _PALETTE["outline"], scale,
            cache=("appearance outline", rect))
@@ -396,7 +389,7 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_control):
         if (tick <= 1 or (py - last_label >= 9 * scale and top - py >= 8 * scale
                           and peak_j - tick >= .25)):
             _text(str(tick), x - 4 * scale, py - 3 * scale, 8 * scale,
-                  _PALETTE["orange" if tick == 1 else "muted"], 20 * scale, align=1.)
+                  _PALETTE["muted"], 20 * scale, align=1.)
             last_label = py
     _text(f"{peak_j:.2f}",
           x - 4 * scale, top + 1 * scale,
@@ -404,7 +397,7 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_control):
     _text(localization.tr("scope.appearance.axis_lightness"),
           left, top + 13 * scale, 8 * scale, _PALETTE["muted"], 58 * scale)
     _text(localization.tr("scope.appearance.axis_saturation"),
-          x + width * .5, y - 22 * scale, 8 * scale, _PALETTE["muted"],
+          x + width * .5, y - 24 * scale, 8 * scale, _PALETTE["muted"],
           width, align=.5)
     title_y = box["curve_title"][1] + 8 * scale
     _text(localization.tr("scope.appearance.title"), left, title_y, 9 * scale,
@@ -425,27 +418,29 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_control):
                   _PALETTE["muted"], width - 4 * scale, align=.5)
 
     saturation_active = active_control == "saturation_crossover"
-    saturation_color = (*_PALETTE["orange"][:3], .9 if saturation_active else .36)
+    saturation_color = (*_PALETTE["C"][:3], .92 if saturation_active else .46)
     saturation_stroke = (1.5 if saturation_active else 1.) * scale
-    _lines(((saturation_marker[0], y), saturation_marker), saturation_color,
-           saturation_stroke)
-    _circle(saturation_marker, geometry.CROSSOVER_HANDLE_RADIUS * scale,
-            saturation_color, saturation_stroke)
+    dash = 5 * scale
+    segments = [point for start in np.arange(y, top, 2 * dash)
+                for point in ((saturation_marker[0], start),
+                              (saturation_marker[0], min(start + dash, top)))]
+    _lines(segments, saturation_color, saturation_stroke)
+    radius = geometry.CROSSOVER_HANDLE_RADIUS * scale
+    marker_x, marker_y = saturation_marker
+    handle = ((marker_x - radius, marker_y), (marker_x, marker_y + radius),
+              (marker_x + radius, marker_y), (marker_x, marker_y - radius))
+    _lines([point for edge in zip(handle, handle[1:] + handle[:1]) for point in edge],
+           saturation_color, saturation_stroke)
 
     tone_active = active_control == "tone_crossover"
-    tone_color = (*_PALETTE["C"][:3], .92 if tone_active else .46)
+    tone_color = (*_PALETTE["orange"][:3], .9 if tone_active else .36)
     tone_stroke = (1.5 if tone_active else 1.) * scale
-    dash = 5 * scale
     segments = [point for start in np.arange(x, right, 2 * dash)
                 for point in ((start, tone_marker[1]),
                               (min(start + dash, right), tone_marker[1]))]
     _lines(segments, tone_color, tone_stroke)
-    radius = geometry.CROSSOVER_HANDLE_RADIUS * scale
-    marker_y = tone_marker[1]
-    handle = ((x - radius, marker_y), (x, marker_y + radius),
-              (x + radius, marker_y), (x, marker_y - radius))
-    _lines([point for edge in zip(handle, handle[1:] + handle[:1]) for point in edge],
-           tone_color, tone_stroke)
+    _circle(tone_marker, geometry.CROSSOVER_HANDLE_RADIUS * scale,
+            tone_color, tone_stroke)
     if above_peak:
         arrow_x = x + 10 * scale
         arrow_y = top + 7 * scale
@@ -456,12 +451,12 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_control):
     if active_control is not None:
         if tone_active:
             message = localization.tr(
-                "gizmo.input_lightness_crossover",
-                value=f"{tone.tone_crossover / 100.:.2f}",
+                "gizmo.output_lightness_crossover",
+                value=f"{tone.tone_crossover:.2f}",
             )
         elif saturation_active:
             message = localization.tr(
-                "gizmo.input_saturation_crossover",
+                "gizmo.saturation_crossover",
                 value=f"{tone.saturation_crossover:.2f}",
             )
         else:
@@ -480,7 +475,7 @@ def _draw_tone(box, state, key, linear, tone, selected, active_control):
     model = _tone_model(tone)
     peak_j = _tone_peak_j(tone)
     histogram = None if state is None else state.tone_histogram
-    _draw_appearance(box, state, key, peak_j, tone, model, active_control)
+    _draw_appearance(box, state, key, peak_j, tone, active_control)
     _draw_tone_curve(box["curve"], model, histogram, selected, scale, peak_j)
     _slider(box["exposure"], "exposure", linear.exposure, scale, track=box["exposure_track"])
     _slider(box["fit"], "fit", tone.fit, scale, vertical=True, track=box["fit_track"])

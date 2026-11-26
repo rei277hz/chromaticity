@@ -105,9 +105,9 @@ class ColorGraph:
                   ((.0582, .1475), (.0258, .0308), (.1347, .0385), (.0289, .0096)))
         ja = 100*(1220/self.prepared.aw)**self.prepared.gamma
         c = 1204*(1+rho)/self.prepared.aw*400*math.hypot(24/11, 4/9)
-        height = math.sqrt(ja*ja+66*c*self.prepared.tone.maximum_chroma_gain)
-        target = float(self.prepared.tone.remap(height))
-        return target
+        height = math.hypot(ja, math.sqrt(66*c))
+        tone = self.prepared.tone
+        return float(tone.remap(height)) * math.sqrt(tone.maximum_chroma_gain)
 
     @cached_property
     def _color_bounds(self):

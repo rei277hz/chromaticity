@@ -72,16 +72,17 @@ links lead to the corresponding build instructions.
 
 ### Integrated 2-3A variants
 
-Each variant replaces Cone Tone and Color J/C in the cone chain. Forward
-applies global chroma shaping, then Shadow and Highlight Chroma, then
-saturation-preserving Tone. **C Tone Crossover**
-sets the input lightness where both tonal chroma adjustments reach zero.
-The Unified Chroma crossover uses raw input saturation `C / abs(J_A)`.
+Each variant replaces Cone Tone and Color J/C in the cone chain. The legacy
+variants apply their chroma shaping before saturation-preserving Tone.
+Unified Chroma applies Tone first, then C Muted/Vivid and Shadow/Highlight
+Chroma. Its C Tone Crossover selects the normalized output neutral J where
+both tonal chroma adjustments reach zero, with `1` representing `J=100`.
+Legacy variants retain the input-lightness crossover.
 Legacy variants use `s = C / (C + (35/75) * abs(J_A))` for their pivots.
 
 | Variant and Buck target | Tone Fit and H–K Influence | Global chroma controls | Saturation pivot or crossover | Global gain near gray | Shadow and Highlight Chroma fade | Inverse |
 | --- | --- | --- | --- | --- | --- | --- |
-| [Unified Chroma baseline](#unified-chroma-baseline) (`:dctl`) | Fit `-2` to `+2`, H–K Influence fixed at `1.0` | C Muted Gain and C Vivid Gain shape one curve | Raw input saturation `C / abs(J_A)`, default `0.45`. At a positive crossover the gain is halfway between the endpoints in stops. | Approaches `2^(C Muted Gain)` at a positive crossover. Zero crossover gives Vivid Gain. | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
+| [Unified Chroma baseline](#unified-chroma-baseline) (`:dctl`) | Fit `-2` to `+2`, H–K Influence fixed at `1.0` | C Muted Gain and C Vivid Gain shape one curve after Tone | HDR-picker-compressed `C / abs(J_A)`, default `0.5`, range `0–0.99` | Approaches `2^(C Muted Gain)` at a positive crossover. Zero crossover gives Vivid Gain. | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
 | [Legacy Log Gain](#integrated-tone-and-color-jc-prototype) (`:jc_tone_fit_prototype`) | Fit `-2` to `+6`, H–K Influence `0` to `1` | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates in stops and approaches unity near gray | Global curve closed form. Tonal gain and Tone use scalar solves. |
 | [Linear Gain](#linear-gain-audition) (`:jc_tone_fit_linear_gain_prototype`) | Fit `-2` to `+6`, H–K Influence `0` to `1` | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
 
@@ -176,16 +177,25 @@ Tone's inverse still uses a scalar solve. [Linear Gain behavior and Resolve audi
 
 This is the standard Tone J/C node in the five-stage chain. Its opt-in
 prototype build remains available for comparison with other designs.
-C Muted Gain and C Vivid Gain shape incoming saturation together. C Saturation
-Crossover selects raw input saturation `C / abs(J_A)` from `0` to `1`,
-with a default of `0.45`. At a positive crossover, the applied gain in stops
-is the average of the two settings. A zero crossover applies Vivid Gain to
-every chromatic sample. C Muted Gain, C Vivid Gain, Shadow Chroma, and
-Highlight Chroma range from `-4` to `+4` stops. The baseline uses the
-original smooth Tone curve and the Linear Gain fade for Shadow and
-Highlight Chroma. H–K Influence is fixed at `1.0` and
+C Muted Gain and C Vivid Gain shape saturation after Tone. C Saturation
+Crossover uses the HDR Color Picker's compressed saturation coordinate,
+`u = s / sqrt(k^2 + s^2)`, where `s = C / abs(J_A)` and
+`k = 34.09902169100728 / 75`. The numerator is the fitted `K` from
+`//libraries/hdr-color-picker-core:radius_fit`. The crossover ranges from `0`
+to `0.99` and defaults to `0.5`. A positive crossover places the gain halfway
+between the endpoints in stops. Zero applies Vivid Gain to every chromatic
+sample. C Muted Gain,
+C Vivid Gain, Shadow Chroma, and Highlight Chroma range from `-4` to `+4`
+stops. The baseline uses the original smooth Tone curve and the Linear Gain
+fade for Shadow and Highlight Chroma. H–K Influence is fixed at `1.0` and
 Remap Fit is limited to `-2` through `+2`. The target builds English and
 Simplified Chinese DCTLs.
+
+C Tone Crossover uses normalized output-neutral J. It ranges from `0.1`
+to `1.4` in steps of `0.001`, defaults to `0.45`, and reads `1.0` for
+neutral `J=100`.
+Shadow and Highlight Chroma use `abs(J_A)/100` after Tone, which equals
+normalized output J for neutrals.
 
 ```sh
 buck2 build --remote-only //products/perceptual-grade-dctl:dctl --show-output

@@ -36,7 +36,7 @@ from .stage2_parameters import (
 # The receipt payload changed from raw socket values to effective socket
 # contracts.  Keep the manifest version distinct so stale generated assets
 # fail explicitly instead of being interpreted with the new canonicalization.
-SCHEMA = 5
+SCHEMA = 6
 MANIFEST_NAME = "node_templates.json"
 BLEND_NAME = "node_templates.blend"
 STACK_SHADER_NAME = "grade_stack.glsl"

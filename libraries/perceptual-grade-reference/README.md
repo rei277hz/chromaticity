@@ -13,8 +13,8 @@ The reference has no required Blender dependency. It owns the accelerated CPU
 kernel, forward/inverse/boundary GPU shader builders and optional Blender GPU
 adapter; callers can supply a `program_factory` when constructing `BakeStack`.
 
-The default grade applies Original Unified Chroma and full H–K Tone before
-Warp. The signed appearance stage exposes forward and inverse evaluation
+The default grade applies full H–K Tone followed by Original Unified Chroma
+before Warp. The signed appearance stage exposes forward and inverse evaluation
 through `UnifiedChroma`. The JSON CLI, analytic Stack, and CPU and GPU
 BakeStack accept the same `tone_chroma` settings. [Settings and equations](src/README.md#original-unified-chroma)
 

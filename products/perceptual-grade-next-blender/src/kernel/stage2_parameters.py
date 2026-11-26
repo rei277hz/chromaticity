@@ -21,7 +21,7 @@ from .stage2_bindings import PARAMETER_IMAGE, PARAMETER_ROLE
 from .tables import TEXTURE_WIDTH
 
 
-PARAMETER_SCHEMA = 5
+PARAMETER_SCHEMA = 6
 PARAMETER_SHAPE = (1, TEXTURE_WIDTH, 4)
 PARAMETER_CONTENT_SIGNATURE = "_perceptual_grade_parameter_content_signature"
 PARAMETER_BUNDLE_SIGNATURE = "_perceptual_grade_parameter_bundle_signature"
@@ -47,7 +47,7 @@ _MUTED_GAIN_MIN, _MUTED_GAIN_MAX = map(math.exp2, TONE_CHROMA_LIMITS['muted_gain
 _VIVID_GAIN_MIN, _VIVID_GAIN_MAX = map(math.exp2, TONE_CHROMA_LIMITS['vivid_gain'])
 _SHADOW_MIN, _SHADOW_MAX = TONE_CHROMA_LIMITS['shadow_chroma']
 _HIGHLIGHT_MIN, _HIGHLIGHT_MAX = TONE_CHROMA_LIMITS['highlight_chroma']
-_CROSSOVER_MIN, _CROSSOVER_MAX = TONE_CHROMA_LIMITS['tone_crossover']
+_CROSSOVER_MIN, _CROSSOVER_MAX = (100. * value for value in TONE_CHROMA_LIMITS['tone_crossover'])
 LAST_PARAMETER_SLOT = TONE_CHROMA_TONE_SLOT
 PARAMETER_ROLES = ('parameter', 'web', 'web_toe', 'adaptance')
 COLOR_ROLE_FIELDS = MappingProxyType({
