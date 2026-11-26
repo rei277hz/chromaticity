@@ -6,12 +6,17 @@ from ...color_core.modcam16 import HK, encode_cones
 from ...kernel.prepare import nits_to_j, prepare_tone
 
 
-PLOT_MAX = float(nits_to_j(4000.0))
 _HISTOGRAM_BINS = 128
+
+
+def peak_j(tone):
+    """Return neutral J at the selected peak, in the tone curve's units."""
+    return float(nits_to_j(tone.peak_nits, tone.reference_nits))
 
 
 def analyze(rgba, linear, tone):
     """Bin alpha-weighted output J after applying Linear and Tone to the capture."""
+    maximum = peak_j(tone)
     tone = prepare_tone(tone)
     pixels = np.asarray(rgba, dtype=np.float64)
     valid = np.isfinite(pixels).all(axis=-1) & (pixels[..., 3] > 0.)
@@ -23,9 +28,9 @@ def analyze(rgba, linear, tone):
     chroma *= tone.chroma_gain(appearance.ja, chroma)
     magnitude = np.hypot(appearance.ja, np.sqrt(HK * chroma))
     after = tone.remap(magnitude) / 100.
-    visible = after <= PLOT_MAX
+    visible = after <= maximum
     histogram = np.histogram(after[visible], bins=_HISTOGRAM_BINS,
-                             range=(0., PLOT_MAX), weights=weights[visible])[0]
+                             range=(0., maximum), weights=weights[visible])[0]
     histogram = histogram.astype(np.float32)
     histogram.setflags(write=False)
     return histogram

@@ -130,8 +130,16 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("appearance_tone_and_warp"), details)
         self.assertTrue(data.get("appearance_preview_reused_inputs_and_roles"), details)
         timing = data.get("appearance_timing_seconds", {})
-        self.assertEqual(set(timing), {"first_preview", "warm_preview", "release_to_exact"}, details)
+        self.assertEqual(set(timing), {
+            "first_preview", "warm_preview", "release_to_exact", "panel_preview",
+        }, details)
         self.assertTrue(all(value > 0 for value in timing.values()), details)
+        print(
+            f"Appearance Distribution timing — panel preview {timing['panel_preview'] * 1000:.0f} ms, "
+            f"first drag preview {timing['first_preview'] * 1000:.0f} ms, "
+            f"warm drag preview {timing['warm_preview'] * 1000:.0f} ms, "
+            f"release to native appearance {timing['release_to_exact'] * 1000:.0f} ms"
+        )
 
 
 if __name__ == "__main__":

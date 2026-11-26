@@ -9,7 +9,7 @@ import math
 
 from ...kernel.prepare import prepare_tone
 from .analysis import CHROMA_LIMIT, color_bar_targets
-from .tone_scope import PLOT_MAX
+from .tone_scope import peak_j as tone_peak_j
 
 
 _TARGETS = {label: (cb, cr) for label, cb, cr in color_bar_targets()}
@@ -53,9 +53,10 @@ def tone_model(tone):
     return prepare_tone(tone)
 
 
-def curve_point(rect, source, target):
+def curve_point(rect, source, target, peak_j):
     x, y, width, height = rect
-    return x + source / PLOT_MAX * width, y + min(1., max(0., target / PLOT_MAX)) * height
+    return (x + min(1., max(0., source / peak_j)) * width,
+            y + min(1., max(0., target / peak_j)) * height)
 
 
 def tone_anchor_levels(model):

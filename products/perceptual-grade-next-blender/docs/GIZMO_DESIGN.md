@@ -9,10 +9,14 @@ limited to Warp and selective Adaptance. A future graphical Warp editor remains
 out of scope for this product change.
 
 The Tone Curve plots the prepared Stage 2 mapping and its four editable
-anchors. Input J and Output J have a one-unit grid, and the SDR/HDR bars split
-at Input J = 1. Exposure runs along the bottom edge, Fit along the right edge,
-and Peak sits on the title row. The histogram bins alpha-weighted output J
-after applying Linear and Stage 2 to the captured input.
+anchors. Its maximum is the neutral lightness of the selected peak. Input
+Lightness and Output Lightness have a one-unit grid, and the SDR/HDR bars split
+at Input Lightness = 1. Exposure runs along the bottom edge, Fit along the
+right edge, and Peak sits on the title row. The histogram bins alpha-weighted
+output lightness after applying Linear and Stage 2 to the captured input.
+Selecting a peak, including the current selection, moves Highlights to that
+value. White stays fixed, with Highlights clamped to at least 0.001 normalized
+lightness above it.
 
 Press **R** during a drag to reset the held control and continue from its
 reset value. Tone anchors reset to their current output targets within their
@@ -74,25 +78,26 @@ It uses the same Compositor input or Shader viewport context as the other
 Gizmo scopes. The plot is unavailable while **Use Bake** is active because
 the Grade is displaying a baked RGB texture.
 
-The vertical axis uses normalized J ticks, with
-\(J_\mathrm{HK}/100=1\) at 80% of the height and the neutral 4,000-nit
-reference at the top, labeled approximately 3.07. A single smooth curve
-gradually reduces the slope through the reference at 1. The readout above the plot gives the percentage
-of valid alpha weight above the 4,000-nit reference. The horizontal position is
-\(s/\sqrt{1+s^2}\), where \(s=C/|J_A|\). Tick labels show the uncompressed
-saturation from zero to infinity. Black has zero saturation.
+The vertical axis is Lightness with normalized J ticks. The selected peak
+neutral is at the top, while \(J_\mathrm{HK}/100=1\) remains at 80% of the
+height. A single smooth curve maps the full range. The horizontal axis is
+Saturation, with position \(s/\sqrt{1+s^2}\), where \(s=C/|J_A|\). Tick
+labels show the uncompressed saturation from zero to infinity. Black has zero
+saturation.
 
 Opacity shows alpha-weighted density. Each bin's tint follows its weighted
 circular mean hue, with tint strength set by how closely its hues agree.
 Near-neutral samples contribute their full density weight and less hue weight.
-Opposing hues produce a visible gray trace. During a Tone drag, **Preview**
-plots up to 4,096 deterministic samples from the current input capture.
+Opposing hues produce a visible gray trace. During Grade edits from the panel
+or Gizmo, **Preview** plots up to 4,096 deterministic samples when the current
+input capture and matching Grade parameters are ready.
 The generated Grade shader applies Warp, H–K repair, and gamut mapping before
 plotting the samples. Reduced captures include coverage-averaged pixels, so
-the preview can differ from the native result, especially at edges. If the
-current samples or Grade bank are pending, the plot shows **Updating
-appearance**. Release or cancellation requests one exact native capture for
-the settled settings. Capture failures show an error.
+the preview can differ from the native result, especially at edges. The last
+complete appearance remains visible while a Grade-only replacement is
+prepared. **Updating appearance** appears during source or frame recapture.
+The scope requests an exact native capture when the edit settles. Capture
+failures show an error.
 
 ## Linear scope latency report
 

@@ -12,8 +12,9 @@ from ...kernel.prepare import nits_to_j
 from ...kernel.settings import D65, LinearSettings
 from ...kernel.tone_ui import TONE_DEFAULTS, TONE_LEVEL_FIELDS, TONE_LIMITS, _j_to_nits
 from . import editor, geometry
-from .geometry import AXIS_LABELS, SLIDER_RANGES, curve_point, tone_anchor_levels, tone_model
-from .tone_scope import PLOT_MAX
+from .geometry import (
+    AXIS_LABELS, SLIDER_RANGES, curve_point, tone_anchor_levels, tone_model, tone_peak_j,
+)
 from .white_drag import WhiteDrag
 
 if TYPE_CHECKING:
@@ -61,12 +62,15 @@ class _Drag:
     panel_size: float | tuple | None = None
 
 
-def _tone_hit(rect, point, model, selected, scale):
+def _tone_hit(rect, point, model, selected, scale, peak_j):
     sources, targets = tone_anchor_levels(model)
     actual = model.remap(sources * 100.) / 100.
-    choices = ((math.dist(point, curve_point(rect, source, target)), index != selected, index)
-               for index, source in enumerate(sources) if source <= PLOT_MAX
-               for target in (targets[index], actual[index]) if target <= PLOT_MAX)
+    choices = ((math.dist(point, curve_point(rect, source, target, peak_j)),
+                index != selected, index)
+               for index, source in enumerate(sources)
+               for target in ((targets[index], actual[index])
+                              if source <= peak_j and actual[index] <= peak_j
+                              else (targets[index],)))
     distance, _, index = min(choices, default=(math.inf, False, None))
     return index if distance <= 7 * scale else None
 
@@ -226,6 +230,16 @@ class Interaction:
                 return "resize_" + handle, ()
         if geometry.contains(box["header"], point):
             return "header", ()
+        if "curve" in box:
+            x, y, w, h = box["curve"]
+            # Endpoint markers straddle the plot border and the edge sliders.
+            pad = 3 * box["scale"]
+            if geometry.contains((x - pad, y - pad, w + 2 * pad, h + 2 * pad), point):
+                tone = self.callbacks.tone_settings(node)
+                index = _tone_hit(box["curve"], point, tone_model(tone),
+                                  self.editors[key].tone_anchor, box["scale"], tone_peak_j(tone))
+                if index is not None:
+                    return "curve", (TONE_LEVEL_FIELDS[index],)
         for item in SLIDER_RANGES:
             if item in box and geometry.contains(box[item], point):
                 return item, (item,)
@@ -239,12 +253,6 @@ class Interaction:
                 return "scope", ("source_x", "source_y")
         elif geometry.contains(box["peak"], point):
             return "peak", ()
-        elif geometry.contains(box["curve"], point):
-            model = tone_model(self.callbacks.tone_settings(node))
-            index = _tone_hit(box["curve"], point, model,
-                              self.editors[key].tone_anchor, box["scale"])
-            if index is not None:
-                return "curve", (TONE_LEVEL_FIELDS[index],)
         return "body", ()
 
     def _white_control(self, key, node, frame):
@@ -331,11 +339,12 @@ class Interaction:
             return geometry.drag_handle(drag.rect, drag.mode, *start,
                                         mouse[0] - last[0], mouse[1] - last[1])
         if drag.mode == "curve":
-            reference = self.callbacks.tone_settings(node).reference_nits
+            tone = self.callbacks.tone_settings(node)
+            reference = tone.reference_nits
             if dx == 0:
                 return drag.values
             delta = dx / drag.rect[2]
-            level = float(nits_to_j(drag.values[0], reference)) + delta * .1 * PLOT_MAX
+            level = float(nits_to_j(drag.values[0], reference)) + delta * .1 * tone_peak_j(tone)
             limits = TONE_LIMITS[TONE_LEVEL_FIELDS.index(drag.fields[0])]
             low, high = nits_to_j(limits, reference)
             return (_j_to_nits(float(min(high, max(low, level))), reference),)

@@ -129,7 +129,6 @@ def _close(key):
 def _readout(key, node, scene):
     return _runtime.display_state(
         key, node, frame=editor.frame_key(scene), stage=_editors[key].stage,
-        dragging=_interaction.dragging(key),
     )
 
 

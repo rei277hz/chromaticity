@@ -280,6 +280,33 @@ def scenario():
     original_appearance = state().appearance.rgba
     appearance_captures = capture_jobs.count("appearance")
     assert appearance_captures > 0
+
+    shared.pg_grade.pg_tone.input_highlights = 600.0
+    with bpy.context.temp_override(window=window, area=node_area, region=node_region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="1000") == {"FINISHED"}
+    assert shared.pg_grade.pg_tone.input_highlights == 1000.0
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.appearance_status == "current"
+        and value.appearance is not None and value.appearance.rgba is not original_appearance,
+        "Same-value peak selection did not set shared Grade Highlights",
+    )
+    previous_preview = state().appearance
+    panel_edit_started = time.monotonic()
+    shared.pg_grade.pg_tone.fit += 0.1
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.appearance_status == "preview"
+        and value.appearance is not None
+        and value.appearance.rgba is not previous_preview.rgba,
+        "Tone panel edit did not show the live appearance preview",
+    )
+    panel_preview_seconds = time.monotonic() - panel_edit_started
+    yield from wait_for(
+        lambda: appearance_current() and state().appearance.rgba is not previous_preview.rgba,
+        "Tone panel edit did not publish its exact appearance",
+    )
+    original_appearance = state().appearance.rgba
+    appearance_captures = capture_jobs.count("appearance")
+
     before = pointer.settings(shared)
     start = pointer.control_point("fit", shared)
     yield from pointer.press_at(start, "fit", shared)
@@ -329,6 +356,7 @@ def scenario():
     report["appearance_timing_seconds"] = {
         "first_preview": timings[0], "warm_preview": timings[1],
         "release_to_exact": time.monotonic() - released,
+        "panel_preview": panel_preview_seconds,
     }
     report["appearance_preview_reused_inputs_and_roles"] = True
     report["shared_tone_gizmo"] = True

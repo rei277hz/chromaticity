@@ -755,6 +755,12 @@ def _linear_owner_for_node(node):
     return node if _is_per_node_grade_node(node) else None
 
 
+def _peak_owner_for_node(node):
+    if _is_stack_node(node):
+        return _stack_active_grade(node)
+    return _linear_owner_for_node(node)
+
+
 def _scope_linear_settings(node):
     owner = _linear_owner_for_node(node)
     if owner is None:
@@ -4344,12 +4350,30 @@ def _color_changed(settings, _context):
 
 
 def _peak_changed(settings, context):
+    _select_peak(settings, settings.peak_nits, context, peak_changed=True)
+
+
+def _select_peak(settings, peak_nits, context, *, peak_changed=False):
     if settings.as_pointer() in _syncing or _frame_change_active:
-        return
-    owner = _holder(settings)
-    if owner is not None:
-        _rebase_color_authoring(owner)
+        return False
+    needs_assignment = settings.peak_nits != peak_nits
+    controls = _tone_settings(settings)
+    highlight = clamp_tone_anchor(controls, 3, float(peak_nits))
+    highlight = float(np.float32(highlight))
+    highlight_changed = settings.input_highlights != highlight
+    if not (peak_changed or needs_assignment or highlight_changed):
+        return False
+    with _suspend(settings):
+        if needs_assignment:
+            settings.peak_nits = peak_nits
+        if highlight_changed:
+            settings.input_highlights = highlight
+    if peak_changed or needs_assignment:
+        owner = _holder(settings)
+        if owner is not None:
+            _rebase_color_authoring(owner)
     _tone_changed(settings, context)
+    return True
 
 
 def _per_node_grade_changed(node):
@@ -4663,27 +4687,29 @@ def _draw_stack_settings(node, layout):
 
 
 def _draw_tone_settings(node, layout):
-    layout.context_pointer_set("pg_stack_node" if _is_stack_node(node) else "pg_node", node)
-    if _is_stack_node(node):
-        grade = _stack_active_grade(node)
-        settings = grade.pg_tone if grade is not None else None
-        enabled = grade is not None
-    elif _is_shared_grade_node(node):
-        grade = node.pg_grade
-        settings = grade.pg_tone if grade is not None else node.pg_tone
-        enabled = grade is not None
-    else:
-        settings = _tone_controls(node)
-        enabled = True
-    if settings is None:
+    is_stack = _is_stack_node(node)
+    layout.context_pointer_set("pg_stack_node" if is_stack else "pg_node", node)
+    owner = _peak_owner_for_node(node)
+    if is_stack and owner is None:
         return
+    settings = _tone_controls(owner if owner is not None else node)
     column = layout.column()
-    column.enabled = enabled
+    column.enabled = owner is not None
     column.prop(settings, "black_compression_nits", slider=True)
     for field in TONE_LEVEL_FIELDS:
         column.prop(settings, field, slider=True)
     column.prop(settings, "fit", slider=True)
-    column.prop(settings, "peak_nits")
+    peak_row = column.row()
+    peak_row.operator_context = "INVOKE_DEFAULT"
+    value = localization.tr(f"tone.peak.{settings.peak_nits}")
+    peak_operator = peak_row.operator(
+        PG_OT_gizmo_set_peak.bl_idname,
+        text=localization.tr("gizmo.peak", value=value),
+        icon="DOWNARROW_HLT",
+    )
+    if owner is not None:
+        peak_operator.node_pointer = str(node.as_pointer())
+        peak_operator.owner_pointer = str(owner.as_pointer())
     column.label(text=localization.tr("label.reference"))
     column.separator()
     for field in TONE_CHROMA_FIELDS:
@@ -5280,24 +5306,45 @@ class PG_OT_gizmo_set_peak(bpy.types.Operator):
     node_pointer: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
     owner_pointer: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
 
+    def _target(self, context):
+        try:
+            node = _output_node_from_context(context)
+            owner = _peak_owner_for_node(node)
+            if owner is None or not node.select:
+                return None
+            has_node = bool(self.node_pointer)
+            has_owner = bool(self.owner_pointer)
+            if has_node != has_owner:
+                return None
+            if has_node and (str(node.as_pointer()) != self.node_pointer
+                             or str(owner.as_pointer()) != self.owner_pointer):
+                return None
+        except ReferenceError:
+            return None
+        return node, owner
+
+    def invoke(self, context, _event):
+        if self.properties.is_property_set("peak_nits"):
+            return self.execute(context)
+        target = self._target(context)
+        if target is None:
+            return {"CANCELLED"}
+        _show_gizmo_peak_menu(context, target[0])
+        return {"FINISHED"}
+
     def execute(self, context):
-        node = _node_from_context(context)
-        owner = _linear_owner_for_node(node)
-        if (owner is None or not node.select
-                or str(node.as_pointer()) != self.node_pointer
-                or str(owner.as_pointer()) != self.owner_pointer):
+        target = self._target(context)
+        if target is None:
             return {"CANCELLED"}
-        settings = _tone_controls(owner)
-        if settings.peak_nits == self.peak_nits:
-            return {"CANCELLED"}
-        settings.peak_nits = self.peak_nits
+        _node, owner = target
+        _select_peak(_tone_controls(owner), self.peak_nits, context)
         if context.area is not None:
             context.area.tag_redraw()
         return {"FINISHED"}
 
 
 def _show_gizmo_peak_menu(context, node):
-    owner = _linear_owner_for_node(node)
+    owner = _peak_owner_for_node(node)
     if owner is None:
         return
     node_pointer = str(node.as_pointer())
@@ -5305,6 +5352,7 @@ def _show_gizmo_peak_menu(context, node):
     selected = _tone_controls(owner).peak_nits
 
     def draw(menu, _context):
+        menu.layout.operator_context = "EXEC_DEFAULT"
         for peak in TONE_PEAKS:
             value = str(peak)
             icon = "RADIOBUT_ON" if value == selected else "RADIOBUT_OFF"

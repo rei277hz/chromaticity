@@ -24,6 +24,7 @@ bpy.context.preferences.extensions.repos.new(
 extension = importlib.import_module("bl_ext.pg_vectorscope.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
 vectorscope = importlib.import_module(extension.__name__ + ".features.vectorscope.analysis")
+tone_scope = importlib.import_module(extension.__name__ + ".features.vectorscope.tone_scope")
 vectorscope_ui = importlib.import_module(extension.__name__ + ".features.vectorscope.ui")
 drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
 pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui)
@@ -445,8 +446,8 @@ def exercise_gizmo_controls():
     original_appearance = state().appearance.rgba
     adjusted = yield from pointer.drag_control("exposure", grade, (25, 0), cancel=True)
     assert adjusted.linear.exposure > baseline.linear.exposure
-    adjusted = yield from pointer.drag_control("curve", grade, (20, 0), cancel=True)
-    assert adjusted.tone.input_nits[3] > baseline.tone.input_nits[3]
+    adjusted = yield from pointer.drag_control("curve", grade, (-20, 0), cancel=True)
+    assert adjusted.tone.input_nits[3] < baseline.tone.input_nits[3]
     assert adjusted.tone.input_nits[:3] == baseline.tone.input_nits[:3]
     adjusted = yield from pointer.drag_control("fit", grade, (0, 35), cancel=True)
     assert adjusted.tone.fit > baseline.tone.fit
@@ -462,6 +463,21 @@ def exercise_gizmo_controls():
         "Peak edit did not update the Tone histogram",
     )
     assert pointer.settings(grade).tone.peak_nits == 2000
+    assert grade.input_highlights == 2000.
+    grade.input_highlights = 600.
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="2000") == {"FINISHED"}
+    assert grade.input_highlights == 2000.
+    grade.input_white = 800.
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="500") == {"FINISHED"}
+    assert grade.peak_nits == "500" and grade.input_white == 800.
+    gap = tone_scope.nits_to_j(grade.input_highlights) - tone_scope.nits_to_j(grade.input_white)
+    np.testing.assert_allclose(gap, .001, atol=1e-6)
+    grade.input_white = baseline.tone.input_nits[2]
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="2000") == {"FINISHED"}
+    assert grade.input_highlights == 2000.
     yield from wait_for(lambda: appearance_current(original_appearance),
                         "Peak edit did not update final appearance")
     tone_appearance = state().appearance.rgba
@@ -477,6 +493,7 @@ def exercise_gizmo_controls():
     grade.web_chroma_2_0 = 0.
 
     # With a non-default peak, R resets Highlights to the current output target.
+    grade.input_highlights = 1400.
     before = pointer.settings(grade)
     point = pointer.control_point("curve", grade)
     yield from pointer.press_at(point, "curve", grade)
@@ -490,7 +507,6 @@ def exercise_gizmo_controls():
                         "Highlights reset gesture did not finish", 5.)
     assert pointer.settings(grade) == reset_settings
     report["highlight_reset_to_peak"] = True
-    grade.input_highlights = before.tone.input_nits[3]
     grade.peak_nits = "1000"
 
     # Guarded black and white must be sampled at the returned endpoints.
@@ -507,8 +523,9 @@ def exercise_gizmo_controls():
     yield from wait_for(
         lambda: (value := state()) is not None and value.appearance_status == "current"
         and value.appearance is not None and value.appearance.rgba is not black_appearance
-        and value.appearance.overflow_fraction == 1.,
-        "Final appearance did not report guarded white overflow",
+        and value.appearance.peak_j == tone_scope.peak_j(pointer.settings(grade).tone)
+        and not value.appearance.rgba[..., 3].any(),
+        "Final appearance did not exclude guarded white above the selected peak",
     )
     white = appearance_samples[0]
     assert np.all(white[..., 0] > 100.)

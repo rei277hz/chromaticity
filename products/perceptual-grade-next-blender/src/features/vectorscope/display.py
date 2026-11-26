@@ -11,7 +11,7 @@ from .geometry import SLIDER_RANGES as _SLIDER_RANGES
 from .geometry import curve_point as _curve_point
 from .geometry import tone_anchor_levels as _tone_anchor_levels
 from .geometry import tone_model as _tone_model
-from .tone_scope import PLOT_MAX
+from .geometry import tone_peak_j as _tone_peak_j
 
 
 _TEXTURES = {}
@@ -27,9 +27,6 @@ _PALETTE = {
         "R": "ff3352", "C": "4bc9cc", "B": "2890ff", "Y": "f0cf5a",
     }.items()
 }
-
-_J_TICKS = tuple(range(math.floor(PLOT_MAX) + 1))
-
 
 def _shader(name):
     import gpu
@@ -260,7 +257,7 @@ def _draw_linear(box, state, key, linear):
     _slider(box["yb_balance"], "yb_balance", -linear.balance[1], scale)
 
 
-def _draw_tone_curve(rect, model, histogram, selected, scale):
+def _draw_tone_curve(rect, model, histogram, selected, scale, peak_j):
     from gpu_extras.batch import batch_for_shader
 
     x, y, width, height = rect
@@ -278,55 +275,62 @@ def _draw_tone_curve(rect, model, histogram, selected, scale):
         batch_for_shader(shader, "TRIS", {"pos": points}).draw(shader)
 
     grid = []
-    for tick in _J_TICKS:
-        px, py = _curve_point(rect, tick, tick)
+    last_x_label = -math.inf
+    last_y_label = -math.inf
+    for tick in range(math.ceil(peak_j)):
+        px, py = _curve_point(rect, tick, tick, peak_j)
         grid.extend(((px, y), (px, y + height), (x, py), (x + width, py)))
-        _text(str(tick), px, y - 12 * scale, 8 * scale,
-              _PALETTE["muted"], 14 * scale, align=.5)
-        _text(str(tick), x - 4 * scale, py - 3 * scale, 8 * scale,
-              _PALETTE["muted"], 14 * scale, align=1.)
-    _lines(grid, _PALETTE["grid"], scale, cache=("curve grid", rect))
+        if px - last_x_label >= 23 * scale and x + width - px >= 23 * scale:
+            _text(str(tick), px, y - 12 * scale, 8 * scale,
+                  _PALETTE["muted"], 14 * scale, align=.5)
+            last_x_label = px
+        if py - last_y_label >= 10 * scale and y + height - py >= 10 * scale:
+            _text(str(tick), x - 4 * scale, py - 3 * scale, 8 * scale,
+                  _PALETTE["muted"], 14 * scale, align=1.)
+            last_y_label = py
+    _lines(grid, _PALETTE["grid"], scale, cache=("curve grid", rect, peak_j))
     right, top = x + width, y + height
+    peak_label = f"{peak_j:.2f}"
+    _text(peak_label, right, y - 12 * scale, 8 * scale, _PALETTE["muted"], 24 * scale, align=1.)
+    _text(peak_label, x - 4 * scale, top - 3 * scale, 8 * scale, _PALETTE["muted"], 24 * scale, align=1.)
     _lines(((x, top), (right, top)), _PALETTE["outline"], scale,
            cache=("curve top", rect))
     identity = []
     for index in range(0, 36, 2):
         for tick in (index, index + 1):
-            level = PLOT_MAX * tick / 36
-            identity.append(_curve_point(rect, level, level))
+            level = peak_j * tick / 36
+            identity.append(_curve_point(rect, level, level, peak_j))
     _lines(identity, _PALETTE["reference"], scale, cache=("curve identity", rect))
-    source = np.linspace(0., PLOT_MAX, 192)
+    source = np.linspace(0., peak_j, 192)
     target = model.remap(source * 100.) / 100.
-    visible = target <= PLOT_MAX
-    curve = [_curve_point(rect, a, b) for a, b in zip(source[visible], target[visible])]
+    visible = target <= peak_j
+    curve = [_curve_point(rect, a, b, peak_j) for a, b in zip(source[visible], target[visible])]
     if curve and not visible.all():
-        position = float(np.interp(PLOT_MAX, target, source))
-        curve.append(_curve_point(rect, position, PLOT_MAX))
+        position = float(np.interp(peak_j, target, source))
+        curve.append(_curve_point(rect, position, peak_j, peak_j))
     if len(curve) > 1:
         _lines([point for segment in zip(curve, curve[1:]) for point in segment],
                _PALETTE["orange"], 1.6 * scale)
     sources, targets = _tone_anchor_levels(model)
     actual = model.remap(sources * 100.) / 100.
     for index, source_j in enumerate(sources):
-        if source_j > PLOT_MAX:
-            continue
         color = _PALETTE["orange" if index == selected else "reference"]
-        _circle(_curve_point(rect, source_j, targets[index]), 3 * scale, color, scale)
-        if actual[index] <= PLOT_MAX:
-            _circle(_curve_point(rect, source_j, actual[index]), 1.5 * scale, color, 2 * scale)
-    sdr_width = width / PLOT_MAX
+        _circle(_curve_point(rect, source_j, targets[index], peak_j), 3 * scale, color, scale)
+        if source_j <= peak_j and actual[index] <= peak_j:
+            _circle(_curve_point(rect, source_j, actual[index], peak_j), 1.5 * scale, color, 2 * scale)
+    sdr_width = width / peak_j
     _fill((x, top + 4 * scale, sdr_width, 3 * scale), _PALETTE["reference"])
     _fill((x + sdr_width, top + 4 * scale, width - sdr_width, 3 * scale), _PALETTE["hdr"])
     _text("SDR", x, top + 12 * scale, 7 * scale, _PALETTE["muted"], sdr_width)
     _text("HDR", x + sdr_width + 3 * scale, top + 12 * scale,
           7 * scale, _PALETTE["muted"], width - sdr_width - 3 * scale)
-    _text(localization.tr("gizmo.output_j"), x, top + 21 * scale,
+    _text(localization.tr("gizmo.output_lightness"), x, top + 21 * scale,
           8 * scale, _PALETTE["muted"], width)
-    _text(localization.tr("gizmo.input_j"), x + width * .5, y - 24 * scale,
+    _text(localization.tr("gizmo.input_lightness"), x + width * .5, y - 24 * scale,
           8 * scale, _PALETTE["muted"], width, align=.5)
 
 
-def _draw_appearance(box, state, key):
+def _draw_appearance(box, state, key, peak_j):
     rect, scale = box["appearance"], box["scale"]
     x, y, width, height = rect
     top, right = y + height, x + width
@@ -347,13 +351,15 @@ def _draw_appearance(box, state, key):
             _text(label, px, y - 11 * scale, 8 * scale, _PALETTE["muted"],
                   20 * scale, align=alignment)
     lightness_ticks = tuple(
-        (tick, y + appearance_scope.lightness_position(tick * appearance_scope.LIGHTNESS_KNEE) * height)
-        for tick in _J_TICKS
+        (tick, y + appearance_scope.lightness_position(
+            tick * appearance_scope.LIGHTNESS_KNEE, peak_j) * height)
+        for tick in range(math.ceil(peak_j))
     )
     for tick, py in lightness_ticks[2:]:
         guide.extend(((x, py), (right, py)))
-    _lines(guide, _PALETTE["grid"], scale, cache=("appearance grid", rect))
+    _lines(guide, _PALETTE["grid"], scale, cache=("appearance grid", rect, peak_j))
     if appearance is not None:
+        appearance = appearance_scope.rescale(appearance, peak_j)
         _draw_trace(rect, appearance.rgba, (key, "appearance"), additive=False)
 
     knee = lightness_ticks[1][1]
@@ -368,30 +374,26 @@ def _draw_appearance(box, state, key):
     last_label = y
     for tick, py in lightness_ticks:
         _lines(((x - 2 * scale, py), (x, py)), _PALETTE["outline"], scale)
-        if tick <= 1 or (py - last_label >= 9 * scale and top - py >= 8 * scale):
+        if (tick <= 1 or (py - last_label >= 9 * scale and top - py >= 8 * scale
+                          and peak_j - tick >= .25)):
             _text(str(tick), x - 4 * scale, py - 3 * scale, 8 * scale,
                   _PALETTE["orange" if tick == 1 else "muted"], 20 * scale, align=1.)
             last_label = py
-    _text(f"{appearance_scope.LIGHTNESS_MAX / appearance_scope.LIGHTNESS_KNEE:.2f}",
+    _text(f"{peak_j:.2f}",
           x - 4 * scale, top + 1 * scale,
           8 * scale, _PALETTE["muted"], 22 * scale, align=1.)
-    _text("J_HK", left, top + 13 * scale, 8 * scale, _PALETTE["muted"], 28 * scale)
-    _text("s" if compact else localization.tr("scope.appearance.axis_saturation"),
-          x - 11 * scale if compact else x + width * .5,
-          y - (11 if compact else 22) * scale, 8 * scale, _PALETTE["muted"],
+    _text(localization.tr("scope.appearance.axis_lightness"),
+          left, top + 13 * scale, 8 * scale, _PALETTE["muted"], 58 * scale)
+    _text(localization.tr("scope.appearance.axis_saturation"),
+          x + width * .5, y - 22 * scale, 8 * scale, _PALETTE["muted"],
           width, align=.5)
     title_y = box["curve_title"][1] + 8 * scale
     _text(localization.tr("scope.appearance.title"), left, title_y, 9 * scale,
           _PALETTE["text"], column_width)
-    if appearance is not None:
-        _text(localization.tr("scope.appearance.overflow", fraction=appearance.overflow_fraction),
-              left + column_width, top + 13 * scale, 8 * scale,
-              _PALETTE["orange" if appearance.overflow_fraction else "muted"],
-              column_width, align=1.)
     if status == "preview":
         _text(localization.tr("scope.appearance.preview"), right - 4 * scale,
               y + 4 * scale, 8 * scale, _PALETTE["text"], width - 8 * scale, align=1.)
-    elif status != "current":
+    elif status in {"updating", "bake", "unavailable", "error"}:
         status_id = status if status in {"bake", "unavailable"} else (
             "unavailable" if status == "error" else "updating")
         _text(localization.tr("scope.appearance." + status_id), x + width * .5,
@@ -407,9 +409,10 @@ def _draw_appearance(box, state, key):
 def _draw_tone(box, state, key, linear, tone, selected):
     scale = box["scale"]
     model = _tone_model(tone)
+    peak_j = _tone_peak_j(tone)
     histogram = None if state is None else state.tone_histogram
-    _draw_appearance(box, state, key)
-    _draw_tone_curve(box["curve"], model, histogram, selected, scale)
+    _draw_appearance(box, state, key, peak_j)
+    _draw_tone_curve(box["curve"], model, histogram, selected, scale, peak_j)
     _slider(box["exposure"], "exposure", linear.exposure, scale, track=box["exposure_track"])
     _slider(box["fit"], "fit", tone.fit, scale, vertical=True, track=box["fit_track"])
     tx, ty, tw, _ = box["curve_title"]
@@ -477,6 +480,7 @@ def reset():
     _TEXTURES.clear()
     _BATCHES.clear()
     _tone_model.cache_clear()
+    appearance_scope.rescale.cache_clear()
 
 
 def close():

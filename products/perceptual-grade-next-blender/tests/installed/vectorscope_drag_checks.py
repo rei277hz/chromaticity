@@ -293,8 +293,12 @@ class ScopePointer:
             x, y, width, height = box["resize_grips"][control.removeprefix("resize_")]
             return x + width / 2, y + height / 2
         if control == "curve":
-            tone = geometry.tone_model(self.settings(node).tone)
-            return geometry.curve_point(box["curve"], tone.source[-1], tone.target[-1])
+            settings = self.settings(node).tone
+            tone = geometry.tone_model(settings)
+            return geometry.curve_point(
+                box["curve"], tone.source[-1], tone.target[-1],
+                geometry.tone_peak_j(settings),
+            )
         x, y, width, height = box[control]
         return x + width / 2, y + height / 2
 

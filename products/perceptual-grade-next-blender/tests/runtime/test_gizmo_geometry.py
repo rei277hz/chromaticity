@@ -76,6 +76,15 @@ class GizmoGeometryTests(unittest.TestCase):
                 self.assertLessEqual(peak[0] + peak[2],
                                      box["rect"][0] + box["rect"][2] - 12 * scale)
 
+    def test_tone_curve_uses_selected_peak_as_both_axis_maxima(self):
+        rect = (10., 20., 400., 240.)
+        for peak in (500., 1000., 2000., 4000.):
+            with self.subTest(peak=peak):
+                tone = self.settings.ToneSettings(peak_nits=peak)
+                maximum = self.geometry.tone_peak_j(tone)
+                point = self.geometry.curve_point(rect, maximum, maximum, maximum)
+                self.assertEqual(point, (410., 260.))
+
     def test_moved_panel_obeys_region_bounds_and_dpi(self):
         normal = self.geometry.layout("LINEAR", 900, 660, 1.0, (40, 50))
         scaled = self.geometry.layout("LINEAR", 1800, 1320, 2.0, (40, 50))

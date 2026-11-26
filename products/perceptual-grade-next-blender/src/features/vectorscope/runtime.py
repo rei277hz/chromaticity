@@ -51,9 +51,10 @@ class _Payload:
 @dataclass(frozen=True)
 class _AppearancePayload:
     route: object
+    peak_j: float
 
     def analyze(self, rgba):
-        return appearance_scope.analyze(rgba)
+        return appearance_scope.analyze(rgba, self.peak_j)
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,12 @@ class _Editor:
     binding: tuple
     frame: tuple
     stage: str
-    dragging: bool
+
+
+@dataclass(frozen=True)
+class _AppearanceObservation:
+    grade_signature: str
+    changed_at: float
 
 
 @dataclass(frozen=True)
@@ -136,7 +142,8 @@ class ScopeRuntime:
 
     def __init__(self, snapshot_scope, linear_settings, working_space, *, create_job,
                  gate=None, upstream_ready=None, grade_signature=None,
-                 preview_roles=None, preview_backend=None):
+                 preview_roles=None, preview_backend=None,
+                 appearance_settle_seconds=0.15, clock=time.monotonic):
         self.snapshot_scope = snapshot_scope
         self.create_job = create_job
         self.linear_settings = linear_settings
@@ -146,6 +153,8 @@ class ScopeRuntime:
         self.grade_signature = grade_signature
         self.preview_roles = preview_roles
         self.preview_backend = preview_backend
+        self.appearance_settle_seconds = max(0., float(appearance_settle_seconds))
+        self.clock = clock
         self.preview_unavailable = None
         self.scope_states = {}
         self.scheduler = policy.SchedulerState()
@@ -155,6 +164,8 @@ class ScopeRuntime:
         self.queue_tokens = count(1)
         self.payloads = {}
         self.displays = {}
+        self.preview_displays = {}
+        self.appearance_observations = {}
         self.samples = OrderedDict()
         self.sample_bytes = 0
         self.active = None
@@ -246,6 +257,8 @@ class ScopeRuntime:
     def _apply(self, key, effects, event, *, samples=None, trace=None, capture=None):
         if effects.clear:
             self.displays.pop(key, None)
+        if effects.clear_preview:
+            self.preview_displays.pop(key, None)
         if effects.remove_queue:
             self._remove_queued(key, event.ticket_generation)
         if effects.enqueue:
@@ -255,7 +268,7 @@ class ScopeRuntime:
         if effects.retain_samples and capture is not None:
             self._remember_samples(capture.capture_signature, samples)
         if effects.publish_preview:
-            self.displays[key] = trace
+            self.preview_displays[key] = trace
         if effects.publish:
             started = self._clock()
             self.displays[key] = trace
@@ -363,7 +376,7 @@ class ScopeRuntime:
         if self._shutting_down:
             return None
         key = self._key(key)
-        editor = _Editor(self._target(node), frame, stage, dragging)
+        editor = _Editor(self._target(node), frame, stage)
         with self._observations:
             previous = self.editors.get(key)
         if previous is not None and (previous.binding != editor.binding
@@ -385,38 +398,78 @@ class ScopeRuntime:
             self._unavailable(key, error, input_revision)
             if appearance_enabled:
                 self._unavailable(appearance, error, appearance_revision)
-            return self.display_state(key, node, frame=frame, stage=stage, dragging=dragging)
-        self._observe(key, context, node, viewport, tone)
+            return self.display_state(key, node, frame=frame, stage=stage)
+        source = self._observe(key, context, node, viewport, tone)
 
         if not appearance_enabled:
             appearance_state = self._scope_state(appearance)
             if (appearance_state.desired_generation is not None
                     or appearance_state.preview_status != "none"):
                 self._release(appearance)
-        elif dragging:
-            if self._scope_state(appearance).desired_generation is not None:
-                self._withdraw_capture(appearance)
-            self._observe_appearance_preview(key, node)
+        elif source is not None:
+            try:
+                self._observe_appearance(key, node, tone, source, dragging)
+            except Exception as error:
+                self._unavailable(appearance, error, appearance_revision)
         else:
-            self._observe(appearance, context, node, viewport, None)
-            if (policy.status(self._scope_state(appearance), self._revision(appearance), True).status == "current"
-                    and self.preview_roles is not None):
-                self._warm_preview()
-        return self.display_state(key, node, frame=frame, stage=stage, dragging=dragging)
+            input_state = self._scope_state(key)
+            if input_state.failure_error is not None:
+                self._unavailable(appearance, input_state.failure_error, appearance_revision)
+        return self.display_state(key, node, frame=frame, stage=stage)
 
-    def _observe_appearance_preview(self, editor, node):
+    def _observe_appearance(self, editor, node, tone, source, dragging):
         key = _AppearanceKey(editor)
-        inputs = self._preview_inputs(editor, node)
-        if inputs is None or self.preview_roles is None or self.grade_signature is None:
-            self._dispatch(key, policy.Event("preview_withdraw"))
-            return
-        demand, samples = inputs
-        signature = self.grade_signature(node)
-        roles = None if signature is None else self.preview_roles(node, signature)
-        if roles is None:
-            self._dispatch(key, policy.Event("preview_withdraw"))
-            return
+        route, upstream = source
+        input_signature = self.demands[editor].capture_signature
+        signature = None if self.grade_signature is None else self.grade_signature(node)
+        if signature is None:
+            raise RuntimeError("Could not read evaluated Grade settings")
         revision = self._revision(key)
+        observation = self.appearance_observations.get(editor)
+        if observation is None or observation.grade_signature != signature:
+            observation = _AppearanceObservation(signature, self.clock())
+            self.appearance_observations[editor] = observation
+            self._dispatch(key, policy.Event("preview_withdraw"))
+        state = self._scope_state(key)
+        capture_signature = self._digest((input_signature, "appearance", signature))
+        same_capture = state.capture_signature == capture_signature
+        if same_capture and policy.status(state, revision, True).status == "current":
+            if self.preview_roles is not None and not dragging:
+                self._warm_preview()
+            return
+        peak_j = tone_scope.peak_j(tone)
+        inputs = self._preview_inputs(editor, node)
+        if inputs is not None and self.preview_roles is not None:
+            self._observe_appearance_preview(key, node, peak_j, inputs, signature, revision)
+        settled = self.clock() - observation.changed_at >= self.appearance_settle_seconds
+        source_recapture = state.source_signature != input_signature
+        grade_ready = self.upstream_ready is None or self.upstream_ready((*upstream, node))
+        ready = not dragging and grade_ready and (
+            settled or source_recapture or state.published_capture_generation is None
+        )
+        changed = not same_capture or state.revision != revision
+        if not changed and ready == (not state.waiting):
+            return
+        self.payloads[key] = payload = _AppearancePayload(
+            dict(route, scope_capture="appearance"), peak_j,
+        )
+        samples = self.samples.get(capture_signature) if changed else None
+        self._dispatch(key, policy.Event(
+            "request", capture_signature=capture_signature,
+            source_signature=input_signature, analysis_signature=capture_signature,
+            cache_available=samples is not None, ready=ready, revision=revision,
+        ), trace=None if samples is None else payload.analyze(samples))
+
+    def _observe_appearance_preview(self, key, node, peak_j, inputs, signature, revision):
+        demand, samples = inputs
+        state = self._scope_state(key)
+        if (state.preview_input_signature == demand.capture_signature
+                and state.preview_grade_signature == signature
+                and state.preview_revision == revision):
+            return
+        roles = self.preview_roles(node, signature)
+        if roles is None:
+            return
         receipt = _PreviewReceipt(key, revision, demand.capture_signature, signature)
         effects = self._dispatch(key, policy.Event(
             "preview_request", revision=revision,
@@ -425,22 +478,21 @@ class ScopeRuntime:
         ))
         if not effects.evaluate_preview:
             return
-        self._evaluate_preview(receipt, demand, samples, roles, node)
+        self._evaluate_preview(receipt, demand, samples, roles, node, peak_j)
 
-    def _evaluate_preview(self, receipt, demand, samples, roles, node):
+    def _evaluate_preview(self, receipt, demand, samples, roles, node, peak_j):
         started = self._clock()
         try:
             self._require_preview()
             pixels = self.preview_backend.evaluate(
                 samples, roles, input_receipt=demand.capture_signature,
             )
-            trace = appearance_scope.analyze(pixels)
-        except Exception as error:
+            trace = appearance_scope.analyze(pixels, peak_j)
+        except Exception:
             self._dispatch(receipt.key, policy.Event(
                 "preview_result", revision=self._revision(receipt.key),
                 preview_input_signature=receipt.input_signature,
                 preview_grade_signature=receipt.grade_signature,
-                error=str(error),
             ))
             return
         current = self._preview_inputs(receipt.key.editor, node)
@@ -479,8 +531,10 @@ class ScopeRuntime:
 
     def _preview_inputs(self, editor, node):
         payload = self.payloads.get(editor)
+        state = self._scope_state(editor)
         if (not isinstance(payload, _Payload) or payload.tone is None
-                or policy.status(self._scope_state(editor), self._revision(editor), True).status != "current"):
+                or state.desired_generation is None
+                or state.published_source_generation != state.source_generation):
             return None
         with self._observations:
             observed = self.editors.get(editor)
@@ -496,22 +550,14 @@ class ScopeRuntime:
     def _observe(self, key, context, node, viewport, tone):
         if threading.current_thread() is not self._main_thread:
             raise RuntimeError("Vectorscope observation must run on Blender's main thread")
-        appearance = isinstance(key, _AppearanceKey)
         revision = self._revision(key)
         try:
-            if appearance and getattr(node, "pg_use_bake", False):
-                self._release(key)
-                return None, "bake", None
-            if appearance and getattr(node, "mute", False):
-                raise ValueError("Final appearance requires an unmuted Grade")
             route_started = self._clock()
             dependencies = []
             upstream = []
             watch = {}
             route_options = {"dependencies": dependencies,
                              "upstream_grades": upstream, "watch": watch}
-            if appearance:
-                route_options["scope_capture"] = "appearance"
             route = routes.describe_vectorscope(node, context, viewport, **route_options)
             selection = self._selection(node), self._target(node)
             pointers = frozenset(
@@ -560,19 +606,10 @@ class ScopeRuntime:
                 self.watches[key] = scope_watch
             source_signature = self._digest((selection, route["source_signature"]))
             capture_identity = (route["capture_signature"], selection, epoch)
-            if appearance:
-                signature = None if self.grade_signature is None else self.grade_signature(node)
-                if signature is None:
-                    raise RuntimeError("Could not read evaluated Grade settings")
-                if all(item.as_pointer() != node.as_pointer() for item in upstream):
-                    upstream.append(node)
-                capture_signature = self._digest((*capture_identity, "appearance", signature))
-                analysis_signature = capture_signature
-            else:
-                linear = self.linear_settings(node)
-                space = self.working_space()
-                capture_signature = self._digest(capture_identity)
-                analysis_signature = self._analysis_signature(capture_signature, linear, space, tone)
+            linear = self.linear_settings(node)
+            space = self.working_space()
+            capture_signature = self._digest(capture_identity)
+            analysis_signature = self._analysis_signature(capture_signature, linear, space, tone)
             route_finished = self._clock()
             previous = self.demands.get(key)
             changed = (previous is None or previous.capture_signature != capture_signature
@@ -582,8 +619,7 @@ class ScopeRuntime:
             ready = self.upstream_ready is None or self.upstream_ready(tuple(upstream))
             if changed:
                 capture_started = self._clock()
-                payload = (_AppearancePayload(route) if appearance else _Payload(
-                    route, prepare_linear(linear, space), epoch, tone))
+                payload = _Payload(route, prepare_linear(linear, space), epoch, tone)
                 capture_finished = self._clock()
                 samples = self.samples.get(capture_signature)
                 lookup_finished = self._clock()
@@ -609,6 +645,7 @@ class ScopeRuntime:
                     source_signature=source_signature, analysis_signature=analysis_signature,
                     ready=ready, revision=revision,
                 ))
+            return route, upstream
         except Exception as error:
             self._unavailable(key, error, revision)
 
@@ -659,7 +696,7 @@ class ScopeRuntime:
     def _analysis_signature(self, capture_signature, linear, space, tone):
         return self._digest((capture_signature, linear, space, tone))
 
-    def display_state(self, key, node, *, frame, stage, dragging):
+    def display_state(self, key, node, *, frame, stage):
         """Read display receipts against live context without resolving a route."""
         key = self._key(key)
         appearance = _AppearanceKey(key)
@@ -667,27 +704,32 @@ class ScopeRuntime:
             editor = self.editors.get(key)
             revision = self.revisions.get(key, 0)
             appearance_revision = self.revisions.get(appearance, 0)
+            source_epoch = self.source_epochs.get(key)
         plot = self.displays.get(key)
         payload = self.payloads.get(key)
         space_matches = (not isinstance(payload, _Payload)
                          or payload.space == self.working_space())
+        epoch_matches = not isinstance(payload, _Payload) or payload.source_epoch == source_epoch
         tone = stage == "TONE"
         readout = policy.project(
             self._scope_state(key), self._scope_state(appearance),
             editor is not None and editor.binding == self._target(node)
             and editor.stage == stage and editor.frame[0] == frame[0],
-            editor is not None and frame == editor.frame and space_matches,
+            editor is not None and frame == editor.frame and space_matches and epoch_matches,
             tone, plot is not None and (plot.ndim == 1) == tone,
             revision, appearance_revision,
-            editor is not None and dragging == editor.dragging,
-            dragging, getattr(node, "mute", False), getattr(node, "pg_use_bake", False),
+            getattr(node, "mute", False), getattr(node, "pg_use_bake", False),
         )
         if not readout.visible:
             return None
         plot = plot if readout.input_show_plot else None
         if readout.appearance_status == "none":
             return DisplayState(plot, readout.input_status, readout.input_error)
-        trace = self.displays.get(appearance) if readout.appearance_show_plot else None
+        trace = None
+        if readout.appearance_show_plot:
+            captures = (self.displays if readout.appearance_status == "current"
+                        else self.preview_displays)
+            trace = captures.get(appearance, self.displays.get(appearance))
         return DisplayState(None, readout.input_status, readout.input_error, plot, trace,
                             readout.appearance_status, readout.appearance_error)
 
@@ -888,10 +930,8 @@ class ScopeRuntime:
             for key, editor in self.editors.items():
                 if editor.frame[0] != scene_pointer:
                     continue
-                self.revisions[key] = self.revisions.get(key, 0) + 1
-                appearance = _AppearanceKey(key)
-                if editor.stage == "TONE":
-                    self.revisions[appearance] = self.revisions.get(appearance, 0) + 1
+                self.source_epochs[key] = next(self.epoch)
+                self._mark_source_changed(key)
                 affected.append(_editor_key(key))
         return tuple(dict.fromkeys(affected))
 
@@ -961,11 +1001,9 @@ class ScopeRuntime:
         self._release(_AppearanceKey(editor))
 
     def _release(self, key):
+        if isinstance(key, _AppearanceKey):
+            self.appearance_observations.pop(key.editor, None)
         self._forget_observation(key, release_binding=True)
-        self._dispatch(key, policy.Event("release"))
-
-    def _withdraw_capture(self, key):
-        self._forget_observation(key)
         self._dispatch(key, policy.Event("release"))
 
     def reset(self):
@@ -973,6 +1011,7 @@ class ScopeRuntime:
             self._dispatch(key, policy.Event("reset"))
         self.payloads.clear()
         self.samples.clear()
+        self.appearance_observations.clear()
         self.sample_bytes = 0
         if self.preview_backend is not None:
             self.preview_backend.close()
@@ -1009,6 +1048,7 @@ class ScopeRuntime:
         self.scope_states.clear()
         self.payloads.clear()
         self.displays.clear()
+        self.preview_displays.clear()
 
 
 __all__ = ("ScopeRuntime",)
