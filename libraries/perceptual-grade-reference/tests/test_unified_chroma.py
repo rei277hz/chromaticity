@@ -18,6 +18,15 @@ class UnifiedChromaTests(unittest.TestCase):
             np.testing.assert_array_equal(actual, points)
             self.assertTrue(np.signbit(actual[0, 1]))
 
+    def test_chroma_gain_limits(self):
+        for field in ('muted_gain', 'vivid_gain', 'shadow_chroma', 'highlight_chroma'):
+            for value in (-4., 4.):
+                with self.subTest(field=field, value=value):
+                    self.assertEqual(getattr(UnifiedChromaSettings(**{field: value}), field), value)
+            for value in (-4.01, 4.01):
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, field):
+                    UnifiedChromaSettings(**{field: value})
+
     def test_both_directions_at_all_fits_and_peaks(self):
         points = np.array([
             [0., 0., 0.], [-90., 0., 0.], [67., 0., 0.], [0., 12., -16.],
@@ -26,8 +35,8 @@ class UnifiedChromaTests(unittest.TestCase):
         ]).reshape(2, 5, 3)
         settings = UnifiedChromaSettings(
             input_nits=(2.4, 42., 225., 1600.), black_compression_nits=1.7,
-            muted_gain=-2., vivid_gain=2., saturation_crossover=.22,
-            shadow_chroma=1.5, highlight_chroma=-1.3, tone_crossover=35.,
+            muted_gain=-4., vivid_gain=4., saturation_crossover=.22,
+            shadow_chroma=-4., highlight_chroma=4., tone_crossover=35.,
         )
         for peak in (500, 1000, 2000, 4000):
             for fit in range(-2, 3):
@@ -73,7 +82,7 @@ class UnifiedChromaTests(unittest.TestCase):
     def test_raw_saturation_crossover_across_signed_ramps(self):
         radius = np.array([0., .01, 1., 45., 50., 100., 200.])
         for crossover in (0., .45, .5, 1.):
-            for muted, vivid in ((-2., 2.), (2., -2.)):
+            for muted, vivid in ((-4., 4.), (4., -4.)):
                 stage = UnifiedChroma(UnifiedChromaSettings(
                     muted_gain=muted, vivid_gain=vivid, saturation_crossover=crossover,
                 ))

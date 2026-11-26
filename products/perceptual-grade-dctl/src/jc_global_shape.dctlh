@@ -175,11 +175,12 @@ __DEVICE__ int pg_jc_global_chroma_valid(PGFour saturation, float shadow, float 
                                         int mode) {
     if (mode != PG_JC_CHROMA_LINEAR_GAIN && mode != PG_JC_CHROMA_LOG_GAIN && mode != PG_JC_CHROMA_UNIFIED)
         return 0;
+    float tonalLimit = mode == PG_JC_CHROMA_UNIFIED ? 4.0f : 2.0f;
     int validCurve = mode == PG_JC_CHROMA_UNIFIED
         ? saturation.s == 0.0f && saturation.m >= 0.0f && saturation.m <= 1.0f &&
-          _fabs(saturation.w) <= 2.0f && _fabs(saturation.h) <= 2.0f
+          _fabs(saturation.w) <= tonalLimit && _fabs(saturation.h) <= tonalLimit
         : pg_jc_global_curve_valid(saturation, 0.05f, 0.95f);
-    return validCurve && _fabs(shadow) <= 2.0f && _fabs(highlight) <= 2.0f &&
+    return validCurve && _fabs(shadow) <= tonalLimit && _fabs(highlight) <= tonalLimit &&
            crossover >= 10.0f && crossover <= 160.0f;
 }
 

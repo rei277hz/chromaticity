@@ -149,12 +149,15 @@ class InterfaceTests(unittest.TestCase):
         stage = "jc_tone_fit_unified_chroma"
         self.assertEqual({path.name for path in oracle.TONE_FIT_UNIFIED_CHROMA_DIR.iterdir()},
                          {filename(stage, locale) for locale in LOCALES})
-        limits = {"cMutedGain": (0., -2., 2.), "cVividGain": (0., -2., 2.),
-                  "cSaturationCrossover": (.45, 0., 1.)}
+        stops = (0., -4., 4.)
+        limits = {"cMutedGain": stops, "cVividGain": stops,
+                  "cSaturationCrossover": (.45, 0., 1.),
+                  "shadowChroma": stops, "highlightChroma": stops}
         for locale in LOCALES:
             with self.subTest(locale=locale):
                 baseline = controls(oracle.source("jc_tone_fit_linear_gain", locale))
-                removed = {"cContrast", "cPivot", "cMuted", "cVivid", "hkInfluence", "remapFit"}
+                removed = {"cContrast", "cPivot", "cMuted", "cVivid", "hkInfluence", "remapFit",
+                           "shadowChroma", "highlightChroma"}
                 shared = [item for item in baseline if item["name"] not in removed]
                 self.assertEqual(next(item for item in baseline if item["name"] == "remapFit")["max"], 6.)
                 records = controls(oracle.source(stage, locale))

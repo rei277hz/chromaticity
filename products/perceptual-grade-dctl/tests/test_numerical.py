@@ -281,7 +281,7 @@ class NumericalTests(unittest.TestCase):
         height = np.array([75., -42., 130., -600.])
         radius = abs(height) * [.4, 1., 2., 4.]
         wire = cone.pack(height, -.6 * radius, .8 * radius).astype("f4")
-        for muted, vivid in ((-2., 2.), (2., -2.), (.75, .75)):
+        for muted, vivid in ((-4., 4.), (4., -4.), (.75, .75)):
             settings = dict(cMutedGain=muted, cVividGain=vivid)
             sweep = np.stack([self.compare(stage, wire, dict(settings, cSaturationCrossover=p))
                               for p in np.linspace(0., 1., 21)])
@@ -320,9 +320,27 @@ class NumericalTests(unittest.TestCase):
                                    .5 * cone.enter(chromatic).q[:, 1:], rtol=3.e-4, atol=.0003)
         self.assert_stage_close(self.compare(stage, forward, dict(active, direction=1)), chromatic)
 
-        for name, value in (("cMutedGain", 2.01), ("cVividGain", -2.01),
-                            ("cSaturationCrossover", -.01), ("cSaturationCrossover", 1.01)):
+        for value in (-4.01, 4.01):
+            for name in ("cMutedGain", "cVividGain", "shadowChroma", "highlightChroma"):
+                with self.subTest(control=name, value=value):
+                    np.testing.assert_array_equal(oracle.run(stage, axis[:1], {name: value}),
+                                                  [[400., 0., 400.]])
+        for value in (-.01, 1.01):
+            name = "cSaturationCrossover"
             np.testing.assert_array_equal(oracle.run(stage, axis[:1], {name: value}), [[400., 0., 400.]])
+
+    def test_unified_chroma_round_trips_combined_gain_limits(self):
+        stage = "jc_tone_fit_unified_chroma"
+        wire = cone.pack([8., -24., 45., -115., 160.],
+                         [1.5, -8., 21., -38., 80.], [2., 3., -4., 25., -60.]).astype("f4")
+        for stops in (-4., 4.):
+            with self.subTest(stops=stops):
+                forward = dict(cMutedGain=stops, cVividGain=-stops, shadowChroma=stops,
+                               highlightChroma=-stops, cSaturationCrossover=.45,
+                               blackCompression=.3, inputMidtones=45.)
+                inverse = dict(forward, direction=1)
+                self.assert_stage_close(self.compare(stage, self.compare(stage, wire, forward), inverse), wire)
+                self.assert_stage_close(self.compare(stage, self.compare(stage, wire, inverse), forward), wire)
 
     def test_input_output_keep_signed_hdr_and_use_the_physical_chart(self):
         neutral = np.array([[-2048.], [2048.]]) * reference.WHITE

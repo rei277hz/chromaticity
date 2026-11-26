@@ -26,6 +26,7 @@ _POINTER_BUTTONS = {"LEFTMOUSE", "MIDDLEMOUSE", "RIGHTMOUSE", "BUTTON4MOUSE",
                     "BUTTON5MOUSE", "BUTTON6MOUSE", "BUTTON7MOUSE", "PEN", "ERASER"}
 _POINTER_MOVES = {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
 _CROSSOVERS = {"saturation_crossover", "tone_crossover"}
+_APPEARANCE_CONTROLS = _CROSSOVERS | geometry.APPEARANCE_GAIN_FIELDS
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,8 @@ def _control_cursor(stage, mode):
             handle, "SCROLL_XY")
     if mode in {"fit", "cr_balance", "tone_crossover"} or (mode == "exposure" and stage == "LINEAR"):
         return "SCROLL_Y"
-    if mode in {"curve", "exposure", "yb_balance", "saturation_crossover"}:
+    if (mode in {"curve", "exposure", "yb_balance", "saturation_crossover"}
+            or mode in geometry.APPEARANCE_GAIN_FIELDS):
         return "SCROLL_X"
     return None
 
@@ -110,24 +112,25 @@ class Interaction:
         self.observe = observe
         self.drags = {}
         self.hover_cursors = {}
-        self.crossover_hover = {}
+        self.appearance_hover = {}
         self.outside_buttons = {}
 
     def dragging(self, key):
         drag = self.drags.get(key[0])
         return drag is not None and drag.key == key and drag.token is not None
 
-    def active_crossover(self, key, box, tone):
+    def active_appearance_control(self, key, box, tone):
         drag = self.drags.get(key[0])
         if drag is not None:
-            return drag.mode if drag.key == key and drag.mode in _CROSSOVERS else None
-        hover = self.crossover_hover.get(key[0])
+            return (drag.mode if drag.key == key
+                    and drag.mode in _APPEARANCE_CONTROLS else None)
+        hover = self.appearance_hover.get(key[0])
         if hover is None:
             return None
         area, point = hover
         try:
             if area.as_pointer() == key[1]:
-                return geometry.appearance_crossover_at(
+                return geometry.appearance_control_at(
                     box["appearance"], tone, point, box["scale"],
                 )
         except (AttributeError, ReferenceError, RuntimeError):
@@ -139,21 +142,21 @@ class Interaction:
         if drag is not None and drag.key == key:
             self._cancel_drag(key[0])
         self._restore_hover_cursor(key[0])
-        self._set_crossover_hover(key[0])
+        self._set_appearance_hover(key[0])
 
     def reconcile_windows(self, windows):
         for window_key in self.outside_buttons.keys() - windows:
             del self.outside_buttons[window_key]
-        for window_key in self.crossover_hover.keys() - windows:
-            del self.crossover_hover[window_key]
+        for window_key in self.appearance_hover.keys() - windows:
+            del self.appearance_hover[window_key]
 
     def reset(self):
         for window_key in tuple(self.drags):
             self._cancel_drag(window_key)
         for window_key in tuple(self.hover_cursors):
             self._restore_hover_cursor(window_key)
-        for window_key in tuple(self.crossover_hover):
-            self._set_crossover_hover(window_key)
+        for window_key in tuple(self.appearance_hover):
+            self._set_appearance_hover(window_key)
         self.outside_buttons.clear()
 
     def reconcile(self, key, window, node):
@@ -187,15 +190,15 @@ class Interaction:
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             pass
 
-    def _set_crossover_hover(self, window_key, area=None, point=None):
+    def _set_appearance_hover(self, window_key, area=None, point=None):
         current = None if area is None else (area, point)
-        previous = self.crossover_hover.get(window_key)
+        previous = self.appearance_hover.get(window_key)
         if previous == current:
             return
         if current is None:
-            self.crossover_hover.pop(window_key, None)
+            self.appearance_hover.pop(window_key, None)
         else:
-            self.crossover_hover[window_key] = current
+            self.appearance_hover[window_key] = current
         previous_area = None if previous is None else previous[0]
         if previous_area is not None and previous_area != area:
             try:
@@ -210,7 +213,7 @@ class Interaction:
         if drag is None:
             return
         self._restore_hover_cursor(window_key)
-        self._set_crossover_hover(window_key)
+        self._set_appearance_hover(window_key)
         manager = bpy.context.window_manager
         window = None if manager is None else next(
             (item for item in manager.windows if item.as_pointer() == window_key), None)
@@ -255,7 +258,7 @@ class Interaction:
             tone = self.callbacks.tone_settings(node)
             return ((tone.fit,) if mode == "fit"
                     else (tone.input_nits[TONE_LEVEL_FIELDS.index(fields[0])],))
-        if mode in _CROSSOVERS:
+        if mode in _APPEARANCE_CONTROLS:
             return (getattr(self.callbacks.tone_settings(node), mode),)
         linear = self.callbacks.linear_settings(node)
         if mode == "scope":
@@ -289,11 +292,11 @@ class Interaction:
                     return "curve", (TONE_LEVEL_FIELDS[index],)
         if "appearance" in box:
             tone = self.callbacks.tone_settings(node)
-            crossover = geometry.appearance_crossover_at(
+            appearance_control = geometry.appearance_control_at(
                 box["appearance"], tone, point, box["scale"],
             )
-            if crossover is not None:
-                return crossover, (crossover,)
+            if appearance_control is not None:
+                return appearance_control, (appearance_control,)
         for item in SLIDER_RANGES:
             if item in box and geometry.contains(box[item], point):
                 return item, (item,)
@@ -332,7 +335,7 @@ class Interaction:
             values = self._control_values(mode, node, fields) if fields else ()
         model = (tone_model(self.callbacks.tone_settings(node))
                  if mode == "tone_crossover" else None)
-        if mode in _CROSSOVERS:
+        if mode in _APPEARANCE_CONTROLS:
             rect = box["appearance"]
         else:
             rect = box["scope"] if mode in AXIS_LABELS else box.get(mode, box["rect"])
@@ -373,10 +376,10 @@ class Interaction:
             drag = self._press_control(key, node, box, point, origin, editor.frame_key(window.scene))
         self.drags[key[0]] = drag
         self._set_hover_cursor(window, _control_cursor(self.editors[key].stage, drag.mode))
-        if drag.mode in _CROSSOVERS:
-            self._set_crossover_hover(key[0], area, point)
+        if drag.mode in _APPEARANCE_CONTROLS:
+            self._set_appearance_hover(key[0], area, point)
         else:
-            self._set_crossover_hover(key[0])
+            self._set_appearance_hover(key[0])
         area.tag_redraw()
         return True
 
@@ -384,16 +387,16 @@ class Interaction:
         hit = self._plot_at(window, mouse)
         if hit is None:
             self._set_hover_cursor(window)
-            self._set_crossover_hover(window.as_pointer())
+            self._set_appearance_hover(window.as_pointer())
             return False
         key, area, region, node, box, point = hit
         with bpy.context.temp_override(window=window, area=area, region=region):
             mode, _ = self._control_at(key, node, box, point)
         self._set_hover_cursor(window, _control_cursor(self.editors[key].stage, mode))
-        if mode in _CROSSOVERS:
-            self._set_crossover_hover(key[0], area, point)
+        if mode in _APPEARANCE_CONTROLS:
+            self._set_appearance_hover(key[0], area, point)
         else:
-            self._set_crossover_hover(key[0])
+            self._set_appearance_hover(key[0])
         return True
 
     def _drag_values(self, drag, node, mouse):
@@ -417,6 +420,8 @@ class Interaction:
             limits = TONE_LIMITS[TONE_LEVEL_FIELDS.index(drag.fields[0])]
             low, high = nits_to_j(limits, reference)
             return (_j_to_nits(float(min(high, max(low, level))), reference),)
+        if drag.mode in geometry.APPEARANCE_GAIN_FIELDS:
+            return (geometry.drag_appearance_gain(drag.rect, drag.mode, drag.values[0], dx),)
         if drag.mode == "saturation_crossover":
             return (geometry.drag_saturation_crossover(drag.rect, drag.values[0], dx),)
         if drag.mode == "tone_crossover":
@@ -457,7 +462,7 @@ class Interaction:
                 index = TONE_LEVEL_FIELDS.index(drag.fields[0])
                 target = tone_anchor_levels(tone_model(tone))[1][index]
                 values = (_j_to_nits(float(target), tone.reference_nits),)
-            elif drag.mode == "fit" or drag.mode in _CROSSOVERS:
+            elif drag.mode == "fit" or drag.mode in _APPEARANCE_CONTROLS:
                 values = (TONE_DEFAULTS[drag.mode],)
             elif drag.white is not None:
                 values = D65
@@ -532,8 +537,12 @@ class Interaction:
                 preferences.position = position
                 preferences.sizes[preferences.stage] = size
                 area.tag_redraw()
-            elif drag.fields and (drag.token is not None or math.dist(mouse, drag.origin) >= 3 * drag.scale):
-                self._edit_drag(drag, node, self._drag_values(drag, node, mouse))
+            elif drag.fields:
+                distance = (abs(mouse[0] - drag.origin[0])
+                            if drag.mode in geometry.APPEARANCE_GAIN_FIELDS
+                            else math.dist(mouse, drag.origin))
+                if drag.token is not None or distance >= 3 * drag.scale:
+                    self._edit_drag(drag, node, self._drag_values(drag, node, mouse))
             if releasing and self.drags.pop(window_key, None) is drag:
                 if drag.token is not None:
                     self.callbacks.finish(window_key, drag.token, node)
@@ -552,7 +561,7 @@ class Interaction:
         if event.type == "WINDOW_DEACTIVATE":
             self._cancel_drag(window_key)
             self._restore_hover_cursor(window_key)
-            self._set_crossover_hover(window_key)
+            self._set_appearance_hover(window_key)
             self.outside_buttons.pop(window_key, None)
             return False
         if drag is not None:
@@ -578,7 +587,7 @@ class Interaction:
         elif self._hover_plot(window, mouse):
             return True
         self._restore_hover_cursor(window_key)
-        self._set_crossover_hover(window_key)
+        self._set_appearance_hover(window_key)
         if event.type in _POINTER_BUTTONS and event.value == "PRESS":
             self.outside_buttons[window_key] = event.type
         return False

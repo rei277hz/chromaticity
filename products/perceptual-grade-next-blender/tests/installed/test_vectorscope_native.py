@@ -103,6 +103,10 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("tone_crossover_reset_and_cancel"), details)
         self.assertTrue(data.get("tone_crossover_pinned_handle"), details)
         self.assertTrue(data.get("tone_crossover_autokey_undo"), details)
+        self.assertTrue(data.get("appearance_chroma_gain_drag_and_vertical_lock"), details)
+        self.assertTrue(data.get("appearance_chroma_gain_reset_and_cancel"), details)
+        for field in ("muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma"):
+            self.assertTrue(data.get(field + "_autokey_undo"), details)
         self.assertTrue(data.get("tone_gizmo_drawn"), details)
         self.assertTrue(data.get("fit_reset_before_motion"), details)
         self.assertTrue(data.get("fit_reset_continues_and_cancels"), details)
@@ -137,6 +141,8 @@ class VectorscopeNativeTests(unittest.TestCase):
         self.assertTrue(data.get("appearance_preview_reused_inputs_and_roles"), details)
         self.assertTrue(data.get("saturation_crossover_preview_and_capture"), details)
         self.assertTrue(data.get("tone_crossover_preview_and_capture"), details)
+        for field in ("muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma"):
+            self.assertTrue(data.get(field + "_preview_and_capture"), details)
         timing = data.get("appearance_timing_seconds", {})
         self.assertEqual(set(timing), {
             "first_preview", "warm_preview", "release_to_exact", "panel_preview",

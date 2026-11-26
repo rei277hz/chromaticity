@@ -3,6 +3,7 @@
 import importlib
 from importlib.resources import files
 import math
+import numpy as np
 from pathlib import Path
 import sys
 import tempfile
@@ -175,12 +176,12 @@ class GizmoGeometryTests(unittest.TestCase):
         )
         self.assertFalse(pinned)
         self.assertEqual(
-            self.geometry.appearance_crossover_at(rect, tone, marker, 1.),
+            self.geometry.appearance_control_at(rect, tone, marker, 1.),
             "tone_crossover",
         )
         saturation = self.geometry.saturation_crossover_point(rect, 0.)
         self.assertEqual(
-            self.geometry.appearance_crossover_at(
+            self.geometry.appearance_control_at(
                 rect, tone, (saturation[0], marker[1]), 1.,
             ),
             "tone_crossover",
@@ -192,11 +193,111 @@ class GizmoGeometryTests(unittest.TestCase):
         )
         other_saturation = self.geometry.saturation_crossover_point(rect, .45)
         self.assertEqual(
-            self.geometry.appearance_crossover_at(
+            self.geometry.appearance_control_at(
                 rect, other, (other_saturation[0], other_marker[1]), 1.,
             ),
             "saturation_crossover",
         )
+
+    def test_appearance_gain_hover_regions_and_horizontal_priority(self):
+        for width, height, scale in ((304, 256, 1.), (1200, 900, 1.), (1600, 1200, 2.)):
+            with self.subTest(width=width, height=height, scale=scale):
+                tone = self.settings.ToneSettings(saturation_crossover=.45,
+                                                  tone_crossover=45.)
+                rect = self.geometry.layout("TONE", width, height, scale)["appearance"]
+                x, y, plot_width, plot_height = rect
+                saturation_x, _ = self.geometry.saturation_crossover_point(
+                    rect, tone.saturation_crossover,
+                )
+                (_, tone_y), _ = self.geometry.tone_crossover_point(
+                    rect, self.geometry.tone_model(tone),
+                    self.geometry.tone_peak_j(tone), tone.tone_crossover,
+                )
+                strips = self.geometry.appearance_gain_strips(rect, tone_y, scale)
+                self.assertEqual(strips["shadow_chroma"][3], 5 * scale)
+                self.assertEqual(strips["highlight_chroma"][3], 5 * scale)
+                guide_clearance = 6 * scale
+                body_y = max(
+                    (y + plot_height * .25, y + plot_height * .75),
+                    key=lambda candidate: abs(candidate - tone_y),
+                )
+                muted = (saturation_x - guide_clearance, body_y)
+                vivid = (saturation_x + guide_clearance, body_y)
+                self.assertEqual(self.geometry.appearance_control_at(rect, tone, muted, scale),
+                                 "muted_gain")
+                self.assertEqual(self.geometry.appearance_control_at(rect, tone, vivid, scale),
+                                 "vivid_gain")
+
+                # Moving vertically through the plot body preserves the horizontal selection.
+                right_body = (vivid[0], y + plot_height - 6 * scale)
+                self.assertEqual(self.geometry.appearance_control_at(rect, tone, right_body, scale),
+                                 "vivid_gain")
+                top_strip = (vivid[0], y + plot_height - 2 * scale)
+                self.assertEqual(
+                    self.geometry.appearance_control_at(rect, tone, top_strip, scale),
+                    "highlight_chroma",
+                )
+                bottom_strip = (muted[0], y + 2 * scale)
+                self.assertEqual(
+                    self.geometry.appearance_control_at(rect, tone, bottom_strip, scale),
+                    "shadow_chroma",
+                )
+
+                self.assertEqual(
+                    self.geometry.appearance_control_at(
+                        rect, tone, (saturation_x, y + plot_height * .5), scale,
+                    ),
+                    "saturation_crossover",
+                )
+                self.assertEqual(
+                    self.geometry.appearance_control_at(rect, tone, (x + 12 * scale, tone_y), scale),
+                    "tone_crossover",
+                )
+
+    def test_appearance_gain_edge_strips_hide_when_tone_crossover_is_pinned(self):
+        defaults = self.settings.ToneSettings()
+        tone = self.settings.ToneSettings(
+            input_nits=(*defaults.input_nits[:3], 500.), peak_nits=500.,
+            tone_crossover=160.,
+        )
+        rect = self.geometry.layout("TONE", 1200, 900)["appearance"]
+        model = self.geometry.tone_model(tone)
+        peak_j = self.geometry.tone_peak_j(tone)
+        marker, pinned = self.geometry.tone_crossover_point(
+            rect, model, peak_j, tone.tone_crossover,
+        )
+        self.assertTrue(pinned)
+        strips = self.geometry.appearance_gain_strips(rect, marker[1], 1.)
+        self.assertNotIn("highlight_chroma", strips)
+        self.assertIn("shadow_chroma", strips)
+        self.assertEqual(
+            self.geometry.appearance_control_at(
+                rect, tone, (rect[0] + rect[2] * .75, rect[1] + rect[3] - 2), 1.,
+            ),
+            "tone_crossover",
+        )
+
+    def test_appearance_gain_drag_and_prepared_tone_accept_full_stop_range(self):
+        rect = (0., 0., 200., 100.)
+        for field in self.geometry.APPEARANCE_GAIN_FIELDS:
+            with self.subTest(field=field):
+                low, high = self.settings.TONE_CHROMA_LIMITS[field]
+                self.assertEqual((low, high), (-4., 4.))
+                self.assertEqual(self.geometry.drag_appearance_gain(rect, field, 0., 100.), high)
+                self.assertEqual(self.geometry.drag_appearance_gain(rect, field, 0., -100.), low)
+
+        points = np.asarray(((-85., 28., -14.), (72., 24., 31.), (130., -52., 17.)))
+        for muted, vivid, shadow, highlight in ((-4., 4., -4., 4.), (4., -4., 4., -4.)):
+            with self.subTest(muted=muted, vivid=vivid):
+                tone = self.settings.ToneSettings(
+                    muted_gain=muted, vivid_gain=vivid,
+                    shadow_chroma=shadow, highlight_chroma=highlight,
+                )
+                prepared = self.geometry.tone_model(tone)
+                np.testing.assert_allclose(
+                    prepared.inverse_appearance(prepared.forward(points)),
+                    points, atol=0., rtol=3e-12,
+                )
 
     def test_moved_panel_obeys_region_bounds_and_dpi(self):
         normal = self.geometry.layout("LINEAR", 900, 660, 1.0, (40, 50))

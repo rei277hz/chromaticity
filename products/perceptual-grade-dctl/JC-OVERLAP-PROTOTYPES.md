@@ -300,11 +300,12 @@ Chroma and Highlight Chroma.
 
 | Control | Default and range | Behavior |
 | --- | --- | --- |
-| C Muted Gain | `0` stops, `-2` to `+2` | Set the gain limit for nearly gray colors at nonzero lightness. |
-| C Vivid Gain | `0` stops, `-2` to `+2` | Set the gain limit for highly saturated colors. Its effect builds smoothly with input saturation. |
+| C Muted Gain | `0` stops, `-4` to `+4` | Set the gain limit for nearly gray colors at nonzero lightness. |
+| C Vivid Gain | `0` stops, `-4` to `+4` | Set the gain limit for highly saturated colors. Its effect builds smoothly with input saturation. |
 | C Saturation Crossover | `0.45`, `0` to `1` | Set the raw input saturation `C / abs(J_A)` where gain in stops is halfway between Muted and Vivid. At zero all chromatic samples use Vivid Gain. |
+| Shadow Chroma and Highlight Chroma | `0` stops, `-4` to `+4` | Set the tonal chroma gain below and above C Tone Crossover. The gain fades near gray and toward the crossover. |
 
-All three sliders use steps of `0.01`. At the default crossover, the
+These sliders use steps of `0.01`. At the default crossover, the
 incoming chroma is `0.45 * abs(J_A)` before Tone. At a crossover of `1`,
 chroma equals the magnitude of achromatic lightness. Inputs can have
 saturation above `1`. C Tone Crossover selects lightness for the separate

@@ -346,6 +346,12 @@ class ScopeRuntime:
             _key, removed = self.samples.popitem(last=False)
             self.sample_bytes -= removed.nbytes
 
+    def _cached_samples(self, signature):
+        samples = self.samples.get(signature)
+        if samples is not None:
+            self.samples.move_to_end(signature)
+        return samples
+
     @staticmethod
     def _validated_samples(rgba):
         import numpy as np
@@ -453,7 +459,7 @@ class ScopeRuntime:
         self.payloads[key] = payload = _AppearancePayload(
             dict(route, scope_capture="appearance"), peak_j,
         )
-        samples = self.samples.get(capture_signature) if changed else None
+        samples = self._cached_samples(capture_signature) if changed else None
         self._dispatch(key, policy.Event(
             "request", capture_signature=capture_signature,
             source_signature=input_signature, analysis_signature=capture_signature,
@@ -544,7 +550,7 @@ class ScopeRuntime:
         demand = self.demands.get(editor)
         if demand is None:
             return None
-        samples = self.samples.get(demand.capture_signature)
+        samples = self._cached_samples(demand.capture_signature)
         return None if samples is None else (demand, samples)
 
     def _observe(self, key, context, node, viewport, tone):
@@ -621,7 +627,7 @@ class ScopeRuntime:
                 capture_started = self._clock()
                 payload = _Payload(route, prepare_linear(linear, space), epoch, tone)
                 capture_finished = self._clock()
-                samples = self.samples.get(capture_signature)
+                samples = self._cached_samples(capture_signature)
                 lookup_finished = self._clock()
                 trace = None if samples is None else payload.analyze(samples)
                 timings = ()
@@ -677,7 +683,7 @@ class ScopeRuntime:
                 or policy.status(self._scope_state(key), self._revision(key), True).status != "current"):
             return None
         signature = capture.capture_signature
-        samples = self.samples.get(signature)
+        samples = self._cached_samples(signature)
         if samples is None:
             return None
         linear, space = self.linear_settings(node), self.working_space()

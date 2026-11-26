@@ -165,10 +165,11 @@ def output_controls():
 
 
 def global_chroma_controls(unified=False):
+    tonal_limit = 4 if unified else 2
     if unified:
         yield from global_shape_sliders((
-            ("cMutedGain", 0, -2, 2, 0.01),
-            ("cVividGain", 0, -2, 2, 0.01),
+            ("cMutedGain", 0, -tonal_limit, tonal_limit, 0.01),
+            ("cVividGain", 0, -tonal_limit, tonal_limit, 0.01),
             ("cSaturationCrossover", 0.45, 0.0, 1.0, 0.01),
         ))
     else:
@@ -179,8 +180,8 @@ def global_chroma_controls(unified=False):
             ("cVivid", 0, -1, 1, 0.01),
         ))
     yield from global_shape_sliders((
-        ("shadowChroma", 0, -2, 2, 0.01),
-        ("highlightChroma", 0, -2, 2, 0.01),
+        ("shadowChroma", 0, -tonal_limit, tonal_limit, 0.01),
+        ("highlightChroma", 0, -tonal_limit, tonal_limit, 0.01),
         ("cToneCrossover", 45, 10, 160, 0.1),
     ))
 

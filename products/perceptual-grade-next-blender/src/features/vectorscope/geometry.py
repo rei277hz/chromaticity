@@ -31,6 +31,10 @@ _CROSSOVER_MIN, _CROSSOVER_MAX = TONE_CHROMA_LIMITS["saturation_crossover"]
 _CROSSOVER_LEFT = appearance_scope.saturation_position(_CROSSOVER_MIN)
 _CROSSOVER_RIGHT = appearance_scope.saturation_position(_CROSSOVER_MAX)
 _TONE_CROSSOVER_MIN, _TONE_CROSSOVER_MAX = TONE_CHROMA_LIMITS["tone_crossover"]
+APPEARANCE_GAIN_FIELDS = frozenset((
+    "muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma",
+))
+_APPEARANCE_EDGE_STRIP = 5.
 
 
 def _rect(x, y, width, height):
@@ -103,7 +107,7 @@ def tone_crossover_point(rect, model, peak_j, value):
 
 
 def appearance_crossover_at(rect, tone, point, scale):
-    """Resolve hits in handle, saturation guide, then lightness guide order."""
+    """Resolve the existing Tone and Saturation guide hit zones."""
     x, y, width, height = rect
     band = _CROSSOVER_HIT_RADIUS * scale
     if not contains((x - band, y - band, width + 2 * band, height + 2 * band), point):
@@ -115,9 +119,60 @@ def appearance_crossover_at(rect, tone, point, scale):
         return "tone_crossover"
     if saturation_crossover_hit(rect, tone.saturation_crossover, point, scale):
         return "saturation_crossover"
-    if contains(rect, point) and abs(point[1] - marker[1]) <= band:
+    if not contains(rect, point):
+        return None
+    if abs(point[1] - marker[1]) <= band:
         return "tone_crossover"
-    return None
+
+
+def appearance_control_at(rect, tone, point, scale):
+    """Resolve crossover guides before the tonal strips and saturation halves."""
+    crossover = appearance_crossover_at(rect, tone, point, scale)
+    if crossover is not None:
+        return crossover
+    x, y, width, _height = rect
+    if not contains(rect, point):
+        return None
+    tone_y = tone_crossover_point(
+        rect, tone_model(tone), tone_peak_j(tone), tone.tone_crossover,
+    )[0][1]
+    for field, strip in appearance_gain_strips(rect, tone_y, scale).items():
+        if contains(strip, point):
+            return field
+    saturation_x, _ = saturation_crossover_point(rect, tone.saturation_crossover)
+    return "muted_gain" if point[0] < saturation_x else "vivid_gain"
+
+
+def appearance_gain_regions(rect, saturation_x, tone_y):
+    """Return the four highlight rectangles bounded by the visible guides."""
+    x, y, width, height = rect
+    return {
+        "muted_gain": (x, y, saturation_x - x, height),
+        "vivid_gain": (saturation_x, y, x + width - saturation_x, height),
+        "shadow_chroma": (x, y, width, tone_y - y),
+        "highlight_chroma": (x, tone_y, width, y + height - tone_y),
+    }
+
+
+def appearance_gain_strips(rect, tone_y, scale):
+    """Return edge strips that have room outside the Tone crossover hit band."""
+    x, y, width, height = rect
+    top = y + height
+    band = _CROSSOVER_HIT_RADIUS * scale
+    strip = _APPEARANCE_EDGE_STRIP * scale
+    strips = {}
+    if tone_y - y > band:
+        strips["shadow_chroma"] = (x, y, width, min(strip, tone_y - y - band))
+    if top - tone_y > band:
+        thickness = min(strip, top - tone_y - band)
+        strips["highlight_chroma"] = (x, top - thickness, width, thickness)
+    return strips
+
+
+def drag_appearance_gain(rect, field, value, dx):
+    """Map a full-plot horizontal drag to the gain's full stop range."""
+    low, high = TONE_CHROMA_LIMITS[field]
+    return min(high, max(low, value + dx / rect[2] * (high - low)))
 
 
 def drag_tone_crossover(rect, model, peak_j, value, dy):

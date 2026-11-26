@@ -175,8 +175,10 @@ C Muted Gain and C Vivid Gain shape incoming saturation together. C Saturation
 Crossover selects raw input saturation `C / abs(J_A)` from `0` to `1`,
 with a default of `0.45`. At a positive crossover, the applied gain in stops
 is the average of the two settings. A zero crossover applies Vivid Gain to
-every chromatic sample. The baseline uses the original smooth Tone curve and
-the Linear Gain fade for Shadow and Highlight Chroma. H–K Influence is fixed at `1.0` and
+every chromatic sample. C Muted Gain, C Vivid Gain, Shadow Chroma, and
+Highlight Chroma range from `-4` to `+4` stops. The baseline uses the
+original smooth Tone curve and the Linear Gain fade for Shadow and
+Highlight Chroma. H–K Influence is fixed at `1.0` and
 Remap Fit is limited to `-2` through `+2`. The target builds English and
 Simplified Chinese DCTLs.
 

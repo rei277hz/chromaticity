@@ -245,6 +245,33 @@ class Stage2ParameterTests(unittest.TestCase):
                                       np.float32((.5, 2., .4 / (35. / 75.), 1.)))
         np.testing.assert_array_equal(pixels[TONE_CHROMA_TONE_SLOT], (-.75, 1.25, 52., 1.))
 
+    def test_stage2_parameter_validation_accepts_and_bounds_chroma_gain_endpoints(self):
+        for muted, vivid, shadow, highlight in ((-4., 4., -4., 4.),
+                                                 (4., -4., 4., -4.)):
+            with self.subTest(muted=muted, vivid=vivid, shadow=shadow, highlight=highlight):
+                prepared = prepare_parameters(complete(tone=ToneSettings(
+                    muted_gain=muted, vivid_gain=vivid,
+                    shadow_chroma=shadow, highlight_chroma=highlight,
+                )))
+                validated = PreparedParameters(prepared.pixels, fields=prepared.fields)
+                np.testing.assert_array_equal(validated.pixels, prepared.pixels)
+
+        prepared = prepare_parameters(complete(tone=ToneSettings(
+            muted_gain=-4., vivid_gain=4., shadow_chroma=-4., highlight_chroma=4.,
+        )))
+        for slot, channel, value in (
+            (TONE_CHROMA_GAIN_SLOT, 0, np.float32(16.01)),
+            (TONE_CHROMA_GAIN_SLOT, 1, np.float32(16.01)),
+            (TONE_CHROMA_TONE_SLOT, 0, np.float32(4.01)),
+            (TONE_CHROMA_TONE_SLOT, 1, np.float32(4.01)),
+        ):
+            pixels = prepared.pixels.copy()
+            pixels[0, slot, channel] = value
+            with self.subTest(slot=slot, channel=channel), self.assertRaisesRegex(
+                ValueError, "chroma parameters",
+            ):
+                PreparedParameters(pixels, fields=prepared.fields)
+
     def test_raw_saturation_crossover_and_zero_knee(self):
         settings = ToneSettings(muted_gain=-1., vivid_gain=1.)
         self.assertEqual(settings.saturation_crossover, .45)

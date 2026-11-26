@@ -81,6 +81,7 @@
   "gizmo.output_lightness": "Output Lightness",
   "gizmo.input_saturation_crossover": "Input Saturation Crossover {value}",
   "gizmo.input_lightness_crossover": "Input Lightness Crossover {value}",
+  "gizmo.appearance_gain": "{name} {value} stops",
   "label.vectorscope": "Vectorscope",
   "tooltip.toggle_vectorscope": "Show or hide the Linear vectorscope in this editor.",
   "scope.vectorscope.updating": "Updating",

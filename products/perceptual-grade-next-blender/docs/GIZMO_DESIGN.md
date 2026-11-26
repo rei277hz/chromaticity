@@ -93,6 +93,15 @@ Its hover readout shows the input value in normalized lightness units. An
 upward arrow marks a crossover above the selected peak. Drag down from the
 top edge to bring it into view. The sidebar covers the full crossover range.
 
+Hover the plot body to highlight C Muted Gain left of the Saturation Crossover
+or C Vivid Gain to its right. The 5 UI-scaled-pixel top and bottom strips select
+Highlight Chroma above C Tone Crossover and Shadow Chroma below it. Crossover
+guides take priority. The highlighted half-plane is filled with translucent
+white, and the readout shows the selected gain in stops. Drag horizontally
+right to increase any of these four gains. One plot-width drag spans `-4` to
+`+4` stops. If C Tone Crossover is pinned to the top, Highlight Chroma remains
+available through the sidebar.
+
 Opacity shows alpha-weighted density. Each bin's tint follows its weighted
 circular mean hue, with tint strength set by how closely its hues agree.
 Near-neutral samples contribute their full density weight and less hue weight.

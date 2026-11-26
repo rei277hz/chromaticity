@@ -6,9 +6,9 @@ D65 = (.3127, .329)
 SPACES = ('Linear Rec.709', 'Linear Rec.2020', 'ACEScg')
 TONE_PEAKS = (500, 1000, 2000, 4000)
 TONE_CHROMA_LIMITS = {
-    'black_compression_nits': (0., 2.), 'muted_gain': (-2., 2.),
-    'vivid_gain': (-2., 2.), 'saturation_crossover': (0., 1.),
-    'shadow_chroma': (-2., 2.), 'highlight_chroma': (-2., 2.),
+    'black_compression_nits': (0., 2.), 'muted_gain': (-4., 4.),
+    'vivid_gain': (-4., 4.), 'saturation_crossover': (0., 1.),
+    'shadow_chroma': (-4., 4.), 'highlight_chroma': (-4., 4.),
     'tone_crossover': (10., 160.),
 }
 ZERO46 = ((0.,) * 6,) * 4

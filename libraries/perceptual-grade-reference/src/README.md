@@ -40,9 +40,9 @@ RGB adapters.
 | `black_compression_nits` | `0` | `[0, 2]` |
 | `peak_nits` | `1000` | `500`, `1000`, `2000`, or `4000` |
 | `fit` | `0` | Integers from `-2` through `2` |
-| `muted_gain`, `vivid_gain` | `0` | `[-2, 2]` stops |
+| `muted_gain`, `vivid_gain` | `0` | `[-4, 4]` stops |
 | `saturation_crossover` | `0.45` | `[0, 1]` in raw input saturation `C/abs(J_A)` |
-| `shadow_chroma`, `highlight_chroma` | `0` | `[-2, 2]` stops |
+| `shadow_chroma`, `highlight_chroma` | `0` | `[-4, 4]` stops |
 | `tone_crossover` | `45` | `[10, 160]` in `abs(J_A)` units |
 
 Source anchors use the D65 / 203-nit neutral conversion with a minimum

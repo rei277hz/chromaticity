@@ -311,13 +311,71 @@ class ScopePointer:
                 geometry.tone_peak_j(settings), settings.tone_crossover,
             )
             return point
+        if control in geometry.APPEARANCE_GAIN_FIELDS:
+            return self.appearance_gain_point(control, node, box)
         x, y, width, height = box[control]
         return x + width / 2, y + height / 2
 
-    def press_at(self, point, control=None, node=None):
+    def appearance_gain_point(self, control, node, box=None):
+        """Choose an interior point in one appearance gain's active region."""
+        box = self.box() if box is None else box
+        rect = box["appearance"]
+        tone = self.settings(node).tone
+        scale = box["scale"]
+        x, y, width, height = rect
+        saturation_x, _ = self.ui.editor.geometry.saturation_crossover_point(
+            rect, tone.saturation_crossover,
+        )
+        (_tone_x, tone_y), _pinned = self.ui.editor.geometry.tone_crossover_point(
+            rect, self.ui.editor.geometry.tone_model(tone),
+            self.ui.editor.geometry.tone_peak_j(tone), tone.tone_crossover,
+        )
+        inset = 2.5 * scale
+        guide_clearance = 6. * scale
+
+        if control in {"muted_gain", "vivid_gain"}:
+            if control == "muted_gain":
+                x0, x1 = x + inset, saturation_x - guide_clearance
+            else:
+                x0, x1 = saturation_x + guide_clearance, x + width - inset
+            y_options = (y + height * .25, y + height * .75)
+            point = ((x0 + x1) * .5,
+                     max(y_options, key=lambda candidate: abs(candidate - tone_y)))
+        else:
+            left_segment = (x + inset, saturation_x - guide_clearance)
+            right_segment = (saturation_x + guide_clearance, x + width - inset)
+            x0, x1 = max((left_segment, right_segment), key=lambda segment: segment[1] - segment[0])
+            point_x = (x0 + x1) * .5
+            strip = self.ui.editor.geometry.appearance_gain_strips(
+                rect, tone_y, scale,
+            )[control]
+            point = (point_x, strip[1] + strip[3] * .5)
+
+        active = self.ui.editor.geometry.appearance_control_at(
+            rect, tone, point, scale,
+        )
+        assert active == control, (control, point, active, rect, saturation_x, tone_y)
+        return point
+
+    def hover_appearance_control(self, control, node):
+        point = self.control_point(control, node)
+        yield from self.move_to(point, control)
+        assert "RUNNING_MODAL" in self._acknowledged["result"], (
+            "Gizmo did not own its hovered appearance control", control,
+            self._acknowledged,
+        )
+        key = self.ui.editor.key(self.window, self.area)
+        box = self.box()
+        active = self.ui._interaction.active_appearance_control(
+            key, box, self.settings(node).tone,
+        )
+        assert active == control, (control, active)
         window_key = self.window.as_pointer()
-        self._record("prepare_press", control=control, node=None if node is None else node.name,
-                     window=window_key, area=self.area.as_pointer(), local_xy=point)
+        assert self.ui._interaction.hover_cursors[window_key][1] == "SCROLL_X"
+        return point
+
+    def move_to(self, point, control=None):
+        window_key = self.window.as_pointer()
         deadline = time.monotonic() + 5
         while self.nodes._gesture_observer_token(window_key) is None:
             assert time.monotonic() < deadline, "The window gesture router did not register"
@@ -349,6 +407,12 @@ class ScopePointer:
         move = target_moves[-1]
         assert self._injected is move and self._acknowledged is not None, (
             self._delivery_failure(move), control, move["xy"], target_moves)
+
+    def press_at(self, point, control=None, node=None):
+        window_key = self.window.as_pointer()
+        self._record("prepare_press", control=control, node=None if node is None else node.name,
+                     window=window_key, area=self.area.as_pointer(), local_xy=point)
+        yield from self.move_to(point, control)
         press = self.event_at("LEFTMOUSE", "PRESS", point)
         deadline = time.monotonic() + 5
         while ((drag := self.ui._interaction.drags.get(window_key)) is None

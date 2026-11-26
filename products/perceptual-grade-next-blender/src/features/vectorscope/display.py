@@ -330,7 +330,7 @@ def _draw_tone_curve(rect, model, histogram, selected, scale, peak_j):
           8 * scale, _PALETTE["muted"], width, align=.5)
 
 
-def _draw_appearance(box, state, key, peak_j, tone, model, active_crossover):
+def _draw_appearance(box, state, key, peak_j, tone, model, active_control):
     rect, scale = box["appearance"], box["scale"]
     x, y, width, height = rect
     top, right = y + height, x + width
@@ -362,6 +362,17 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_crossover):
         appearance = appearance_scope.rescale(appearance, peak_j)
         _draw_trace(rect, appearance.rgba, (key, "appearance"), additive=False)
 
+    saturation_marker = geometry.saturation_crossover_point(rect, tone.saturation_crossover)
+    tone_marker, above_peak = geometry.tone_crossover_point(
+        rect, model, peak_j, tone.tone_crossover,
+    )
+    if active_control in geometry.APPEARANCE_GAIN_FIELDS:
+        highlighted = geometry.appearance_gain_regions(
+            rect, saturation_marker[0], tone_marker[1],
+        )[active_control]
+        if highlighted[2] > 0. and highlighted[3] > 0.:
+            _fill(highlighted, (1., 1., 1., .12))
+
     knee = lightness_ticks[1][1]
     dash = 5 * scale
     segments = [point for start in np.arange(x, right, 2 * dash)
@@ -370,6 +381,14 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_crossover):
     _lines(((x, y), (x, top), (x, y), (right, y), (x, top), (right, top),
             (right, top), (right, y)), _PALETTE["outline"], scale,
            cache=("appearance outline", rect))
+
+    edge_mark = (*_PALETTE["text"][:3], .42)
+    edge_x = x + width * .5
+    strips = geometry.appearance_gain_strips(rect, tone_marker[1], scale)
+    for _, strip_y, _, strip_height in strips.values():
+        mark_y = strip_y + strip_height * .5
+        _lines(((edge_x - 6 * scale, mark_y), (edge_x + 6 * scale, mark_y)),
+               edge_mark, scale)
 
     last_label = y
     for tick, py in lightness_ticks:
@@ -405,10 +424,7 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_crossover):
                   y + height * .5 - 15 * scale, 8 * scale,
                   _PALETTE["muted"], width - 4 * scale, align=.5)
 
-    saturation_marker = geometry.saturation_crossover_point(
-        rect, tone.saturation_crossover,
-    )
-    saturation_active = active_crossover == "saturation_crossover"
+    saturation_active = active_control == "saturation_crossover"
     saturation_color = (*_PALETTE["orange"][:3], .9 if saturation_active else .36)
     saturation_stroke = (1.5 if saturation_active else 1.) * scale
     _lines(((saturation_marker[0], y), saturation_marker), saturation_color,
@@ -416,10 +432,7 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_crossover):
     _circle(saturation_marker, geometry.CROSSOVER_HANDLE_RADIUS * scale,
             saturation_color, saturation_stroke)
 
-    tone_marker, above_peak = geometry.tone_crossover_point(
-        rect, model, peak_j, tone.tone_crossover,
-    )
-    tone_active = active_crossover == "tone_crossover"
+    tone_active = active_control == "tone_crossover"
     tone_color = (*_PALETTE["C"][:3], .92 if tone_active else .46)
     tone_stroke = (1.5 if tone_active else 1.) * scale
     dash = 5 * scale
@@ -440,28 +453,34 @@ def _draw_appearance(box, state, key, peak_j, tone, model, active_crossover):
                 (arrow_x, arrow_y), (arrow_x - 3 * scale, arrow_y - 3 * scale),
                 (arrow_x, arrow_y), (arrow_x + 3 * scale, arrow_y - 3 * scale)),
                tone_color, tone_stroke)
-    if active_crossover is not None:
+    if active_control is not None:
         if tone_active:
             message = localization.tr(
                 "gizmo.input_lightness_crossover",
                 value=f"{tone.tone_crossover / 100.:.2f}",
             )
-        else:
+        elif saturation_active:
             message = localization.tr(
                 "gizmo.input_saturation_crossover",
                 value=f"{tone.saturation_crossover:.2f}",
+            )
+        else:
+            message = localization.tr(
+                "gizmo.appearance_gain",
+                name=localization.tr("property." + active_control),
+                value=f"{getattr(tone, active_control):+.2f}",
             )
         _, panel_y, panel_width, _ = box["rect"]
         _text(message, left, panel_y + 26 * scale, 9 * scale,
               _PALETTE["text"], panel_width - 24 * scale)
 
 
-def _draw_tone(box, state, key, linear, tone, selected, active_crossover):
+def _draw_tone(box, state, key, linear, tone, selected, active_control):
     scale = box["scale"]
     model = _tone_model(tone)
     peak_j = _tone_peak_j(tone)
     histogram = None if state is None else state.tone_histogram
-    _draw_appearance(box, state, key, peak_j, tone, model, active_crossover)
+    _draw_appearance(box, state, key, peak_j, tone, model, active_control)
     _draw_tone_curve(box["curve"], model, histogram, selected, scale, peak_j)
     _slider(box["exposure"], "exposure", linear.exposure, scale, track=box["exposure_track"])
     _slider(box["fit"], "fit", tone.fit, scale, vertical=True, track=box["fit_track"])
@@ -493,7 +512,7 @@ def _draw_status(box, state):
           _PALETTE["orange" if failed else "muted"], width)
 
 
-def draw(region, box, state, key, stage, linear, tone, selected, active_crossover):
+def draw(region, box, state, key, stage, linear, tone, selected, active_control):
     """Draw only the supplied view, with GPU state restored on exit."""
     import gpu
     from mathutils import Matrix
@@ -513,7 +532,7 @@ def draw(region, box, state, key, stage, linear, tone, selected, active_crossove
             if stage == "LINEAR":
                 _draw_linear(box, state, key, linear)
             else:
-                _draw_tone(box, state, key, linear, tone, selected, active_crossover)
+                _draw_tone(box, state, key, linear, tone, selected, active_control)
             _draw_status(box, state)
     finally:
         gpu.state.blend_set(blend)

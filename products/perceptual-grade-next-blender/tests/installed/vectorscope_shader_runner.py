@@ -401,6 +401,50 @@ def scenario():
         assert capture_jobs.count("input") == input_captures
         report[field + "_preview_and_capture"] = True
 
+    previous_appearance = state().appearance.rgba
+    tone.tone_crossover = 20.0
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.appearance_status == "preview"
+        and value.appearance is not None,
+        "Lower tone crossover did not start the exact appearance update",
+    )
+    yield from wait_for(
+        lambda: appearance_current(previous_appearance),
+        "Lower tone crossover did not publish its exact appearance",
+    )
+    pointer.appearance_gain_point("highlight_chroma", shared)
+
+    gain_fields = ("muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma")
+    for field in gain_fields:
+        before_gain = pointer.settings(shared).tone
+        before_appearance = state().appearance.rgba
+        appearance_captures = capture_jobs.count("appearance")
+        start = pointer.control_point(field, shared)
+        yield from pointer.press_at(start, field, shared)
+        end = start[0] + 12, start[1]
+        pointer.event_at("MOUSEMOVE", "NOTHING", end)
+        yield from wait_for(
+            lambda: (value := state()) is not None and value.appearance_status == "preview"
+            and value.appearance is not None
+            and value.appearance.rgba is not before_appearance,
+            f"{field} did not show the live appearance preview",
+        )
+        preview = state().appearance
+        assert preview.rgba[..., 3].any()
+        assert getattr(pointer.settings(shared).tone, field) > getattr(before_gain, field)
+        assert all(getattr(pointer.settings(shared).tone, other) == getattr(before_gain, other)
+                   for other in gain_fields if other != field)
+        assert capture_jobs.count("appearance") == appearance_captures
+        pointer.event_at("LEFTMOUSE", "RELEASE", end)
+        # A gain can leave the sampled colors in the same density bins.
+        yield from wait_for(
+            lambda: appearance_current() and state().appearance.rgba is not before_appearance,
+            f"{field} did not publish its exact appearance",
+        )
+        assert capture_jobs.count("appearance") == appearance_captures + 1
+        assert capture_jobs.count("input") == input_captures
+        report[field + "_preview_and_capture"] = True
+
 
 sequence = scenario()
 started = time.monotonic()

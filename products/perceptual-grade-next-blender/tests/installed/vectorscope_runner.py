@@ -454,6 +454,7 @@ def exercise_gizmo_controls():
     yield from exercise_fit_reset()
     yield from exercise_saturation_crossover()
     yield from exercise_tone_crossover()
+    yield from exercise_appearance_chroma_gains()
     with bpy.context.temp_override(window=window, area=area, region=region):
         assert bpy.ops.perceptual_grade.gizmo_set_peak(
             peak_nits="2000", node_pointer=str(grade.as_pointer()),
@@ -700,6 +701,59 @@ def exercise_pinned_tone_crossover():
     report["tone_crossover_pinned_handle"] = True
 
 
+def exercise_appearance_chroma_gains():
+    fields = ("muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma")
+    for field in fields:
+        point = yield from pointer.hover_appearance_control(field, grade)
+        before = pointer.settings(grade)
+        start = point
+        yield from pointer.press_at(start, field, grade)
+        vertical_only = start[0], start[1] + 4
+        injected = pointer.event_at("MOUSEMOVE", "NOTHING", vertical_only)
+        yield from wait_for(
+            lambda: pointer._acknowledged is not None,
+            f"{field} vertical-only motion was not acknowledged", 5.,
+        )
+        assert pointer._injected is injected
+        drag = vectorscope_ui._interaction.drags.get(window.as_pointer())
+        assert drag is not None and drag.mode == field and drag.token is None
+        assert getattr(grade, field) == getattr(before.tone, field)
+        assert nodes._gesture_token(window.as_pointer()) is None
+        injected = pointer.event_at("LEFTMOUSE", "RELEASE", vertical_only)
+        yield from wait_for(
+            lambda: pointer._acknowledged is not None
+            and pointer._injected is injected
+            and window.as_pointer() not in vectorscope_ui._interaction.drags,
+            f"{field} click did not release", 5.,
+        )
+        edited = yield from pointer.drag_control(field, grade, (12, 0), cancel=True)
+        assert getattr(edited.tone, field) > getattr(before.tone, field)
+        assert all(getattr(edited.tone, other) == getattr(before.tone, other)
+                   for other in fields if other != field)
+        assert pointer.settings(grade) == before
+    report["appearance_chroma_gain_drag_and_vertical_lock"] = True
+
+    field = "vivid_gain"
+    grade.vivid_gain = 1.5
+    before = pointer.settings(grade)
+    start = pointer.control_point(field, grade)
+    yield from pointer.press_at(start, field, grade)
+    end = start[0] + 8, start[1]
+    pointer.event_at("MOUSEMOVE", "NOTHING", end)
+    yield from wait_for(lambda: grade.vivid_gain > before.tone.vivid_gain,
+                        "Vivid gain drag did not start", 5.)
+    yield from pointer.reset_drag_at(end)
+    assert grade.vivid_gain == 0.
+    pointer.event_at("ESC", "PRESS", end)
+    pointer.event_at("ESC", "RELEASE", end)
+    pointer.event_at("LEFTMOUSE", "RELEASE", end)
+    yield from wait_for(lambda: nodes._gesture_token(window.as_pointer()) is None,
+                        "Vivid gain reset gesture did not cancel", 5.)
+    assert pointer.settings(grade) == before
+    grade.vivid_gain = 0.
+    report["appearance_chroma_gain_reset_and_cancel"] = True
+
+
 def exercise_drags():
     cleanup()
     tree.links.new(source.outputs["Image"], grade.inputs["Color"])
@@ -821,7 +875,9 @@ def exercise_drags():
     # Blender node wrapper while preserving the open Gizmo.
     checkpoint("native crossover Auto Key and undo")
     yield from pointer.click_control("tone_tab", restored_tree.nodes[NODE_NAME])
-    for field, delta in (("saturation_crossover", (20, 0)), ("tone_crossover", (0, 18))):
+    for field, delta in (("saturation_crossover", (20, 0)), ("tone_crossover", (0, 18)),
+                         ("muted_gain", (12, 0)), ("vivid_gain", (12, 0)),
+                         ("shadow_chroma", (12, 0)), ("highlight_chroma", (12, 0))):
         cross_node = restored_tree.nodes[NODE_NAME]
         before = pointer.settings(cross_node)
         press_frame = window.scene.frame_current + window.scene.frame_subframe

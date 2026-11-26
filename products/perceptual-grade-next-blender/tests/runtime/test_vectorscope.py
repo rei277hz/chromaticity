@@ -717,6 +717,17 @@ class VectorscopeTests(unittest.TestCase):
         np.testing.assert_array_equal(first, second)
         self.assertEqual(first.dtype, np.float32)
 
+    def test_cached_input_survives_successive_appearance_captures(self):
+        runtime = self.runtime.ScopeRuntime(None, None, None, create_job=Mock())
+        pixels = np.ones((1, 1, 4), dtype=np.float32)
+        runtime._remember_samples("input", pixels.copy())
+        for index in range(self.runtime.CACHE_LIMIT + 1):
+            self.assertIsNotNone(runtime._cached_samples("input"))
+            runtime._remember_samples(f"appearance {index}", pixels.copy())
+        self.assertIn("input", runtime.samples)
+        self.assertNotIn("appearance 0", runtime.samples)
+        self.assertEqual(len(runtime.samples), self.runtime.CACHE_LIMIT)
+
     def make_runtime(self, watch, dependencies):
         runtime = self.runtime.ScopeRuntime(None, None, None, create_job=Mock())
         runtime.dependencies = {1: frozenset(dependencies)}

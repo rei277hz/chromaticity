@@ -36,11 +36,11 @@ class UnifiedChromaSettings:
         object.__setattr__(self, 'fit', int(self.fit))
         ranges = (
             ('black_compression_nits', 0., 2.),
-            ('muted_gain', -2., 2.),
-            ('vivid_gain', -2., 2.),
+            ('muted_gain', -4., 4.),
+            ('vivid_gain', -4., 4.),
             ('saturation_crossover', 0., 1.),
-            ('shadow_chroma', -2., 2.),
-            ('highlight_chroma', -2., 2.),
+            ('shadow_chroma', -4., 4.),
+            ('highlight_chroma', -4., 4.),
             ('tone_crossover', 10., 160.),
         )
         for name, lower, upper in ranges:
