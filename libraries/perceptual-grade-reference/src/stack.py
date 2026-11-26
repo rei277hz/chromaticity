@@ -16,6 +16,9 @@ FROM_NATIVE=np.linalg.inv(TO_NATIVE)
 
 
 def matrix_native(model):
+    # Scalar linear transforms are identical in XYZ and native AP1.
+    if np.array_equal(model.linear, np.eye(3) * model.linear[1, 1]):
+        return model.linear.copy()
     return (model.boundary.matrix@(CAT16/model.white_cones[:,None])@model.linear
             @model.cones_to_xyz@np.linalg.inv(model.boundary.matrix))
 
@@ -88,6 +91,7 @@ class Stack:
     def apply_native(self,values):
         result=np.asarray(values,dtype=float);pending=None;cancelled=False
         for i,(m,direction) in enumerate(zip(self.models,self.directions)):
+            final = i == len(self.models) - 1
             if direction=='FORWARD':
                 before=m.cones_to_xyz@np.linalg.inv(m.boundary.matrix)
                 result=m.input_native(result,before,True)
@@ -95,12 +99,17 @@ class Stack:
                 n=self.models[i+1] if following else None
                 cancelled=following and m.nonlinear_key==n.nonlinear_key
                 pending=result if cancelled else m.grade_state(m.enter_native(result))
-                if not following:result=m.release_state(pending,guard=True);pending=None
+                if not following:
+                    result = (m.release_output_state(pending) if final
+                              else m.release_state(pending, guard=True))
+                    pending = None
             else:
                 if pending is None:result=nonlinear_inverse(m,input_repair(result,m.acescg_y))[0]
                 elif cancelled:result=pending
                 else:result=nonlinear_inverse(m,pending,True)[0]
                 result=result@self.inverses[i].T;pending=None;cancelled=False
+                if final:
+                    result = m.release_native_output(result)
         return input_repair(result,rgb_matrix('ACEScg')[1]) if not self.models else result
 
     def apply(self,values):

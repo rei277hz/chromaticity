@@ -12,7 +12,9 @@ from color_tools.perceptual_grade_reference.grading import ColorSettings
 from color_tools.perceptual_grade_reference.appearance import CAT16, viewing, encode, decode
 from color_tools.color_core.scaled import Scalar as S
 from color_tools.perceptual_grade_reference.cube_guard import guard
-from color_tools.perceptual_grade_reference.responses import requested_energy
+from color_tools.perceptual_grade_reference.export import OutputCompressionSettings, compress_saturation
+from color_tools.perceptual_grade_reference.responses import State, requested_energy, signed_hk
+from color_tools.perceptual_grade_reference.stack import Stack
 
 
 class ModelTests(unittest.TestCase):
@@ -143,3 +145,129 @@ class ModelTests(unittest.TestCase):
         for q,energy,rgb in zip(state.q,state.energy,actual):
             scaled=model.boundary.decode_scaled([S(v) for v in q],S(energy))
             np.testing.assert_allclose([float(v) for v in scaled],rgb,rtol=3e-12,atol=2e-10)
+
+
+class OutputCompressionTests(unittest.TestCase):
+    def test_curve_preserves_signed_energy_and_hue(self):
+        for dtype in (np.float32, np.float64):
+            with self.subTest(dtype=dtype):
+                ja = np.array([4, 4, 4, -4, -4, 4, 0, 0], dtype=dtype)
+                chroma = np.array([0, 1, 2, 4, 6, 400, 0, 4], dtype=dtype)
+                direction = np.array([.6, -.8], dtype=dtype)
+                q = np.column_stack((signed_hk(ja, chroma), chroma[:, None] * direction)).astype(dtype)
+                state = State(q, ja * abs(ja))
+                off = compress_saturation(state, OutputCompressionSettings())
+                np.testing.assert_array_equal(off.q, q)
+                result = compress_saturation(state, OutputCompressionSettings(enabled=True))
+                self.assertEqual(result.q.dtype, dtype)
+                np.testing.assert_array_equal(result.energy, state.energy)
+                # The first three rows are neutral, below the knee, and at the knee.
+                np.testing.assert_array_equal(result.q[:3], q[:3])
+                expected = np.array([0, 1, 2, 3, 10 / 3, 3.99, 0, 0], dtype=dtype)
+                np.testing.assert_allclose(result.q[:, 1:], expected[:, None] * direction, rtol=5e-7)
+                np.testing.assert_allclose(result.q[:, 0], signed_hk(ja, expected), rtol=5e-7)
+
+    def test_scaled_energy_survives_near_black(self):
+        # This J_A and its signed energy are both smaller than any float64.
+        ja = S(-1., -1500)
+        q = np.array([signed_hk(ja, S(1.)), S(), S(-1.)], dtype=object)
+        state = State(q, np.array(ja * abs(ja), dtype=object))
+        result = compress_saturation(state, OutputCompressionSettings(enabled=True))
+        self.assertEqual(result.q.dtype, object)
+        self.assertEqual(result.energy.item(), state.energy.item())
+        self.assertEqual(result.q[1], S())
+        self.assertAlmostEqual(float(result.q[2] / ja), 1.)
+        self.assertEqual(result.q[0], signed_hk(ja, abs(result.q[2])))
+
+    def test_curve_is_monotone_and_asymptotic(self):
+        saturation = np.array([0., .25, .5, .75, 1., 2., 8., 1e12])
+        ja = np.full(saturation.shape, 4.)
+        chroma = saturation * ja
+        q = np.column_stack((signed_hk(ja, chroma), chroma, np.zeros_like(chroma)))
+        state = State(q, ja * ja)
+        compressed = compress_saturation(
+            state, OutputCompressionSettings(enabled=True),
+        )
+        mapped = np.hypot(compressed.q[:, 1], compressed.q[:, 2]) / ja
+        self.assertTrue(np.all(np.diff(mapped) >= 0.))
+        self.assertTrue(np.all(mapped <= 1.))
+        self.assertGreater(mapped[-1], .999999999)
+
+    def test_invalid_limits_are_rejected(self):
+        for knee, ceiling in [(-1., 1.), (1., 1.), (2., 1.), (0., 8.1),
+                              (np.nan, 1.), (0., np.inf)]:
+            with self.subTest(knee=knee, ceiling=ceiling), self.assertRaises(ValueError):
+                Model(Settings(output_compression=OutputCompressionSettings(
+                    enabled=True, knee=knee, ceiling=ceiling)))
+
+    def test_rgb_adapters_agree_on_compressed_xyz(self):
+        base = Model()
+        xyz = np.array([[1., .04, .02], [.1, .2, 2.]]) @ base.rgb_to_xyz.T
+        settings = Settings(output_compression=OutputCompressionSettings(True, .1, .3))
+        expected = Model(settings).forward_xyz(xyz)
+        self.assertGreater(np.max(abs(expected - base.forward_xyz(xyz))), .01)
+        for space in ('Linear Rec.709', 'Linear Rec.2020', 'ACEScg'):
+            with self.subTest(space=space):
+                model = Model(settings, space=space)
+                rgb = xyz @ model.xyz_to_rgb.T
+                np.testing.assert_allclose(model.forward(rgb) @ model.rgb_to_xyz.T,
+                                           expected, rtol=2e-12, atol=1e-12)
+
+    def test_reset_grade_applies_compression_only_at_final_export(self):
+        base = Model()
+        settings = OutputCompressionSettings(enabled=True, knee=.1, ceiling=.3)
+        compressed = Model(Settings(output_compression=settings))
+        points = np.array([[1., .03, .01], [.01, .2, 2.], [.18, .18, .18]])
+        graded = base.grade_state(base.enter_native(points))
+        state = compress_saturation(graded, settings)
+        expected = guard(base.boundary, state.q, state.energy)[2]
+        self.assertGreater(np.max(abs(expected - points)), .01)
+        np.testing.assert_allclose(compressed.release_output_state(graded), expected,
+                                   rtol=2e-12, atol=1e-12)
+        np.testing.assert_allclose(compressed.forward_native(points), expected, rtol=2e-12, atol=1e-12)
+        np.testing.assert_array_equal(compressed.forward_native(points, export=False),
+                                      base.forward_native(points, export=False))
+
+        first = Settings(output_compression=settings)
+        np.testing.assert_allclose(Stack([first, Settings()]).apply_native(points), points,
+                                   rtol=2e-12, atol=1e-12)
+        np.testing.assert_allclose(Stack([first, first]).apply_native(points), expected,
+                                   rtol=2e-12, atol=1e-12)
+
+    def test_inverse_last_compresses_after_the_linear_inverse(self):
+        base = Model()
+        native_to_xyz = base.cones_to_xyz @ np.linalg.inv(base.boundary.matrix)
+        gains = np.array([.5, 1., 2.])
+        linear = native_to_xyz @ np.diag(gains) @ np.linalg.inv(native_to_xyz)
+        controls = OutputCompressionSettings(enabled=True, knee=.1, ceiling=.3)
+        final = Settings(linear=LinearSettings(matrix=tuple(map(tuple, linear))),
+                         output_compression=controls)
+        points = np.array([[.6, .1, .2], [.03, .05, 1.]])
+        model = Model(Settings(output_compression=controls))
+        expected = model.release_output_state(model.encode_native(points / gains))
+        wrong_order = model.forward_native(points) / gains
+        self.assertGreater(np.max(abs(expected - wrong_order)), .01)
+        for entries, directions in (([final], ['INVERSE']),
+                                    ([Settings(), final], ['FORWARD', 'INVERSE'])):
+            with self.subTest(directions=directions):
+                actual = Stack(entries, directions).apply_native(points)
+                np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=1e-12)
+
+    def test_inverse_only_white_endpoint_with_compression_off(self):
+        final = Settings(linear=LinearSettings(exposure=-1.))
+        actual = Stack([final], ['INVERSE']).apply_native([[700., 700., 700.]])
+        np.testing.assert_array_equal(actual, [[1024., 1024., 1024.]])
+
+    def test_standalone_inverse_solves_the_uncompressed_grade(self):
+        base = Model()
+        settings = OutputCompressionSettings(enabled=True, knee=0., ceiling=.1)
+        compressed = Model(Settings(output_compression=settings))
+        rgb = np.array([[.5, .2, .1]])
+        xyz = rgb @ base.rgb_to_xyz.T
+        for method, values in [('inverse', rgb), ('inverse_xyz', xyz)]:
+            with self.subTest(method=method):
+                actual = getattr(compressed, method)(values)
+                expected = getattr(base, method)(values)
+                np.testing.assert_array_equal(actual.value, expected.value)
+                np.testing.assert_array_equal(actual.residual, expected.residual)
+                np.testing.assert_array_equal(actual.status, expected.status)

@@ -3,8 +3,9 @@ import numpy as np
 
 from color_tools.perceptual_grade_core.model.hk_guard import guard
 from color_tools.perceptual_grade_reference.appearance import Appearance, CAT16, response_constants
+from color_tools.perceptual_grade_reference.export import OutputCompressionSettings, compress_saturation
 from color_tools.perceptual_grade_reference.model import WHITES, xyz_from_xy
-from color_tools.perceptual_grade_reference.responses import GAMMA, INVERSE, OPPONENT, eccentricity, signed_hk
+from color_tools.perceptual_grade_reference.responses import GAMMA, INVERSE, OPPONENT, State, eccentricity, signed_hk
 
 WHITE = xyz_from_xy(WHITES["D65"])
 FL, AW = response_constants(203.)
@@ -57,12 +58,12 @@ def pack(ja, a, b):
     return np.sign(chart) * np.where(magnitude <= 200., magnitude, tail)
 
 
-def output(wire):
+def output(wire, compression=OutputCompressionSettings()):
     physical = appearance(wire)
     energy = physical.ja * abs(physical.ja)
     q, repaired = guard(physical.q, energy, energy)
-    changed = np.any(q != physical.q, axis=-1) | (repaired != energy)
+    graded = compress_saturation(State(q, repaired), compression)
+    changed = np.any(graded.q != physical.q, axis=-1) | (graded.energy != energy)
     result = np.asarray(wire, dtype=np.float64).copy()
-    result[changed] = response(np.sign(repaired[changed]) * np.sqrt(abs(repaired[changed])),
-                               q[changed, 1], q[changed, 2])
+    result[changed] = response(graded.ja[changed], graded.q[changed, 1], graded.q[changed, 2])
     return to_xyz(result)

@@ -14,7 +14,8 @@ LAYOUT=dict(TONE_ACTIVE=0,BLACK=1,SPAN=2,SLOPE=3,HIGH=4,TONE_WIDTH=5,
     ANCHORS=96,LOG_RADII=100,ANGLES=124,LOG_CHROMA=148,HUE_RADIANS=172,LOG_SCALE=196,
     CANONICAL_FIRST=220,CANONICAL_LAST=223,Y_WEIGHTS=226,TONE_TABLE=229,ADAPTANCE_LOG_GAINS=234,
     UNIFIED_CHROMA=246,MUTED_GAIN=247,VIVID_GAIN=248,SATURATION_CROSSOVER=249,
-    SHADOW_CHROMA=250,HIGHLIGHT_CHROMA=251,CHROMA_TONE_CROSSOVER=252)
+    SHADOW_CHROMA=250,HIGHLIGHT_CHROMA=251,CHROMA_TONE_CROSSOVER=252,
+    OUTPUT_COMPRESSION=253,OUTPUT_KNEE=254,OUTPUT_SPAN=255)
 HEADER_SIZE=256
 
 
@@ -47,6 +48,9 @@ def parameters(kernel):
         put('UNIFIED_CHROMA',1.)
         put('MUTED_GAIN',[controls.muted_gain,controls.vivid_gain,controls.saturation_crossover,
                          controls.shadow_chroma,controls.highlight_chroma,controls.tone_crossover])
+    put('OUTPUT_COMPRESSION',kernel.output_compression.enabled)
+    put('OUTPUT_KNEE',kernel.output_compression.knee)
+    put('OUTPUT_SPAN',kernel.output_compression.ceiling-kernel.output_compression.knee)
     return result
 
 
@@ -475,6 +479,26 @@ vec4 pg_export_state(vec4 q,out vec3 rgb) {
 vec3 pg_export(vec4 q) {
     vec3 rgb;pg_export_state(q,rgb);return rgb;
 }
+vec4 pg_compress_output(vec4 q) {
+    if(pg_param(PG_P_OUTPUT_COMPRESSION)==0.0)return q;
+    float ja=sign(q.w)*sqrt(abs(q.w));
+    float c=pg_hypot(q.yz),knee=abs(ja)*pg_param(PG_P_OUTPUT_KNEE);
+    if(c<=knee)return q;
+    float span=abs(ja)*pg_param(PG_P_OUTPUT_SPAN),excess=c-knee;
+    float radius=knee+span*(isinf(excess)?1.0:excess/(span+excess));
+    vec2 direction=q.yz/max(abs(q.y),abs(q.z));
+    q.yz=(direction/length(direction))*radius;
+    float base=sqrt(66.0*radius),magnitude=pg_hypot(vec2(ja,base));
+    q.x=ja>=0.0?magnitude:2.0*base-magnitude;
+    return q;
+}
+vec3 pg_release_native(vec3 rgb) {
+    bool legal=all(greaterThanEqual(rgb,vec3(0.0)))&&all(lessThanEqual(rgb,vec3(1024.0)));
+    if(legal&&pg_param(PG_P_OUTPUT_COMPRESSION)==0.0)return rgb;
+    vec4 entered=pg_enter(rgb),mapped=pg_compress_output(entered);
+    if(legal&&all(equal(entered.yz,mapped.yz)))return rgb;
+    return pg_export(mapped);
+}
 vec4 pg_hk_guard(vec4 q,float reference_energy) {
     if(pg_param(PG_P_HK_GUARD)==0.0||q.x<0.0||any(isnan(q))||any(isinf(q)))return q;
     float c=length(q.yz),b=sqrt(66.0*c),d=q.w;
@@ -495,9 +519,12 @@ vec4 pg_hk_guard(vec4 q,float reference_energy) {
     return vec4(sqrt(max(x+lift,0.0)),q.yz*(c>0.0?cg/c:1.0),e);
 }
 vec3 pg_forward(vec3 rgb) {
-    if(pg_param(PG_P_IDENTITY)!=0.0)return rgb;
+    if(pg_param(PG_P_IDENTITY)!=0.0) {
+        if(pg_param(PG_P_OUTPUT_COMPRESSION)==0.0)return rgb;
+        return pg_release_native(rgb);
+    }
     vec4 toned=pg_tone(pg_enter(rgb));
-    return pg_export(pg_grade(toned));
+    return pg_export(pg_compress_output(pg_grade(toned)));
 }
 '''
 
@@ -507,12 +534,8 @@ void main() {
     int id=int(gl_GlobalInvocationID.x);if(id>=sample_count)return;
     ivec2 address=ivec2(id%256,id/256);vec4 input_value=texelFetch(input_pixels,address,0),result;
     if(operation==0)result=pg_enter(input_value.xyz);
-    else if(operation==2&&pg_param(PG_P_IDENTITY)!=0.0)result=vec4(input_value.xyz,1.0);
-    else {
-        vec4 state=operation==1?input_value:pg_enter(input_value.xyz);
-        vec4 toned=pg_tone(state);
-        result=vec4(pg_export(pg_grade(toned)),1.0);
-    }
+    else if(operation==1)result=vec4(pg_export(pg_compress_output(pg_grade(pg_tone(input_value)))),1.0);
+    else result=vec4(pg_forward(input_value.xyz),1.0);
     imageStore(output_pixels,address,result);
 }
 '''

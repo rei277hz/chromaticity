@@ -346,6 +346,41 @@ class NumericalTests(unittest.TestCase):
         self.assertTrue(np.all(warped != wire[[0, 2]]))
         np.testing.assert_allclose(cone.enter(warped).ja, [-30., -5.], atol=1.e-4)
 
+    def test_output_saturation_compression_uses_repaired_physical_appearance(self):
+        chromatic = cone.response([30., 30., -65., -5.], [2., 24., 16., 27.], [1., -18., -12., 21.])
+        neutral = cone.from_xyz(np.array([-2048., 2048.])[:, None] * cone.WHITE)
+        # The weighted achromatic response 2R + G + .05B is exactly zero.
+        wire = np.vstack((chromatic, neutral, [1., -2., 0.], [0., 0., 0.])).astype("f4")
+        baseline = self.compare("output", wire, {})
+        settings = dict(saturationKnee=.2, saturationCeiling=.65)
+        np.testing.assert_array_equal(self.compare("output", wire, settings), baseline)
+        compressed = self.compare("output", wire, dict(settings, saturationCompression=1))
+        unchanged = [0, 4, 5, 7]
+        np.testing.assert_array_equal(compressed[unchanged], baseline[unchanged])
+        np.testing.assert_array_equal(compressed[[3, 6]], np.zeros((2, 3)))
+        self.assertTrue(np.all(np.max(abs(baseline[[3, 6]]), axis=-1) > 1.e-6))
+
+        source = cone.appearance(wire[1:3])
+        result = cone.appearance(cone.from_xyz(compressed[1:3]))
+        before = np.linalg.norm(source.q[:, 1:], axis=-1)
+        after = np.linalg.norm(result.q[:, 1:], axis=-1)
+        np.testing.assert_allclose(result.ja, source.ja, atol=2.e-3)
+        np.testing.assert_allclose(result.q[:, 1:] / after[:, None],
+                                   source.q[:, 1:] / before[:, None], atol=2.e-4)
+        self.assertTrue(np.all(after < before))
+        self.assertTrue(np.all(after / abs(result.ja) < settings["saturationCeiling"]))
+
+    def test_output_saturation_compression_diagnoses_invalid_controls(self):
+        wire = cone.from_xyz(SAMPLES[:1])
+        magenta = rgb_matrix("Linear Rec.709") @ [1., 0., 1.]
+        for settings in ({"saturationKnee": float("nan")}, {"saturationCeiling": float("inf")},
+                         {"saturationKnee": -.01}, {"saturationCeiling": 8.01},
+                         {"saturationKnee": 1.}, {"saturationKnee": 2.},
+                         {"saturationCompression": 2}):
+            with self.subTest(settings=settings):
+                np.testing.assert_allclose(oracle.run("output", wire, settings, x=60),
+                                           magenta[None, :], rtol=1.e-6)
+
     def test_prototype_wheels_match_reference_at_every_peak(self):
         settings = {"lightnessFit": 2, "chromaFit": -1}
         for i, row in enumerate("SMWH", 1):

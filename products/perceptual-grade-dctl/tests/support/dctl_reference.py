@@ -2,6 +2,7 @@
 import numpy as np
 
 from color_tools.perceptual_grade_reference.appearance import encode, decode
+from color_tools.perceptual_grade_reference.export import OutputCompressionSettings
 from color_tools.perceptual_grade_reference.grading import Tone, ToneSettings, kernel, normalized_kernel
 from color_tools.perceptual_grade_reference.model import LinearSettings, WHITES, linear_matrix
 
@@ -161,7 +162,13 @@ def apply(stage, values, controls):
     if stage == "input":
         return cone_reference.from_xyz(values)
     if stage == "output":
-        return cone_reference.output(values)
+        defaults = OutputCompressionSettings()
+        compression = OutputCompressionSettings(
+            enabled=bool(controls.get("saturationCompression", defaults.enabled)),
+            knee=controls.get("saturationKnee", defaults.knee),
+            ceiling=controls.get("saturationCeiling", defaults.ceiling),
+        )
+        return cone_reference.output(values, compression)
     if stage in GLOBAL_SHAPE_PROTOTYPES:
         return jc_global_shape.apply(values, controls)
     if stage in OVERLAP_PROTOTYPES:

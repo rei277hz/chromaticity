@@ -222,12 +222,19 @@ class InterfaceTests(unittest.TestCase):
                      "remapFit", "peakNits"},
             "jc": J_C | SHAPE | {"globalChromaGain", "peakNits", "direction"},
             "warp": WEB | CENTER | {"adaptanceHalfSaturation", "peakNits", "direction"},
-            "output": set(),
+            "output": {"saturationCompression", "saturationKnee", "saturationCeiling"},
         }
         for stage in STAGES:
             with self.subTest(stage=stage):
                 records = {item["name"]: item for item in oracle.ui(stage)}
                 self.assertEqual(records.keys(), expected[stage])
+                if stage == "output":
+                    toggle = records["saturationCompression"]
+                    self.assertEqual((toggle["type"], toggle["default"]), ("DCTLUI_CHECK_BOX", 0))
+                    for name, default in (("saturationKnee", .5), ("saturationCeiling", 1.)):
+                        fields = ("type", "default", "min", "max", "step")
+                        self.assertEqual(tuple(records[name][key] for key in fields),
+                                         ("DCTLUI_SLIDER_FLOAT", default, 0., 8., .01))
                 self.assertLessEqual(sum(i["type"] == "DCTLUI_SLIDER_FLOAT" for i in records.values()), 64)
                 if "peakNits" in records:
                     self.assertEqual(records["peakNits"]["default"], 1)

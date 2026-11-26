@@ -3,6 +3,9 @@ from . import bake_gpu
 from ..perceptual_grade_core.model import bake_inverse, tone_table
 
 
+RELEASE_NATIVE_OPERATION = 9
+
+
 def source(data,offsets,expanded):
     constants=(f'const float PG_INV_TOL={float(bake_inverse.TOLERANCE):.9g};\n'
                f'const float PG_SEARCH_TOL={float(bake_inverse.SEARCH_TOLERANCE):.9g};\n'
@@ -11,7 +14,8 @@ def source(data,offsets,expanded):
                f'const float PG_RGB_REL_TOL={float(bake_inverse.RGB_RELATIVE_TOLERANCE):.9g};\n'
                f'const float PG_RGB_ABS_TOL={float(bake_inverse.RGB_ABSOLUTE_TOLERANCE):.9g};\n'
                f'const float PG_INV_STEP={float(bake_inverse.STEP):.9g};\n'
-               f'const int PG_INV_ITERATIONS={bake_inverse.ITERATIONS};\n')
+               f'const int PG_INV_ITERATIONS={bake_inverse.ITERATIONS};\n'
+               f'const int PG_RELEASE_NATIVE={RELEASE_NATIVE_OPERATION};\n')
     table_fetch='''
 float pg_tone_node(int node,int component) {
     int index=4*node+component;
@@ -230,6 +234,7 @@ void main() {
     int id=int(gl_GlobalInvocationID.x);if(id>=sample_count)return;
     ivec2 address=ivec2(id%256,id/256);vec4 input_value=texelFetch(input_pixels,address,0),result;
     if(operation<2)result=pg_inverse(input_value,operation==1);
+    else if(operation==PG_RELEASE_NATIVE)result=vec4(pg_release_native(input_value.xyz),0.0);
     else if(operation==8)result=pg_grade(input_value);
     else if(operation==7)result=vec4(pg_chroma_scale(input_value),0.0,0.0);
     else if(operation==6) {

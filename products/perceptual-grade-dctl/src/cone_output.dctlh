@@ -1,8 +1,25 @@
-__DEVICE__ PGValue pg_cone_output(float3 wire) {
-    if (!pg_cone_valid(wire)) return pg_value(color_zero3(), 0);
+__DEVICE__ PGState pg_output_compress(PGState state, float knee, float ceiling) {
+    float ja = pg_ja(state.e);
+    float chroma = pg_hypot(state.q.y, state.q.z);
+    float start = _fabs(ja) * knee;
+    if (chroma <= start) return state;
+    // Evaluate the saturation shoulder in chroma units, including the J_A=0 limit.
+    float width = _fabs(ja) * (ceiling - knee);
+    float excess = chroma - start;
+    float mapped = _fmaf(width, excess / (width + excess), start);
+    if (mapped >= chroma) return state;
+    float gain = mapped / chroma;
+    return pg_state(make_float3(pg_hk(ja, mapped), state.q.y * gain, state.q.z * gain), state.e);
+}
+
+__DEVICE__ PGValue pg_cone_output(float3 wire, int enabled, float knee, float ceiling) {
+    if (!pg_cone_valid(wire) || (enabled != 0 && enabled != 1) ||
+        !color_finite(knee) || !color_finite(ceiling) ||
+        knee < 0.0f || knee >= ceiling || ceiling > 8.0f) return pg_value(color_zero3(), 0);
     // Export repair uses physical appearance coordinates and final energy.
     PGState state = pg_state_from_response(wire);
     PGState repaired = pg_guard(state, state.e);
+    if (enabled) repaired = pg_output_compress(repaired, knee, ceiling);
     if (repaired.e == state.e && repaired.q.y == state.q.y && repaired.q.z == state.q.z)
         return pg_xyz_from_response(wire);
     return pg_decode_xyz(repaired);

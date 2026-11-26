@@ -156,6 +156,14 @@ def global_shape_sliders(sliders):
                    label_id=f"global_shape.{name}", tooltip_id=f"global_shape.tooltip.{name}")
 
 
+def output_controls():
+    yield dict(name="saturationCompression", type="DCTLUI_CHECK_BOX", default=0,
+               label_id="output.compression", tooltip_id="output.tooltip.compression")
+    for name, default in (("saturationKnee", .5), ("saturationCeiling", 1.)):
+        yield dict(name=name, type="DCTLUI_SLIDER_FLOAT", default=default, min=0, max=8, step=.01,
+                   label_id=f"output.{name}", tooltip_id=f"output.tooltip.{name}")
+
+
 def global_chroma_controls(unified=False):
     if unified:
         yield from global_shape_sliders((
@@ -292,7 +300,7 @@ def stage_call(stage, variant):
     if stage == "input":
         return "", "pg_cone_input(pixel)"
     if stage == "output":
-        return "", "pg_cone_output(pixel)"
+        return "", "pg_cone_output(pixel, saturationCompression, saturationKnee, saturationCeiling)"
     if stage == "tone":
         return "", ("pg_cone_tone(pixel, inputBlack, pg_four(inputShadows, inputMidtones, inputWhite, "
                     "inputHighlights), remapFit, peakNits)")
@@ -475,6 +483,7 @@ def main():
         if stage in CONE_DOMAINS:
             headers = ["cone_chart"]
             if stage == "output":
+                controls.extend(output_controls())
                 headers.extend(["hk_repair", "cone_output"])
             elif stage == "jc_tone_fit":
                 headers.extend(["jc_gain_common", "jc_global_shape", "jc_tone_compression", "tone_fit", "jc_tone_fit"])
