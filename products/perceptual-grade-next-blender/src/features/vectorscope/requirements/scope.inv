@@ -2,7 +2,9 @@
   "version": 1,
   "state": "State",
   "event": "Event",
-  "initializers": ["initial_state"],
+  "initializers": [
+    "initial_state"
+  ],
   "step": "step",
   "invariants": {},
   "properties": [
