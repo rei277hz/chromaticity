@@ -30,11 +30,9 @@ def cases():
     result = {
         "linear": dict(srcWhite=3, globalExposure=.2, ls=5., ba=7.),
         "input": {},
-        "tone": dict(inputShadows=4., inputMidtones=43., remapFit=2),
-        "jc": dict(toneHJContrast=1.2, toneSJContrast=.15, toneMJContrast=-.8,
-                   toneSCContrast=-.1, toneWCContrast=.08, globalChromaGain=.1,
-                   jSaturationCenter=.42, jSaturationWidth=.35,
-                   cSaturationCenter=.65, cSaturationWidth=.75),
+        "tone_jc": dict(inputShadows=4., inputMidtones=43., remapFit=2,
+                        cMutedGain=-.25, cVividGain=.5, cSaturationCrossover=.4,
+                        shadowChroma=.3, highlightChroma=-.2),
         "warp": dict(toneMAdaptanceA=2., webhue00=-6, webchroma14=.2, webscale25=-.15),
         "output": {},
         "surface": dict(toneSJContrast=1.2, toneMJContrast=-.8, toneHCContrast=.12,
@@ -66,13 +64,14 @@ def run(output, size):
     settings = cases()
     results = {}
     actual_chain = expected_chain = baseline_chain = pixels
+    reversible = ("tone_jc", "warp")
     for stage in (*STAGES, *PROTOTYPES, *SURFACE_PROTOTYPES):
-        inputs = wire if stage in ("tone", "jc", "warp", "output") else pixels
-        space = CONE if stage in ("input", "tone", "jc", "warp") else XYZ
+        inputs = wire if stage in (*reversible, "output") else pixels
+        space = CONE if stage in ("input", *reversible) else XYZ
         result = oracle.run(stage, inputs, settings[stage])
         expected = reference.apply(stage, inputs, settings[stage])
         results[stage] = metrics(result, expected, inputs, comparison="Float64 reference", space=space)
-        if stage in ("jc", "warp"):
+        if stage in reversible:
             inverse = dict(settings[stage], direction=1)
             restored = oracle.run(stage, result, inverse)
             results[stage + "_round_trip"] = metrics(restored, inputs, inputs,
@@ -83,23 +82,24 @@ def run(output, size):
         if stage in STAGES and stage != "output":
             actual_chain = oracle.run(stage, actual_chain, settings[stage])
             expected_chain = reference.apply(stage, expected_chain, settings[stage])
-            if stage not in ("jc", "warp"):
+            if stage not in reversible:
                 baseline_chain = reference.apply(stage, baseline_chain, settings[stage])
 
     forward_output = oracle.run("output", actual_chain)
     results["chain"] = metrics(forward_output, cone.output(expected_chain), pixels,
                                comparison="Float64 forward chain", space=XYZ)
-    for stage in ("warp", "jc"):
+    for stage in reversed(reversible):
         actual_chain = oracle.run(stage, actual_chain, dict(settings[stage], direction=1))
-    results["chain_color_round_trip"] = metrics(actual_chain, baseline_chain, pixels,
-                                                comparison="Undo Warp and J/C against float64 Tone", space=CONE)
+    results["chain_appearance_round_trip"] = metrics(actual_chain, baseline_chain, pixels,
+                                                     comparison="Undo Warp and Tone J/C against float64 XYZ Input",
+                                                     space=CONE)
     results["chain_export_after_undo"] = metrics(oracle.run("output", actual_chain), cone.output(baseline_chain),
-                                                pixels, comparison="Export after undoing Warp and J/C", space=XYZ)
+                                                pixels, comparison="Export after undoing Warp and Tone J/C", space=XYZ)
     report = dict(samples=len(pixels), controls=settings, results=results)
     output.mkdir(parents=True, exist_ok=True)
     (output / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     lines = ["# Float32 DCTL quality", "",
-             f"{len(pixels)} samples per test. The chain evaluates Linear, Input, Tone, Color J/C, Warp and Output.",
+             f"{len(pixels)} samples per test. The chain evaluates Linear, XYZ Input, Tone J/C, Warp and XYZ Output.",
              "The tolerance is 0.1% of the maximum expected channel magnitude in each pixel, with an absolute floor of 1e-7.",
              "", "| Stage | Comparison | Output space | Worst error / tolerance | Pixels outside tolerance |",
              "| --- | --- | --- | ---: | ---: |"]

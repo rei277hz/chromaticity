@@ -35,7 +35,7 @@ controls and runtime behavior.
 | --- | --- | --- |
 | Analytic reference `Model` | Linear, appearance encoding, selected Tone/Chroma path, Color/Warp, H--K repair, decode, and reference RGB boundary handling | Full RGB inverse searches and forward-validates candidates. The integrated Tone/Chroma sub-map has a separate uniqueness proof. |
 | Blender Grade Stack | Ordered Grade entries in fixed AP1-D65 coordinates, then one sampled Stack LUT and the scene boundary | Per-entry inverse uses a bounded GPU solve where needed. The LUT records approximation residuals for affected vertices. |
-| Resolve DCTL chain | Linear, XYZ input, Tone, Color J/C, Warp, then XYZ output with H--K repair | Color J/C and Warp expose local Direction controls. There is no single full-grade inverse node. |
+| Resolve DCTL chain | Linear, XYZ input, integrated Tone J/C, Warp, then XYZ output with H--K repair and optional saturation compression | Tone J/C and Warp expose local Direction controls. |
 
 ## Coordinates and carried state
 
@@ -296,10 +296,11 @@ LUT lifecycle and user-visible approximation report.
 
 ### Resolve DCTL
 
-Resolve uses six serial DCTLs. Linear adjusts scene-linear XYZ D65. XYZ Input
-converts to signed cone responses. Cone Tone applies the Tone curve, Cone
-Color J/C applies its J/C controls, Cone Warp applies hue/chroma, Adaptance,
-and Scale, and XYZ Output performs H--K repair before decoding to XYZ D65.
+Resolve uses five serial DCTLs. Linear adjusts scene-linear XYZ D65. XYZ Input
+converts to signed cone responses. Cone Tone J/C applies Unified Chroma and
+the saturation-preserving Tone curve. Cone Warp applies hue/chroma, Adaptance,
+and Scale. XYZ Output performs H--K repair and optional saturation compression
+before decoding to XYZ D65.
 Resolve does not apply the Blender AP1 input repair or AP1 cube boundary.
 Signed and above-range XYZ values are retained by the cone chain.
 
@@ -344,13 +345,13 @@ not claimed globally unique.
 
 ### Resolve DCTL Direction
 
-Color J/C and Warp can be placed in inverse Direction. Their local inverse
+Tone J/C and Warp can be placed in inverse Direction. Their local inverse
 branches reverse their corresponding forward operations. Some components use
 bounded iteration, including Tone and Warp inversions in the Resolve product
 DCTLs.
-The six-node chain does not provide one inverse for Linear through XYZ Output,
-and the final H--K repair has no paired inverse node. For two Color operations,
-reverse their serial order when applying their inverses.
+To undo the two appearance nodes, apply inverse Warp followed by inverse
+Tone J/C before XYZ Output. Final H--K repair and saturation compression occur
+after those inverses.
 
 The distinction is between a unique inverse for the integrated 2–3A map on
 signed appearance triples and a full product inverse. Only the former has the

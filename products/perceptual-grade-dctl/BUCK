@@ -42,8 +42,7 @@ GENERATOR_ARGS = [
 DCTL_STAGES = [
     ("linear", "1-Linear"),
     ("input", "1B-XYZ-Input"),
-    ("tone", "2-Cone-Tone"),
-    ("jc", "3A-Cone-Color-JC"),
+    ("tone_jc", "2-3A-Cone-Tone-JC"),
     ("warp", "3B-Cone-Warp"),
     ("output", "4-XYZ-Output"),
 ]
@@ -54,6 +53,18 @@ generate(
     outputs = {
         stage + "_" + locale: "Perceptual-Grade-" + slug + suffix + ".dctl"
         for stage, slug in DCTL_STAGES
+        for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
+    },
+    tool = ":generator",
+    visibility = ["PUBLIC"],
+)
+
+generate(
+    name = "standalone_tone_jc",
+    args = GENERATOR_ARGS + ["--standalone-tone-jc"],
+    outputs = {
+        stage + "_" + locale: "Perceptual-Grade-" + slug + suffix + ".dctl"
+        for stage, slug in [("tone", "2-Cone-Tone"), ("jc", "3A-Cone-Color-JC")]
         for locale, suffix in [("en", ""), ("zh_HANS", "-zh-HANS")]
     },
     tool = ":generator",

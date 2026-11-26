@@ -13,10 +13,13 @@ from .warp_geometry import geometry_source
 STAGES = {
     "linear": "1-Linear",
     "input": "1B-XYZ-Input",
-    "tone": "2-Cone-Tone",
-    "jc": "3A-Cone-Color-JC",
+    "tone_jc": "2-3A-Cone-Tone-JC",
     "warp": "3B-Cone-Warp",
     "output": "4-XYZ-Output",
+}
+STANDALONE_TONE_JC = {
+    "tone": "2-Cone-Tone",
+    "jc": "3A-Cone-Color-JC",
 }
 CONE_DOMAINS = {
     "input": "Linear XYZ D65 to modCAM16 cone responses",
@@ -54,10 +57,12 @@ JC_TONE_FIT_LINEAR_GAIN_PROTOTYPE = {
 JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE = {
     "jc_tone_fit_unified_chroma": "2-3A-Cone-Tone-JC-Unified-Chroma-Prototype",
 }
+UNIFIED_CHROMA_STAGES = {"tone_jc", *JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE}
 WARP_QUADRATIC_SCALE_PROTOTYPE = {
     "warp_quadratic_scale": "3B-Cone-Warp-Quadratic-Scale-Prototype",
 }
 VARIANT_STAGES = {
+    "tone_jc": "jc_tone_fit",
     "jc_tone_fit_linear_gain": "jc_tone_fit",
     "jc_tone_fit_unified_chroma": "jc_tone_fit",
     "warp_quadratic_scale": "warp",
@@ -200,7 +205,7 @@ def jc_global_shape_controls(spec):
 
 
 def jc_tone_fit_controls(spec, variant):
-    unified = variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE
+    unified = variant in UNIFIED_CHROMA_STAGES
     direction = next(control for control in spec if control["name"] == "direction")
     shared = (control for control in spec
               if "jc_tone_fit" in control["stages"] and control["name"] != "direction"
@@ -346,7 +351,7 @@ def stage_call(stage, variant):
             "            cToneCrossover, direction)"
         )
     if stage == "jc_tone_fit":
-        unified = variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE
+        unified = variant in UNIFIED_CHROMA_STAGES
         if unified:
             mode = "PG_JC_CHROMA_UNIFIED"
             saturation = "pg_four(0.0f, cSaturationCrossover, cMutedGain, cVividGain)"
@@ -381,7 +386,7 @@ def stage_call(stage, variant):
 def entry_point(stage, variant):
     setup, call = stage_call(stage, variant)
     overlay = ""
-    if variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE:
+    if variant in UNIFIED_CHROMA_STAGES:
         overlay = """    if (showToneCurve && result.valid) {
         output = pg_jc_tone_overlay_pixel(output, p_Width, p_Height, p_X, p_Y,
                     pg_four(inputShadows, inputMidtones, inputWhite, inputHighlights),
@@ -405,6 +410,8 @@ def main():
     for arg in ("output-dir", "source-dir", "color-source", "metadata", "catalog-dir"):
         parser.add_argument("--" + arg, type=Path, required=True)
     prototypes = parser.add_mutually_exclusive_group()
+    prototypes.add_argument("--standalone-tone-jc", action="store_true",
+                            help="Emit the standalone Tone and Color J/C DCTLs")
     prototypes.add_argument("--jc-prototype", action="store_true", help="Emit only the Color J/C LGG prototypes")
     prototypes.add_argument("--jc-surface", action="store_true", help="Emit only the Color J/C saturation surface prototype")
     prototypes.add_argument("--jc-overlap", action="store_true", help="Emit the two cone Color J/C tonal overlap prototypes")
@@ -434,7 +441,9 @@ def main():
         catalogs = {locale: lgg_messages(messages, lgg_locales[locale])
                     for locale, messages in catalogs.items()}
     else:
-        if args.jc_surface:
+        if args.standalone_tone_jc:
+            stages = STANDALONE_TONE_JC
+        elif args.jc_surface:
             stages = JC_SURFACE_PROTOTYPE
         elif args.jc_overlap:
             stages = JC_OVERLAP_PROTOTYPES
@@ -488,7 +497,7 @@ def main():
                 headers.extend(["hk_repair", "cone_output"])
             elif stage == "jc_tone_fit":
                 headers.extend(["jc_gain_common", "jc_global_shape", "jc_tone_compression", "tone_fit", "jc_tone_fit"])
-                if variant in JC_TONE_FIT_UNIFIED_CHROMA_PROTOTYPE:
+                if variant in UNIFIED_CHROMA_STAGES:
                     headers.append("jc_tone_overlay")
             elif stage != "input":
                 if stage in {"jc_gain", "jc_global_shape"}:

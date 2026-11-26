@@ -9,8 +9,9 @@ from color_tools.perceptual_grade_reference.model import LinearSettings, WHITES,
 from . import cone_color, cone_reference, jc_gain, jc_global_shape, jc_prototype, jc_surface
 from .dctl import (
     ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES,
-    OVERLAP_PROTOTYPES, PROTOTYPES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
-    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, SURFACE_PROTOTYPES,
+    TONE_FIT_LINEAR_GAIN_PROTOTYPES, TONE_FIT_PROTOTYPES, UNIFIED_CHROMA_STAGES,
+    WARP_QUADRATIC_SCALE_PROTOTYPES,
 )
 
 WHITE = cone_reference.WHITE
@@ -89,7 +90,7 @@ def apply_tone_fit(stage, wire, tone, controls):
     if compression > 0.:
         origin_gain *= .5
 
-    unified = stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES
+    unified = stage in UNIFIED_CHROMA_STAGES
     influence = 1. if unified else controls.get("hkInfluence", 1.)
 
     def tone_ray(scale, ja, hk_chroma):
@@ -175,7 +176,7 @@ def apply(stage, values, controls):
         controls = overlap_settings(stage, controls)
         stage = "jc"
     tone = Tone(tone_settings(controls))
-    if stage in (*TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES, *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES):
+    if stage in (*TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES, *UNIFIED_CHROMA_STAGES):
         return apply_tone_fit(stage, values, tone, controls)
     if stage in GAIN_PROTOTYPES:
         return jc_gain.apply(stage, values, tone, overlap_settings(stage, controls))

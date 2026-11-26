@@ -21,6 +21,8 @@ generate(
     args = [
         "--dctl-dir",
         "$(location //products/perceptual-grade-dctl:dctl)",
+        "--standalone-dir",
+        "$(location //products/perceptual-grade-dctl:standalone_tone_jc)",
         "--prototype-dir",
         "$(location //products/perceptual-grade-dctl:jc_prototype)",
         "--surface-dir",
@@ -85,6 +87,7 @@ python_library(
     resources = {
         "oracle": ":oracle",
         "stages": "//products/perceptual-grade-dctl:dctl",
+        "standalone_tone_jc": "//products/perceptual-grade-dctl:standalone_tone_jc",
         "prototypes": "//products/perceptual-grade-dctl:jc_prototype",
         "surfaces": "//products/perceptual-grade-dctl:jc_surface_prototype",
         "overlaps": "//products/perceptual-grade-dctl:jc_overlap_prototypes",

@@ -16,7 +16,8 @@ The target produces `Perceptual-Grade-3A-Color-JC-Surface-Prototype.dctl` and
 for your locale on a scene-linear XYZ D65 node. To compare the standalone
 prototype with the cone Color J/C node, feed identical XYZ into two branches.
 Place the prototype on one and XYZ Input → Color J/C → XYZ Output on the other.
-Match Peak Nits. [DCTL installation](README.md#install-and-use)
+Build Color J/C with `:standalone_tone_jc` and match Peak Nits.
+[DCTL installation](README.md#install-and-use)
 
 ## Controls
 

@@ -1,47 +1,50 @@
 # Perceptual Grade for DaVinci Resolve
 
-Six DCTLs grade scene-linear **XYZ D65**, with reference white at Y = 1
-(203 nits). XYZ Input converts to signed modCAM16 cone responses for Tone and
-both Color nodes. XYZ Output converts back to scene-linear XYZ D65.
+Five DCTLs grade scene-linear **XYZ D65**, with reference white at Y = 1
+(203 nits). XYZ Input converts to signed modCAM16 cone responses for integrated
+Tone and Color J/C and Warp. XYZ Output decodes the responses to linear XYZ D65.
 
 | DCTL | Adjustments |
 | --- | --- |
 | `Perceptual-Grade-1-Linear.dctl` | Exposure, CAT16 source white, and balance, spread and heading on the cyan–red and yellow–blue axes |
 | `Perceptual-Grade-1B-XYZ-Input.dctl` | Converts linear XYZ D65 to signed cone responses |
-| `Perceptual-Grade-2-Cone-Tone.dctl` | Black, Shadows, Midtones, White and Highlights input levels in nits, curve Fit and output peak |
-| `Perceptual-Grade-3A-Cone-Color-JC.dctl` | J and C contrast per tone, separate J and C saturation centers and widths, overall chroma gain, direction |
+| `Perceptual-Grade-2-3A-Cone-Tone-JC.dctl` | Tone curve, unified C Muted and C Vivid gains, shadow and highlight chroma shaping, direction |
 | `Perceptual-Grade-3B-Cone-Warp.dctl` | Chroma, integer hue and scale on six Rec.709 handles across four tonal rows, four Adaptance centers, half saturation, direction |
 | `Perceptual-Grade-4-XYZ-Output.dctl` | Final H–K repair, optional saturation compression, and decode to linear XYZ D65 |
 
 ## Install and use
 
-1. Build both locales. Buck prints the directory containing all 12 files.
+1. Build both locales. Buck prints the directory containing all 10 standard
+   files.
 
    ```sh
    buck2 build --remote-only //products/perceptual-grade-dctl:dctl --show-output
    ```
 
 2. In Resolve's **Project Settings → Color Management → Lookup Tables**, open
-   the LUT folder and install the six English files or the six Simplified
+   the LUT folder and install the five English files or the five Simplified
    Chinese files with the `-zh-HANS` suffix. Choose **Update Lists**. On the
    Color page, add the DCTL effects on serial nodes in the order shown above.
+   Standalone Tone and Color J/C nodes are available only through the opt-in
+   `:standalone_tone_jc` target. Other variants also have explicit opt-in
+   targets and are excluded from the standard `:dctl` bundle.
 3. If your node graph works in RGB or log, place a Color Space Transform before
    Linear to convert the working gamut and gamma to **CIE XYZ** with **Linear**
    gamma and D65 white. After XYZ Output, use the reverse transform to return to
    the working gamut and gamma. Set tone mapping and gamut mapping to **None**
    on both transforms. Keep display rendering and RGB operations outside the
    cone-response nodes.
-4. Match **Peak Nits** across Tone, Color J/C and Warp. The default is 1000 nits.
-   Linear, Tone and both Color nodes pass valid input through exactly at their
+4. Match **Peak Nits** across Tone J/C and Warp. The default is 1000 nits.
+   Linear, Tone J/C, and Warp pass valid input through exactly at their
    default settings. The XYZ Input and Output pair applies a float32 round trip
    with export repair where the final appearance requires it.
 
 ## Color and export
 
-Use the **Direction** menu to audition a Color node's inverse. To undo both
-nodes within the same cone chain, place their copies between Forward Warp and
-XYZ Output, in the order Warp **Inverse** → Color J/C **Inverse**, with the
-matching settings and Peak Nits. [Stage 3 design and audition](REVERSIBLE-STAGE-3.md)
+Use the **Direction** menu on Tone J/C and Warp to audition their inverses.
+To undo both within the same cone chain, place their copies between Forward
+Warp and XYZ Output, in the order Warp **Inverse** → Tone J/C **Inverse**, with
+matching settings and Peak Nits.
 
 Warp uses 57 floating-point sliders and 24 integer hue sliders in degrees.
 That keeps the floating-point sliders within Resolve's limit of 64 per DCTL.
@@ -78,7 +81,7 @@ Legacy variants use `s = C / (C + (35/75) * abs(J_A))` for their pivots.
 
 | Variant and Buck target | Tone Fit and H–K Influence | Global chroma controls | Saturation pivot or crossover | Global gain near gray | Shadow and Highlight Chroma fade | Inverse |
 | --- | --- | --- | --- | --- | --- | --- |
-| [Unified Chroma baseline](#unified-chroma-baseline) (`:jc_tone_fit_unified_chroma_prototype`) | Fit `-2` to `+2`, H–K Influence fixed at `1.0` | C Muted Gain and C Vivid Gain shape one curve | Raw input saturation `C / abs(J_A)`, default `0.45`. At a positive crossover the gain is halfway between the endpoints in stops. | Approaches `2^(C Muted Gain)` at a positive crossover. Zero crossover gives Vivid Gain. | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
+| [Unified Chroma baseline](#unified-chroma-baseline) (`:dctl`) | Fit `-2` to `+2`, H–K Influence fixed at `1.0` | C Muted Gain and C Vivid Gain shape one curve | Raw input saturation `C / abs(J_A)`, default `0.45`. At a positive crossover the gain is halfway between the endpoints in stops. | Approaches `2^(C Muted Gain)` at a positive crossover. Zero crossover gives Vivid Gain. | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
 | [Legacy Log Gain](#integrated-tone-and-color-jc-prototype) (`:jc_tone_fit_prototype`) | Fit `-2` to `+6`, H–K Influence `0` to `1` | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates in stops and approaches unity near gray | Global curve closed form. Tonal gain and Tone use scalar solves. |
 | [Linear Gain](#linear-gain-audition) (`:jc_tone_fit_linear_gain_prototype`) | Fit `-2` to `+6`, H–K Influence `0` to `1` | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
 
@@ -88,13 +91,13 @@ gray stays neutral.
 
 ### Standalone 3A variants
 
-Cone variants occupy the Color J/C position after Cone Tone. XYZ variants
-operate directly on scene-linear XYZ D65, outside the cone chain. LGG means
-Lift, Gamma, and Gain.
+For a standalone cone variant, replace the standard 2-3A node with Cone Tone
+from `:standalone_tone_jc` followed by the selected Color J/C variant. XYZ
+variants operate directly on scene-linear XYZ D65. LGG means Lift, Gamma, and Gain.
 
 | Variant | Domain | Tonal weighting | J adjustment | C adjustment and pivot | Near-gray behavior | Inverse in the DCTL |
 | --- | --- | --- | --- | --- | --- | --- |
-| [Shipping Color J/C](#install-and-use) (`:dctl`) | Cone | Four anchors with interpolation between neighbors | Local lightness contrast at fixed chroma, shared J center and width | Per-tone contrast, shared C center and width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
+| Standalone Color J/C (`:standalone_tone_jc`) | Cone | Four anchors with interpolation between neighbors | Local lightness contrast at fixed chroma, shared J center and width | Per-tone contrast, shared C center and width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
 | [Adjacent Overlap](#color-jc-tonal-overlap-prototypes) (`:jc_overlap_prototypes`) | Cone | Each anchor also receives its immediate neighbors | Local lightness contrast at fixed chroma, shared J center and width | Per-tone contrast, shared C center and width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
 | [Broad Overlap](#color-jc-tonal-overlap-prototypes) (`:jc_overlap_prototypes`) | Cone | Each anchor receives all four rows with distance falloff | Local lightness contrast at fixed chroma, shared J center and width | Per-tone contrast, shared C center and width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
 | [Broad Overlap with Anchor Centers](#color-jc-tonal-overlap-prototypes) (`:jc_anchor_centers_prototype`) | Cone | Broad overlap for contrast amounts | Local lightness contrast at fixed chroma, J center per anchor, shared J width | Per-tone contrast, C center per anchor, shared C width, overall gain | J fades. C retains relative gain. | J scalar solve, C closed form |
@@ -110,7 +113,7 @@ The LGG pivot is the chroma-to-lightness ratio `C / abs(J_A)`. A ratio of
 `35/75` corresponds to `0.50` on the normalized saturation scale `s`.
 Cone variants defer H–K repair to XYZ Output. The standalone XYZ variants
 apply H–K repair inside the DCTL.
-[Shipping Color J/C](REVERSIBLE-STAGE-3.md#how-color-jc-preserves-order) ·
+[Standalone Color J/C](REVERSIBLE-STAGE-3.md#how-color-jc-preserves-order) ·
 [Cone auditions](JC-OVERLAP-PROTOTYPES.md) ·
 [Surface audition](JC-SURFACE-PROTOTYPE.md) ·
 [LGG auditions](JC-LGG-PROTOTYPE.md)
@@ -171,6 +174,8 @@ Tone's inverse still uses a scalar solve. [Linear Gain behavior and Resolve audi
 
 ### Unified Chroma baseline
 
+This is the standard Tone J/C node in the five-stage chain. Its opt-in
+prototype build remains available for comparison with other designs.
 C Muted Gain and C Vivid Gain shape incoming saturation together. C Saturation
 Crossover selects raw input saturation `C / abs(J_A)` from `0` to `1`,
 with a default of `0.45`. At a positive crossover, the applied gain in stops
@@ -183,6 +188,7 @@ Remap Fit is limited to `-2` through `+2`. The target builds English and
 Simplified Chinese DCTLs.
 
 ```sh
+buck2 build --remote-only //products/perceptual-grade-dctl:dctl --show-output
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_chroma_prototype --show-output
 ```
 

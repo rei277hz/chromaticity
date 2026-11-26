@@ -7,8 +7,8 @@ from color_tools.perceptual_grade_reference.model import rgb_matrix
 from tests.support import cone_reference as cone, dctl_reference as reference, jc_prototype, jc_surface, oracle
 from tests.support.dctl import (
     ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES, OVERLAP_PROTOTYPES,
-    PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES, TONE_FIT_PROTOTYPES,
-    TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
+    PROTOTYPES, STAGES, STANDALONE_STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
+    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, UNIFIED_CHROMA_STAGES,
     WARP_QUADRATIC_SCALE_PROTOTYPES,
 )
 
@@ -50,9 +50,9 @@ class NumericalTests(unittest.TestCase):
                 np.testing.assert_array_equal(actual.view("u4"), pixels.view("u4"))
         wire = np.array([[0., -0., 0.], [399., -399., 71.], [-1., -2., -3.],
                          [1.e-25, -1.e-25, 1.e-12]], dtype="f4")
-        for stage in ("tone", "jc", "warp", *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
+        for stage in (*STANDALONE_STAGES, "warp", *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
                       *GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES,
-                      *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
+                      *UNIFIED_CHROMA_STAGES,
                       *WARP_QUADRATIC_SCALE_PROTOTYPES):
             with self.subTest(stage=stage):
                 actual = oracle.run(stage, wire)
@@ -93,6 +93,21 @@ class NumericalTests(unittest.TestCase):
                     actual = self.compare("jc_tone_fit_unified_chroma", wire, settings)
                     self.assert_stage_close(actual, oracle.run("tone", wire, settings))
                     np.testing.assert_array_equal(actual, oracle.run("jc_tone_fit", wire, settings))
+
+    def test_standard_tone_jc_matches_unified_chroma_prototype(self):
+        wire = np.vstack([cone.from_xyz(np.vstack([SAMPLES, 2048. * SAMPLES])),
+                          cone.pack([-75., 55., 350.], [19., -65., 40.], [-4., 11., -90.]),
+                          [11., -22., 0.], [389., 390., 388.]]).astype("f4")
+        settings = dict(blackCompression=1.1, inputShadows=2.4, inputMidtones=42.,
+                        inputWhite=225., inputHighlights=1600., remapFit=1, peakNits=2,
+                        cMutedGain=-1.3, cVividGain=1.7, cSaturationCrossover=.22,
+                        shadowChroma=1.5, highlightChroma=-1.3, cToneCrossover=35.)
+        for direction in (0, 1):
+            with self.subTest(direction=direction):
+                controls = dict(settings, direction=direction)
+                standard = self.compare("tone_jc", wire, controls)
+                prototype = oracle.run("jc_tone_fit_unified_chroma", wire, controls)
+                np.testing.assert_array_equal(standard, prototype)
 
     def test_integrated_tone_applies_global_chroma_first(self):
         wire = cone.from_xyz(np.vstack([SAMPLES, 20. * SAMPLES])).astype("f4")
@@ -1055,33 +1070,37 @@ class NumericalTests(unittest.TestCase):
                 quadratic = self.compare("warp_quadratic_scale", wire, dict(settings, peakNits=peak))
                 self.assert_stage_close(quadratic, baseline)
 
-    def test_six_node_chain_can_undo_color_before_export(self):
-        settings = {"linear": {"globalExposure": .25}, "tone": {"inputMidtones": 40.},
-                    "jc": JC_CONTROLS, "warp": WARP_CONTROLS}
-        edited = baseline = SAMPLES
+    def test_five_node_chain_can_undo_color_before_export(self):
+        tone_jc = dict(inputMidtones=40., cMutedGain=-.6, cVividGain=.8,
+                       cSaturationCrossover=.55, shadowChroma=.2,
+                       highlightChroma=-.1, cToneCrossover=45.)
+        settings = {"linear": {"globalExposure": .25}, "tone_jc": tone_jc,
+                    "warp": WARP_CONTROLS}
+        edited = SAMPLES
+        baseline = SAMPLES
         for stage in STAGES:
             edited = oracle.run(stage, edited, settings.get(stage))
+            if stage in ("linear", "input"):
+                baseline = reference.apply(stage, baseline, settings.get(stage, {}))
+            if stage == "input":
+                before_tone_jc = edited
             if stage == "warp":
                 after_warp = edited
-            if stage in ("jc", "warp"):
-                continue
-            baseline = reference.apply(stage, baseline, settings.get(stage, {}))
-            if stage == "tone":
-                after_tone = edited
-        self.assertGreater(np.max(abs(edited - baseline)), .001)
+        expected = reference.apply("output", baseline, {})
+        self.assertGreater(np.max(abs(edited - expected)), .001)
         restored = oracle.run("warp", after_warp, dict(WARP_CONTROLS, direction=1))
-        restored = oracle.run("jc", restored, dict(JC_CONTROLS, direction=1))
-        self.assert_stage_close(restored, after_tone)
-        self.assert_stage_close(oracle.run("output", restored), baseline)
+        restored = oracle.run("tone_jc", restored, dict(tone_jc, direction=1))
+        self.assert_stage_close(restored, before_tone_jc)
+        self.assert_stage_close(oracle.run("output", restored), expected)
 
     def test_invalid_hues_and_poles_propagate_to_output_diagnostic(self):
         wire = cone.from_xyz(SAMPLES[:3])
         marker = np.tile([400., 0., 400.], (len(wire), 1))
         np.testing.assert_array_equal(oracle.run("warp", wire, {"webhue20": 360}), marker)
         np.testing.assert_array_equal(oracle.run("warp", wire, {"toneSAdaptanceA": 1.e6}), marker)
-        invalid = np.array([[400., 0., 0.], [0., -400., 0.], [0., 0., np.inf]])
-        for stage in ("tone", "jc", "warp"):
+        for stage in (*STANDALONE_STAGES, "tone_jc", "warp"):
             with self.subTest(stage=stage):
+                invalid = np.array([[400., 0., 0.], [0., -400., 0.], [0., 0., np.inf]])
                 invalid = oracle.run(stage, invalid)
                 np.testing.assert_array_equal(invalid, marker)
         for x, magnitude in ((0, .06), (60, 1.)):

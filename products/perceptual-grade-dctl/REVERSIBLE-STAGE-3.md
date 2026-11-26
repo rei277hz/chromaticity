@@ -1,5 +1,9 @@
 # Reversible Color J/C and Warp
 
+Build standalone Color J/C with `:standalone_tone_jc` for the auditions
+below. The standard chain uses integrated Tone J/C with Unified Chroma.
+[DCTL installation and inverse order](README.md#color-and-export)
+
 Positive Midtones C Contrast reduces chroma on the muted side of C Center and
 increases it on the vivid side. C Width controls how gradually that change
 takes effect. Four tonal amounts share this pair of controls. The four J
@@ -13,8 +17,9 @@ contrast slider influence at neighboring tonal anchors. [Tonal overlap prototype
 ## Node connections and inverse scope
 
 XYZ Input encodes the three signed modCAM16 cone responses, each strictly
-inside `(-400, 400)`. Tone, Color J/C and Warp consume and return this same
-triplet. These nodes open each component `r` into a grading coordinate
+inside `(-400, 400)`. Tone J/C, Warp, and the standalone Tone and Color J/C
+nodes consume and return this same triplet. These nodes open each component
+`r` into a grading coordinate
 `u`. For `|r| <= 200`, `u = r`. Beyond that,
 `u = sign(r) * 40000 / (400 - |r|)`. Closing the chart uses the identity up to
 200 and `r = sign(u) * (400 - 40000/|u|)` beyond it. The open chart permits a

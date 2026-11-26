@@ -1,15 +1,15 @@
 # Color J/C cone prototypes
 
-Adjacent Overlap and Broad Overlap use the shipping cone Color J/C controls.
+Adjacent Overlap and Broad Overlap use the standalone cone Color J/C controls.
 Both spread each slider's influence across Shadows, Midtones, White, and
 Highlights before evaluating the J and C curves. Broad Overlap with Anchor
 Centers adds independent J and C saturation centers at each tonal anchor.
 Linear Gain and Log Gain use the same Broad Overlap weights with two controls
 per anchor, a saturation-preserving J Contrast and a C Gain that fades near gray.
 Global Shape uses continuous lightness and saturation curves with movable pivots.
-The Unified Chroma baseline combines the Tone curve with a single saturation
-curve for muted and vivid gains. The earlier integrated Log Gain and Linear
-Gain variants are available for comparison.
+The standard 2-3A Unified Chroma node combines the Tone curve with a single
+saturation curve for muted and vivid gains. The integrated Log Gain and Linear
+Gain variants have opt-in targets for comparison.
 
 ## Build and install
 
@@ -21,6 +21,7 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_global_shape_proto
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_prototype --show-output
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_linear_gain_prototype --show-output
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_chroma_prototype --show-output
+buck2 build --remote-only //products/perceptual-grade-dctl:standalone_tone_jc --show-output
 ```
 
 | Prototype | English filename |
@@ -35,10 +36,10 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_c
 | Integrated Tone and J/C Linear Gain | `Perceptual-Grade-2-3A-Cone-Tone-JC-Linear-Gain-Prototype.dctl` |
 | Integrated Tone and J/C Unified Chroma baseline | `Perceptual-Grade-2-3A-Cone-Tone-JC-Unified-Chroma-Prototype.dctl` |
 
-The Simplified Chinese filenames end in `-zh-HANS.dctl`. Use the overlap
-and Global Shape prototypes in the Color J/C position. Integrated Tone and J/C
-replaces both Cone Tone and Color J/C. It follows XYZ Input and precedes Warp
-and XYZ Output. [DCTL installation](README.md#install-and-use)
+The Simplified Chinese filenames end in `-zh-HANS.dctl`. To audition a
+standalone cone variant, place Cone Tone and the variant in place of 2-3A.
+Integrated Tone and J/C variants go directly in the 2-3A position between
+XYZ Input and Warp. [DCTL installation](README.md#install-and-use)
 
 ## Effective amounts
 
@@ -57,11 +58,11 @@ anchors are as follows. These numbers are inputs to the saturation response.
 
 | DCTL | Shadows | Midtones | White | Highlights |
 | --- | ---: | ---: | ---: | ---: |
-| Shipping cone Color J/C | 0 | 1 | 0 | 0 |
+| Standalone cone Color J/C | 0 | 1 | 0 | 0 |
 | Adjacent Overlap | 0.200 | 0.667 | 0.167 | 0 |
 | Broad Overlap | 0.320 | 0.485 | 0.242 | 0.040 |
 
-The shipping C curve already blends neighboring settings between anchors.
+The standalone C curve blends neighboring settings between anchors.
 For a Midtones-only `+1` edit, the amount is `+0.5` halfway from Midtones to
 White and reaches zero at White. The prototypes blend the effective amounts
 over the same interval. The wider reach reduces the peak response to an
@@ -398,7 +399,7 @@ them in `libraries/perceptual-grade-reference` and then propagating them to
 | Tonal C Gain near gray | Whether a softly colored neutral stays close enough to gray when a vivid patch gains chroma at the same tone | High. The half-weight point can move. The curve must stay increasing over the full slider range. |
 | Linear or log-like C gain | Compare the multipliers in the table on the same muted-to-vivid ramp | High. Both variants share controls, tonal weights, and near-gray protection. |
 
-1. Compare shipping Color J/C, Adjacent Overlap, and Broad Overlap on the
+1. Compare standalone Color J/C, Adjacent Overlap, and Broad Overlap on the
    same skin shot, muted-to-vivid ramp, and colored lightness ramp. Use
    identical XYZ Input and XYZ Output nodes, Tone settings, and Peak Nits.
 2. Set Midtones C Contrast to `+1` with the other controls at reset. Compare
