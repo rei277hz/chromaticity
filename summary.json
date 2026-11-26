@@ -2,12 +2,12 @@
   "schema": 1,
   "metadata": {
     "repository": "rei277hz/chromaticity",
-    "commit": "5bd54ac6ad51707d3fd17b69bb54f37f0b8491fc",
-    "run_id": "45603976306",
-    "run_number": 67,
+    "commit": "9ae43b925d6fa4ef2cd1bb83f9546759902b3772",
+    "run_id": "45759247588",
+    "run_number": 74,
     "run_attempt": 1,
-    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/45603976306",
-    "timestamp": "2026-11-25T11:53:52+00:00"
+    "run_url": "https://github.com/rei277hz/chromaticity/actions/runs/45759247588",
+    "timestamp": "2026-11-26T05:37:16+00:00"
   },
   "builds": {
     "passed": 2,
@@ -30,13 +30,13 @@
     ]
   },
   "tests": {
-    "passed": 67,
+    "passed": 66,
     "total": 68,
     "outcome": "failed",
     "exit_code": 3,
     "counts": {
-      "failed": 1,
-      "passed": 67
+      "failed": 2,
+      "passed": 66
     },
     "issues": [
       "test-build-report.json: the build command did not report complete success"
@@ -44,275 +44,479 @@
     "targets": [
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_preparation",
-        "status": "passed"
+        "purpose": "Checks preparation scheduling and replacement of outdated requests.",
+        "status": "passed",
+        "duration_us": 156082,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_node",
-        "status": "passed"
+        "purpose": "Checks Grade node readiness, failure states, and Grade Stack transitions.",
+        "status": "passed",
+        "duration_us": 144983,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_helper",
-        "status": "passed"
+        "purpose": "Checks helper process startup, job admission, cancellation, and shutdown deadlines.",
+        "status": "passed",
+        "duration_us": 119661,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_verification",
-        "status": "passed"
+        "purpose": "Checks proof verification against unreachable branches, unsafe operations, and inconsistent assumptions.",
+        "status": "passed",
+        "duration_us": 3535704,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_resources",
-        "status": "passed"
+        "purpose": "Checks resource ownership, validation, and retention for undo.",
+        "status": "passed",
+        "duration_us": 134665,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_bank_publication",
-        "status": "passed"
+        "purpose": "Checks parameter image staging, bank switching, and rollback.",
+        "status": "passed",
+        "duration_us": 129439,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_bake",
-        "status": "passed"
+        "purpose": "Checks bake request admission, artifact activation, and live output selection.",
+        "status": "passed",
+        "duration_us": 123513,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_render_preflight",
-        "status": "passed"
+        "purpose": "Checks render admission against the requested scene, frame, and published Grade signature.",
+        "status": "passed",
+        "duration_us": 120095,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_gesture",
-        "status": "passed"
+        "purpose": "Checks drag activation, observer handoff, release, and undo ownership.",
+        "status": "passed",
+        "duration_us": 175285,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_authoring",
-        "status": "passed"
+        "purpose": "Checks Color control edits, including hue-handle constraints, restoration, and Adaptance limits.",
+        "status": "passed",
+        "duration_us": 1048352,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:preparation_runtime",
-        "status": "passed"
+        "purpose": "Exercises asynchronous Grade and Stack preparation, helper coordination, and publication recovery.",
+        "status": "passed",
+        "duration_us": 3193977,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:runtime_bake_routes",
-        "status": "passed"
+        "purpose": "Checks Bake source routing, dependency fingerprints, and UV geometry validation.",
+        "status": "passed",
+        "duration_us": 914202,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:bake_worker_runtime",
-        "status": "passed"
+        "purpose": "Checks Bake worker dispatch and capture helper cancellation and cleanup.",
+        "status": "passed",
+        "duration_us": 582627,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:lut_worker",
-        "status": "passed"
+        "purpose": "Checks Stack LUT request validation, progressive results, and worker cancellation.",
+        "status": "passed",
+        "duration_us": 1005172,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:lut_shader",
-        "status": "passed"
+        "purpose": "Checks compute shader assembly and compares generated Stack LUT shader source.",
+        "status": "passed",
+        "duration_us": 836498,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:preparation",
-        "status": "passed"
+        "purpose": "Checks Linear and Tone preparation, parameter snapshots, and tone-anchor limits.",
+        "status": "passed",
+        "duration_us": 7528623,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_preparation",
-        "status": "passed"
+        "purpose": "Checks preparation and reuse of Color parameters for Adaptance and Warp.",
+        "status": "passed",
+        "duration_us": 125070356,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_resolution",
-        "status": "passed"
+        "purpose": "Checks resolution of Color settings into valid Adaptance and hue-warp geometry.",
+        "status": "passed",
+        "duration_us": 776674,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_transport",
-        "status": "passed"
+        "purpose": "Checks achromatic and chromatic coordinates carried between Tone and Color stages.",
+        "status": "passed",
+        "duration_us": 6835986,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:lut",
-        "status": "passed"
+        "purpose": "Checks Stack LUT baking, atlas layout, interpolation, and boundary extrapolation.",
+        "status": "passed",
+        "duration_us": 761608,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:lut_gpu",
-        "status": "passed"
+        "purpose": "Checks GPU Stack LUTs against reference and native Blender graphs, including inverse grades.",
+        "status": "passed",
+        "duration_us": 227705631,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:reference",
-        "status": "passed"
+        "purpose": "Checks Linear and Tone numerics and full Grade oracle behavior against the reference model.",
+        "status": "passed",
+        "duration_us": 4947132,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:boundary_resource",
-        "status": "passed"
+        "purpose": "Checks deterministic output boundary data and rejection of missing or invalid resources.",
+        "status": "passed",
+        "duration_us": 16222562,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:node_templates",
-        "status": "passed"
+        "purpose": "Checks template manifests, working spaces, private bindings, and saved instances.",
+        "status": "passed",
+        "duration_us": 45574605,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:fallback_pool",
-        "status": "passed"
+        "purpose": "Checks fallback node group reuse, validation, and retention for undo through bpy.",
+        "status": "passed",
+        "duration_us": 3879781,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:fallback_pool_lts",
-        "status": "passed"
+        "purpose": "Runs fallback node group checks in Blender LTS.",
+        "status": "passed",
+        "duration_us": 4260003,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:template_receipts",
-        "status": "passed"
+        "purpose": "Checks native template validation receipts before and after runtime bindings through bpy.",
+        "status": "passed",
+        "duration_us": 48743518,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:template_receipts_blender",
-        "status": "passed"
+        "purpose": "Runs native template receipt checks in the Blender application.",
+        "status": "passed",
+        "duration_us": 104108069,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:compositor_validity",
-        "status": "passed"
+        "purpose": "Checks compositor graphs for magenta error output, alpha preservation, and invalid state rejection.",
+        "status": "passed",
+        "duration_us": 2107929,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:compositor_validity_blender",
-        "status": "passed"
+        "purpose": "Checks invalid pixel and state handling in Blender's GPU compositor.",
+        "status": "passed",
+        "duration_us": 2853767,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_templates",
-        "status": "passed"
+        "purpose": "Checks shader Color templates with active and extreme controls across working spaces.",
+        "status": "passed",
+        "duration_us": 25918795,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_templates_compositor",
-        "status": "passed"
+        "purpose": "Checks compositor Color templates with active and extreme controls across working spaces.",
+        "status": "passed",
+        "duration_us": 26864662,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:native",
-        "status": "passed"
+        "purpose": "Checks raw shader and compositor output against the reference, plus native resource ownership and save/reopen.",
+        "status": "passed",
+        "duration_us": 19193901,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stages",
-        "status": "passed"
+        "purpose": "Checks appearance stage handoffs, generic decoding, and native graph cleanup after build failure.",
+        "status": "passed",
+        "duration_us": 7723694,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stage2",
-        "status": "passed"
+        "purpose": "Checks the public interface of reset and active Grade node trees and rejects incomplete preparation.",
+        "status": "passed",
+        "duration_us": 257226740,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stage2_shader",
-        "status": "passed"
+        "purpose": "Compares guarded Stage 2 shader output against the independent reference.",
+        "status": "passed",
+        "duration_us": 72175439,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stage2_compositor",
-        "status": "passed"
+        "purpose": "Compares guarded Stage 2 compositor output against the independent reference.",
+        "status": "passed",
+        "duration_us": 222313468,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stage2_extreme",
-        "status": "passed"
+        "purpose": "Compares extreme compositor Tone settings across parameterized and generic Grade graphs.",
+        "status": "passed",
+        "duration_us": 283924818,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stage2_updates",
-        "status": "passed"
+        "purpose": "Checks repeated parameter publication and verifies updated snapshots survive save and reload.",
+        "status": "passed",
+        "duration_us": 240927886,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:color_stages",
-        "status": "passed"
+        "purpose": "Checks native Color stages against reference numerics, including hue seams and sharp control boundaries.",
+        "status": "passed",
+        "duration_us": 106536433,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:persistent_color_stages",
-        "status": "passed"
+        "purpose": "Runs Color-stage numerical checks through persistent native Grade graphs.",
+        "status": "passed",
+        "duration_us": 424041681,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:persistent",
-        "status": "passed"
+        "purpose": "Checks persistent Grade graph updates, resource reuse, rollback, and save/reopen.",
+        "status": "passed",
+        "duration_us": 531024398,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:guards",
-        "status": "passed"
+        "purpose": "Checks native H\u2013K and gamut boundary guard accuracy and fallback behavior.",
+        "status": "passed",
+        "duration_us": 14943057,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:saturation",
-        "status": "passed"
+        "purpose": "Checks saturating arithmetic for overflow, sign handling, and division by zero.",
+        "status": "passed",
+        "duration_us": 2320183,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:full",
-        "status": "passed"
+        "purpose": "Checks the full guarded Grade pipeline in shader graphs across working spaces.",
+        "status": "passed",
+        "duration_us": 270803702,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:full_compositor",
-        "status": "passed"
+        "purpose": "Checks the full guarded Grade pipeline in compositor graphs across working spaces.",
+        "status": "passed",
+        "duration_us": 218140374,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:grade_render_preflight",
-        "status": "passed"
+        "purpose": "Checks that pending Grades are reconciled before Blender evaluates a render.",
+        "status": "passed",
+        "duration_us": 12952503,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gate_policy",
-        "status": "passed"
+        "purpose": "Checks numerical admission limits and the conditions for HDR-based exceptions.",
+        "status": "passed",
+        "duration_us": 533265,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:hdr_metrics",
-        "status": "passed"
+        "purpose": "Checks HDR comparison metrics, display transforms, and reported worst-case samples.",
+        "status": "passed",
+        "duration_us": 2092066,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:architecture",
-        "status": "passed"
+        "purpose": "Checks component dependencies and verifies portable preparation can run without Blender.",
+        "status": "passed",
+        "duration_us": 685974,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:policy_coverage",
-        "status": "passed"
+        "purpose": "Checks that proof evidence covers every shipped policy module.",
+        "status": "passed",
+        "duration_us": 172168,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:package",
-        "status": "passed"
+        "purpose": "Checks extension ZIP contents, proof coverage, and runtime import boundaries.",
+        "status": "passed",
+        "duration_us": 672697,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:technical_report_audit",
-        "status": "passed"
+        "purpose": "Checks technical report chapters and links to implementation and test evidence.",
+        "status": "passed",
+        "duration_us": 940631,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:handbook_audit",
-        "status": "failed"
+        "purpose": "Checks published handbook formats, source references, and browser rendering fixtures.",
+        "status": "failed",
+        "duration_us": null,
+        "attempts": 0
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:install_workspace",
-        "status": "passed"
+        "purpose": "Checks installation into a workspace and safe replacement of the existing extension.",
+        "status": "passed",
+        "duration_us": 2370015,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:installed",
-        "status": "passed"
+        "purpose": "Exercises extension registration, Grade and Stack lifecycle, save/load, undo, and recovery in Blender.",
+        "status": "passed",
+        "duration_us": 300986185,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:installed_animation",
-        "status": "passed"
+        "purpose": "Checks continuous Grade animation in background and GUI-driven Blender sessions.",
+        "status": "passed",
+        "duration_us": 101076330,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:bake_installed",
-        "status": "passed"
+        "purpose": "Exercises native Bake routes, artifact publication, and bake state transitions in Blender.",
+        "status": "passed",
+        "duration_us": 84180601,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:bake_workspace_installed",
-        "status": "passed"
+        "purpose": "Checks native Bake results in non-default working spaces.",
+        "status": "passed",
+        "duration_us": 6821014,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:compositor_gui",
-        "status": "passed"
+        "purpose": "Checks live compositor edits, automatic precision, and recovery of saved Grade kernels.",
+        "status": "passed",
+        "duration_us": 98140917,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:vectorscope",
-        "status": "passed"
+        "purpose": "Checks Gizmo geometry, scope capture and analysis, freshness, and white-point dragging.",
+        "status": "passed",
+        "duration_us": 1739478,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:vectorscope_native",
-        "status": "passed"
+        "purpose": "Checks live scope updates during compositor edits and playback and shader viewport capture.",
+        "status": "failed",
+        "duration_us": 128320904,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:vectorscope_latency",
-        "status": "passed"
+        "purpose": "Checks timing evidence for cold and warm Vectorscope updates.",
+        "status": "passed",
+        "duration_us": 291896,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:compositor_carriers",
-        "status": "passed"
+        "purpose": "Checks live compositor intermediates and output with GPU Auto, GPU Full, and CPU Full precision.",
+        "status": "passed",
+        "duration_us": 178520982,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gesture_undo_gui",
-        "status": "passed"
+        "purpose": "Checks that distinct GUI drags produce independent undo steps.",
+        "status": "passed",
+        "duration_us": 7900687,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:gesture_drag_gui",
-        "status": "passed"
+        "purpose": "Checks that Blender mouse events publish drag previews and finish gestures.",
+        "status": "passed",
+        "duration_us": 19454777,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:image_save_gui",
-        "status": "passed"
+        "purpose": "Checks that saving generated Grade images preserves Blender's unsaved user-image warnings.",
+        "status": "passed",
+        "duration_us": 38658838,
+        "attempts": 1
       },
       {
         "target": "//products/perceptual-grade-next-blender/tests:stack_helper",
-        "status": "passed"
+        "purpose": "Checks that first-time Grade Stack preparation uses the real GPU helper.",
+        "status": "passed",
+        "duration_us": 10507359,
+        "attempts": 1
       }
     ]
   }
