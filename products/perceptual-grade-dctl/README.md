@@ -10,7 +10,7 @@ Tone and Color J/C and Warp. XYZ Output decodes the responses to linear XYZ D65.
 | `Perceptual-Grade-1B-XYZ-Input.dctl` | Converts linear XYZ D65 to signed cone responses |
 | `Perceptual-Grade-2-3A-Cone-Tone-JC.dctl` | Tone curve, unified C Muted and C Vivid gains, shadow and highlight chroma shaping, direction |
 | `Perceptual-Grade-3B-Cone-Warp.dctl` | Chroma, integer hue and scale on six Rec.709 handles across four tonal rows, four Adaptance centers, half saturation, direction |
-| `Perceptual-Grade-4-XYZ-Output.dctl` | Final H–K repair, optional saturation compression, and decode to linear XYZ D65 |
+| `Perceptual-Grade-4-XYZ-Output.dctl` | Final H–K repair, subtractive density, saturation compression, and decode to linear XYZ D65 |
 
 ## Install and use
 
@@ -55,11 +55,20 @@ for Blender and ACES 2.0 compatibility. Invalid cone data propagates through
 the cone nodes to the magenta diagnostic at XYZ Output. Invalid ordering of
 the Warp hues triggers the diagnostic across the image.
 
+**Subtractive Density** applies APD/ADX-inspired base-10 attenuation to the
+modCAM16 achromatic lightness magnitude after H–K repair. It preserves the
+lightness sign, chroma, and hue. For saturation `s = C / |J_A|` and **Density
+Pivot** `p`, it multiplies `|J_A|` by `10^(-D * s² / (s² + p²))`, where `D`
+is the density amount. Exact neutrals pass through. At the pivot, half the
+density applies. Density ranges from 0 to 0.60 and defaults to 0 (off). The
+pivot ranges from 0.05 to 8 and defaults to 0.50. Both controls must be finite
+and within their ranges. The calculation uses modCAM16 coordinates alone.
+
 **Saturation Compression** is an optional XYZ Output control, off by default.
-After H–K repair it uses the modCAM16 saturation ratio `C / |J_A|`, preserving
-signed achromatic lightness and scaling the opponent axes together. Colors up
-to the **Saturation Knee** pass through the shoulder unchanged. Above the knee,
-the output saturation approaches the **Saturation Ceiling** smoothly. The
+It uses the modCAM16 saturation ratio `C / |J_A|` after Subtractive Density,
+preserving signed achromatic lightness and scaling the opponent axes together.
+Colors up to the **Saturation Knee** pass through the shoulder unchanged. Above
+the knee, the output saturation approaches the **Saturation Ceiling** smoothly. The
 defaults are 0.5 for the knee and 1 for the ceiling. Both controls must be
 finite and satisfy `0 ≤ knee < ceiling ≤ 8` regardless of the switch position.
 Invalid controls trigger the magenta diagnostic. At zero achromatic lightness,

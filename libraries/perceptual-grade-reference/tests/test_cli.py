@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import numpy as np
 from color_tools.perceptual_grade_reference.model import Model,Settings,LinearSettings
-from color_tools.perceptual_grade_reference.export import OutputCompressionSettings
+from color_tools.perceptual_grade_reference.export import OutputCompressionSettings, OutputDensitySettings
 from color_tools.perceptual_grade_reference.grading import ColorSettings
 from color_tools.perceptual_grade_reference.unified_chroma import UnifiedChromaSettings
 
@@ -52,6 +52,20 @@ class CLITests(unittest.TestCase):
         self.assertGreater(np.max(abs(actual - values)), .01)
 
         invalid = self.invoke(dict(values=values, output_compression=dict(controls, ceiling=.1)))
+        self.assertNotEqual(invalid.returncode, 0)
+
+    def test_output_density_controls_round_trip_through_json(self):
+        values = [[1., .03, .01], [.01, .2, 2.], [.18, .18, .18]]
+        controls = dict(amount=.45, pivot=.25)
+        model = Model(Settings(output_density=OutputDensitySettings(**controls)), 'ACEScg')
+        result = self.invoke(dict(values=values, space='ACEScg', output_density=controls))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        actual = np.asarray(json.loads(result.stdout)['value'])
+        np.testing.assert_allclose(actual, model.forward(values), rtol=2e-12, atol=1e-14)
+        np.testing.assert_array_equal(actual[-1], values[-1])
+        self.assertGreater(np.max(abs(actual - values)), .01)
+
+        invalid = self.invoke(dict(values=values, output_density=dict(controls, amount=.61)))
         self.assertNotEqual(invalid.returncode, 0)
 
     def test_unified_chroma_controls_round_trip_through_json(self):

@@ -438,6 +438,66 @@ class NumericalTests(unittest.TestCase):
         self.assertTrue(np.all(after < before))
         self.assertTrue(np.all(after / abs(result.ja) < settings["saturationCeiling"]))
 
+    def test_output_subtractive_density_preserves_chroma_and_fades_at_pivot(self):
+        ja = np.array([24., 24., 24., 24., -65.])
+        chroma = np.array([0., 1.2, 12., 48., 20.])
+        wire = cone.response(ja, chroma * .8, chroma * .6).astype("f4")
+        baseline = self.compare("output", wire, {})
+        settings = dict(subtractiveDensity=.4, densityPivot=.5)
+        dense = self.compare("output", wire, settings)
+        np.testing.assert_array_equal(baseline, self.compare("output", wire, {"densityPivot": 8.}))
+
+        source = cone.appearance(cone.from_xyz(baseline))
+        result = cone.appearance(cone.from_xyz(dense))
+        source_chroma = np.linalg.norm(source.q[:, 1:], axis=-1)
+        saturation = source_chroma / abs(source.ja)
+        weight = saturation ** 2 / (saturation ** 2 + settings["densityPivot"] ** 2)
+        gain = 10. ** (-settings["subtractiveDensity"] * weight)
+        np.testing.assert_allclose(result.ja / source.ja, gain, rtol=8.e-4, atol=8.e-5)
+        np.testing.assert_allclose(result.q[:, 1:], source.q[:, 1:], rtol=8.e-4, atol=8.e-5)
+        np.testing.assert_array_equal(dense[0], baseline[0])
+        self.assertAlmostEqual(gain[2], 10. ** (-settings["subtractiveDensity"] / 2.), delta=2.e-6)
+        self.assertLess(gain[3], gain[2])
+        np.testing.assert_array_equal(np.sign(result.ja), np.sign(ja))
+
+    def test_output_subtractive_density_runs_after_repair_before_the_shoulder(self):
+        # The weighted achromatic response 2R + G + .05B is exactly zero in the third sample.
+        wire = np.vstack((cone.response([30., -5.], [12., 27.], [9., 21.]), [1., -2., 0.], [0., 0., 0.]))
+        baseline = self.compare("output", wire, {})
+        shoulder = dict(saturationCompression=1, saturationKnee=.65, saturationCeiling=1.)
+        np.testing.assert_array_equal(self.compare("output", wire, shoulder)[0], baseline[0])
+
+        density = {"subtractiveDensity": .4}
+        dense = self.compare("output", wire, density)
+        np.testing.assert_array_equal(dense[2:], baseline[2:])
+        compressed = self.compare("output", wire, density | shoulder)
+        before = cone.appearance(cone.from_xyz(dense[:1]))
+        after = cone.appearance(cone.from_xyz(compressed[:1]))
+        np.testing.assert_allclose(after.ja, before.ja, atol=2.e-3)
+        self.assertLess(np.linalg.norm(after.q[0, 1:]), np.linalg.norm(before.q[0, 1:]))
+
+    def test_output_subtractive_density_validates_controls_even_when_off(self):
+        wire = cone.from_xyz(SAMPLES[:1])
+        magenta = rgb_matrix("Linear Rec.709") @ [1., 0., 1.]
+        for settings in ({"subtractiveDensity": float("nan")}, {"subtractiveDensity": float("inf")},
+                         {"subtractiveDensity": -.01}, {"subtractiveDensity": .61},
+                         {"densityPivot": float("nan")}, {"densityPivot": float("inf")},
+                         {"densityPivot": .049}, {"densityPivot": 8.01}):
+            with self.subTest(settings=settings):
+                np.testing.assert_allclose(oracle.run("output", wire, settings, x=60),
+                                           magenta[None, :], rtol=1.e-6)
+
+    def test_output_subtractive_density_checks_cone_interval_after_the_shoulder(self):
+        wire = [[350., 300., -300.]]
+        magenta = rgb_matrix("Linear Rec.709") @ [1., 0., 1.]
+        density = {"subtractiveDensity": .6}
+        self.compare("output", wire, {})
+        np.testing.assert_allclose(oracle.run("output", wire, density, x=60),
+                                   magenta[None, :], rtol=1.e-6)
+        recovered = self.compare("output", wire, dict(density, saturationCompression=1,
+                                                     saturationKnee=.05, saturationCeiling=.2))
+        self.assertGreater(np.max(abs(recovered[0] - magenta)), .01)
+
     def test_output_saturation_compression_diagnoses_invalid_controls(self):
         wire = cone.from_xyz(SAMPLES[:1])
         magenta = rgb_matrix("Linear Rec.709") @ [1., 0., 1.]

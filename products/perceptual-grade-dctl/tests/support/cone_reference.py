@@ -58,10 +58,20 @@ def pack(ja, a, b):
     return np.sign(chart) * np.where(magnitude <= 200., magnitude, tail)
 
 
-def output(wire, compression=OutputCompressionSettings()):
+def output(wire, compression=OutputCompressionSettings(), *, density=0., pivot=.5):
     physical = appearance(wire)
     energy = physical.ja * abs(physical.ja)
     q, repaired = guard(physical.q, energy, energy)
+    if density > 0.:
+        ja = np.sign(repaired) * np.sqrt(abs(repaired))
+        chroma = np.hypot(q[:, 1], q[:, 2])
+        denominator = np.hypot(chroma, pivot * abs(ja))
+        ratio = np.divide(chroma, denominator, out=np.zeros_like(chroma), where=denominator > 0.)
+        gain = 10. ** (-density * ratio ** 2)
+        mapped_energy = repaired * gain ** 2
+        q = q.copy()
+        q[:, 0] = np.where(mapped_energy != repaired, signed_hk(ja * gain, chroma), q[:, 0])
+        repaired = mapped_energy
     graded = compress_saturation(State(q, repaired), compression)
     changed = np.any(graded.q != physical.q, axis=-1) | (graded.energy != energy)
     result = np.asarray(wire, dtype=np.float64).copy()

@@ -162,6 +162,9 @@ def global_shape_sliders(sliders):
 
 
 def output_controls():
+    for name, default, minimum, maximum in (("subtractiveDensity", 0., 0., .6), ("densityPivot", .5, .05, 8.)):
+        yield dict(name=name, type="DCTLUI_SLIDER_FLOAT", default=default, min=minimum, max=maximum, step=.01,
+                   label_id=f"output.{name}", tooltip_id=f"output.tooltip.{name}")
     yield dict(name="saturationCompression", type="DCTLUI_CHECK_BOX", default=0,
                label_id="output.compression", tooltip_id="output.tooltip.compression")
     for name, default in (("saturationKnee", .5), ("saturationCeiling", 1.)):
@@ -310,7 +313,8 @@ def stage_call(stage, variant):
     if stage == "input":
         return "", "pg_cone_input(pixel)"
     if stage == "output":
-        return "", "pg_cone_output(pixel, saturationCompression, saturationKnee, saturationCeiling)"
+        return "", ("pg_cone_output(pixel, subtractiveDensity, densityPivot, "
+                    "saturationCompression, saturationKnee, saturationCeiling)")
     if stage == "tone":
         return "", ("pg_cone_tone(pixel, inputBlack, pg_four(inputShadows, inputMidtones, inputWhite, "
                     "inputHighlights), remapFit, peakNits)")

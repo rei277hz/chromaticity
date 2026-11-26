@@ -1,3 +1,20 @@
+__DEVICE__ PGState pg_output_density(PGState state, float amount, float pivot) {
+    float chroma = pg_hypot(state.q.y, state.q.z);
+    if (chroma == 0.0f || state.e == 0.0f) return state;
+    float ja = pg_ja(state.e);
+    float threshold = pivot * _fabs(ja);
+    // Normalize both terms before squaring to retain the weight near black.
+    float scale = _fmaxf(chroma, threshold);
+    float c = chroma / scale;
+    float t = threshold / scale;
+    float weight = c * c / (c * c + t * t);
+    float gain = _powf(10.0f, -amount * weight);
+    float mappedEnergy = state.e * (gain * gain);
+    if (mappedEnergy == state.e) return state;
+    return pg_state(make_float3(pg_hk(ja * gain, chroma), state.q.y, state.q.z),
+                    mappedEnergy);
+}
+
 __DEVICE__ PGState pg_output_compress(PGState state, float knee, float ceiling) {
     float ja = pg_ja(state.e);
     float chroma = pg_hypot(state.q.y, state.q.z);
@@ -12,13 +29,16 @@ __DEVICE__ PGState pg_output_compress(PGState state, float knee, float ceiling) 
     return pg_state(make_float3(pg_hk(ja, mapped), state.q.y * gain, state.q.z * gain), state.e);
 }
 
-__DEVICE__ PGValue pg_cone_output(float3 wire, int enabled, float knee, float ceiling) {
+__DEVICE__ PGValue pg_cone_output(float3 wire, float density, float pivot, int enabled, float knee, float ceiling) {
     if (!pg_cone_valid(wire) || (enabled != 0 && enabled != 1) ||
+        !color_finite(density) || !color_finite(pivot) ||
+        density < 0.0f || density > 0.60f || pivot < 0.05f || pivot > 8.0f ||
         !color_finite(knee) || !color_finite(ceiling) ||
         knee < 0.0f || knee >= ceiling || ceiling > 8.0f) return pg_value(color_zero3(), 0);
     // Export repair uses physical appearance coordinates and final energy.
     PGState state = pg_state_from_response(wire);
     PGState repaired = pg_guard(state, state.e);
+    if (density > 0.0f) repaired = pg_output_density(repaired, density, pivot);
     if (enabled) repaired = pg_output_compress(repaired, knee, ceiling);
     if (repaired.e == state.e && repaired.q.y == state.q.y && repaired.q.z == state.q.z)
         return pg_xyz_from_response(wire);

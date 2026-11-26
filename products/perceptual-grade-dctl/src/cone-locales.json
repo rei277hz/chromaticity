@@ -1,9 +1,13 @@
 {
   "en": {
+    "output.subtractiveDensity": "Subtractive Density",
+    "output.densityPivot": "Density Pivot",
+    "output.tooltip.subtractiveDensity": "Attenuate signed achromatic lightness while preserving chroma and hue. The effect fades near gray. Zero turns it off.",
+    "output.tooltip.densityPivot": "Set the ratio of chroma to absolute achromatic lightness where half the density applies. Higher values concentrate the effect on more saturated colors.",
     "output.compression": "Saturation Compression",
     "output.saturationKnee": "Saturation Knee",
     "output.saturationCeiling": "Saturation Ceiling",
-    "output.tooltip.compression": "Compress modCAM16 saturation after export repair while preserving hue and signed achromatic lightness.",
+    "output.tooltip.compression": "Compress modCAM16 saturation after Subtractive Density while preserving hue and signed achromatic lightness.",
     "output.tooltip.saturationKnee": "Start compression at this ratio of chroma to absolute achromatic lightness. Lower saturation passes through unchanged. Set the knee below the ceiling.",
     "output.tooltip.saturationCeiling": "Set the saturation approached by increasingly vivid colors. The ceiling must exceed the knee.",
     "cone.direction": "Direction",
@@ -61,10 +65,14 @@
     "tooltip.color.adaptance_half_saturation": "Set the saturation C/|J_A| where instantaneous tint speed falls to half its neutral value. The neutral still reaches the selected a/b target."
   },
   "zh_HANS": {
+    "output.subtractiveDensity": "减色法密度",
+    "output.densityPivot": "密度饱和度中点",
+    "output.tooltip.subtractiveDensity": "减小有符号的消色明度的绝对值，同时保持彩度和色相。效果在近灰区域逐渐减弱。零值停用。",
+    "output.tooltip.densityPivot": "设置应用一半密度时的彩度与消色明度绝对值之比。数值越高，效果越集中在高饱和色。",
     "output.compression": "饱和度压缩",
     "output.saturationKnee": "饱和度起压点",
     "output.saturationCeiling": "饱和度上限",
-    "output.tooltip.compression": "导出修复后压缩 modCAM16 饱和度，同时保持色相和有符号的消色明度。",
+    "output.tooltip.compression": "在减色法密度之后压缩 modCAM16 饱和度，同时保持色相和有符号的消色明度。",
     "output.tooltip.saturationKnee": "当彩度与消色明度绝对值之比超过此值时开始压缩。低于此值的饱和度保持不变。起压点必须低于上限。",
     "output.tooltip.saturationCeiling": "设置高饱和色逐渐趋近的饱和度。上限必须高于起压点。",
     "cone.direction": "方向",

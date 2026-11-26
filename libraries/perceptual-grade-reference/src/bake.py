@@ -6,7 +6,7 @@ import numpy as np
 
 from ..perceptual_grade_core.model.bake import Kernel as _Kernel
 from ..perceptual_grade_core.model.bake_inverse import Inverse as _Inverse
-from .export import OutputCompressionSettings, compress_saturation
+from .export import OutputCompressionSettings, OutputDensitySettings, apply_output_effects
 from .grading import Color
 from .responses import HK, State, signed_hk
 from .unified_chroma import radial_gain
@@ -41,11 +41,13 @@ class Kernel(_Kernel):
     """Use the reference Color implementation for accelerated Grade rows."""
 
     def __init__(self, data, tone, color, table=None, *, hk_guard=True, tone_chroma=None,
-                 output_compression=OutputCompressionSettings()):
+                 output_compression=OutputCompressionSettings(),
+                 output_density=OutputDensitySettings()):
         self.color_model = (color if color.hk_guard == bool(hk_guard) else
                             Color(color.settings, tone, color.boundary, hk_guard=hk_guard))
         self.tone_chroma = tone_chroma
         self.output_compression = output_compression
+        self.output_density = output_density
         super().__init__(data, tone, color, table, hk_guard=hk_guard)
         key = self.resource_key.encode("ascii") + b"reference-warp-v3"
         if tone_chroma is not None:
@@ -57,6 +59,9 @@ class Kernel(_Kernel):
         if output_compression.enabled:
             key += b"output-saturation-v1" + np.asarray(
                 (output_compression.knee, output_compression.ceiling), dtype="<f8").tobytes()
+        if output_density.enabled:
+            key += b"output-density-v1" + np.asarray(
+                (output_density.amount, output_density.pivot), dtype="<f8").tobytes()
         self.resource_key = hashlib.sha256(key).hexdigest()
 
     def _chroma_state(self, state, ja, *, invert=False):
@@ -98,21 +103,22 @@ class Kernel(_Kernel):
         return super().export(state, None)
 
     def final_export(self, state, native=None):
-        """Compress a terminal state, retaining the supplied native RGB on exact identity."""
+        """Apply output effects, retaining the supplied native RGB on exact identity."""
         original = State(state[..., :3], state[..., 3])
-        mapped = compress_saturation(original, self.output_compression)
+        mapped = apply_output_effects(original, self.output_density, self.output_compression)
         if native is None:
-            return self.export(np.concatenate((mapped.q, state[..., 3:]), axis=-1))
-        unchanged = np.all(mapped.q[..., 1:] == original.q[..., 1:], axis=-1)
+            return self.export(np.concatenate((mapped.q, mapped.energy[..., None]), axis=-1))
+        unchanged = ((mapped.energy == original.energy)
+                     & np.all(mapped.q[..., 1:] == original.q[..., 1:], axis=-1))
         keep = unchanged & np.all((native >= 0.) & (native <= 1024.), axis=-1)
         out = native.copy()
         if not np.all(keep):
-            rows = np.concatenate((mapped.q[~keep], state[..., 3:][~keep]), axis=-1)
+            rows = np.concatenate((mapped.q[~keep], mapped.energy[~keep, None]), axis=-1)
             out[~keep] = self.export(rows)
         return out
 
     def evaluate(self, rgb):
-        if not self.output_compression.enabled:
+        if not (self.output_density.enabled or self.output_compression.enabled):
             return super().evaluate(rgb)
         rgb = np.asarray(rgb, dtype=np.float32)
         entered = self.enter(rgb)

@@ -173,7 +173,8 @@ def apply(stage, values, controls):
             knee=controls.get("saturationKnee", defaults.knee),
             ceiling=controls.get("saturationCeiling", defaults.ceiling),
         )
-        return cone_reference.output(values, compression)
+        return cone_reference.output(values, compression, density=controls.get("subtractiveDensity", 0.),
+                                     pivot=controls.get("densityPivot", .5))
     if stage in GLOBAL_SHAPE_PROTOTYPES:
         return jc_global_shape.apply(values, controls)
     if stage in OVERLAP_PROTOTYPES:

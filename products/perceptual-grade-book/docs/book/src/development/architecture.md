@@ -77,7 +77,7 @@ Chinese files.
 | 1B | XYZ Input | XYZ D65 to signed cone responses |
 | 2-3A | Cone Tone J/C | Integrated Tone and Unified Chroma controls |
 | 3B | Cone Warp | Hue, chroma, Scale, and Adaptance controls |
-| 4 | XYZ Output | H–K repair, optional saturation compression, and decode to scene-linear XYZ D65 |
+| 4 | XYZ Output | H–K repair, Subtractive Density, optional saturation compression, and decode to scene-linear XYZ D65 |
 
 `products/perceptual-grade-dctl/BUCK` declares the source tree, locale catalogs,
 generator, outputs, and conformance targets. `src/` holds the shared DCTL
@@ -88,9 +88,10 @@ against independent calculations.
 
 Resolve users place the five stages on serial nodes in the listed order. Its
 input and output boundaries accept scene-linear XYZ D65. The chain does not
-apply Blender's RGB repair or AP1-D65 boundary mapping. H–K repair belongs to
-the final XYZ Output stage, after Warp. Standalone Tone and Color J/C and
-prototype variants have explicit opt-in build targets.
+apply Blender's RGB repair or AP1-D65 boundary mapping. After Warp, XYZ Output
+performs H–K repair, applies Subtractive Density to achromatic lightness, then
+optionally compresses saturation before decoding. Standalone Tone and Color
+J/C and prototype variants have explicit opt-in build targets.
 
 ## Change ownership
 

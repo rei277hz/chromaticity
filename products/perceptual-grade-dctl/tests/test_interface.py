@@ -241,7 +241,8 @@ class InterfaceTests(unittest.TestCase):
                         "cSaturationCrossover", "shadowChroma", "highlightChroma", "cToneCrossover",
                         "direction", "showToneCurve"},
             "warp": WEB | CENTER | {"adaptanceHalfSaturation", "peakNits", "direction"},
-            "output": {"saturationCompression", "saturationKnee", "saturationCeiling"},
+            "output": {"subtractiveDensity", "densityPivot", "saturationCompression", "saturationKnee",
+                       "saturationCeiling"},
         }
         for stage in STAGES:
             with self.subTest(stage=stage):
@@ -250,10 +251,18 @@ class InterfaceTests(unittest.TestCase):
                 if stage == "output":
                     toggle = records["saturationCompression"]
                     self.assertEqual((toggle["type"], toggle["default"]), ("DCTLUI_CHECK_BOX", 0))
-                    for name, default in (("saturationKnee", .5), ("saturationCeiling", 1.)):
+                    for name, default, minimum, maximum in (("subtractiveDensity", 0., 0., .6),
+                                                            ("densityPivot", .5, .05, 8.),
+                                                            ("saturationKnee", .5, 0., 8.),
+                                                            ("saturationCeiling", 1., 0., 8.)):
                         fields = ("type", "default", "min", "max", "step")
                         self.assertEqual(tuple(records[name][key] for key in fields),
-                                         ("DCTLUI_SLIDER_FLOAT", default, 0., 8., .01))
+                                         ("DCTLUI_SLIDER_FLOAT", default, minimum, maximum, .01))
+                    self.assertEqual(records["subtractiveDensity"]["label"], "Subtractive Density")
+                    self.assertEqual(records["densityPivot"]["label"], "Density Pivot")
+                    translated = {item["name"]: item["label"] for item in controls(oracle.source(stage, "zh_HANS"))}
+                    self.assertEqual(translated["subtractiveDensity"], "减色法密度")
+                    self.assertEqual(translated["densityPivot"], "密度饱和度中点")
                 self.assertLessEqual(sum(i["type"] == "DCTLUI_SLIDER_FLOAT" for i in records.values()), 64)
                 if "peakNits" in records:
                     self.assertEqual(records["peakNits"]["default"], 1)

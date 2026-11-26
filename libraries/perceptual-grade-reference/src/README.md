@@ -1622,25 +1622,34 @@ echo '{"operation":"inverse","values":[[0.36,0.36,0.36]],"linear":{"exposure":1}
 
 The CLI accepts `values` with a final dimension of three, `operation` (`forward`
 or `inverse`), `space`, `white`, and `linear`, `tone`, `color` settings objects.
-It also accepts an optional `output_compression` object containing `enabled`,
-`knee`, and `ceiling`. The default is disabled, with knee `0.5` and ceiling
-`1.0`. Enabled compression preserves raw modCAM16 saturation
+The optional `output_density` object accepts `amount` from `0` to `0.6`
+with default `0`, and `pivot` from `0.05` to `8` with default `0.5`.
+The effective density is amount times the raw modCAM16 saturation weight
+`C² / (C² + (pivot * abs(J_A))²)`. It attenuates signed `J_A` by
+`10^(-effective_density)` and signed energy by the square of that factor.
+Exact neutrals and zero-energy states bypass density. The opponent pair
+and hue stay fixed, and the calculation depends only on appearance coordinates.
+
+The optional `output_compression` object contains `enabled`, `knee`, and
+`ceiling`. The default is disabled, with knee `0.5` and ceiling `1.0`.
+Enabled compression preserves raw modCAM16 saturation
 `C / abs(J_A)` through the knee and then approaches the ceiling according to
 `knee + d*x/(d+x)`, where `x = saturation - knee` and
 `d = ceiling - knee`. The finite controls must satisfy
 `0 <= knee < ceiling <= 8`.
 
-Compression runs only at final RGB export, after grading and before AP1 cube
-projection. It preserves signed achromatic energy and hue while scaling opponent
-chroma radially. At exactly zero `J_A`, enabled compression reduces chroma to
-zero. In a Stack, only the final entry's output settings control the exported
-result, including when the last entry is inverse. Intermediate appearance
-handoffs, inverse fitting, and the source value returned by `Model.inverse`
-remain uncompressed. Import `OutputCompressionSettings` from
-`color_tools.perceptual_grade_reference.export` and pass it to
-`Settings(output_compression=...)`. When evaluating stages individually,
-`Model.release_output_state(state)` applies the configured compression and
-projects the result into the AP1 cube.
+Final RGB export applies density, then saturation compression, then AP1 cube
+projection. Compression preserves signed achromatic energy and hue while
+scaling opponent chroma radially. At exactly zero `J_A`, enabled compression
+reduces chroma to zero. In a Stack, the final entry's output settings control
+the exported result, including when the last entry is inverse. Intermediate
+appearance handoffs, inverse fitting, and the source value returned by
+`Model.inverse` use the grading transform before the output effects. Import
+`OutputDensitySettings` and `OutputCompressionSettings` from
+`color_tools.perceptual_grade_reference.export` and pass them to
+`Settings(output_density=..., output_compression=...)`. When evaluating stages
+individually, `Model.release_output_state(state)` applies the configured
+effects and projects the result into the AP1 cube.
 
 The CLI writes JSON containing `value`, plus inverse `residual` and `status`.
 The Python API exposes `Model.forward`, `forward_xyz`, `inverse`, `inverse_xyz`,

@@ -5,7 +5,7 @@ import numpy as np
 from .appearance import CAT16, response_constants, encode_cones
 from .grading import ToneSettings, ColorSettings, Tone, Color
 from ..color_core.scaled import Scalar as S, dot
-from .export import OutputCompressionSettings, compress_saturation, input_repair
+from .export import OutputCompressionSettings, OutputDensitySettings, apply_output_effects, input_repair
 from .cube import context as cube_context
 from .cube_guard import guard as cube_guard, guard_scaled as cube_guard_scaled
 from .responses import compress, coordinates, requested_energy, State
@@ -37,6 +37,7 @@ class Settings:
     color: ColorSettings = field(default_factory=ColorSettings)
     tone_chroma: UnifiedChromaSettings | None = None
     output_compression: OutputCompressionSettings = field(default_factory=OutputCompressionSettings)
+    output_density: OutputDensitySettings = field(default_factory=OutputDensitySettings)
 
 
 def xyz_from_xy(xy):
@@ -133,6 +134,8 @@ class Model:
             raise ValueError('Only cached D65 / 203 nits is supported')
         if not isinstance(settings.output_compression, OutputCompressionSettings):
             raise ValueError('Unknown output compression settings schema')
+        if not isinstance(settings.output_density, OutputDensitySettings):
+            raise ValueError('Unknown output density settings schema')
         self.hk_guard = bool(hk_guard)
         self.settings, self.space = settings, space
         self.white = xyz_from_xy(WHITES[settings.white])
@@ -264,9 +267,9 @@ class Model:
         return np.asarray(out).reshape(state.q.shape)
 
     def release_output_state(self, state):
-        """Compress final appearance, then project it into native AP1."""
-        compressed = compress_saturation(state, self.settings.output_compression)
-        return self.release_state(compressed, guard=True)
+        """Apply output appearance effects, then project into native AP1."""
+        mapped = apply_output_effects(state, self.settings.output_density, self.settings.output_compression)
+        return self.release_state(mapped, guard=True)
 
     def release_native_output(self, values):
         """Export native RGB, keeping exact legal values along untouched rays."""
@@ -276,14 +279,14 @@ class Model:
         shape = native.shape
         native = native.reshape(-1, 3)
         state = self.encode_native(native)
-        compressed = compress_saturation(state, self.settings.output_compression)
-        changed = np.any(compressed.q[:, 1:] != state.q[:, 1:], axis=-1)
+        mapped = apply_output_effects(state, self.settings.output_density, self.settings.output_compression)
+        changed = (mapped.energy != state.energy) | np.any(mapped.q[:, 1:] != state.q[:, 1:], axis=-1)
         project = changed | np.any((native < 0.) | (native > 1024.), axis=-1)
         if not np.any(project):
             return native.reshape(shape).copy()
         result = native.copy()
         result[project] = self.release_state(
-            State(compressed.q[project], compressed.energy[project]), guard=True)
+            State(mapped.q[project], mapped.energy[project]), guard=True)
         return result.reshape(shape)
 
     def _adapters(self, input_matrix, output_matrix):
@@ -348,8 +351,8 @@ class Model:
         request, energy = self.color.scaled_apply_state(stage2_q, stage2_ja)
         if export:
             state = State(np.asarray(request, dtype=object), np.asarray(energy, dtype=object))
-            compressed = compress_saturation(state, self.settings.output_compression)
-            request, energy = list(compressed.q), compressed.energy.item()
+            mapped = apply_output_effects(state, self.settings.output_density, self.settings.output_compression)
+            request, energy = list(mapped.q), mapped.energy.item()
             return cube_guard_scaled(boundary,request,energy)[2]
         return self.boundary.decode_scaled(request, energy)
 
@@ -376,7 +379,7 @@ class Model:
         if entry:
             if apply_linear:values = self.input_native(values,before,True)
             if export and not self.nonlinear_active:
-                if not self.settings.output_compression.enabled:
+                if not (self.settings.output_density.enabled or self.settings.output_compression.enabled):
                     return np.asarray(values,dtype=float) if values.dtype==object else self.prepare_native(values)
                 if values.dtype != object:
                     return self.release_native_output(self.prepare_native(values))
@@ -428,10 +431,11 @@ class Model:
         return solve(self._inverse_model(), xyz)
 
     def _inverse_model(self):
-        """Use the grading transform up to the optional output compressor."""
-        if not self.settings.output_compression.enabled:
+        """Fit the grade before the optional output appearance effects."""
+        if not (self.settings.output_density.enabled or self.settings.output_compression.enabled):
             return self
-        return Model(replace(self.settings, output_compression=OutputCompressionSettings()),
+        return Model(replace(self.settings, output_density=OutputDensitySettings(),
+                             output_compression=OutputCompressionSettings()),
                      self.space, hk_guard=self.hk_guard)
 
     def inverse(self, rgb):

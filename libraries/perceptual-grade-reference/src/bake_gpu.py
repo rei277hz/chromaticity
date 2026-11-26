@@ -11,6 +11,7 @@ LAYOUT=dict(TONE_ACTIVE=0,BLACK=1,SPAN=2,SLOPE=3,HIGH=4,TONE_WIDTH=5,
     TONE_KNOTS=6,TONE_RESIDUAL=11,COEFF_KNOTS=15,FIT_WIDTHS=20,GAIN=22,HALF_SATURATION=23,
     LIGHT_ACTIVE=24,CHROMA_ACTIVE=25,ADAPTANCE_ACTIVE=26,WEB_ACTIVE=27,IDENTITY=28,
     HK_GUARD=29,DIRECTIONAL=30,INVERSE_SIMPLE=31,LIGHT=32,CHROMA=48,
+    OUTPUT_DENSITY_AMOUNT=64,OUTPUT_DENSITY_PIVOT=65,
     TONE_NORMALIZERS=72,TONE_CONSTANTS=76,COEFF_NORMALIZERS=80,COEFF_CONSTANTS=88,
     ANCHORS=96,LOG_RADII=100,ANGLES=124,LOG_CHROMA=148,HUE_RADIANS=172,LOG_SCALE=196,
     CANONICAL_FIRST=220,CANONICAL_LAST=223,Y_WEIGHTS=226,TONE_TABLE=229,ADAPTANCE_LOG_GAINS=234,
@@ -53,6 +54,8 @@ def parameters(kernel):
     put('OUTPUT_COMPRESSION',kernel.output_compression.enabled)
     put('OUTPUT_KNEE',kernel.output_compression.knee)
     put('OUTPUT_SPAN',kernel.output_compression.ceiling-kernel.output_compression.knee)
+    put('OUTPUT_DENSITY_AMOUNT',kernel.output_density.amount)
+    put('OUTPUT_DENSITY_PIVOT',kernel.output_density.pivot)
     return result
 
 
@@ -485,6 +488,20 @@ vec4 pg_export_state(vec4 q,out vec3 rgb) {
 vec3 pg_export(vec4 q) {
     vec3 rgb;pg_export_state(q,rgb);return rgb;
 }
+vec4 pg_apply_density(vec4 q) {
+    float amount=pg_param(PG_P_OUTPUT_DENSITY_AMOUNT);
+    if(amount==0.0||q.w==0.0||all(equal(q.yz,vec2(0.0))))return q;
+    float ja=sign(q.w)*sqrt(abs(q.w));
+    float chroma=pg_hypot(q.yz),scale=max(chroma,abs(ja));
+    float chroma_unit=chroma/scale;
+    float pivot_unit=pg_param(PG_P_OUTPUT_DENSITY_PIVOT)*(abs(ja)/scale);
+    float chroma_squared=chroma_unit*chroma_unit;
+    float weight=chroma_squared/(chroma_squared+pivot_unit*pivot_unit);
+    float gain=exp2(-3.321928094887362*amount*weight);
+    float energy=q.w*(gain*gain);
+    if(energy==q.w)return q;
+    return vec4(pg_hk(ja*gain,chroma),q.yz,energy);
+}
 vec4 pg_compress_output(vec4 q) {
     if(pg_param(PG_P_OUTPUT_COMPRESSION)==0.0)return q;
     float ja=sign(q.w)*sqrt(abs(q.w));
@@ -498,11 +515,17 @@ vec4 pg_compress_output(vec4 q) {
     q.x=ja>=0.0?magnitude:2.0*base-magnitude;
     return q;
 }
+bool pg_output_effects_enabled() {
+    return pg_param(PG_P_OUTPUT_DENSITY_AMOUNT)!=0.0||pg_param(PG_P_OUTPUT_COMPRESSION)!=0.0;
+}
+vec4 pg_apply_output_effects(vec4 q) {
+    return pg_compress_output(pg_apply_density(q));
+}
 vec3 pg_release_native(vec3 rgb) {
     bool legal=all(greaterThanEqual(rgb,vec3(0.0)))&&all(lessThanEqual(rgb,vec3(1024.0)));
-    if(legal&&pg_param(PG_P_OUTPUT_COMPRESSION)==0.0)return rgb;
-    vec4 entered=pg_enter(rgb),mapped=pg_compress_output(entered);
-    if(legal&&all(equal(entered.yz,mapped.yz)))return rgb;
+    if(legal&&!pg_output_effects_enabled())return rgb;
+    vec4 entered=pg_enter(rgb),mapped=pg_apply_output_effects(entered);
+    if(legal&&all(equal(entered.yzw,mapped.yzw)))return rgb;
     return pg_export(mapped);
 }
 vec4 pg_hk_guard(vec4 q,float reference_energy) {
@@ -526,11 +549,11 @@ vec4 pg_hk_guard(vec4 q,float reference_energy) {
 }
 vec3 pg_forward(vec3 rgb) {
     if(pg_param(PG_P_IDENTITY)!=0.0) {
-        if(pg_param(PG_P_OUTPUT_COMPRESSION)==0.0)return rgb;
+        if(!pg_output_effects_enabled())return rgb;
         return pg_release_native(rgb);
     }
     vec4 toned=pg_tone(pg_enter(rgb));
-    return pg_export(pg_compress_output(pg_grade(toned)));
+    return pg_export(pg_apply_output_effects(pg_grade(toned)));
 }
 '''
 
@@ -540,7 +563,7 @@ void main() {
     int id=int(gl_GlobalInvocationID.x);if(id>=sample_count)return;
     ivec2 address=ivec2(id%256,id/256);vec4 input_value=texelFetch(input_pixels,address,0),result;
     if(operation==0)result=pg_enter(input_value.xyz);
-    else if(operation==1)result=vec4(pg_export(pg_compress_output(pg_grade(pg_tone(input_value)))),1.0);
+    else if(operation==1)result=vec4(pg_export(pg_apply_output_effects(pg_grade(pg_tone(input_value)))),1.0);
     else result=vec4(pg_forward(input_value.xyz),1.0);
     imageStore(output_pixels,address,result);
 }
