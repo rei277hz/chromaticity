@@ -2,7 +2,7 @@
 
 [![Lint](https://github.com/rei277hz/chromaticity/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/rei277hz/chromaticity/actions/workflows/lint.yml)
 [![Linux build targets](https://raw.githubusercontent.com/rei277hz/chromaticity/ci-status/builds.svg)](https://github.com/rei277hz/chromaticity/blob/ci-status/README.md)
-[![Linux smoke suites](https://raw.githubusercontent.com/rei277hz/chromaticity/ci-status/tests.svg)](https://github.com/rei277hz/chromaticity/blob/ci-status/README.md)
+[![Linux test suites](https://raw.githubusercontent.com/rei277hz/chromaticity/ci-status/tests.svg)](https://github.com/rei277hz/chromaticity/blob/ci-status/README.md)
 
 Color grading, HDR color pickers, and reusable color-science libraries for
 Blender, DaVinci Resolve, and the web.
