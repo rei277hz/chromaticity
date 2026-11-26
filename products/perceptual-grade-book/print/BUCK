@@ -223,7 +223,7 @@ generate(
         "--pdf-dir", "$(location //products/perceptual-grade-book:technical-report[pdf])",
         "--publication", "technical-report",
         "--language", "en",
-        "--chapter", "Next Blender policy machines",
+        "--chapter", "Blender runtime policies",
     ],
     outputs = {"manifest": "review.json"},
     tool = ":review_tool",

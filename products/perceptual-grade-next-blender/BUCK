@@ -38,15 +38,15 @@ FEATURE_POLICY_SOURCES = {
     path[len(PREFIX):]: path
     for path in glob([
         PREFIX + "features/grade/policy/*.py",
-        PREFIX + "features/bake/policy.py",
-        PREFIX + "features/interaction/policy.py",
-        PREFIX + "features/vectorscope/authority.py",
+        PREFIX + "features/bake/policy/*.py",
+        PREFIX + "features/interaction/policy/*.py",
+        PREFIX + "features/vectorscope/policy/*.py",
         PREFIX + "features/__init__.py",
         PREFIX + "features/bake/__init__.py",
         PREFIX + "features/grade/__init__.py",
         PREFIX + "features/grade/policy/__init__.py",
-        PREFIX + "features/interaction/__init__.py",
         PREFIX + "features/vectorscope/__init__.py",
+        PREFIX + "features/interaction/__init__.py",
     ])
 }
 
@@ -84,7 +84,7 @@ source_tree(
         "README.md",
         "ARCHITECTURE.md",
         "BUCK",
-        "requirements/*.inv",
+        "src/requirements/*.inv",
         "src/features/**/requirements/*.inv",
         "src/locales/*.json",
     ])},
@@ -284,7 +284,11 @@ python_library(
         "features/__init__.py": PREFIX + "features/__init__.py",
         "features/interaction/__init__.py": PREFIX + "features/interaction/__init__.py",
         "features/interaction/runtime.py": PREFIX + "features/interaction/runtime.py",
-        "features/interaction/policy.py": PREFIX + "features/interaction/policy.py",
+        "features/interaction/policy/__init__.py": PREFIX + "features/interaction/policy/__init__.py",
+        "features/interaction/policy/gesture.py": PREFIX + "features/interaction/policy/gesture.py",
+        "features/vectorscope/__init__.py": PREFIX + "features/vectorscope/__init__.py",
+        "features/vectorscope/policy/__init__.py": PREFIX + "features/vectorscope/policy/__init__.py",
+        "features/vectorscope/policy/scope.py": PREFIX + "features/vectorscope/policy/scope.py",
     },
     base_module = "color_tools",
     visibility = ["PUBLIC"],
@@ -310,13 +314,13 @@ export_file(
 
 export_file(
     name = "render_preflight_requirements",
-    src = "requirements/render_preflight.inv",
+    src = PREFIX + "requirements/render_preflight.inv",
     visibility = ["PUBLIC"],
 )
 
 export_file(
     name = "bake_source",
-    src = PREFIX + "features/bake/policy.py",
+    src = PREFIX + "features/bake/policy/bake.py",
     visibility = ["PUBLIC"],
 )
 
@@ -360,7 +364,7 @@ invariant_proof(
         "failed_request_retires_without_publishing",
     ],
     requirements = ":bake_requirements",
-    runtime_source = "features/bake/policy.py",
+    runtime_source = "features/bake/policy/bake.py",
     source = ":bake_source",
     visibility = ["PUBLIC"],
 )
@@ -431,7 +435,7 @@ export_file(
 
 export_file(
     name = "preparation_requirements",
-    src = "requirements/preparation.inv",
+    src = PREFIX + "requirements/preparation.inv",
     visibility = ["PUBLIC"],
 )
 
@@ -486,7 +490,7 @@ invariant_proof(
         "cancelled_startup_exit_publishes_cancellation",
         "startup_exit_publishes_probe_failure",
     ],
-    requirements = "requirements/helper.inv",
+    requirements = PREFIX + "requirements/helper.inv",
     runtime_source = "policy/helper.py",
     source = POLICY_PREFIX + "helper.py",
     visibility = ["PUBLIC"],
@@ -514,7 +518,7 @@ invariant_proof(
         "shared_survivor_retains_resource",
         "unused_resource_retires_after_eviction",
     ],
-    requirements = "requirements/resources.inv",
+    requirements = PREFIX + "requirements/resources.inv",
     runtime_source = "policy/resources.py",
     source = POLICY_PREFIX + "resources.py",
     visibility = ["PUBLIC"],
@@ -555,8 +559,8 @@ invariant_proof(
         "native_gesture_permissions_are_reachable",
     ],
     requirements = "src/features/interaction/requirements/gesture.inv",
-    runtime_source = "features/interaction/policy.py",
-    source = PREFIX + "features/interaction/policy.py",
+    runtime_source = "features/interaction/policy/gesture.py",
+    source = PREFIX + "features/interaction/policy/gesture.py",
     visibility = ["PUBLIC"],
 )
 
@@ -651,9 +655,28 @@ invariant_proof(
         "current_display_is_reachable",
         "current_preview_is_reachable",
     ],
-    requirements = "src/features/vectorscope/requirements/vectorscope.inv",
-    runtime_source = "features/vectorscope/authority.py",
-    source = PREFIX + "features/vectorscope/authority.py",
+    requirements = "src/features/vectorscope/requirements/authority.inv",
+    runtime_source = "features/vectorscope/policy/scope.py",
+    source = PREFIX + "features/vectorscope/policy/scope.py",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_vectorscope_scope",
+    required_properties = [
+        "stale_start_receipt_is_inert",
+        "reset_retains_active_capture_for_cancellation",
+        "busy_scheduler_rejects_start",
+        "waiting_scope_does_not_reserve_capture_slot",
+        "current_capture_result_releases_active_slot",
+        "released_capture_is_not_analyzable",
+        "replacement_source_capture_is_not_analyzable",
+        "duplicate_release_does_not_replay_cancellation",
+        "duplicate_unavailable_does_not_replay_effects",
+    ],
+    requirements = "src/features/vectorscope/requirements/scope.inv",
+    runtime_source = "features/vectorscope/policy/scope.py",
+    source = PREFIX + "features/vectorscope/policy/scope.py",
     visibility = ["PUBLIC"],
 )
 
@@ -668,6 +691,7 @@ POLICY_PROOFS = [
     ":proof_gesture",
     ":proof_render_preflight",
     ":proof_vectorscope",
+    ":proof_vectorscope_scope",
 ]
 
 verification_group(

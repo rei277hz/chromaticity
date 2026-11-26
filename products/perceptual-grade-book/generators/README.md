@@ -1,48 +1,23 @@
 # Book asset producers
 
-These build-only producers regenerate the maintained Perceptual Grade books'
-figures, photographs, screenshots, animations, icon files, and runtime diagrams.
-Their original source was adapted on 2026-11-04 from 1.23.2's `tools/docs`,
-`tools/assets`, and model/localization modules. Original paths and SHA-256 values
-are recorded in `source-provenance.json`; the original GPL-3.0 license is retained
-in `LICENSE`. Copyright belongs to Rei277Hz and the Perceptual Grade contributors.
+These Buck actions regenerate Perceptual Grade figures, screenshots, animations,
+icons, and policy diagrams. Source producers declare their inputs explicitly, so
+media changes rebuild their outputs while chapter-only edits do not. Provenance
+records stable logical paths instead of checkout or sandbox paths.
 
-`pg_book_legacy` preserves the model used by the historical chapters. It is
-isolated from current product implementations and is used only by these build
-tools. Its authored JSON catalogs are compiled by the pinned Babel dependency.
-The photo producer reuses the existing photographic sample arrays and imports
-the release's PQ PNG and fixture metadata. It renders the legacy comparison
-through pinned Blender's ACES 2.0 / sRGB display transform.
+The numerical producer samples the current reference for Linear, Tone, Color,
+and H–K behavior. Its two LUT figures read the live Blender kernel's 65-point
+ACEScg axis and interpolation address. All figures declare current-reference
+scope in `figures.json`. Python produces the numerical tables and PGFPlots source,
+then pinned XeLaTeX, PGFPlots, and dvisvgm render the SVGs. The same vectors are
+used by the English Technical Report site, PDF, and EPUB. The
+`downloads/chart-sources.zip` package contains the source tables, plot files, and
+provenance for these figures.
 
-All dependencies are explicit Buck inputs. Numerical/data/recording edits rebuild
-their producer; chapter edits do not invalidate these media actions. FFmpeg comes
-only from the pinned imageio-ffmpeg wheel. Remote execution runs the producers
-with fixed process settings, and each action requires all its declared output
-files.
-Provenance records logical source paths, independent of checkout or sandbox paths.
-
-The numerical plot producer uses the current mathematical reference for Linear,
-Tone, coefficient weights, drivers, and H–K repair. It retains the legacy model
-for the historical Concentration and LUT illustrations, and recorded benchmark
-inputs remain historical. Each figure declares its scope in `figures.json`;
-the data manifest records the current reference and legacy source hashes.
-The producer computes model samples in Python and renders 11 plots
-as SVG with the pinned XeLaTeX, PGFPlots, and dvisvgm toolchain. The plots appear
-in the English Technical Report, with the same SVGs used for its site, PDF, and
-EPUB editions. Four archived LUT plots are redrawn
-from recorded rankings, scores, and axes; the domain-128 finalist errors retain
-the report's eight-decimal precision, and two comparison axes are reconstructed
-from the published sampling formulas. Original report archives remain unchanged.
-The `:figures_data` action prepares the numeric tables and figure definitions;
-`:figures` renders the SVGs. The publication's `downloads/chart-sources.zip`
-contains the chart sources and plotted data. Candidate key fragments accompany
-the historical figures in the report.
-
-Edit numerical samples and plot definitions in `figures.py`, recorded-study
-extraction in `historical_figures.py`, and shared typography in `plot-style.tex`.
-PGFPlots handles numeric axes and mathematical labels; D2 remains the producer
-for state and architecture diagrams. Photographs and screenshots remain raster
-images.
+Edit numerical samples and plot definitions in `figures.py`, shared publication
+provenance in `figure_common.py`, and typography in `plot-style.tex`. PGFPlots
+handles numeric axes and mathematical labels. D2 produces state and architecture
+diagrams, while screenshots and authored demonstrations remain raster media.
 
 The chart renderer uses XeTeX's XDV output with the explicit
 `pgfsys-dvisvgm.def` driver. dvisvgm outlines the bundled Tinos and TeX Gyre
@@ -55,20 +30,20 @@ licenses alongside TeX, tables, and provenance.
 ```sh
 buck2 build --remote-only //products/perceptual-grade-book/generators:assets --show-output
 buck2 test --remote-only //products/perceptual-grade-book/generators:tests
-buck2 test --remote-only //products/perceptual-grade-book/generators:historical_figures_test //products/perceptual-grade-book/generators/latex:tests
+buck2 test --remote-only //products/perceptual-grade-book/generators/latex:tests
 ```
 
 `:assets` is a tree relative to an assembled mdBook root; assembly shares its
-resources between both books. Individual public targets are
-`:figures`, `:photos`, `:screenshots`, `:demos`, `:intro`, `:favicon`,
-`:ab_background`, and `:locus`. Their named outputs include required media and
-provenance. Generated files belong in Buck outputs; do not copy them into source.
+resources between both books. Individual public targets are `:figures`,
+`:screenshots`, `:demos`, `:intro`, and `:favicon`. Their named outputs include
+required media and provenance. Generated files belong in Buck outputs and do not
+need to be copied into source.
 
 The video recordings and `:demos`/`:intro` producers remain available, but their
 animated outputs, stills, and animation provenance are not members of `:assets`.
 No site, deployment ZIP, PDF, or EPUB ships animated images. Reintroducing a
 video presentation must preserve that publication boundary.
 
-The tests exercise real encoded MOV fixtures, color interpretation, trim timing,
-print stills, looping, deterministic output, required media failures, exact PNG
+The tests exercise encoded MOV fixtures, color interpretation, trim timing, print
+stills, looping, deterministic output, required media failures, exact PNG
 payloads in ICO files, and provenance independent of build locations.

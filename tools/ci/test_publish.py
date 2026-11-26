@@ -22,7 +22,11 @@ class PublishTests(unittest.TestCase):
                     "GITHUB_TOKEN": "test-placeholder", "GITHUB_SHA": "a" * 40,
                     "GITHUB_RUN_ID": "100", "GITHUB_RUN_NUMBER": "10", "GITHUB_RUN_ATTEMPT": "1",
                     "GITHUB_SERVER_URL": "https://github.com"}
-        self.summary = report.collect(self.root / "absent", {"builds": ["//:a"], "tests": ["//test:a"]}, self.env)
+        self.summary = report.collect(self.root / "absent", {
+            "builds": ["//:a"],
+            "tests": ["//test:a"],
+            "test_purposes": {"//test:a": "Exercise publication reporting."},
+        }, self.env)
         report.write(self.summary, self.output)
 
     def test_default_branch_push_is_required(self):
@@ -85,6 +89,13 @@ class PublishTests(unittest.TestCase):
         self.assertNotEqual(git("rev-parse", "ci-status"), first)
         published = json.loads(git("show", "ci-status:summary.json"))
         self.assertEqual(publish.order(published), (10, 2))
+        test_row, = published["tests"]["targets"]
+        self.assertEqual(test_row["purpose"], "Exercise publication reporting.")
+        self.assertIsNone(test_row["duration_us"])
+        self.assertEqual(test_row["attempts"], 0)
+        readme = git("show", "ci-status:README.md")
+        self.assertIn("| Test ID | Purpose | Result | Duration | Attempts |", readme)
+        self.assertIn("| `//test:a` | Exercise publication reporting. | not_run | n/a | 0 |", readme)
 
 
 if __name__ == "__main__":

@@ -1,1 +1,1 @@
-"""Build-only historical handbook support; excluded from product runtimes."""
+"""Build-time producers for the Perceptual Grade books."""

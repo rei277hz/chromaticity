@@ -41,19 +41,19 @@ class TechnicalReportAuditTests(unittest.TestCase):
         self.write(self.docs / "src/report/README.md", "# Technical Report\n")
         self.write(self.docs / "src/development/policies.md", """# Policies
 
-<a id="next-policy.overview"></a>
+<a id="grade-policy.overview"></a>
 
 ## Contract
 
-<a id="next-policy.contract"></a>
+<a id="grade-policy.contract"></a>
 
 ## Sample
 
-<a id="next-policy.sample"></a>
+<a id="grade-policy.sample"></a>
 """)
         self.write(self.product / "src/policy/__init__.py", "")
         self.write(self.product / "src/policy/sample.py",
-                   "# pg-book: technical-report/en#next-policy.sample\nVALUE = 1\n")
+                   "# pg-book: technical-report/en#grade-policy.sample\nVALUE = 1\n")
         self.write(self.tests / "policy/test_sample.py", "def test_sample():\n    pass\n")
         self.manifest = {
             "schema": 1,
@@ -61,9 +61,9 @@ class TechnicalReportAuditTests(unittest.TestCase):
                          self.chapter("development/policies.md")],
             "policies": [
                 {"anchor": anchor, "kind": "conceptual", "sources": [], "evidence": []}
-                for anchor in ("next-policy.overview", "next-policy.contract")
+                for anchor in ("grade-policy.overview", "grade-policy.contract")
             ] + [{
-                "anchor": "next-policy.sample", "kind": "production",
+                "anchor": "grade-policy.sample", "kind": "production",
                 "sources": [self.source], "evidence": [self.test_source],
             }],
         }
@@ -80,9 +80,9 @@ class TechnicalReportAuditTests(unittest.TestCase):
 
     def chapter(self, path):
         return {
-            "path": path, "scope": "next",
+            "path": path, "scope": "blender",
             "review": "Reviewed against the current sample policy and test.",
-            "evidence": [self.source, self.test_source], "remaining_work": [],
+            "evidence": [self.source, self.test_source],
         }
 
     def audit(self, manifest=None):
@@ -117,14 +117,12 @@ class TechnicalReportAuditTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.audit(manifest)
 
-    def test_legacy_or_mixed_chapter_requires_remaining_work(self):
-        for scope in ("legacy", "mixed"):
+    def test_obsolete_chapter_scopes_are_rejected(self):
+        for scope in ("next", "legacy", "mixed"):
             manifest = deepcopy(self.manifest)
             manifest["chapters"][0]["scope"] = scope
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 self.audit(manifest)
-            manifest["chapters"][0]["remaining_work"] = ["Replace the legacy workflow."]
-            self.assertEqual(self.audit(manifest)["chapters"], 2)
 
     def test_evidence_must_be_an_existing_declared_file(self):
         for evidence in (
@@ -158,27 +156,27 @@ class TechnicalReportAuditTests(unittest.TestCase):
     def test_missing_source_comment_or_string_only_reference_fails(self):
         for source in (
                 "VALUE = 1\n",
-                'VALUE = "# pg-book: technical-report/en#next-policy.sample"\n',
-                '"""# pg-book: technical-report/en#next-policy.sample"""\n'):
+                'VALUE = "# pg-book: technical-report/en#grade-policy.sample"\n',
+                '"""# pg-book: technical-report/en#grade-policy.sample"""\n'):
             self.write(self.product / "src/policy/sample.py", source)
             with self.subTest(source=source), self.assertRaises(ValueError):
                 self.audit()
 
     def test_manifest_anchor_must_exist_in_the_report(self):
         manifest = deepcopy(self.manifest)
-        manifest["policies"][-1]["anchor"] = "next-policy.missing"
+        manifest["policies"][-1]["anchor"] = "grade-policy.missing"
         with self.assertRaises(ValueError):
             self.audit(manifest)
 
     def test_new_policy_anchor_requires_manifest_coverage(self):
         with (self.docs / "src/development/policies.md").open("a", encoding="utf-8") as stream:
-            stream.write('\n## Additional\n\n<a id="next-policy.additional"></a>\n')
+            stream.write('\n## Additional\n\n<a id="grade-policy.additional"></a>\n')
         with self.assertRaises(ValueError):
             self.audit()
 
     def test_new_shipped_policy_cannot_reuse_another_modules_coverage(self):
         self.write(self.product / "src/policy/additional.py",
-                   "# pg-book: technical-report/en#next-policy.sample\nVALUE = 2\n")
+                   "# pg-book: technical-report/en#grade-policy.sample\nVALUE = 2\n")
         with self.assertRaises(ValueError):
             self.audit()
 
@@ -190,9 +188,9 @@ class TechnicalReportAuditTests(unittest.TestCase):
 
     def test_source_scan_ignores_test_fixtures_and_unrelated_directories(self):
         self.write(self.tests / "policy/test_fixture.py",
-                   "# pg-book: technical-report/en#next-policy.not-a-section\n")
+                   "# pg-book: technical-report/en#grade-policy.not-a-section\n")
         self.write(self.product / "generated/fixture.py",
-                   "# pg-book: technical-report/en#next-policy.not-a-section\n")
+                   "# pg-book: technical-report/en#grade-policy.not-a-section\n")
         self.assertEqual(self.audit()["shipped_policies"], 1)
 
 

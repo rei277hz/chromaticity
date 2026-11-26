@@ -9,20 +9,17 @@ import numpy as np
 
 from pg_book_generators import check_demos, check_favicon, check_intro
 from pg_book_generators.figure_common import manifest
-from pg_book_legacy.localization.i18n import CATALOGS, tr
-from pg_book_legacy.model import color, tone
-
 RESOURCES = Path(__file__).with_name('test_resources')
 
 
 class GeneratorsTest(unittest.TestCase):
-    def test_current_figure_data_and_historical_scope(self):
+    def test_current_reference_and_blender_figure_data(self):
         root = RESOURCES / 'figures'
         data = json.loads((root / 'numerical-data.json').read_text())
         self.assertEqual(data['model'], 'perceptual-grade-reference')
         self.assertEqual(data['shadow_ratio'], 0.015507796089266005)
-        # These samples catch using the old 27.65 shadow anchor or passing
-        # normalized H to the reference API, which takes appearance units.
+        # These samples catch an incorrect shadow anchor or passing normalized
+        # H to the reference API, which takes appearance units.
         np.testing.assert_allclose(data['tone_targets'],
                                    [0., .19599678, .51351504, 1., 1.83748822], atol=5e-9, rtol=0)
         curves = np.genfromtxt(root / 'tables/tone-curves.dat', names=True)
@@ -34,37 +31,25 @@ class GeneratorsTest(unittest.TestCase):
         guard = np.genfromtxt(root / 'tables/guard-boundary.dat', names=True)
         self.assertTrue(np.all((guard['repaired_h'] >= 50) & (guard['repaired_h'] <= 60)))
         self.assertTrue(np.all(guard['repaired_c'] <= guard['x']))
-        np.testing.assert_allclose(data['guard_sample_50_80'],
-                                   [58.18807665868112, 48.1416478163039, 0.], rtol=1e-12)
-        self.assertGreater(data['guard_sample_energy'], 0.)
         figures = json.loads((root / 'figures.json').read_text())['figures']
         scopes = {figure['id']: figure['scope'] for figure in figures}
-        self.assertEqual({name for name, scope in scopes.items() if scope == 'current-reference'},
-                         {'linear-basis', 'tone-curves', 'tone-saturation', 'color-tone-weights',
-                          'color-drivers', 'guard-boundary', 'guard-energy'})
-        self.assertEqual(scopes['color-hue-concentration'], 'historical')
-        self.assertEqual(scopes['lut-input-grid'], 'historical')
+        expected = {'linear-basis', 'tone-curves', 'tone-saturation', 'color-tone-weights',
+                    'color-drivers', 'guard-boundary', 'guard-energy',
+                    'lut-input-grid', 'lut-interpolation'}
+        self.assertEqual(set(scopes), expected)
+        self.assertEqual(set(scopes.values()), {'current-reference'})
+        lut_axis = np.genfromtxt(root / 'tables/lut-input-grid.dat', names=True)
+        self.assertEqual(len(lut_axis), 65)
+        self.assertEqual((lut_axis['y'][0], lut_axis['y'][-1]), (0., 1024.))
+        interpolation = np.genfromtxt(root / 'tables/lut-interpolation.dat', names=True)
+        self.assertGreater(np.max(np.abs(interpolation['shaped'] - interpolation['physical'])), 1e-3)
+        np.testing.assert_allclose(interpolation['physical'][[0, -1]], [0., 1.], atol=1e-14)
+        address = np.genfromtxt(root / 'tables/lut-address.dat', names=True)
+        np.testing.assert_allclose(address['y'][[0, -1]], [0., 64.], atol=1e-12)
         inputs = json.loads((root / 'manifest.json').read_text())['inputs']
         for name in ('reference/grading.py', 'reference/model.py', 'reference/responses.py',
-                     'shared-model/hk_guard.py', 'legacy/model/color.py'):
+                     'shared-model/hk_guard.py', 'color-core/scaled.py', 'blender-kernel/lut.py'):
             self.assertIn(name, inputs)
-
-    def test_legacy_model_and_compiled_catalogs(self):
-        self.assertEqual(tr('product.name', locale='en'), CATALOGS['en']['product.name'])
-        self.assertEqual(set(CATALOGS), {'en', 'zh_HANS'})
-        # Original 1.23.2 numerical-figure probes, independent of today's model.
-        model = tone.model(tone.Parameters())
-        self.assertEqual((model.reference, model.peak), (203, 1000))
-        np.testing.assert_allclose(model.target, [
-            0.0, 0.27650145394737236, 0.5135150445963199,
-            1.0, 1.8374882202130838,
-        ], rtol=1e-12, atol=1e-14)
-        np.testing.assert_allclose(
-            color.project_hk(np.array([50., 80., 0.]), np.array([50., 20., 0.])),
-            [58.18807665868112, 48.1416478163039, 0.0],
-            rtol=1e-12, atol=1e-14,
-        )
-        self.assertEqual((color.CHROMA_SATURATION, color.CHROMA_NEUTRAL), (35.0, 2.0))
 
     def test_provenance_is_independent_of_checkout(self):
         with tempfile.TemporaryDirectory() as temporary:

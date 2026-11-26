@@ -1,6 +1,6 @@
 # Saturation-preserving tone curve
 
-The analytic reference remaps the nonnegative magnitude \(M=\sqrt{J_A^2+66C}\), then scales \(J_A\) and the opponent pair together. This preserves hue and signed modCAM16 saturation. Five neutral-nits landmarks define the mapping; fixed tone targets come from the reference and peak calibration. The frozen 1.23.2 products use the same broad curve construction with different target/effective-parameter rules, documented below.
+The analytic model remaps the nonnegative magnitude \(M=\sqrt{J_A^2+66C}\), then scales \(J_A\) and the opponent pair together. This preserves hue and signed modCAM16 saturation. Five neutral-nits landmarks define the mapping; fixed tone targets come from the reference and peak calibration.
 
 ## Build a monotone curve
 
@@ -75,7 +75,7 @@ $$
 y_1=\nu(0.015507796089266005\,R_w)\approx\nu(3.148\ \mathrm{nits}).
 $$
 
-The 1.23.2 DCTL and bundled legacy figure model use \(0.037153526983R_w\), or 7.542 nits, for the same landmark. At matching effective reference and peak values, this Shadows target is the difference in the fixed target set. The legacy products also round effective reference and peak settings to whole nits, while the analytic Tone helper maps them smoothly; fractional or out-of-range inputs can therefore change other targets too. The complete analytic Model currently accepts only D65 / 203 nits.
+The complete analytic Model currently accepts only D65 and Reference Nits = 203. Its lower-level Tone helper accepts a wider effective-reference range.
 
 The effective reference and peak are not the raw inputs. The reference passes each through a smooth bounded map, so fractional and out-of-range requests move continuously:
 
@@ -85,4 +85,4 @@ R_w=\operatorname{cap}_{1000}\!\left(\operatorname{floor}_{48}(R_{\mathrm{input}
 P_w=\operatorname{cap}_{10000}\!\left(\operatorname{floor}_{2R_w}(P_{\mathrm{input}})\right),
 $$
 
-where \(\operatorname{floor}_\ell\) and \(\operatorname{cap}_u\) are the quintic ease-in and ease-out \(e(x)=x^3(6-8x+3x^2)\) applied to the distance from the interval edge, exactly \(x\) more than one unit inside and exactly the bound outside, with matching first and second derivatives at both joins. The earlier handbook described integer rounding to the nearest nit; that is the 1.23.2 behaviour and it produces a step at every half-nit. Use the smooth form for the reference, and treat the effective \(R_w,P_w\) as configuration shared by forward and inverse evaluation rather than as a menu index.
+where \(\operatorname{floor}_\ell\) and \(\operatorname{cap}_u\) are the quintic ease-in and ease-out \(e(x)=x^3(6-8x+3x^2)\) applied to the distance from the interval edge, exactly \(x\) more than one unit inside and exactly the bound outside, with matching first and second derivatives at both joins. Treat the effective \(R_w,P_w\) as configuration shared by forward and inverse evaluation rather than as a menu index.

@@ -2,7 +2,7 @@
 
 Stage 1 is a linear color transform. The reference then repairs the input into its native AP1 cube and encodes it in modCAM16. Tone and Color operate on appearance coordinates; RGB export applies cube containment and decoding after Stage 3. This chapter introduces that representation, especially the coordinates used by the Color controls.
 
-This part describes the current analytic model in `libraries/perceptual-grade-reference`. Archived 1.23.2 controls, instructions and measurements are identified separately. The frozen Blender implementation retains its earlier Warp ordering; Next Blender follows the reference's Adaptance → H–K repair → Scale order. Product features and historical releases still need their own scope labels.
+This chapter describes the analytic model in `libraries/perceptual-grade-reference`. Product adapters organize controls and execution around their host boundaries. Their stage placement is documented separately in [Architecture and runtime](../development/architecture.md).
 
 modCAM16 is a revised color appearance model in the CAM16 family. It describes how a color looks under specified viewing conditions, separating lightness, chromatic strength and hue. Perceptual Grade uses its revised relationships and Helmholtz–Kohlrausch compensation, which accounts for chroma’s contribution to perceived lightness.
 
@@ -39,12 +39,10 @@ On the nonnegative branch, normalized lightness is \(j=H/100=M/100\). A referenc
 
 The reference fixes \(Y_b=10\) on Colour's scale where the test white has \(Y_w=100\), with the illuminant discounted. Internally, XYZ and the white \(W\) use \(Y=1\) units; normalized cone inputs are \((A\,XYZ)/(A\,W)\), with \(A\) the CAT16 matrix. The background setting is distinct from the adapting luminance of 20.3 nits.
 
-The complete analytic `Model` accepts Grade white D65 with Reference Nits 203, matching its cached boundary context. Its lower-level appearance and Tone helpers accept a wider effective reference range. The archived products offer the eight white presets and Reference Nits controls described in [Working White](../guide/working-white.md); that product interface does not widen the complete reference model's supported context.
+The complete analytic `Model` accepts Grade white D65 with Reference Nits 203, matching its cached boundary context. Its lower-level appearance and Tone helpers accept a wider effective reference range. Product controls may expose a different subset of those lower-level parameters.
 
 The distinction matters on the negative branch: Tone remaps \(M\), preserves the sign of \(J_A\), then reconstructs \(H\). Color's tonal selectors also use the post-Tone \(M\). Replacing that magnitude by signed \(H\) would change which tonal controls affect the color.
 
 The [saturation-preserving tone curve](tone.md) remaps lightness while maintaining the tone-stage invariant. [Tone-shaped color operators](color.md) then blend adjustments across tonal regions. [Evaluation and interpolation](evaluation.md) follows the bounded H–K guard and the analytic, native and sampled implementations.
 
-The current RGB entry path applies Stage 1, repairs into native AP1 \([0,1024]^3\), then encodes the result. Appearance helpers also support signed cone responses directly. The paired neutral lift, subtraction and fallback levels described for 1.23.2 are historical behavior. Reset remains an identity within the legal input cube; out-of-cube input still receives entry repair.
-
-Stage 3 evaluates J/C edits, Warp hue/chroma, selective Adaptance, H–K repair, then common positive Scale. With the default guard enabled, nonnegative-\(H\) requests are repaired and negative-\(H\) requests bypass repair; Scale multiplies either carried energy by \(\lambda^2\), preserving its sign. Appearance handoffs carry that post-policy state, and RGB export applies only the separate cube guard. The [guard chapter](hk-guard.md) explains the nonnegative-energy guarantee and its branch conditions; [credits](../reference/credits.md) lists the model references.
+Stage 3 in the reference evaluates J/C edits, Warp hue/chroma, selective Adaptance, H–K repair, then common positive Scale. With the default guard enabled, nonnegative-\(H\) requests are repaired and negative-\(H\) requests bypass repair; Scale multiplies either carried energy by \(\lambda^2\), preserving its sign. Appearance handoffs carry that post-policy state. Product export boundaries are described in [Architecture and runtime](../development/architecture.md). The [guard chapter](hk-guard.md) explains the nonnegative-energy guarantee and its branch conditions; [credits](../reference/credits.md) lists the model references.

@@ -37,7 +37,7 @@ helper 不修改 Scene 或用户偏好设置。
 烘焙会明确拒绝 UDIM／平铺图像、影片与图像序列、多视图／多层源、Shader to RGB、
 影片剪辑与 Mask、关联或动画中的缓存／Alembic 几何、缺失或重叠的 UV，以及不受
 支持的节点图实例。UV 烘焙前应应用不受支持的拓扑修改器或形变修改器。完整路线
-边界见[Next 烘焙策略](https://rei277hz.github.io/perceptual-grade/technical/en/development/next-policies.html#next-policy.bake)。
+边界见[Next 烘焙策略](https://rei277hz.github.io/perceptual-grade/technical/en/development/policies.html#grade-policy.bake)。
 
 ## 渲染就绪
 

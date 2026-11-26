@@ -89,6 +89,17 @@ Synthetic download checks are excluded; skipped, failed, missing, and incomplete
 results remain visible and cannot produce an all-passing badge. Reports and logs
 are retained as workflow artifacts for 14 days, including when commands fail.
 
+The Markdown report is also appended to the GitHub Actions step summary. Its
+test catalog lists each selected target ID, a purpose maintained in
+[`targets.json`](targets.json), the suite result, duration, and attempt count.
+Durations sum Buck-reported execution time across attempts, so parallel suites
+can make the sum differ from the workflow's wall-clock time. Skipped and omitted
+results and test discovery events are not counted as attempts. A rerun result
+counts only when Buck reports its duration. Duration is `n/a` when there is no
+completed timing or any counted attempt has a missing or invalid duration; the
+report records such timing gaps as issues. Rows with measured durations sort
+from longest to shortest, followed by suites without complete timing.
+
 Only a default-branch push run can update the public `ci-status` branch. The
 final publishing job alone has repository write permission; it publishes two SVG
 badges and their JSON/Markdown summary without committing to the source branch.

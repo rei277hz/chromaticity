@@ -1,6 +1,6 @@
 """Narrow host admission for publishing prepared Grade image data."""
 
-# pg-book: technical-report/en#next-policy.render-preflight
+# pg-book: technical-report/en#grade-policy.render-preflight
 
 from contextlib import contextmanager
 from collections import deque

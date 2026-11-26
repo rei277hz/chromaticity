@@ -1,6 +1,6 @@
 """Lifecycle-owned helper lane for isolated Bake and scope captures."""
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 
 from concurrent.futures import CancelledError
 from pathlib import Path

@@ -13,10 +13,7 @@ def verify_policy_coverage(entries, manifest):
     expected = {
         name for name in entries
         if name.endswith(".py") and Path(name).name != "__init__.py"
-        and (name.startswith("policy/") or "/policy/" in name
-             or name in {"features/bake/policy.py",
-                         "features/interaction/policy.py",
-                         "features/vectorscope/authority.py"})
+        and (name.startswith("policy/") or "/policy/" in name)
     }
     if (not isinstance(manifest, dict) or manifest.get("version") != 2
             or not isinstance(manifest.get("machines"), dict)):

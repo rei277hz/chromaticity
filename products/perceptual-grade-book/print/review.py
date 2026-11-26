@@ -14,9 +14,7 @@ from lxml import html
 REGRESSION_PHRASE = "场景工作空间"
 CHARTS = {
     "linear-basis", "tone-curves", "tone-saturation", "color-tone-weights",
-    "color-drivers", "color-hue-concentration", "guard-boundary", "guard-energy",
-    "lut-input-grid", "lut-interpolation", "render-benchmark",
-    "lut-shaper-errors", "lut-shaper-placement", "lut-domain128-errors", "lut-domain128-placement",
+    "color-drivers", "guard-boundary", "guard-energy", "lut-input-grid", "lut-interpolation",
 }
 
 
@@ -77,12 +75,6 @@ def render_review(pdf_path, output_dir, language="zh-Hans", chapter=None, docume
         chart_locations = chart_pages(reader, document_path, language)
         matching_pages = set(chart_locations)
         selected = set(matching_pages)
-        # Historical candidate keys follow the paired plots and can flow onto
-        # the next page. Include that page in the visual review as well.
-        for index, figures in chart_locations.items():
-            if any(figure["chart"] in {"lut-shaper-placement", "lut-domain128-placement"} for figure in figures):
-                if index + 1 < len(reader.pages):
-                    selected.add(index + 1)
     elif chapter is not None:
         matching_pages = chapter_pages(reader, chapter)
         selected = {0} | matching_pages

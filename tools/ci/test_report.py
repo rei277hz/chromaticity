@@ -1,4 +1,4 @@
-"""Regression checks for target counts, partial runs, and safe badge rendering."""
+"""Regression checks for target counts, timing, and partial runs."""
 
 import json
 from pathlib import Path
@@ -17,14 +17,18 @@ def build_report(labels, failed=()):
         for label in labels}}
 
 
-def event(label, status=1, configuration="linux#123"):
+def event(label, status=1, configuration="linux#123", *, duration_us=250_000):
     package, name = label.split(":", 1)
-    return {"Event": {"data": {"Instant": {"data": {"TestResult": {
+    result = {
         "name": "root" + label, "status": status,
         "target_label": {"label": {"package": "root" + package, "name": name},
                          "configuration": {"full_name": configuration},
                          "execution_configuration": None},
-        "details": "Ran 100 individual cases; these are still one Buck target."}}}}}}
+        "details": "Ran 100 individual test cases.",
+    }
+    if duration_us is not None:
+        result["duration_us"] = duration_us
+    return {"Event": {"data": {"Instant": {"data": {"TestResult": result}}}}}
 
 
 class ReportTests(unittest.TestCase):
@@ -32,7 +36,14 @@ class ReportTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
-        self.selection = {"builds": ["//:a", "//:b"], "tests": ["//tests:one", "//tests:two"]}
+        self.selection = {
+            "builds": ["//:a", "//:b"],
+            "tests": ["//tests:one", "//tests:two"],
+            "test_purposes": {
+                "//tests:one": "Exercise the first suite.",
+                "//tests:two": "Exercise the second suite.",
+            },
+        }
         self.save("build-report.json", build_report(self.selection["builds"]))
         self.save("test-build-report.json", build_report(self.selection["tests"]))
         self.save("exits.json", {"build": 0, "test": 0, "events": 0})
@@ -68,20 +79,40 @@ class ReportTests(unittest.TestCase):
         self.events([event("//tests:one")])
         summary = self.collect()["tests"]
         self.assertEqual(summary["targets"][1]["status"], "failed")
+        self.assertEqual(summary["targets"][1]["attempts"], 0)
+        self.assertIsNone(summary["targets"][1]["duration_us"])
         self.assertEqual((summary["passed"], summary["total"]), (1, 2))
 
     def test_skip_and_missing_results_keep_expected_denominator(self):
-        for values, status in (([event("//tests:one"), event("//tests:two", 3)], "skipped"),
+        for values, status in (([event("//tests:one"), event("//tests:two", 3, duration_us=None)], "skipped"),
                                ([event("//tests:one")], "not_run")):
             with self.subTest(status=status):
                 self.events(values)
                 summary = self.collect()["tests"]
                 self.assertEqual((summary["passed"], summary["total"], summary["outcome"]), (1, 2, "incomplete"))
                 self.assertEqual(summary["targets"][1]["status"], status)
+                self.assertEqual(summary["targets"][1]["attempts"], 0)
+                self.assertIsNone(summary["targets"][1]["duration_us"])
+                self.assertEqual(summary["issues"], [])
+
+    def test_skip_and_omission_durations_are_not_execution_attempts(self):
+        for status in (3, 4):
+            with self.subTest(status=status):
+                self.events([
+                    event("//tests:one"),
+                    event("//tests:two", status, duration_us=900_000),
+                ])
+                row = self.collect()["tests"]["targets"][1]
+                self.assertEqual(row["status"], "skipped")
+                self.assertEqual(row["attempts"], 0)
+                self.assertIsNone(row["duration_us"])
 
     def test_discovery_is_not_a_passing_test(self):
         self.events([event("//tests:one", 9), event("//tests:two", 10)])
-        self.assertEqual(self.collect()["tests"]["passed"], 0)
+        tests = self.collect()["tests"]
+        self.assertEqual(tests["passed"], 0)
+        self.assertEqual([row["attempts"] for row in tests["targets"]], [0, 0])
+        self.assertEqual([row["duration_us"] for row in tests["targets"]], [None, None])
 
     def test_conflicting_or_multiple_configuration_outcomes_are_not_green(self):
         self.events([event("//tests:one", 3), event("//tests:one", 1), event("//tests:two")])
@@ -90,8 +121,49 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(self.collect()["tests"]["targets"][0]["status"], "unknown")
 
     def test_successful_retry_does_not_hide_failure(self):
-        self.events([event("//tests:one", 2), event("//tests:one", 8), event("//tests:one", 1), event("//tests:two")])
-        self.assertEqual(self.collect()["tests"]["targets"][0]["status"], "failed")
+        self.events([
+            event("//tests:one", 9, duration_us=800_000),
+            event("//tests:one", 2, duration_us=300_000),
+            event("//tests:one", 8, duration_us=None),
+            event("//tests:one", 8, duration_us=900_000),
+            event("//tests:one", 1, duration_us=500_000),
+            event("//tests:two"),
+        ])
+        tests = self.collect()["tests"]
+        self.assertEqual(tests["targets"][0], {
+            "target": "//tests:one",
+            "purpose": "Exercise the first suite.",
+            "status": "failed",
+            "duration_us": 1_700_000,
+            "attempts": 3,
+        })
+        self.assertEqual(tests["outcome"], "failed")
+        self.assertEqual(tests["issues"], [])
+
+    def test_invalid_attempt_duration_never_looks_like_a_complete_total(self):
+        for duration in (None, -1, True, 1.5, "200"):
+            with self.subTest(duration=duration):
+                self.events([
+                    event("//tests:one", duration_us=0),
+                    event("//tests:one", duration_us=duration),
+                    event("//tests:two"),
+                ])
+                tests = self.collect()["tests"]
+                row = tests["targets"][0]
+                self.assertEqual(row["status"], "passed")
+                self.assertEqual(row["attempts"], 2)
+                self.assertIsNone(row["duration_us"])
+                self.assertEqual(tests["outcome"], "incomplete")
+                self.assertTrue(any(
+                    "duration" in issue and "//tests:one" in issue for issue in tests["issues"]
+                ), tests["issues"])
+
+    def test_measured_zero_duration_is_available(self):
+        self.events([event("//tests:one", duration_us=0), event("//tests:two")])
+        tests = self.collect()["tests"]
+        self.assertEqual(tests["outcome"], "passed")
+        self.assertEqual(tests["targets"][0]["duration_us"], 0)
+        self.assertEqual(tests["targets"][0]["attempts"], 1)
 
     def test_malformed_event_log_does_not_make_partial_success_green(self):
         with (self.directory / "test-events.jsonl").open("a") as stream:
@@ -146,14 +218,61 @@ class ReportTests(unittest.TestCase):
         output = self.directory / "badges"
         report.write(summary, output)
         self.assertEqual({p.name for p in output.iterdir()}, set(report.OUTPUTS))
-        self.assertIn("not individual test cases", (output / "README.md").read_text())
+        saved = json.loads((output / "summary.json").read_text())
+        self.assertEqual(saved, summary)
+        self.assertEqual(saved["schema"], 1)
+
+    def test_markdown_timing_catalog_sorts_measured_targets_before_missing_timings(self):
+        self.events([
+            event("//tests:one", duration_us=200_000),
+            event("//tests:two", duration_us=64_250_000),
+        ])
+        catalog = report.markdown(self.collect())
+        self.assertIn("| Test ID | Purpose | Result | Duration | Attempts |", catalog)
+        self.assertIn("| `//tests:two` | Exercise the second suite. | passed | 01:04.25 | 1 |", catalog)
+        self.assertIn("| `//tests:one` | Exercise the first suite. | passed | 00:00.20 | 1 |", catalog)
+        self.assertLess(catalog.index("`//tests:two`"), catalog.index("`//tests:one`"))
+
+        self.events([event("//tests:two", duration_us=64_250_000)])
+        catalog = report.markdown(self.collect())
+        self.assertLess(catalog.index("`//tests:two`"), catalog.index("`//tests:one`"))
+        self.assertIn("| `//tests:one` | Exercise the first suite. |", catalog)
+
+    def test_markdown_purpose_is_plain_text_inside_one_cell(self):
+        self.selection["test_purposes"]["//tests:one"] = "Alpha | <beta> & gamma"
+        catalog = report.markdown(self.collect())
+        row = next(line for line in catalog.splitlines() if "`//tests:one`" in line)
+        self.assertNotIn("<beta>", row)
+        self.assertIn("&lt;beta&gt;", row)
+        self.assertIn("&amp; gamma", row)
+        self.assertEqual(len(row.replace(r"\|", "").split("|")), 7)
 
     def test_selection_must_be_nonempty_and_unique(self):
-        for selection in ({"builds": [], "tests": ["//test:a"]},
-                          {"builds": ["//:a", "//:a"], "tests": ["//test:a"]}):
-            self.save("targets.json", selection)
+        for builds in ([], ["//:a", "//:a"]):
+            self.save("targets.json", {**self.selection, "builds": builds})
             with self.assertRaises(ValueError):
                 report.targets(self.directory / "targets.json")
+
+    def test_selection_requires_one_usable_purpose_per_test(self):
+        purposes = self.selection["test_purposes"]
+        for invalid in (
+            None,
+            {},
+            {**purposes, "//tests:extra": "Extra suite."},
+            {**purposes, "//tests:one": " "},
+            {**purposes, "//tests:one": "Line one\nLine two"},
+            {**purposes, "//tests:one": 7},
+        ):
+            with self.subTest(purposes=invalid):
+                self.save("targets.json", {**self.selection, "test_purposes": invalid})
+                with self.assertRaises(ValueError):
+                    report.targets(self.directory / "targets.json")
+        self.save("targets.json", self.selection)
+        self.assertEqual(report.targets(self.directory / "targets.json"), self.selection)
+
+    def test_ci_manifest_covers_every_selected_test(self):
+        selection = report.targets()
+        self.assertEqual(set(selection["test_purposes"]), set(selection["tests"]))
 
 
 if __name__ == "__main__":

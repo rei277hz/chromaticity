@@ -16,10 +16,14 @@ def main():
         'index.html', '.nojekyll', 'site-manifest.json',
         'manual/index.html', 'manual/en/index.html', 'manual/zh-Hans/index.html',
         'technical/en/index.html',
-        'downloads/perceptual_grade-v1.23.2-20261101.zip',
     }
     if required - entries.keys():
         raise ValueError(f'Missing deploy resources: {sorted(required - entries.keys())}')
+    frozen_packages = {name for name in entries
+                       if name.startswith('downloads/archived-blender-extension')
+                       and name.endswith('.zip')}
+    if frozen_packages != {'downloads/archived-blender-extension.zip'}:
+        raise ValueError('Deployment must contain exactly one frozen product ZIP')
     expected=json.loads(entries['site-manifest.json'].read_text())['site_files']
     if set(entries)-{'site-manifest.json'}!=set(expected):
         raise ValueError('Deployment file inventory differs from the built site manifest.')

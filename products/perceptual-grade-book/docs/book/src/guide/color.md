@@ -24,7 +24,7 @@ Highlights. Its saturation parameter sets where the correction reaches half
 influence. Use it for a targeted appearance shift across selected tonal ranges;
 it is not the Linear white-balance control.
 
-The two coordinates form one radial destination. Next shortens an out-of-range
+The two coordinates form one radial destination. The extension shortens an out-of-range
 request along its direction so the calibrated cone responses remain valid;
 it does not clip a and b independently. **Limited** marks a sampled request
 whose effective destination must be shortened, such as an animated value.

@@ -1,4 +1,4 @@
-"""Build-only evidence that the Next handbook ships current, static content."""
+"""Build-only evidence that the Perceptual Grade book ships current, static content."""
 
 from io import BytesIO
 import base64
@@ -13,7 +13,7 @@ from PIL import Image
 from pypdf import PdfReader
 
 
-LEGACY_ZIP = "perceptual_grade-v1.23.2-20261101.zip"
+ARCHIVED_ZIP = "archived-blender-extension.zip"
 EDITIONS = {
     "user-manual": ("en", "zh-Hans"),
     "technical-report": ("en",),
@@ -31,16 +31,13 @@ def audit_sources(docs: Path, generators: Path) -> dict:
     for language, directory in (("en", "src"), ("zh-Hans", "zh-Hans")):
         root = docs / directory
         intro = (root / "README.md").read_text(encoding="utf-8")
-        if LEGACY_ZIP not in intro or "Next" not in intro:
-            raise ValueError("Manual must retain its labeled legacy ZIP and Next scope")
-        legacy_label = "Legacy Blender download" if language == "en" else "旧版 Blender 下载"
-        if legacy_label not in intro:
-            raise ValueError("The retained install ZIP must be labeled legacy")
+        if ARCHIVED_ZIP not in intro or "Perceptual Grade" not in intro:
+            raise ValueError("Manual must identify Perceptual Grade and retain its archive")
         paths = [root / "README.md", *sorted((root / "guide").glob("*.md"))]
         text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
         for match in re.finditer(r'''(?:href=["']?|\]\()([^\s"')>]+\.zip)''', text):
             target = match.group(1).split("#", 1)[0].split("?", 1)[0]
-            if PurePosixPath(target).name != LEGACY_ZIP:
+            if PurePosixPath(target).name != ARCHIVED_ZIP:
                 raise ValueError("The active manual must not offer another install ZIP")
         for obsolete in ("data-still", "assets/demos/", "assets/intro/",
                          "DaVinci Resolve", "DCTL", "Preserved release", "保留版本"):
@@ -51,7 +48,7 @@ def audit_sources(docs: Path, generators: Path) -> dict:
         for control in ("Linear", "Tone", "Color", "Adaptance", "Warp", "Scale",
                         "Bake", "Use Bake", "Node-Owned Grade", "65³"):
             if control not in text:
-                raise ValueError("Missing Next manual control: " + control)
+                raise ValueError("Missing Blender manual control: " + control)
         chapters.extend(language + "/" + path.relative_to(root).as_posix() for path in paths)
     source = generators.read_text(encoding="utf-8")
     if 'name = "demos"' not in source or 'name = "intro"' not in source:
@@ -59,7 +56,7 @@ def audit_sources(docs: Path, generators: Path) -> dict:
     publication = source.split("ASSETS =", 1)[1].split("source_tree(", 1)[0]
     if re.search(r":(?:intro|demos)\[", publication):
         raise ValueError("Video outputs and provenance must not enter published assets")
-    return {"manual_chapters": chapters, "legacy_zip": LEGACY_ZIP,
+    return {"manual_chapters": chapters, "archived_zip": ARCHIVED_ZIP,
             "video_producers_retained": True}
 
 
@@ -170,13 +167,13 @@ def _check_document_images(directory: Path) -> list[str]:
 
 def audit_artifacts(site: Path, archive: Path, exports: dict[str, Path]) -> dict:
     """Inspect the actual site/ZIP and each PDF/EPUB export's static media."""
-    legacy_zip = site / "downloads" / LEGACY_ZIP
-    if not legacy_zip.is_file():
-        raise ValueError("Site lost the legacy Blender ZIP")
-    with zipfile.ZipFile(legacy_zip) as extension:
+    archived_zip = site / "downloads" / ARCHIVED_ZIP
+    if not archived_zip.is_file():
+        raise ValueError("Site lost the archived Blender package")
+    with zipfile.ZipFile(archived_zip) as extension:
         metadata = tomllib.loads(extension.read("blender_manifest.toml").decode("utf-8"))
-        if metadata.get("version") != "1.23.2":
-            raise ValueError("Legacy ZIP does not contain the retained extension version")
+        if not isinstance(metadata.get("version"), str) or not metadata["version"]:
+            raise ValueError("Archived Blender package has no version metadata")
     images = _image_inventory(site)
     if not images:
         raise ValueError("Site has no image inventory")
@@ -186,9 +183,9 @@ def audit_artifacts(site: Path, archive: Path, exports: dict[str, Path]) -> dict
         raise ValueError("Animation provenance entered the site")
     with zipfile.ZipFile(archive) as package:
         names = set(package.namelist())
-        if "downloads/" + LEGACY_ZIP not in names:
-            raise ValueError("Deployment ZIP lost the legacy Blender ZIP")
-        if package.read("downloads/" + LEGACY_ZIP) != legacy_zip.read_bytes():
+        if "downloads/" + ARCHIVED_ZIP not in names:
+            raise ValueError("Deployment ZIP lost the archived Blender package")
+        if package.read("downloads/" + ARCHIVED_ZIP) != archived_zip.read_bytes():
             raise ValueError("Site and deployment ZIP extension bytes differ")
         if ("downloads/provenance/intro-video.json" in names
                 or any(name.startswith(("assets/demos/", "assets/intro/")) for name in names)):

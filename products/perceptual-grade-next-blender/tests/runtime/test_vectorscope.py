@@ -28,7 +28,7 @@ class VectorscopeTests(unittest.TestCase):
         sys.path.insert(0, directory.name)
         cls.addClassCleanup(sys.path.remove, directory.name)
         scope = package_name + ".features.vectorscope."
-        cls.policy = importlib.import_module(scope + "policy")
+        cls.policy = importlib.import_module(scope + "policy.scope")
         cls.runtime = importlib.import_module(scope + "runtime")
         cls.analysis = importlib.import_module(scope + "analysis")
         cls.appearance_scope = importlib.import_module(scope + "appearance_scope")
@@ -61,174 +61,170 @@ class VectorscopeTests(unittest.TestCase):
     def appearance_result(state):
         return state.appearance, state.appearance_status, state.appearance_error
 
-    def request(self, state, capture, *, key=1, source="source", analysis=None,
-                cached=False, ready=True):
-        return self.policy.step(state, self.policy.Event(
-            "request", key=key, capture_signature=capture, source_signature=source,
-            analysis_signature=capture if analysis is None else analysis, cache_available=cached,
-            ready=ready,
+    def test_request_and_capture_receipts_are_scalar_policy_decisions(self):
+        state = self.policy.initial_state()
+        request = self.policy.step(state, self.policy.Event(
+            "request", capture_signature="frame one", source_signature="source",
+            analysis_signature="analysis", revision=4,
         ))
-
-    def schedule(self, state):
-        state, effects = self.policy.step(state, self.policy.Event("schedule"))
-        return state, effects.start
-
-    def start(self, state):
-        state, ticket = self.schedule(state)
-        self.assertIsNotNone(ticket)
-        state, effects = self.policy.step(state, self.policy.Event("started", ticket=ticket))
-        self.assertEqual(effects, self.policy.Effects())
-        return state, ticket
-
-    def capture(self, state, ticket, *, success=True):
-        return self.policy.step(state, self.policy.Event(
-            "capture_result", ticket=ticket, success=success, error="Capture failed",
+        self.assertTrue(request.effects.enqueue)
+        generation = request.state.scope.desired_generation
+        scheduled = self.policy.step(request.state, self.policy.Event(
+            "schedule", ticket_generation=generation,
         ))
-
-    def test_playback_publishes_lagging_density_then_latest_demand(self):
-        state, effects = self.request(self.policy.State(), "frame one")
-        self.assertIsNone(effects.start)
-        state, first = self.start(state)
-        state, _ = self.request(state, "frame two")
-        state, _ = self.request(state, "frame three")
-        state, effects = self.capture(state, first)
-        self.assertEqual(effects.publish.capture_signature, "frame three")
-        self.assertEqual(effects.retain_samples, "frame one")
-        self.assertEqual(self.policy.status(state, 1), ("updating", None))
-        self.assertIsNone(effects.start)
-        state, next_ticket = self.start(state)
-        self.assertEqual(next_ticket.capture_signature, "frame three")
-        state, effects = self.capture(state, next_ticket)
-        self.assertIsNotNone(effects.publish)
-        self.assertEqual(self.policy.status(state, 1), ("current", None))
-
-    def test_newer_cached_plot_survives_superseded_capture(self):
-        state, _ = self.request(self.policy.State(), "frame one")
-        state, first = self.start(state)
-        state, _ = self.request(state, "frame two", cached=True)
-        state, _ = self.request(state, "frame three")
-        state, effects = self.capture(state, first)
-        self.assertIsNone(effects.publish)
-        state, next_ticket = self.schedule(state)
-        self.assertEqual(next_ticket.capture_signature, "frame three")
-        self.assertEqual(self.policy.status(state, 1), ("updating", None))
-
-    def test_latest_linear_revision_reuses_matching_capture(self):
-        state, _ = self.request(self.policy.State(), "frame one")
-        state, first = self.start(state)
-        state, effects = self.request(state, "frame one", analysis="new matrix")
-        self.assertIsNone(effects.start)
-        state, effects = self.capture(state, first)
-        self.assertEqual(effects.publish.analysis_signature, "new matrix")
-        self.assertEqual(self.policy.status(state, 1), ("current", None))
-        self.assertEqual(self.schedule(state), (state, None))
-
-    def test_linear_edit_uses_retained_input_samples_without_starting_capture(self):
-        state, _ = self.request(self.policy.State(), "same input")
-        state, ticket = self.start(state)
-        state, effects = self.capture(state, ticket)
-        self.assertEqual(effects.retain_samples, "same input")
-        state, effects = self.policy.step(state, self.policy.Event(
-            "request", key=1, capture_signature="same input", source_signature="source",
-            analysis_signature="linear correction", cache_available=True,
+        self.assertTrue(scheduled.effects.start)
+        self.assertTrue(scheduled.state.scheduler.busy)
+        started = self.policy.step(scheduled.state, self.policy.Event(
+            "started", ticket_generation=generation,
         ))
-        self.assertIsNone(effects.start)
-        self.assertEqual(effects.publish.capture_signature, "same input")
-        self.assertEqual(effects.publish.analysis_signature, "linear correction")
-        self.assertEqual(self.schedule(state), (state, None))
+        completed = self.policy.step(started.state, self.policy.Event(
+            "capture_result", ticket_generation=generation, success=True, revision=4,
+        ))
+        self.assertTrue(completed.effects.publish)
+        self.assertTrue(completed.effects.retain_samples)
+        self.assertFalse(completed.state.scheduler.busy)
+        self.assertEqual(
+            self.policy.status(completed.state.scope, 4, True).status, "current",
+        )
 
-    def test_waiting_editor_does_not_hold_capture_slot(self):
-        state, _ = self.request(self.policy.State(), "waiting", ready=False)
-        waiting_ticket = state.desired[0]
-        self.assertEqual(self.schedule(state), (state, None))
-        state, _ = self.request(state, "ready", key=2)
-        state, ticket = self.start(state)
-        self.assertEqual(ticket.key, 2)
-        state, _ = self.capture(state, ticket)
-        self.assertEqual(self.schedule(state), (state, None))
-        state, effects = self.request(state, "waiting", ready=True)
+    def test_superseded_capture_can_publish_only_as_lagging_same_source(self):
+        state = self.policy.initial_state()
+        first = self.policy.step(state, self.policy.Event(
+            "request", capture_signature="frame one", source_signature="source",
+            analysis_signature="analysis one", revision=1,
+        ))
+        generation = first.state.scope.desired_generation
+        active = self.policy.step(first.state, self.policy.Event(
+            "schedule", ticket_generation=generation,
+        ))
+        latest = self.policy.step(active.state, self.policy.Event(
+            "request", capture_signature="frame two", source_signature="source",
+            analysis_signature="analysis two", revision=2,
+        ))
+        result = self.policy.step(latest.state, self.policy.Event(
+            "capture_result", ticket_generation=generation, success=True,
+            revision=1, allow_lagging=True,
+        ))
+        self.assertTrue(result.effects.publish)
+        self.assertTrue(result.effects.retain_samples)
+        self.assertIsNone(result.state.scope.published_current_generation)
+        self.assertEqual(
+            self.policy.status(result.state.scope, 2, True).status, "updating",
+        )
+
+    def test_stale_receipts_and_waiting_scopes_cannot_start(self):
+        state = self.policy.initial_state()
+        requested = self.policy.step(state, self.policy.Event(
+            "request", capture_signature="waiting", source_signature="source",
+            analysis_signature="analysis", ready=False,
+        ))
+        generation = requested.state.scope.desired_generation
+        waiting = self.policy.step(requested.state, self.policy.Event(
+            "schedule", ticket_generation=generation,
+        ))
+        self.assertEqual(waiting, self.policy.Transition(requested.state, self.policy.Effects()))
+        stale = self.policy.step(requested.state, self.policy.Event(
+            "started", ticket_generation=generation,
+        ))
+        self.assertEqual(stale, self.policy.Transition(requested.state, self.policy.Effects()))
+
+    def test_reset_preserves_active_fence_until_capture_retires(self):
+        state = self.policy.initial_state()
+        requested = self.policy.step(state, self.policy.Event(
+            "request", capture_signature="active", source_signature="source",
+            analysis_signature="analysis",
+        ))
+        generation = requested.state.scope.desired_generation
+        scheduled = self.policy.step(requested.state, self.policy.Event(
+            "schedule", ticket_generation=generation,
+        ))
+        reset = self.policy.step(scheduled.state, self.policy.Event("reset"))
+        self.assertTrue(reset.effects.cancel)
+        self.assertEqual(reset.state.scope.active_generation, generation)
+        self.assertTrue(reset.state.scheduler.busy)
+
+    def test_runtime_queue_is_fifo_and_coalesces_queued_editor_demand(self):
+        runtime = self.runtime.ScopeRuntime(
+            lambda _route: None, lambda _node: None, lambda: None,
+            create_job=Mock(),
+        )
+        runtime._dispatch(1, self.policy.Event(
+            "request", capture_signature="first", source_signature="s1",
+            analysis_signature="a1",
+        ))
+        runtime._dispatch(2, self.policy.Event(
+            "request", capture_signature="second", source_signature="s2",
+            analysis_signature="a2",
+        ))
+        runtime._dispatch(1, self.policy.Event(
+            "request", capture_signature="first latest", source_signature="s1",
+            analysis_signature="a1 latest",
+        ))
+        start = Mock()
+        def start_and_ack(ticket):
+            start(ticket)
+            runtime._dispatch_ticket(ticket, "started")
+
+        runtime._start = start_and_ack
+        runtime._schedule_next()
+        self.assertEqual(start.call_count, 1)
+        self.assertEqual(start.call_args.args[0].key, 1)
+        self.assertEqual(start.call_args.args[0].capture_signature, "first latest")
+        self.assertEqual(tuple(key for key, _token in runtime.queue), (2,))
+
+    def test_runtime_queue_removes_released_editor_and_keeps_other_entry(self):
+        runtime = self.runtime.ScopeRuntime(
+            lambda _route: None, lambda _node: None, lambda: None,
+            create_job=Mock(),
+        )
+        runtime._dispatch(1, self.policy.Event(
+            "request", capture_signature="first", source_signature="s1",
+            analysis_signature="a1",
+        ))
+        runtime._dispatch(2, self.policy.Event(
+            "request", capture_signature="second", source_signature="s2",
+            analysis_signature="a2",
+        ))
+        runtime._dispatch(1, self.policy.Event("release"))
+        self.assertNotIn(1, runtime.queued)
+        self.assertEqual(tuple(key for key, _token in runtime.queue), (2,))
+
+    def test_stale_start_receipt_cannot_remove_reopened_queue_entry(self):
+        runtime = self.runtime.ScopeRuntime(
+            lambda _route: None, lambda _node: None, lambda: None,
+            create_job=Mock(),
+        )
+        runtime._dispatch(1, self.policy.Event(
+            "request", capture_signature="first", source_signature="s1",
+            analysis_signature="a1",
+        ))
+        old_ticket = runtime.queued[1][1]
+        runtime._dispatch(1, self.policy.Event("release"))
+        runtime._dispatch(1, self.policy.Event(
+            "request", capture_signature="reopened", source_signature="s2",
+            analysis_signature="a2",
+        ))
+        current_ticket = runtime.queued[1][1]
+        effects = runtime._dispatch_ticket(old_ticket, "started")
         self.assertEqual(effects, self.policy.Effects())
-        state, ticket = self.start(state)
-        self.assertEqual(ticket, waiting_ticket)
+        self.assertEqual(runtime.queued[1][1], current_ticket)
+        self.assertEqual(tuple(key for key, _token in runtime.queue), (1,))
 
-    def test_waiting_editor_keeps_matching_trace_updating(self):
-        state, _ = self.request(self.policy.State(), "frame one")
-        state, ticket = self.start(state)
-        state, _ = self.request(state, "frame one", ready=False)
-        state, effects = self.capture(state, ticket)
-        self.assertEqual(effects.publish, ticket)
-        self.assertEqual(effects.retain_samples, "frame one")
-        self.assertEqual(self.policy.status(state, 1), ("updating", None))
-        state, _ = self.request(state, "frame one", ready=True)
-        self.assertEqual(self.policy.status(state, 1), ("current", None))
-        self.assertEqual(self.schedule(state), (state, None))
-
-    def test_deferred_capture_keeps_position_and_uses_latest_demand(self):
-        state, _ = self.request(self.policy.State(), "first")
-        state, _ = self.request(state, "second", key=2)
-        state, reserved = self.schedule(state)
-        self.assertEqual(reserved.key, 1)
-        self.assertEqual(self.schedule(state), (state, None))
-        state, _ = self.policy.step(state, self.policy.Event("deferred", ticket=reserved))
-        self.assertIsNone(state.active)
-        state, _ = self.request(state, "first updated")
-        state, ticket = self.start(state)
-        self.assertEqual(ticket.key, 1)
-        self.assertEqual(ticket.capture_signature, "first updated")
-        for event in ("started", "deferred", "capture_result"):
-            with self.subTest(event=event):
-                self.assertEqual(
-                    self.policy.step(state, self.policy.Event(event, ticket=reserved)),
-                    (state, self.policy.Effects()),
-                )
-        state, _ = self.capture(state, ticket)
-        state, ticket = self.start(state)
-        self.assertEqual(ticket.key, 2)
-
-    def test_started_receipt_removes_only_its_reserved_demand(self):
-        state, _ = self.request(self.policy.State(), "first")
-        state, reserved = self.schedule(state)
-        state, _ = self.request(state, "second")
-        state, _ = self.policy.step(state, self.policy.Event("started", ticket=reserved))
-        self.assertEqual(state.active, reserved)
-        self.assertEqual(state.queued, state.desired)
-        state, _ = self.capture(state, reserved)
-        state, ticket = self.start(state)
-        self.assertEqual(ticket.capture_signature, "second")
-
-    def test_release_and_unavailable_cancel_only_the_affected_capture(self):
-        for kind in ("release", "unavailable"):
-            with self.subTest(kind=kind):
-                state, _ = self.request(self.policy.State(), "active")
-                state, ticket = self.start(state)
-                state, _ = self.request(state, "waiting", key=2, ready=False)
-                state, effects = self.policy.step(state, self.policy.Event(kind, key=2))
-                self.assertIsNone(effects.cancel)
-                self.assertEqual(state.waiting, frozenset())
-                state, _ = self.request(state, "queued", key=3)
-                state, effects = self.policy.step(state, self.policy.Event(kind, key=1))
-                self.assertEqual(effects.cancel, ticket)
-                self.assertEqual(effects.clear, (1,))
-                self.assertEqual(self.schedule(state), (state, None))
-                state, effects = self.capture(state, ticket)
-                self.assertEqual(effects, self.policy.Effects())
-                state, next_ticket = self.start(state)
-                self.assertEqual(next_ticket.key, 3)
-
-    def test_reset_retires_active_ticket_and_clears_waiting_demand(self):
-        state, _ = self.request(self.policy.State(), "active")
-        state, ticket = self.start(state)
-        state, _ = self.request(state, "waiting", key=2, ready=False)
-        state, effects = self.policy.step(state, self.policy.Event("reset"))
-        self.assertEqual(effects.cancel, ticket)
-        self.assertEqual(effects.clear, (1, 2))
-        self.assertEqual(state, self.policy.State(generation=2, active=ticket))
-        state, _ = self.request(state, "active")
-        state, effects = self.capture(state, ticket)
-        self.assertEqual(effects, self.policy.Effects())
-        self.assertEqual(self.policy.status(state, 1), ("updating", None))
-        state, next_ticket = self.start(state)
-        self.assertGreater(next_ticket.source_generation, ticket.source_generation)
+    def test_reset_removes_all_runtime_queue_entries(self):
+        runtime = self.runtime.ScopeRuntime(
+            lambda _route: None, lambda _node: None, lambda: None,
+            create_job=Mock(),
+        )
+        for key in (1, 2):
+            runtime._dispatch(key, self.policy.Event(
+                "request", capture_signature=str(key), source_signature="source",
+                analysis_signature="analysis",
+            ))
+        runtime.reset()
+        self.assertEqual(tuple(runtime.queue), ())
+        self.assertEqual(runtime.queued, {})
+        self.assertTrue(all(state.desired_generation is None
+                            for state in runtime.scope_states.values()))
 
     def test_runtime_release_rejects_late_success_and_advances_queue(self):
         first, second = Mock(), Mock()
@@ -531,7 +527,7 @@ class VectorscopeTests(unittest.TestCase):
             runtime.finish_shutdown()
             self.assertFalse(root.exists())
             self.assertIsNone(runtime.active)
-            self.assertIsNone(runtime.state.active)
+            self.assertFalse(runtime.scheduler.busy)
 
     def test_appearance_preview_waits_for_current_input_and_grade(self):
         pixels = np.ones((2, 2, 4), dtype=np.float32)
@@ -677,28 +673,60 @@ class VectorscopeTests(unittest.TestCase):
         self.assertEqual(runtime.invalidate(None, (object_id,)), (1,))
 
     def test_reopened_scope_rejects_prior_receipt_with_equal_signatures(self):
-        state, _ = self.request(self.policy.State(), "frame one")
-        state, first = self.start(state)
-        state, effects = self.policy.step(state, self.policy.Event("release", key=1))
-        self.assertEqual(effects.clear, (1,))
-        self.assertEqual(effects.cancel, first)
-        state, _ = self.request(state, "frame one")
-        state, effects = self.capture(state, first)
-        self.assertIsNone(effects.publish)
-        self.assertIsNone(effects.retain_samples)
-        state, ticket = self.start(state)
-        self.assertNotEqual(ticket.generation, first.generation)
-        self.assertEqual(self.policy.status(state, 1), ("updating", None))
+        state = self.policy.initial_state()
+        requested = self.policy.step(state, self.policy.Event(
+            "request", capture_signature="frame one", source_signature="source",
+            analysis_signature="analysis", revision=1,
+        ))
+        generation = requested.state.scope.desired_generation
+        active = self.policy.step(requested.state, self.policy.Event(
+            "schedule", ticket_generation=generation,
+        ))
+        released = self.policy.step(active.state, self.policy.Event("release"))
+        self.assertTrue(released.effects.clear)
+        self.assertTrue(released.effects.cancel)
+        self.assertEqual(released.state.scope.active_generation, generation)
+        retired = self.policy.step(released.state, self.policy.Event(
+            "capture_result", ticket_generation=generation, success=True,
+            revision=1,
+        ))
+        self.assertFalse(retired.effects.publish)
+        self.assertFalse(retired.effects.retain_samples)
+        self.assertFalse(retired.state.scheduler.busy)
 
     def test_superseded_failure_is_inert_and_exact_failure_is_visible(self):
-        state, _ = self.request(self.policy.State(), "frame one")
-        state, first = self.start(state)
-        state, _ = self.request(state, "frame two")
-        state, _ = self.capture(state, first, success=False)
-        self.assertEqual(self.policy.status(state, 1), ("updating", None))
-        state, ticket = self.start(state)
-        state, _ = self.capture(state, ticket, success=False)
-        self.assertEqual(self.policy.status(state, 1), ("error", "Capture failed"))
+        state = self.policy.initial_state()
+        first = self.policy.step(state, self.policy.Event(
+            "request", capture_signature="frame one", source_signature="source",
+            analysis_signature="analysis one", revision=1,
+        ))
+        first_generation = first.state.scope.desired_generation
+        active = self.policy.step(first.state, self.policy.Event(
+            "schedule", ticket_generation=first_generation,
+        ))
+        latest = self.policy.step(active.state, self.policy.Event(
+            "request", capture_signature="frame two", source_signature="source",
+            analysis_signature="analysis two", revision=2,
+        ))
+        stale_failure = self.policy.step(latest.state, self.policy.Event(
+            "capture_result", ticket_generation=first_generation, revision=1,
+            success=False, error="Capture failed",
+        ))
+        self.assertEqual(
+            self.policy.status(stale_failure.state.scope, 2, True).status,
+            "updating",
+        )
+        latest_generation = latest.state.scope.desired_generation
+        scheduled = self.policy.step(stale_failure.state, self.policy.Event(
+            "schedule", ticket_generation=latest_generation,
+        ))
+        failure = self.policy.step(scheduled.state, self.policy.Event(
+            "capture_result", ticket_generation=latest_generation, revision=2,
+            success=False, error="Capture failed",
+        ))
+        self.assertEqual(
+            self.policy.status(failure.state.scope, 2, True).status, "error",
+        )
 
     def test_linear_matrix_moves_density_to_rec709_target(self):
         rgba = np.array([[[1.0, 0.0, 0.0, 1.0]]])

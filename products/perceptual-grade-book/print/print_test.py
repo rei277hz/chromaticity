@@ -31,10 +31,8 @@ CHART_PATHS = {
     name: f"assets/{directory}/{name}.svg"
     for directory, names in (
         ("figures", ("linear-basis", "tone-curves", "tone-saturation", "color-tone-weights",
-                     "color-drivers", "color-hue-concentration", "guard-boundary", "guard-energy",
-                     "lut-input-grid", "lut-interpolation", "render-benchmark")),
-        ("illustrations", ("lut-shaper-errors", "lut-shaper-placement",
-                           "lut-domain128-errors", "lut-domain128-placement")),
+                     "color-drivers", "guard-boundary", "guard-energy", "lut-input-grid",
+                     "lut-interpolation")),
     )
     for name in names
 }
@@ -118,7 +116,7 @@ class PrintBuildChecks:
                 edition = self.print_manifest["languages"][language]
                 self.assertEqual([item["path"] for item in edition["chapters"]], [item["path"] for item in chapters])
                 self.assertEqual(
-                    any(item["path"] == "development/next-policies.md" for item in edition["chapters"]),
+                    any(item["path"] == "development/policies.md" for item in edition["chapters"]),
                     self.publication == "technical-report",
                 )
                 paths = {item["path"] for item in edition["chapters"]}
@@ -136,21 +134,21 @@ class PrintBuildChecks:
 
                 book_html = self.documents / language / "book.html"
                 parsed = html.document_fromstring(book_html.read_bytes())
-                self.assertEqual("Next Blender policy machines" in parsed.text_content(), self.publication == "technical-report")
-                policy_figures = parsed.xpath("//img[contains(@src, '/next-policy/')]")
+                self.assertEqual("Blender runtime policies" in parsed.text_content(), self.publication == "technical-report")
+                policy_figures = parsed.xpath("//img[contains(@src, '/grade-policy/')]")
                 self.assertEqual(len(policy_figures), len(self.policy_figures) if self.publication == "technical-report" else 0)
                 if self.publication == "technical-report":
-                    policy_heading = parsed.xpath("//h1[@id='next-blender-policy-machines']")[0]
-                    policy_chapter = next(item for item in edition["chapters"] if item["path"] == "development/next-policies.md")
+                    policy_heading = parsed.xpath("//h1[@id='blender-runtime-policies']")[0]
+                    policy_chapter = next(item for item in edition["chapters"] if item["path"] == "development/policies.md")
                     number = ".".join(map(str, policy_chapter["number"]))
-                    self.assertEqual(" ".join(" ".join(policy_heading.itertext()).split()), number + " Next Blender policy machines")
+                    self.assertEqual(" ".join(" ".join(policy_heading.itertext()).split()), number + " Blender runtime policies")
                     policy_captions = parsed.xpath(
-                        "//section[@id='chapter-section-next-blender-policy-machines']//figcaption"
+                        "//section[@id='chapter-section-blender-runtime-policies']//figcaption"
                     )
                     self.assertEqual(len(policy_captions), len(self.policy_figures))
-                    policy_section = parsed.xpath("//section[@id='chapter-section-next-blender-policy-machines']")[0]
+                    policy_section = parsed.xpath("//section[@id='chapter-section-blender-runtime-policies']")[0]
                     policy_anchors = source_anchors(
-                        (self.book / "src/development/next-policies.md").read_text(), "next-policies.md")
+                        (self.book / "src/development/policies.md").read_text(), "policies.md")
                     for anchor in policy_anchors:
                         self.assertEqual(len(policy_section.xpath(".//*[@id=$identifier]", identifier=anchor["anchor"])), 1)
                     for index, caption in enumerate(policy_captions, start=1):
@@ -174,6 +172,8 @@ class PrintBuildChecks:
                     self.assertTrue(target.is_file(), reference)
                     self.assertNotIn("/assets/demos/", reference)
                     self.assertNotIn("/assets/intro/", reference)
+                if self.publication == "user-manual":
+                    self.assertEqual(parsed.xpath("//img[@src]"), [])
 
     def test_same_print_document_links_remain_internal(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -293,7 +293,7 @@ class PrintBuildChecks:
                 if self.publication == "technical-report":
                     reader = PdfReader(pdf_path)
                     anchors = source_anchors(
-                        (self.book / "src/development/next-policies.md").read_text(), "next-policies.md")
+                        (self.book / "src/development/policies.md").read_text(), "policies.md")
                     for anchor in anchors:
                         self.assertIn(anchor["anchor"], reader.named_destinations)
                 with pikepdf.open(pdf_path) as pdf:
@@ -309,7 +309,8 @@ class PrintBuildChecks:
                                 uri = str(action.get("/URI"))
                                 self.assertFalse(uri.startswith("file:"))
                                 linked_assets += uri.startswith("https://rei277hz.github.io/perceptual-grade/assets/")
-                    self.assertGreater(linked_assets, 0, "PDF figure links should use portable site URLs")
+                    self.assertEqual(linked_assets > 0, self.publication == "technical-report",
+                                     "Only the report PDF contains linked figures")
                     titles = outline_titles(pdf.open_outline().root)
                     edition = self.print_manifest["languages"][language]
                     font_names = []
@@ -458,15 +459,15 @@ class PrintBuildChecks:
                         archive.read("EPUB/" + name).decode("utf-8")
                         for name in spine_paths if name.startswith("text/chapter-")
                     )
-                    self.assertEqual("Next Blender policy machines" in chapter_bodies, self.publication == "technical-report")
-                    self.assertEqual("next-policy/" in chapter_bodies, self.publication == "technical-report")
+                    self.assertEqual("Blender runtime policies" in chapter_bodies, self.publication == "technical-report")
+                    self.assertEqual("grade-policy/" in chapter_bodies, self.publication == "technical-report")
                     if self.publication == "technical-report":
                         policy_anchors = source_anchors(
-                            (self.book / "src/development/next-policies.md").read_text(), "next-policies.md")
+                            (self.book / "src/development/policies.md").read_text(), "policies.md")
                         chapter_documents = [ET.fromstring(archive.read("EPUB/" + name))
                                              for name in spine_paths if name.startswith("text/chapter-")]
                         policy_documents = [document for document in chapter_documents
-                                            if any(element.get("id") == "next-blender-policy-machines"
+                                            if any(element.get("id") == "blender-runtime-policies"
                                                    for element in document.iter())]
                         self.assertEqual(len(policy_documents), 1)
                         policy_ids = [element.get("id") for element in policy_documents[0].iter()]

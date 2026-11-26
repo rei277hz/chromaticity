@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report selected Buck target outcomes without conflating builds and tests."""
+"""Report selected Buck build outcomes and test suite timings."""
 
 import argparse
 from collections import Counter
@@ -14,11 +14,15 @@ import re
 MANIFEST = Path(__file__).with_name("targets.json")
 STATUS = {1: "passed", 2: "failed", 3: "skipped", 4: "skipped", 5: "failed",
           6: "failed", 7: "unknown", 8: "not_run", 11: "failed"}
+NON_ATTEMPT_STATUSES = {3, 4}  # Skip and omitted.
+OPTIONAL_ATTEMPT_DURATION = {8}  # A rerun notice may not represent an execution.
 OUTPUTS = ("summary.json", "builds.svg", "tests.svg", "README.md")
 
 
 def targets(path=MANIFEST):
     data = json.loads(Path(path).read_text())
+    if not isinstance(data, dict):
+        raise ValueError("CI target selection must be an object")
     for group in ("builds", "tests"):
         labels = data.get(group)
         if (not isinstance(labels, list) or not labels
@@ -26,6 +30,13 @@ def targets(path=MANIFEST):
                        for label in labels)
                 or len(labels) != len(set(labels))):
             raise ValueError(f"Invalid or empty {group} selection")
+    purposes = data.get("test_purposes")
+    if not isinstance(purposes, dict) or purposes.keys() != set(data["tests"]):
+        raise ValueError("test_purposes must cover exactly the selected test targets")
+    for label, purpose in purposes.items():
+        if (not isinstance(purpose, str) or not purpose.strip()
+                or purpose.splitlines() != [purpose] or any(ord(char) < 32 for char in purpose)):
+            raise ValueError(f"{label}: test purpose must be nonblank single-line text")
     return data
 
 
@@ -138,7 +149,7 @@ def test_results(path, selection, issues):
                         raise ValueError(f"invalid status for {label}")
                     if status in (9, 10):  # Test discovery is not a test run.
                         continue
-                    observations[label].setdefault(config, set()).add(STATUS.get(status, "unknown"))
+                    observations[label].setdefault(config, []).append((status, result.get("duration_us")))
                 except (ValueError, AttributeError) as error:
                     issues.append(f"{path.name}:{number}: {error}")
         except UnicodeError as error:
@@ -154,7 +165,7 @@ def test_status(observations, built, label, issues):
     if len(observations) != 1:
         issues.append(f"{label}: multiple configurations in a single-platform selection")
         return "unknown"
-    statuses = next(iter(observations.values()))
+    statuses = {STATUS.get(status, "unknown") for status, _ in next(iter(observations.values()))}
     if "failed" in statuses:
         return "failed"  # A later success must not hide a failed attempt.
     if "unknown" in statuses:
@@ -167,6 +178,26 @@ def test_status(observations, built, label, issues):
         issues.append(f"{label}: passing test has no successful executable build record")
         return "unknown"
     return next(iter(terminal), "not_run")
+
+
+def test_timing(observations, label, issues):
+    attempts = 0
+    total_duration = 0
+    invalid_durations = 0
+    for results in observations.values():
+        for status, duration in results:
+            if status in NON_ATTEMPT_STATUSES:
+                continue
+            if duration is None and status in OPTIONAL_ATTEMPT_DURATION:
+                continue
+            attempts += 1
+            if type(duration) is int and duration >= 0:
+                total_duration += duration
+            else:
+                invalid_durations += 1
+    if invalid_durations:
+        issues.append(f"{label}: missing or invalid duration_us for {invalid_durations} of {attempts} attempts")
+    return attempts, total_duration if attempts and not invalid_durations else None
 
 
 def aggregate(rows, exit_code, issues):
@@ -215,9 +246,12 @@ def collect(directory, selection, env):
     if type(exits.get("events")) is not int or exits["events"] != 0:
         test_issues.append("test event-log export did not complete successfully")
     observations = test_results(directory / "test-events.jsonl", selection["tests"], test_issues)
-    test_rows = [{"target": label, "status": test_status(observations[label], test_builds.get(label),
-                                                        label, test_issues)}
-                 for label in selection["tests"]]
+    test_rows = []
+    for label in selection["tests"]:
+        result = test_status(observations[label], test_builds.get(label), label, test_issues)
+        attempts, duration = test_timing(observations[label], label, test_issues)
+        test_rows.append({"target": label, "purpose": selection["test_purposes"][label],
+                          "status": result, "duration_us": duration, "attempts": attempts})
     return {"schema": 1, "metadata": metadata(env),
             "builds": aggregate(build_rows, exits.get("build"), build_issues),
             "tests": aggregate(test_rows, exits.get("test"), test_issues)}
@@ -243,18 +277,44 @@ def badge(label, section):
 '''
 
 
+def format_duration(duration_us):
+    if duration_us is None:
+        return "n/a"
+    minutes, centiseconds = divmod((duration_us + 5_000) // 10_000, 6_000)
+    seconds, fraction = divmod(centiseconds, 100)
+    return f"{minutes:02d}:{seconds:02d}.{fraction:02d}"
+
+
+def markdown_cell(value):
+    return re.sub(r"([\\`*_\[\]~|])", r"\\\1", escape(value, quote=False))
+
+
 def markdown(summary):
     meta = summary["metadata"]
     lines = ["# Linux build and test results", "",
              f'- Commit: `{meta["commit"]}`', f'- Recorded at: {meta["timestamp"]}',
              f'- Run: {meta["run_url"] or "local validation"}', "",
-             "Counts represent the selected build targets and smoke suites, not individual test cases or the full monorepo suite.", ""]
-    for key, label in (("builds", "Linux build targets"), ("tests", "Linux smoke suites")):
+             "Each test row represents one selected Buck suite. A suite may contain several test cases.", ""]
+    for key, label in (("builds", "Linux build targets"), ("tests", "Linux test suites")):
         group = summary[key]
         lines += [f'## {label}: {group["passed"]}/{group["total"]} passed', "",
-                  f'Run outcome: **{group["outcome"]}**. Command exit: `{group["exit_code"]}`.', "",
-                  "| Target | Result |", "| --- | --- |"]
-        lines += [f'| `{row["target"]}` | {row["status"]} |' for row in group["targets"]]
+                  f'Run outcome: **{group["outcome"]}**. Command exit: `{group["exit_code"]}`.', ""]
+        if key == "builds":
+            lines += ["| Target | Result |", "| --- | --- |"]
+            lines += [f'| `{row["target"]}` | {row["status"]} |' for row in group["targets"]]
+        else:
+            lines += [
+                "Duration sums Buck-reported execution time across attempts. 'n/a' means no complete timing is available.",
+                "",
+                "| Test ID | Purpose | Result | Duration | Attempts |",
+                "| --- | --- | --- | ---: | ---: |",
+            ]
+            rows = sorted(group["targets"], key=lambda row: (
+                row["duration_us"] is None, -(row["duration_us"] or 0), row["target"]))
+            for row in rows:
+                purpose = markdown_cell(row["purpose"])
+                duration = format_duration(row["duration_us"])
+                lines.append(f'| `{row["target"]}` | {purpose} | {row["status"]} | {duration} | {row["attempts"]} |')
         lines += [""]
         if group["issues"]:
             lines += ["Reporting notes:", ""]
@@ -266,7 +326,7 @@ def markdown(summary):
 def write(summary, directory):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    for key, label in (("builds", "Linux build targets"), ("tests", "Linux smoke suites")):
+    for key, label in (("builds", "Linux build targets"), ("tests", "Linux test suites")):
         (directory / f"{key}.svg").write_text(badge(label, summary[key]))
     (directory / "README.md").write_text(markdown(summary))
 

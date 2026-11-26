@@ -1,15 +1,33 @@
 # Code and grading model
 
-> **Historical implementation guidance:** this chapter retains the 1.23.2 runtime, source layout, and validation profile. For current development commands and supported behavior, use the product READMEs in [chromaticity](https://github.com/rei277hz/chromaticity).
+Begin with the model or product boundary that owns the behavior. The
+[architecture chapter](architecture.md) maps the reference, Blender runtime,
+and Resolve DCTL layers. Keep host-independent equations in
+`libraries/perceptual-grade-reference`; implement host integration in the
+corresponding product.
 
-Start by locating the behavior in [Architecture and runtime](architecture.md). A model change belongs in the shared equations; an interaction change belongs in the UI and update lifecycle. Keep the change focused enough that its effect can be explained and reviewed.
+For a model change, define the forward behavior and its valid domain first.
+Preserve explicit invariants such as identity at reset, finite signed and HDR
+inputs where supported, hue or saturation preservation, ordering, and inverse
+round trips. Update the reference's numerical tests and proof requirements
+when a model equation or guarantee changes.
 
-Treat the analytic DCTL as the reference. Match its equations in the numerical model and native graph. Keep the Direct curve approximation and the paired baker/sampler aligned. Preserve exact-reset paths, signed-value support, finite domain guards and current-parameter signatures. Test the affected numerical, DCTL, parity and native-render targets through Buck2 before broadening coverage.
+Blender changes belong to their feature owner under
+`products/perceptual-grade-next-blender/src/features/`. Keep derived settings
+and prepared resources tied to authoritative Grade state. Put shared
+host-neutral lifecycle or capture primitives in `src/runtime/` only when
+multiple features use the same contract. Policy effects authorize external
+mutations; runtime consumers perform them. Update the product's policy,
+runtime, native, or installed tests according to the changed boundary.
 
-The [full forward and inverse specification](forward-inverse-math.md) defines every symbol, all three stages, the 3×6 contribution math, the H–K guard, signed/fallback branches, the implemented inverse solver and the scene/Grade/LUT coordinate boundaries. Sections 6.3 and 6.4 give the 1.23.2 stage-3 controls (Concentration, Hue, Adaptance strength) that the DCTL and the Blender release implement; section 6.5 gives the analytic reference's tonal web, selective Adaptance and final scale. Identify which stage a change targets before editing either. This handbook chapter is the maintained specification; there is no separate engineering Markdown copy.
+Resolve DCTL changes belong under `products/perceptual-grade-dctl/src/` and
+its generator and tests. DCTL sliders, localized declarations, and execution
+order are host-facing interfaces. Verify the generated C/OpenCL entry points
+against independent reference calculations. Resolve GPU compilation and
+interactive operation still require Resolve itself.
 
-Model equations now have two homes with different scopes. `libraries/perceptual-grade-reference` is the authoritative analytic model; `libraries/perceptual-grade-core` holds the shared kernels and the preserved production law that the DCTL and the 1.23.2 Blender release use. An equation that moves between them is a model change, not a refactor, and needs its own comparison evidence.
-
-For a UI or runtime change, reproduce the original problem with a small saved scene or a focused test. Preserve graph ownership and cleanup, and verify both Shader and Compositor where they share the affected code. A draw callback should display cached state; schedule data changes through the owning operator or timer.
-
-Describe the user-visible result in the relevant guide and record the change in the repository’s RELEASES.md. Include the host version, render method and settings needed to reproduce your check. See [Testing and measurements](testing.md) for selecting useful validation.
+For changes shared across products, compare their adapters with the reference
+at matching input, output, and stage boundaries. Product-specific export
+behavior may differ; record the boundary and include it in the tests. The
+[forward and inverse mathematics](forward-inverse-math.md) chapter documents
+the current equations and inverse contracts.

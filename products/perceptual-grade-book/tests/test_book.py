@@ -17,17 +17,12 @@ from pg_book_build import assemble, languages, parts, site, zip_utils
 
 NUMERICAL_CHARTS = {
     'linear-basis', 'tone-curves', 'tone-saturation', 'color-tone-weights',
-    'color-drivers', 'color-hue-concentration', 'guard-boundary', 'guard-energy',
-    'lut-input-grid', 'lut-interpolation', 'render-benchmark',
-}
-HISTORICAL_CHARTS = {
-    'lut-shaper-errors', 'lut-shaper-placement',
-    'lut-domain128-errors', 'lut-domain128-placement',
+    'color-drivers', 'guard-boundary', 'guard-energy', 'lut-input-grid',
+    'lut-interpolation',
 }
 CHART_PATHS = {
-    name: f'assets/{directory}/{name}.svg'
-    for directory, names in (('figures', NUMERICAL_CHARTS), ('illustrations', HISTORICAL_CHARTS))
-    for name in names
+    name: f'assets/figures/{name}.svg'
+    for name in NUMERICAL_CHARTS
 }
 EDITIONS = {
     'user-manual': {'en': 'manual/en', 'zh-Hans': 'manual/zh-Hans'},
@@ -74,7 +69,7 @@ class BookTests(unittest.TestCase):
         cls.historical = cls.resources / 'historical'
         cls.inputs = cls.resources / 'book-inputs'
         cls.assets = [cls.resources / name for name in
-                      ('generated-assets', 'diagram-assets', 'cdn-assets', 'data-downloads')]
+                      ('generated-assets', 'diagram-assets', 'cdn-assets')]
         cls.output = (cls.resources / 'site').resolve()
         cls.book = cls.docs / 'book'
         cls.manifest_path = cls.resources / 'historical-manifest.json'
@@ -186,8 +181,9 @@ class BookTests(unittest.TestCase):
                 self.assertGreater(len(re.findall(r'[\u3400-\u9fff]', body)), 180)
                 self.assertEqual(len(re.findall(r'^## ', chinese, re.M)),
                                  len(re.findall(r'^## ', english, re.M)))
-                self.assertEqual(re.findall(r'(?:src|data-still)="([^"]+)"', chinese),
-                                 re.findall(r'(?:src|data-still)="([^"]+)"', english))
+                image_refs = re.compile(r'(?:src|data-still)="([^"]+)"|!\[[^]]*\]\([^)]+\)')
+                self.assertEqual(image_refs.findall(english), [])
+                self.assertEqual(image_refs.findall(chinese), [])
                 self.assertEqual(re.findall(r'\]\(([^)]+)\)', chinese),
                                  re.findall(r'\]\(([^)]+)\)', english))
                 self.assertEqual(re.findall(r'\\\((.*?)\\\)', chinese),
@@ -208,18 +204,26 @@ class BookTests(unittest.TestCase):
             for stage, text in (('source', source), ('rendered', rendered)):
                 with self.subTest(book=book_name, language=language, stage=stage):
                     for marker in ('MIT OR Apache-2.0', 'GPL-3.0-or-later',
-                                   'Corresponding Source', 'DCTL', 'CC0 1.0',
-                                   'git archive', '1.23.2'):
+                                   'DCTL', 'CC0 1.0'):
                         self.assertIn(marker, text)
+                    corresponding_source = ('Corresponding Source' if language == 'en'
+                                             else '对应源代码')
+                    self.assertIn(corresponding_source, text)
+                    archive_label = ('archived extension ZIP' if language == 'en'
+                                     else '归档的 Blender 扩展 ZIP')
+                    self.assertIn(archive_label.casefold(), text.casefold())
+                    digest_label = 'SHA-256' if language == 'zh-Hans' else 'SHA256'
+                    self.assertIn(digest_label, text)
+                    self.assertTrue('embedded' in text.lower() or '嵌入' in text)
                     for license_name in ('LICENSE-MIT', 'LICENSE-APACHE'):
                         self.assertIn(repository + license_name, text)
         credits = (self.book / 'src/reference/credits.md').read_text()
-        self.assertIn('DetMCD.pdf', credits)
-        self.assertIn('asymptotic Gaussian', credits)
+        self.assertIn('10.1002/col.22792', credits)
+        self.assertIn('Colour', credits)
 
     def test_generated_provenance_uses_stable_input_names(self):
-        for name in ('numerical-figures', 'photographic-figures', 'host-screenshots',
-                     'next-policy-diagrams'):
+        for name in ('numerical-figures', 'host-screenshots',
+                     'grade-policy-diagrams'):
             document = self.output / 'downloads/provenance' / (name + '.json')
             provenance = json.loads(document.read_text())
             self.assertEqual(provenance['invocation'], 'buck2')
@@ -318,8 +322,8 @@ class BookTests(unittest.TestCase):
             ('manual/en/index.html', 'technical/en/index.html'),
             ('manual/zh-Hans/index.html', 'technical/en/index.html'),
             ('technical/en/index.html', 'manual/en/index.html'),
-            ('manual/en/guide/render-methods.html', 'technical/en/development/next-policies.html'),
-            ('manual/zh-Hans/guide/render-methods.html', 'technical/en/development/next-policies.html'),
+            ('manual/en/guide/render-methods.html', 'technical/en/development/policies.html'),
+            ('manual/zh-Hans/guide/render-methods.html', 'technical/en/development/policies.html'),
             ('manual/en/guide/tone.html', 'technical/en/theory/tone.html'),
             ('manual/zh-Hans/guide/tone.html', 'technical/en/theory/tone.html'),
         )
@@ -351,7 +355,8 @@ class BookTests(unittest.TestCase):
         self.assertIn('E_0>0', guard)
         self.assertIn('W>0', guard)
         self.assertIn('0.015507796089266005', tone)
-        self.assertIn('0.037153526983', tone)
+        self.assertIn('Default landmarks take an exact identity branch.', tone)
+        self.assertIn('Values at and below that threshold map to zero.', tone)
         order = ('3. Selective cone Adaptance',
                  '4. With the default guard enabled, [H–K repair]',
                  "5. The web's final positive scale")
@@ -362,8 +367,8 @@ class BookTests(unittest.TestCase):
         self.assertIn('HKCubeLuminance.lean', html.unescape(
             (self.output / 'technical/en/theory/hk-guard.html').read_text()))
 
-    def test_next_policy_chapter_is_only_in_the_english_edition(self):
-        relative = 'development/next-policies.html'
+    def test_blender_policy_chapter_is_only_in_the_english_edition(self):
+        relative = 'development/policies.html'
         for route in ('manual/en', 'manual/zh-Hans', 'technical/en'):
             edition = self.output / route
             is_report = route == 'technical/en'
@@ -373,10 +378,10 @@ class BookTests(unittest.TestCase):
                              next(edition.glob('searchindex-*.js')).read_text()):
                     self.assertEqual(relative in text, is_report)
                 printable = (edition / 'print.html').read_text()
-                self.assertEqual('illustrations/next-policy/' in printable, is_report)
+                self.assertEqual('illustrations/grade-policy/' in printable, is_report)
 
-    def test_next_policy_figures_are_accessible_declared_svg_outputs(self):
-        provenance = json.loads((self.output / 'downloads/provenance/next-policy-diagrams.json').read_text())
+    def test_blender_policy_figures_are_accessible_declared_svg_outputs(self):
+        provenance = json.loads((self.output / 'downloads/provenance/grade-policy-diagrams.json').read_text())
         self.assertEqual(provenance['renderer']['name'], 'D2')
         self.assertEqual(provenance['renderer']['version'], '0.9.0')
         flags = provenance['renderer']['flags']
@@ -396,12 +401,12 @@ class BookTests(unittest.TestCase):
                 self.assertGreater(checked['embedded_font_count'], 0)
                 self.assertEqual(checked['collision_count'], 0)
         self.assertEqual(set(provenance['outputs']), {
-            f'assets/illustrations/next-policy/{name}.svg' for name in expected_names
+            f'assets/illustrations/grade-policy/{name}.svg' for name in expected_names
         })
-        chapter = self.output / 'technical/en/development/next-policies.html'
+        chapter = self.output / 'technical/en/development/policies.html'
         referenced = {site.local_target(self.output, chapter, ref, False)
                       for ref, _ in site.Page(chapter.read_text()).refs
-                      if 'illustrations/next-policy/' in ref}
+                      if 'illustrations/grade-policy/' in ref}
         self.assertEqual(referenced, {self.output / name for name in provenance['outputs']})
         svg_namespace = '{http://www.w3.org/2000/svg}'
         for name, expected_hash in provenance['outputs'].items():
@@ -451,7 +456,7 @@ class BookTests(unittest.TestCase):
 
     def test_numerical_charts_are_accessible_static_vectors(self):
         svg_namespace = '{http://www.w3.org/2000/svg}'
-        self.assertEqual(len(CHART_PATHS), 15)
+        self.assertEqual(len(CHART_PATHS), 9)
         provenance = json.loads((self.output / 'downloads/provenance/numerical-figures.json').read_text())
         self.assertEqual(provenance['renderer']['name'], 'PGFPlots')
         self.assertEqual({name for name in provenance['outputs'] if name.startswith('images/')},
@@ -536,18 +541,13 @@ class BookTests(unittest.TestCase):
                              'fonts/Tinos-Regular.ttf', 'fonts/Tinos-Bold.ttf',
                              'fonts/Tinos-Italic.ttf', 'fonts/Tinos-BoldItalic.ttf',
                              'fonts/Tinos-OFL.txt', 'fonts/texgyretermes-math.otf',
-                             'fonts/TeX-Gyre-Math-LICENSE.txt',
-                             'fragments/lut-shaper-key.md', 'fragments/lut-domain128-key.md'):
+                             'fonts/TeX-Gyre-Math-LICENSE.txt'):
                 self.assertIn(required, names)
                 self.assertTrue(archive.read(required))
             figures = json.loads(archive.read('figures.json'))['figures']
             self.assertEqual({figure['id'] for figure in figures}, set(CHART_PATHS))
             scopes = {figure['id']: figure['scope'] for figure in figures}
-            self.assertEqual({name for name, scope in scopes.items() if scope == 'current-reference'},
-                             {'linear-basis', 'tone-curves', 'tone-saturation', 'color-tone-weights',
-                              'color-drivers', 'guard-boundary', 'guard-energy'})
-            self.assertEqual(scopes['color-hue-concentration'], 'historical')
-            self.assertEqual(scopes['lut-input-grid'], 'historical')
+            self.assertEqual(set(scopes.values()), {'current-reference'})
             source_manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(source_manifest, provenance['data_provenance'])
             self.assertTrue(source_manifest['inputs'])
@@ -607,15 +607,18 @@ class BookTests(unittest.TestCase):
 
     def test_published_downloads_and_media(self):
         downloads = self.output / 'downloads'
-        extension = 'perceptual_grade-v1.23.2-20261101.zip'
-        self.assertFalse((downloads / 'perceptual_grade.zip').exists())
-        with zipfile.ZipFile(downloads / extension) as archive:
-            metadata = tomllib.loads(archive.read('blender_manifest.toml').decode())
-            self.assertEqual(metadata['version'], '1.23.2')
-        for name in (extension, 'Perceptual-Grade.dctl',
-                     'Perceptual-Grade-zh-HANS.dctl'):
-            self.assertEqual(sha(downloads / name),
-                             self.manifest['files']['src/downloads/' + name])
+        self.assertEqual(len(self.manifest['files']), 1)
+        archive_source, archive_digest = next(iter(self.manifest['files'].items()))
+        self.assertEqual(archive_source,
+                         'src/downloads/archived-blender-extension.zip')
+        self.assertEqual(archive_digest,
+                         'e40ec53987e47addf9840ef55a840a4b62bb49e75a94f0d9fc35c0792b95cf6b')
+        archive_name = PurePosixPath(archive_source).name
+        archive = downloads / archive_name
+        self.assertEqual(sha(archive), archive_digest)
+        with zipfile.ZipFile(archive) as package:
+            self.assertIsNone(package.testzip())
+        self.assertFalse(any(path.suffix.lower() == '.dctl' for path in downloads.rglob('*')))
         tutorial = assignment(self.resources / 'tool-pins.bzl', 'TUTORIAL_ASSETS')['colorchecker2014']
         self.assertEqual(sha(downloads / 'ACEScg_ColorChecker2014.exr'), tutorial['sha256'])
         for excluded in ('assets/demos', 'assets/intro', 'downloads/provenance/intro-video.json'):
@@ -623,30 +626,17 @@ class BookTests(unittest.TestCase):
         generator_buck = (self.resources / 'generators.BUCK').read_text()
         self.assertIn('name = "demos"', generator_buck)
         self.assertIn('name = "intro"', generator_buck)
-        introduction = (self.output / 'manual/en/index.html').read_text()
-        self.assertEqual([ref for ref in site.Page(introduction).iframes
-                          if urlsplit(ref).netloc], [])
-        self.assertIn('Legacy Blender download', introduction)
-        self.assertIn(extension, introduction)
-        self.assertNotIn('assets/intro/', introduction)
-
-    def test_markdown_reports_retain_original_bytes_and_download_links(self):
-        for name in ('gpu-solver-exploration.md', 'gpu-baking-validation.md'):
-            report = self.output / 'downloads' / name
-            self.assertEqual(report.read_bytes(),
-                             (self.book / 'src/downloads' / name).read_bytes())
-            self.assertFalse(report.with_suffix('.html').exists())
-            for relative in ('development/testing.html', 'print.html'):
-                page = self.output / 'technical/en' / relative
-                with self.subTest(report=name, page=page.relative_to(self.output)):
-                    references = [ref for ref, _ in site.Page(page.read_text()).refs]
-                    links = [ref for ref in references
-                             if Path(urlsplit(ref).path).name == name]
-                    self.assertTrue(links, 'Missing Markdown report download link')
-                    for reference in links:
-                        self.assertEqual(site.local_target(self.output, page, reference, False), report)
-                    self.assertFalse(any(Path(urlsplit(ref).path).name == report.with_suffix('.html').name
-                                         for ref in references))
+        for route in ('manual/en', 'manual/zh-Hans'):
+            introduction = (self.output / route / 'index.html').read_text()
+            with self.subTest(route=route):
+                self.assertEqual([ref for ref in site.Page(introduction).iframes
+                                  if urlsplit(ref).netloc], [])
+                self.assertIn(archive_name, [Path(urlsplit(ref).path).name
+                                             for ref, runtime in site.Page(introduction).refs
+                                             if not runtime])
+                visible_text = html.unescape(re.sub(r'<[^>]+>', ' ', introduction))
+                self.assertNotIn(archive_name, visible_text)
+                self.assertNotIn('assets/intro/', introduction)
 
     def test_archive_bytes_and_fixed_metadata(self):
         expected = inventory(self.output)
@@ -710,7 +700,7 @@ class LanguageEditionTests(unittest.TestCase):
             site.check_language_chapters(self.book)
 
     def test_unlisted_chinese_copy_is_rejected(self):
-        copy = self.book / 'zh-Hans/development/next-policies.md'
+        copy = self.book / 'zh-Hans/development/policies.md'
         copy.parent.mkdir(parents=True)
         copy.write_text('# Accidental English fallback\n')
         with self.assertRaisesRegex(ValueError, 'unlisted chapters'):

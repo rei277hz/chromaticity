@@ -1,6 +1,6 @@
 """Blender-facing Bake orchestration, receipts, and image publication."""
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 
 import json
 from pathlib import Path
@@ -9,9 +9,10 @@ from uuid import uuid4
 
 import numpy as np
 
-from . import graph as bake_graph, policy as bake_policy, routes as bake_routes
+from . import graph as bake_graph, routes as bake_routes
 from .freshness import BakeReceipt, BakeSources
 from .manager import BakeManager
+from .policy import bake as bake_policy
 from ...runtime.image_publication import ImageSnapshot, write_metadata
 from ...runtime.publication import PublicationDeferred
 

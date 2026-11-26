@@ -240,8 +240,8 @@ class Session:
         self.checkpoint(f"{path} / {trigger} / {ordinal}")
         old = self.display()
         previous = None if old is None else old.brightness
-        previous_generation = self.runtime.state.generation
-        previous_ticket = next((item for item in self.runtime.state.desired if item.key == self.key), None)
+        previous_generation = self.runtime._scope_state(self.key).generation
+        previous_ticket = self.runtime.demands.get(self.key)
         expected = _expected_peak(color, exposure)
         self.records.clear()
         if control:
@@ -254,12 +254,11 @@ class Session:
             display = self.display()
             if display is not None:
                 assert display.status not in {"error", "unavailable"}, display.error
-            state = self.runtime.state
-            publication = next((item for item in state.published if item.key == self.key), None)
-            ticket = next((item for item in state.desired if item.key == self.key), None)
-            if (display is None or display.status != "current" or publication is None
+            scope = self.runtime._scope_state(self.key)
+            ticket = self.runtime.demands.get(self.key)
+            if (display is None or display.status != "current"
                     or ticket is None or ticket.generation <= previous_generation
-                    or publication.current_generation != ticket.generation):
+                    or scope.published_current_generation != ticket.generation):
                 yield
                 continue
             current = [record for record in self.records if record["ticket"]["generation"] == ticket.generation]

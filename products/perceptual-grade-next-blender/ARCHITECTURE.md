@@ -51,9 +51,11 @@ thin around the feature's state and policy.
 same contract and neither feature's eligibility rules need to become implicit.
 3. Put Blender handler and timer ownership behind `HostCallbackRouter`, while
 keeping callback behavior with the feature that responds to the event.
-4. Keep formal policy requirements beside feature-owned policy modules. Build
-the installed extension and exercise behavior through the existing product
-test categories.
+4. Keep feature policy modules under `features/<feature>/policy/` and their
+formal requirements in the sibling `requirements/` directory. Product-wide
+policies and requirements live together under `src/policy/` and
+`src/requirements/`. Build the installed extension and exercise behavior
+through the existing product test categories.
 
 The extension ZIP is the runtime boundary. `tools/` contains template emitters,
 packaging, and report code. Runtime feature modules belong under `src/` and

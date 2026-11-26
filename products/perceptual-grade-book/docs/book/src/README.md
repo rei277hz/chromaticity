@@ -1,18 +1,17 @@
 # Perceptual Grade for Blender
 
 Perceptual Grade is a three-stage color transform for Blender's Shader and
-Compositor node editors. The current Next implementation provides **Linear**,
+Compositor node editors. Perceptual Grade provides **Linear**,
 **Tone**, and **Color** controls, shared Grades, animated node-owned Grades,
 Grade Stacks, and managed image baking. The [Technical Report](https://rei277hz.github.io/perceptual-grade/technical/en/index.html)
-describes the model and current implementation contracts.
+describes the model and product implementations.
 
 <div class="download-grid">
-<a class="download primary" href="downloads/perceptual_grade-v1.23.2-20261101.zip"><strong>Legacy Blender download</strong><span>Perceptual Grade 1.23.2 · 2026-11-01 · not Next</span></a>
+<a class="download primary" href="downloads/archived-blender-extension.zip"><strong>Archived Blender extension</strong><span>Prebuilt archive</span></a>
 </div>
 
-The ZIP above is retained for users of the preserved 1.23.2 extension. It does
-not contain Perceptual Grade Next. This handbook does not yet distribute a Next
-extension ZIP.
+This archived ZIP is the book's sole extension download. Its interface differs
+from the current workflows described here.
 
 Begin with [installation and node connections](guide/install.md), then follow
 the [three-stage workflow](guide/workflow.md). Set white balance and exposure
@@ -23,7 +22,7 @@ animation. A Grade Stack combines ordered forward entries in one sampled
 transform.
 
 The manual covers the Shader and Compositor nodes. The [reference chapters](https://rei277hz.github.io/perceptual-grade/technical/en/index.html)
-explain the mathematics, while the [Next policy chapter](https://rei277hz.github.io/perceptual-grade/technical/en/development/next-policies.html)
+explain the mathematics, while the [Blender runtime policy chapter](https://rei277hz.github.io/perceptual-grade/technical/en/development/policies.html)
 documents runtime publication, failure handling, and bake behavior.
 
 See [credits](reference/credits.md) for model and implementation references,

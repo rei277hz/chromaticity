@@ -1,6 +1,6 @@
 """GPU-only helper process ownership with nonblocking, ordered joins."""
 
-# pg-book: technical-report/en#next-policy.helper
+# pg-book: technical-report/en#grade-policy.helper
 
 from concurrent.futures import CancelledError, InvalidStateError
 from dataclasses import dataclass

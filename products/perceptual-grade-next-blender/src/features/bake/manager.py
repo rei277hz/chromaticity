@@ -1,6 +1,6 @@
 """Foreground request coordinator for serialized native bake jobs."""
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 
 from collections import deque
 from concurrent.futures import CancelledError
@@ -8,7 +8,7 @@ from contextlib import nullcontext
 import shutil
 
 from ...runtime.publication import PublicationDeferred
-from . import policy as bake_policy
+from .policy import bake as bake_policy
 
 
 class BakeManager:

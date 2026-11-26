@@ -47,7 +47,7 @@ and reports the worst error as a multiple of tolerance.
 
 Changing a referenced Grade, entry direction, enable state, or order changes the sampled
 function. A current setting signature is required before a result can install.
-After file load or before rendering, Next reconciles the derived LUT. A
+After file load or before rendering, the extension reconciles the derived LUT. A
 preparation failure is visible and fails closed with magenta output preserving
 alpha.
 

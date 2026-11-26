@@ -1,6 +1,6 @@
 """Atomic Color edits; numerical resolution and ownership remain host independent."""
 
-# pg-book: technical-report/en#next-policy.color-authoring
+# pg-book: technical-report/en#grade-policy.color-authoring
 
 from dataclasses import dataclass, replace
 import math

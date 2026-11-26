@@ -20,7 +20,7 @@ setting keeps an otherwise-unused datablock when the file is saved.
 
 ## Animate a node-owned Grade
 
-Right-click a Grade node and choose **Convert to Node-Owned Grade**. Next copies
+Right-click a Grade node and choose **Convert to Node-Owned Grade**. The extension copies
 the node's current settings onto the node, independently of its shared Grade.
 This mode is useful when a transform should follow Blender's timeline. Numeric
 Linear, Tone, and Stage 3 fields can be keyed with Blender's normal keyframe
@@ -28,7 +28,7 @@ commands or Auto Key. The discrete Tone Peak choice is static.
 
 The animation belongs to the containing Shader or Compositor node tree's Action.
 Reusing a material or group shares that animation across its users. To return to
-shared settings, choose **Convert to Datablock-Owned Grade**. Next creates a
+shared settings, choose **Convert to Datablock-Owned Grade**. The extension creates a
 Grade datablock from the current frame's values and removes that node's Grade
 animation; undo restores the previous node-owned animation.
 

@@ -2,9 +2,9 @@
 
 ## Blender 扩展
 
-[旧版开发 ZIP](../downloads/perceptual_grade-v1.23.2-20261101.zip)包含
-Perceptual Grade 1.23.2，并非本手册介绍的 Next 产品。手册网站不提供 Next
-扩展 ZIP。获得 Next 安装包后，请通过 Blender 的扩展偏好设置安装。
+[归档的开发 ZIP](../downloads/archived-blender-extension.zip)是本书唯一提供的
+扩展下载。其界面与本手册介绍的当前工作流有所不同。请通过 Blender 的扩展偏好设置
+安装扩展包。
 
 在着色器或合成器编辑器中选择 **添加 → 颜色 → Grade** 或 **Grade Stack**。
 选中节点后，打开编辑器 N 面板中的 **Perceptual Grade** 侧栏。选中的 Grade
@@ -19,7 +19,7 @@ Material Output。若要预览不受照明影响的图像，可把 Grade 输出�
 着色器。
 
 Image Texture 的 Color Space 应与源图像编码一致，以便 Blender 正确解码。整个节点
-图使用场景当前支持的工作色彩空间；Next 支持 Linear Rec.709、Linear Rec.2020
+图使用场景支持的工作色彩空间。Perceptual Grade 支持 Linear Rec.709、Linear Rec.2020
 和 ACEScg 场景空间。
 
 ## 在合成器中连接图像

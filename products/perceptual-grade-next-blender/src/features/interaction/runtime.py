@@ -1,11 +1,11 @@
 """Trusted gesture collection bookkeeping; scalar policy authorizes transitions."""
 
-# pg-book: technical-report/en#next-policy.gesture
+# pg-book: technical-report/en#grade-policy.gesture
 
 from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
-from . import policy
+from .policy import gesture as policy
 
 
 @dataclass(frozen=True)

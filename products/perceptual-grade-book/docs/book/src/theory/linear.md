@@ -14,7 +14,7 @@ $$
 M_{\mathrm{RGB}}=2^e N^{-1}M_{\mathrm{dir}}M_{\mathrm{CAT}}N,
 $$
 
-where \(N\) converts grading RGB to XYZ. In the complete reference Model, the destination Grade white is fixed at D65. The archived products expose the additional white choices described in [Working White](../guide/working-white.md).
+where \(N\) converts grading RGB to XYZ. In the complete reference Model, the destination Grade white is fixed at D65. Product adapters handle working-space conversion around this model boundary.
 
 Many RGB mixers offer a preserve-luminance option. Preserving the white is a separate constraint: changing colored relationships should not move a neutral off the white you just established. Here every directional adjustment fixes that white by construction. This is the practical advantage of the six-control layout over editing nine unconstrained mixer coefficients.
 
@@ -29,7 +29,7 @@ M_{\mathrm{CAT}}=A^{-1}\operatorname{diag}
 \left(\frac{AW_d}{AW_s}\right)A.
 $$
 
-The source-white controls supply its two chromaticity coordinates. The reference clamps them to \([0,.9]^2\), then projects to the nearest point in the CAT16-positive polygon, which keeps cone gains positive with a small safety margin. Nonfinite source coordinates are errors. The complete reference maps that source white to D65; archived product controls can select other destination whites. Exposure then supplies the independent overall luminance scale.
+The source-white controls supply its two chromaticity coordinates. The reference clamps them to \([0,.9]^2\), then projects to the nearest point in the CAT16-positive polygon, which keeps cone gains positive with a small safety margin. Nonfinite source coordinates are errors. The complete reference maps that source white to D65. Exposure then supplies the independent overall luminance scale.
 
 The reference evaluates the equivalent form
 
@@ -68,4 +68,4 @@ The current reference requires finite control values but does not impose product
 
 ## Implementation domain
 
-The complete reference Model fixes the Grade white to D65. Its `LinearSettings` can also carry an authoritative finite \(3\times3\) XYZ matrix; when supplied, this matrix replaces the control construction and may be singular. This override is part of the reference API, not one of the nine controls. The archived DCTL and Blender products have their own UI ranges and destination-white settings.
+The complete reference Model fixes the Grade white to D65. Its `LinearSettings` can also carry an authoritative finite \(3\times3\) XYZ matrix; when supplied, this matrix replaces the control construction and may be singular. This override is part of the reference API, not one of the nine controls. Product interfaces define their own supported control ranges.

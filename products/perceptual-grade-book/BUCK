@@ -69,7 +69,11 @@ source_tree(
         (
             "book_data",
             "docs/data/",
-            ["docs/data/*.json"],
+            [
+                "docs/data/demos.json",
+                "docs/data/intro-video.json",
+                "docs/data/screenshots.json",
+            ],
         ),
         (
             "book_screenshots",
@@ -111,28 +115,8 @@ alias(
 )
 
 source_tree(
-    name = "data_downloads",
-    srcs = {
-        "src/downloads/benchmark.json": "docs/data/benchmark.json",
-        "src/downloads/photo-grades.json": "docs/data/photo-grades.json",
-    },
-    visibility = ["PUBLIC"],
-)
-
-source_tree(
     name = "policy_diagram_sources",
     srcs = {path.removeprefix("docs/book/diagrams/"): path for path in glob(["docs/book/diagrams/*.d2"])},
-    visibility = ["PUBLIC"],
-)
-
-source_tree(
-    name = "historical_figure_inputs",
-    srcs = {
-        "shaper.zip": "docs/book/src/downloads/lut-shaper-report.zip",
-        "shaper-selection.json": "docs/book/src/downloads/lut-shaper-selection.json",
-        "domain-report.md": "docs/engineering/lut-domain128/report.md",
-        "domain-selection.json": "docs/book/src/downloads/lut-domain128-selection.json",
-    },
     visibility = ["PUBLIC"],
 )
 
@@ -179,8 +163,6 @@ generate(
         "$(location //products/perceptual-grade-book/cdn:assets)",
         "--assets",
         "$(location //products/perceptual-grade-book/diagrams:assets)",
-        "--assets",
-        "$(location :data_downloads)",
         "--historical",
         "$(location :historical)",
         "--manifest",

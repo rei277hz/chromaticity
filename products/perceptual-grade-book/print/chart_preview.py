@@ -30,7 +30,7 @@ def preview(figures_dir, output_dir, policy_manifest=None, fonts_dir=None):
     sections, records = [], {}
     for index, figure in enumerate(figures, start=1):
         name = figure["id"]
-        image_directory = "src/assets/illustrations/next-policy" if policy_manifest else "images"
+        image_directory = "src/assets/illustrations/grade-policy" if policy_manifest else "images"
         svg_path = figures_dir / image_directory / (name + ".svg")
         svg = ET.parse(svg_path).getroot()
         width, height = float(svg.get("width")), float(svg.get("height"))

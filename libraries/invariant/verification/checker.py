@@ -42,8 +42,21 @@ def validate_requirements(source, requirements):
     parameters, returns = source.signatures[step]
     if list(parameters.values()) != [Type("record", (requirements["state"],)), Type("record", (requirements["event"],))]:
         raise VerificationError("Transition must take exactly (state, event)")
-    if returns.kind != "tuple" or len(returns.args) != 2 or returns.args[0] != Type("record", (requirements["state"],)):
-        raise VerificationError("Transition must return tuple[State, Effects]")
+    tuple_transition = (
+        returns.kind == "tuple"
+        and len(returns.args) == 2
+        and returns.args[0] == Type("record", (requirements["state"],))
+    )
+    record_transition = False
+    if returns.kind == "record":
+        fields = source.records[returns.args[0]]
+        record_transition = (
+            set(fields) == {"state", "effects"}
+            and fields["state"] == Type("record", (requirements["state"],))
+            and fields["effects"].kind == "record"
+        )
+    if not tuple_transition and not record_transition:
+        raise VerificationError("Transition must return state and effects")
     invariants = requirements["invariants"]
     if not isinstance(invariants, dict) or any(not isinstance(k, str) or not k for k in invariants):
         raise VerificationError("Invariants must be a mapping of nonempty names")
@@ -272,7 +285,8 @@ class Checker:
                 premises.append(boolean(i.expression(expression, arguments, z3.And(*premises))))
             input_assumptions = z3.And(*i.domains, *premises)
             result = i.call(self.requirements["step"], [state, event], {}, input_assumptions)
-            conclusions = self.invariants(i, result[0], input_assumptions)
+            result_state = result[0] if isinstance(result, tuple) else result.fields["state"]
+            conclusions = self.invariants(i, result_state, input_assumptions)
             assumptions = z3.And(*i.domains, *premises)
             label = "all" if variant is None else str(variant)
             self.solve("premise.event." + label, assumptions, "sat", "nonvacuity")

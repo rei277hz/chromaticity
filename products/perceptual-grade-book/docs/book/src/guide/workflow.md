@@ -12,7 +12,7 @@ dynamic range. In Color, make selective changes while watching skin, neutrals,
 and saturated colors together. A single grade is a global transform, so it
 cannot compensate for local lighting or an incorrect input color profile.
 
-Next exposes the full numeric Stage 3 controls in the sidebar. **J** adjusts
+The extension exposes the full numeric Stage 3 controls in the sidebar. **J** adjusts
 lightness response by low/high chroma and opponent direction. **C** adjusts
 chroma response using the same drivers, plus global chroma gain. **Adaptance**
 sets opponent-space targets at Shadows, Midtones, White, and Highlights with a
