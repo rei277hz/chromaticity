@@ -85,6 +85,37 @@ class GizmoGeometryTests(unittest.TestCase):
                 point = self.geometry.curve_point(rect, maximum, maximum, maximum)
                 self.assertEqual(point, (410., 260.))
 
+    def test_saturation_crossover_uses_appearance_axis_at_each_size(self):
+        default = self.settings.ToneSettings().saturation_crossover
+        values = (0., default, 1.)
+        for width, height, scale in ((304, 256, 1.), (1200, 900, 1.), (1600, 1200, 2.)):
+            with self.subTest(width=width, height=height, scale=scale):
+                rect = self.geometry.layout("TONE", width, height, scale)["appearance"]
+                x, y, plot_width, plot_height = rect
+                for value in values:
+                    marker = self.geometry.saturation_crossover_point(rect, value)
+                    self.assertAlmostEqual(marker[0], x + plot_width * value / math.hypot(1., value))
+                    self.assertEqual(marker[1], y + plot_height)
+                    for point in ((marker[0] + 4 * scale, y + plot_height / 2),
+                                  (marker[0], marker[1] + 4 * scale)):
+                        self.assertTrue(self.geometry.saturation_crossover_hit(rect, value, point, scale))
+                    for point in ((marker[0] + 6 * scale, y + plot_height / 2),
+                                  (marker[0], y - scale)):
+                        self.assertFalse(self.geometry.saturation_crossover_hit(rect, value, point, scale))
+
+    def test_saturation_crossover_drag_inverts_axis_and_clamps(self):
+        rect = (10., 20., 180., 90.)
+        point = self.geometry.saturation_crossover_point
+        drag = self.geometry.drag_saturation_crossover
+        default = self.settings.ToneSettings().saturation_crossover
+        for start in (0., default, 1.):
+            for end in (0., default, 1.):
+                with self.subTest(start=start, end=end):
+                    self.assertAlmostEqual(drag(rect, start, point(rect, end)[0] - point(rect, start)[0]), end)
+        self.assertEqual(drag(rect, default, -180.), 0.)
+        self.assertEqual(drag(rect, default, 180.), 1.)
+        self.assertEqual(drag(rect, default, 0.), default)
+
     def test_moved_panel_obeys_region_bounds_and_dpi(self):
         normal = self.geometry.layout("LINEAR", 900, 660, 1.0, (40, 50))
         scaled = self.geometry.layout("LINEAR", 1800, 1320, 2.0, (40, 50))

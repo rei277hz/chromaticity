@@ -8,6 +8,8 @@ from functools import lru_cache
 import math
 
 from ...kernel.prepare import prepare_tone
+from ...kernel.settings import TONE_CHROMA_LIMITS
+from . import appearance_scope
 from .analysis import CHROMA_LIMIT, color_bar_targets
 from .tone_scope import peak_j as tone_peak_j
 
@@ -23,6 +25,10 @@ MAX_LINEAR_SIZE = 900.
 MIN_TONE_SIZE = (280., 232.)
 MAX_TONE_SIZE = (1200., 900.)
 _RESIZE_GRIP = 8.
+CROSSOVER_HANDLE_RADIUS = 4.
+_CROSSOVER_MIN, _CROSSOVER_MAX = TONE_CHROMA_LIMITS["saturation_crossover"]
+_CROSSOVER_LEFT = appearance_scope.saturation_position(_CROSSOVER_MIN)
+_CROSSOVER_RIGHT = appearance_scope.saturation_position(_CROSSOVER_MAX)
 
 
 def _rect(x, y, width, height):
@@ -57,6 +63,31 @@ def curve_point(rect, source, target, peak_j):
     x, y, width, height = rect
     return (x + min(1., max(0., source / peak_j)) * width,
             y + min(1., max(0., target / peak_j)) * height)
+
+
+def saturation_crossover_point(rect, value):
+    """Return the guide position for the raw input saturation crossover."""
+    x, y, width, height = rect
+    return (x + appearance_scope.saturation_position(value) * width, y + height)
+
+
+def saturation_crossover_hit(rect, value, point, scale):
+    """Return whether a pointer is close enough to the crossover guide."""
+    marker = saturation_crossover_point(rect, value)
+    return (math.dist(point, marker) <= (CROSSOVER_HANDLE_RADIUS + 1.) * scale
+            or contains(rect, point) and abs(point[0] - marker[0]) <= 5. * scale)
+
+
+def drag_saturation_crossover(rect, value, dx):
+    """Move the marker in plot space and return the new raw saturation."""
+    if dx == 0.:
+        return value
+    position = float(appearance_scope.saturation_position(value)) + dx / rect[2]
+    if position <= _CROSSOVER_LEFT:
+        return _CROSSOVER_MIN
+    if position >= _CROSSOVER_RIGHT:
+        return _CROSSOVER_MAX
+    return position / math.sqrt(1. - position * position)
 
 
 def tone_anchor_levels(model):

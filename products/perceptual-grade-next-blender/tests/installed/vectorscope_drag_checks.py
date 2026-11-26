@@ -299,6 +299,11 @@ class ScopePointer:
                 box["curve"], tone.source[-1], tone.target[-1],
                 geometry.tone_peak_j(settings),
             )
+        if control == "saturation_crossover":
+            settings = self.settings(node).tone
+            return geometry.saturation_crossover_point(
+                box["appearance"], settings.saturation_crossover,
+            )
         x, y, width, height = box[control]
         return x + width / 2, y + height / 2
 

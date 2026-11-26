@@ -79,6 +79,7 @@
   "gizmo.tone_curve": "色调曲线",
   "gizmo.input_lightness": "输入明度",
   "gizmo.output_lightness": "输出明度",
+  "gizmo.input_saturation_crossover": "输入饱和度交叉点 {value}",
   "label.vectorscope": "矢量示波器",
   "tooltip.toggle_vectorscope": "在此编辑器中显示或隐藏线性矢量示波器。",
   "scope.vectorscope.updating": "正在更新",

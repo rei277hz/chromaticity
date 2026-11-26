@@ -79,6 +79,7 @@
   "gizmo.tone_curve": "Tone Curve",
   "gizmo.input_lightness": "Input Lightness",
   "gizmo.output_lightness": "Output Lightness",
+  "gizmo.input_saturation_crossover": "Input Saturation Crossover {value}",
   "label.vectorscope": "Vectorscope",
   "tooltip.toggle_vectorscope": "Show or hide the Linear vectorscope in this editor.",
   "scope.vectorscope.updating": "Updating",

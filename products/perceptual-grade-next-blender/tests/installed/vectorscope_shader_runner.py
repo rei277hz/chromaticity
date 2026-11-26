@@ -372,6 +372,32 @@ def scenario():
     assert state().status == "current" and state().tone_histogram is tone_histogram
     report["appearance_tone_and_warp"] = True
 
+    tone = shared.pg_grade.pg_tone
+    before_chroma = state().appearance.rgba
+    tone.muted_gain = -2.0
+    yield from wait_for(lambda: appearance_current(before_chroma),
+                        "Shared Shader Muted Gain did not refresh final appearance")
+    before_crossover = state().appearance.rgba
+    appearance_captures = capture_jobs.count("appearance")
+    crossover = tone.saturation_crossover
+    start = pointer.control_point("saturation_crossover", shared)
+    yield from pointer.press_at(start, "saturation_crossover", shared)
+    end = start[0] + 32, start[1]
+    pointer.event_at("MOUSEMOVE", "NOTHING", end)
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.appearance_status == "preview"
+        and value.appearance is not None and value.appearance.rgba[..., 3].any(),
+        "Saturation crossover did not show the live appearance preview",
+    )
+    assert tone.saturation_crossover > crossover
+    assert capture_jobs.count("appearance") == appearance_captures
+    pointer.event_at("LEFTMOUSE", "RELEASE", end)
+    yield from wait_for(lambda: appearance_current(before_crossover),
+                        "Saturation crossover did not publish its exact appearance")
+    assert capture_jobs.count("appearance") == appearance_captures + 1
+    assert capture_jobs.count("input") == input_captures
+    report["appearance_crossover_preview_and_capture"] = True
+
 
 sequence = scenario()
 started = time.monotonic()

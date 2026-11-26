@@ -193,7 +193,7 @@ _LINEAR_DEFAULTS = {
 
 _TONE_FIELDS = TONE_FIELDS
 _ANIMATABLE_TONE_FIELDS = tuple(name for name in _TONE_FIELDS if name != "peak_nits")
-_GIZMO_TONE_FIELDS = (*TONE_LEVEL_FIELDS, "fit")
+_GIZMO_TONE_FIELDS = (*TONE_LEVEL_FIELDS, "fit", "saturation_crossover")
 _COLOR_TONES = ("shadows", "midtones", "white", "highlights")
 _WEB_HANDLES = ("red", "yellow", "green", "cyan", "blue", "magenta")
 _ANIMATABLE_COLOR_FIELDS = _COLOR_FIELDS

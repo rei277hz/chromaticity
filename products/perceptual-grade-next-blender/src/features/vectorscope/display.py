@@ -330,7 +330,7 @@ def _draw_tone_curve(rect, model, histogram, selected, scale, peak_j):
           8 * scale, _PALETTE["muted"], width, align=.5)
 
 
-def _draw_appearance(box, state, key, peak_j):
+def _draw_appearance(box, state, key, peak_j, crossover, crossover_active):
     rect, scale = box["appearance"], box["scale"]
     x, y, width, height = rect
     top, right = y + height, x + width
@@ -405,13 +405,24 @@ def _draw_appearance(box, state, key, peak_j):
                   y + height * .5 - 15 * scale, 8 * scale,
                   _PALETTE["muted"], width - 4 * scale, align=.5)
 
+    marker = geometry.saturation_crossover_point(rect, crossover)
+    color = (*_PALETTE["orange"][:3], .9 if crossover_active else .36)
+    stroke = (1.5 if crossover_active else 1.) * scale
+    _lines(((marker[0], y), marker), color, stroke)
+    _circle(marker, geometry.CROSSOVER_HANDLE_RADIUS * scale, color, stroke)
+    if crossover_active:
+        label = localization.tr("gizmo.input_saturation_crossover", value=f"{crossover:.2f}")
+        _, panel_y, panel_width, _ = box["rect"]
+        _text(label, left, panel_y + 26 * scale, 9 * scale,
+              _PALETTE["text"], panel_width - 24 * scale)
 
-def _draw_tone(box, state, key, linear, tone, selected):
+
+def _draw_tone(box, state, key, linear, tone, selected, crossover_active):
     scale = box["scale"]
     model = _tone_model(tone)
     peak_j = _tone_peak_j(tone)
     histogram = None if state is None else state.tone_histogram
-    _draw_appearance(box, state, key, peak_j)
+    _draw_appearance(box, state, key, peak_j, tone.saturation_crossover, crossover_active)
     _draw_tone_curve(box["curve"], model, histogram, selected, scale, peak_j)
     _slider(box["exposure"], "exposure", linear.exposure, scale, track=box["exposure_track"])
     _slider(box["fit"], "fit", tone.fit, scale, vertical=True, track=box["fit_track"])
@@ -443,7 +454,7 @@ def _draw_status(box, state):
           _PALETTE["orange" if failed else "muted"], width)
 
 
-def draw(region, box, state, key, stage, linear, tone, selected):
+def draw(region, box, state, key, stage, linear, tone, selected, crossover_active):
     """Draw only the supplied view, with GPU state restored on exit."""
     import gpu
     from mathutils import Matrix
@@ -463,7 +474,7 @@ def draw(region, box, state, key, stage, linear, tone, selected):
             if stage == "LINEAR":
                 _draw_linear(box, state, key, linear)
             else:
-                _draw_tone(box, state, key, linear, tone, selected)
+                _draw_tone(box, state, key, linear, tone, selected, crossover_active)
             _draw_status(box, state)
     finally:
         gpu.state.blend_set(blend)
