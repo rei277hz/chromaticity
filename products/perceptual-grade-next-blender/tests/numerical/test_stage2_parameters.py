@@ -241,8 +241,27 @@ class Stage2ParameterTests(unittest.TestCase):
         prepared = complete(tone=tone)
         pixels = prepare_parameters(prepared).pixels[0]
         self.assertGreater(float(pixels[TONE_SCALARS_SLOT, 0]), 0.)
-        np.testing.assert_array_equal(pixels[TONE_CHROMA_GAIN_SLOT], (.5, 2., .5, 1.))
+        np.testing.assert_array_equal(pixels[TONE_CHROMA_GAIN_SLOT],
+                                      np.float32((.5, 2., .4 / (35. / 75.), 1.)))
         np.testing.assert_array_equal(pixels[TONE_CHROMA_TONE_SLOT], (-.75, 1.25, 52., 1.))
+
+    def test_raw_saturation_crossover_and_zero_knee(self):
+        settings = ToneSettings(muted_gain=-1., vivid_gain=1.)
+        self.assertEqual(settings.saturation_crossover, .45)
+        ja = np.array((-70., 45.))
+        for crossover in (0., .45, 1.):
+            with self.subTest(crossover=crossover):
+                prepared = complete(tone=replace(settings, saturation_crossover=crossover))
+                low, high, knee, active = prepare_parameters(prepared).pixels[0, TONE_CHROMA_GAIN_SLOT]
+                self.assertEqual((low, high, active), (.5, 2., 1.))
+                self.assertAlmostEqual(float(knee) * (35. / 75.), 2. * crossover, places=6)
+                chroma = np.abs(ja) * (crossover if crossover else .3)
+                gain = prepared.tone.chroma_gain(ja, chroma)
+                expected = 1. if crossover else 2.
+                np.testing.assert_allclose(gain, expected, rtol=1e-14)
+                output = chroma * gain
+                np.testing.assert_allclose(output * prepared.tone.chroma_gain(ja, output, invert=True),
+                                           chroma, rtol=1e-14)
 
     def test_rejects_incomplete_or_incompatible_snapshot(self):
         prepared = complete()

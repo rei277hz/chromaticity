@@ -323,13 +323,13 @@ structure UnifiedChromaControls where
   highlight : ℝ
   tone_crossover : ℝ
   saturation_nonneg : 0 ≤ saturation_crossover
-  saturation_lt_one : saturation_crossover < 1
+  saturation_le_one : saturation_crossover ≤ 1
 
 def unifiedChromaRadius (c : UnifiedChromaControls) (j x : ℝ) : ℝ :=
   let base := (35/75 : ℝ)*|j|
   let a := unifiedStops c.muted
   let b := unifiedStops c.vivid
-  let k := base*(c.saturation_crossover/(1-c.saturation_crossover))*Real.sqrt (b/a)
+  let k := |j| * c.saturation_crossover * Real.sqrt (b/a)
   let g := unifiedStops (unifiedToneStops c.shadow c.highlight c.tone_crossover j)
   unifiedRadial 1 g (base/9) (unifiedRadial a b k x)
 
@@ -344,7 +344,6 @@ theorem unified_chroma_radius_nonneg (c : UnifiedChromaControls) (j x : ℝ) (hx
       0 ≤ unifiedRadial a b k x :=
     (mul_nonneg (le_min ha hb) hx).trans (unified_radial_lower a b k x hk hx)
   have hs := c.saturation_nonneg
-  have hp : 0 ≤ 1-c.saturation_crossover := (sub_pos.mpr c.saturation_lt_one).le
   apply h _ _ _ _ (by norm_num) (by unfold unifiedStops; positivity) (by positivity)
   exact h _ _ _ _ (by unfold unifiedStops; positivity) (by unfold unifiedStops; positivity)
     (by positivity) hx
@@ -354,7 +353,7 @@ theorem unified_chroma_radius_inverse_exists (c : UnifiedChromaControls) (j y : 
   let base := (35/75 : ℝ)*|j|
   let a := unifiedStops c.muted
   let b := unifiedStops c.vivid
-  let k := base*(c.saturation_crossover/(1-c.saturation_crossover))*Real.sqrt (b/a)
+  let k := |j| * c.saturation_crossover * Real.sqrt (b/a)
   let g := unifiedStops (unifiedToneStops c.shadow c.highlight c.tone_crossover j)
   have hg : 0 < g := Real.exp_pos _
   have ha : 0 < a := Real.exp_pos _
@@ -362,7 +361,6 @@ theorem unified_chroma_radius_inverse_exists (c : UnifiedChromaControls) (j y : 
   have hbase : 0 ≤ base := by dsimp [base]; positivity
   have htoe : 0 ≤ base/9 := by positivity
   have hnum := c.saturation_nonneg
-  have hden : 0 < 1-c.saturation_crossover := sub_pos.mpr c.saturation_lt_one
   have hk : 0 ≤ k := by dsimp [k]; positivity
   obtain ⟨r, hr, hru⟩ := unified_radial_inverse_exists 1 g (base/9) y (by norm_num) hg htoe hy
   obtain ⟨x, hx, hxu⟩ := unified_radial_inverse_exists a b k r ha hb hk hr.1

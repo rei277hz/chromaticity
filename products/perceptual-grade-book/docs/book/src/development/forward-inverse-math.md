@@ -130,16 +130,20 @@ R(C;L,H,k)=C\frac{Lk+HC}{k+C},
 $$
 
 where (L,H>0) are endpoint gains and (k\ge0) is the radial knee. For
-Muted/Vivid gains (g_m,g_v) in stops and crossover (p\in(0,1)),
+Muted/Vivid gains (g_m,g_v) in stops, the crossover (s_c\in[0,1])
+is expressed in raw input saturation (C/\lvert J_A\rvert) and defaults
+to 0.45.
 
 $$
 L=2^{g_m},\qquad H=2^{g_v},\qquad
-k=B_C\frac{p}{1-p}\sqrt{\frac{H}{L}},\qquad
+k=\lvert J_A\rvert s_c\sqrt{\frac{H}{L}},\qquad
 C_1=R(C;L,H,k).
 $$
 
-This one curve combines the two chroma controls. The neutral axis remains
-neutral. At small nonzero chroma the gain tends toward the Muted endpoint.
+At a positive crossover and nonzero (J_A), the curve applies the geometric
+mean gain (\sqrt{LH}) at (C=\lvert J_A\rvert s_c). When (k=0), the map is
+(R(C;L,H,0)=HC). Exact neutrals stay neutral. For positive (k), the gain
+tends toward the Muted endpoint as chroma approaches zero.
 
 Shadow and Highlight Chroma apply a second radial map. Define
 

@@ -161,7 +161,7 @@ def global_chroma_controls(unified=False):
         yield from global_shape_sliders((
             ("cMutedGain", 0, -2, 2, 0.01),
             ("cVividGain", 0, -2, 2, 0.01),
-            ("cSaturationCrossover", 0.5, 0.05, 0.95, 0.01),
+            ("cSaturationCrossover", 0.45, 0.0, 1.0, 0.01),
         ))
     else:
         yield from global_shape_sliders((

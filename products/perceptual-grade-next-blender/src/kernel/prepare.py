@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 GAMMA = .525*(1.48+math.sqrt(.1))
 CAT16 = np.asarray(color_linear.CAT16, dtype=np.float64)
 WHITE_XYZ = np.asarray(color_linear.xyz(D65), dtype=np.float64)
+_CHROMA_BASE_RATIO = 35. / 75.
 
 
 def _finite(value, shape, description):
@@ -236,8 +237,8 @@ class PreparedTone:
     def chroma_parameters(self):
         p = self.settings
         low, high = math.exp2(p.muted_gain), math.exp2(p.vivid_gain)
-        knee_multiplier = (p.saturation_crossover / (1-p.saturation_crossover)
-                           * math.sqrt(high / low))
+        # Packed knees multiply (35/75)*|J_A| in both native graphs and the Stack.
+        knee_multiplier = p.saturation_crossover * math.sqrt(high / low) / _CHROMA_BASE_RATIO
         return low, high, knee_multiplier
 
     @property
@@ -255,7 +256,7 @@ class PreparedTone:
         """Evaluate the two monotone chroma maps at incoming signed J_A."""
         lightness, chroma = np.broadcast_arrays(np.abs(np.asarray(ja, dtype=float)),
                                               np.asarray(chroma, dtype=float))
-        base = (35. / 75.)*lightness
+        base = _CHROMA_BASE_RATIO*lightness
         shadow, highlight, crossover = self.chroma_tone
         offset = lightness/crossover-1.
         t = np.minimum(1., np.abs(offset))

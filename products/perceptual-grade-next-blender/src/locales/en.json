@@ -137,7 +137,7 @@
   "property.tone_crossover": "C Tone Crossover",
   "tooltip.muted_gain": "Chroma gain limit toward neutral colors, in stops.",
   "tooltip.vivid_gain": "Chroma gain limit for vivid colors, in stops.",
-  "tooltip.saturation_crossover": "Input saturation where the muted and vivid gains meet halfway in stops.",
+  "tooltip.saturation_crossover": "Input saturation C/|J_A| where chroma gain is halfway between Muted Gain and Vivid Gain in stops. At zero, all chromatic inputs use Vivid Gain.",
   "tooltip.shadow_chroma": "Additional shadow chroma gain, fading smoothly to zero at the Tone crossover.",
   "tooltip.highlight_chroma": "Additional highlight chroma gain, fading smoothly to zero at the Tone crossover.",
   "tooltip.tone_crossover": "Absolute J_A crossover between the shadow and highlight chroma adjustments.",

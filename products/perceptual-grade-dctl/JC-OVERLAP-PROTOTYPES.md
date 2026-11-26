@@ -302,35 +302,37 @@ Chroma and Highlight Chroma.
 | --- | --- | --- |
 | C Muted Gain | `0` stops, `-2` to `+2` | Set the gain limit for nearly gray colors at nonzero lightness. |
 | C Vivid Gain | `0` stops, `-2` to `+2` | Set the gain limit for highly saturated colors. Its effect builds smoothly with input saturation. |
-| C Saturation Crossover | `0.50`, `0.05` to `0.95` | Set the input saturation where the gain in stops is halfway between Muted and Vivid. |
+| C Saturation Crossover | `0.45`, `0` to `1` | Set the raw input saturation `C / abs(J_A)` where gain in stops is halfway between Muted and Vivid. At zero all chromatic samples use Vivid Gain. |
 
-All three sliders use steps of `0.01`. Let `B = (35/75)|J_A|` and
-`s = C/(C+B)`. At the default crossover `s = 0.50`, input chroma equals
-`B`. The reference model uses that same ratio for equal low and high driver
-weights after Tone. Unified Chroma measures it before Tone. C Tone Crossover
-selects lightness for the separate Shadow and Highlight Chroma adjustments.
-[Reference chroma drivers](../../libraries/perceptual-grade-reference/src/grading.py)
+All three sliders use steps of `0.01`. At the default crossover, the
+incoming chroma is `0.45 * abs(J_A)` before Tone. At a crossover of `1`,
+chroma equals the magnitude of achromatic lightness. Inputs can have
+saturation above `1`. C Tone Crossover selects lightness for the separate
+Shadow and Highlight Chroma adjustments.
+
+Existing saved crossover values are interpreted directly as raw input saturation.
 
 For Muted and Vivid stops `M` and `V`, set `L = 2^M` and `H = 2^V`.
-For a crossover setting `p`, chroma `K` is where input saturation equals
-`p`. The forward curve blends the two gains once.
+For a raw crossover setting `s`, chroma `K` is where input saturation
+equals `s`. The forward curve blends the two gains once.
 
 ```text
-K = B*p/(1-p)
+K = abs(J_A)*s
 k = K*sqrt(H/L)
 C_out = C*(L*k + H*C)/(k + C)
 ```
 
-At `C = K`, the gain is `sqrt(L*H)`. Equal gains scale chroma uniformly. Equal and
-opposite stops hold the crossover fixed. Raising the crossover increases
+At `K > 0` and `C = K`, the gain is `sqrt(L*H)`. Equal gains scale chroma
+uniformly. Equal and opposite stops hold the crossover fixed. Raising the crossover increases
 saturation when `M > V` and decreases it when `V > M`, for chromatic
-samples at nonzero lightness. With `B = 35`, `C = 70` and crossover `0.50`,
+samples at nonzero lightness. With `abs(J_A) = 70`, `C = 70` and crossover `0.50`,
 Muted Gain `-1` gives `C_out` of `55.50` at Vivid Gain `0` and `87.50` at
 Vivid Gain `+1`, before tonal chroma and Tone.
 
-Exact gray stays gray. At nonzero lightness, the near-gray gain approaches
-`L`, so Muted Gain also affects faintly colored pixels. At zero lightness, a
-chromatic sample receives `H*C`. For `k > 0`, the slope of the curve is
+Exact gray stays gray. At nonzero lightness and positive crossover, the
+near-gray gain approaches `L`, so Muted Gain also affects faintly colored
+pixels. At zero lightness or zero crossover, a chromatic sample receives
+`H*C`. For `k > 0`, the slope of the curve is
 `(L*k^2 + 2*H*k*C + H*C^2)/(k+C)^2 > 0` throughout the chroma range.
 Given output chroma `Y > 0`, the quadratic
 `H*C^2 + (L*k - Y)*C - k*Y = 0` has one positive root. The DCTL evaluates
@@ -348,7 +350,7 @@ Compare Unified Chroma and integrated Linear Gain on the same muted-to-vivid
 ramp and skin shot, with matching Tone settings, full H–K Influence, and tonal
 chroma at reset.
 Set Muted Gain to `-1` and sweep Vivid Gain from `0` to `+1`. At `+1`, sweep
-C Saturation Crossover from `0.05` to `0.95`, then swap the endpoint gains
+C Saturation Crossover from `0` to `1`, then swap the endpoint gains
 and confirm that the sweep reverses. Check matching Forward and Inverse nodes
 with Tone and both tonal chroma gains active on signed HDR material before
 export. Record the accepted controls and curve in Resolve before implementing

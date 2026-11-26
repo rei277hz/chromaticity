@@ -41,7 +41,7 @@ RGB adapters.
 | `peak_nits` | `1000` | `500`, `1000`, `2000`, or `4000` |
 | `fit` | `0` | Integers from `-2` through `2` |
 | `muted_gain`, `vivid_gain` | `0` | `[-2, 2]` stops |
-| `saturation_crossover` | `0.5` | `[0.05, 0.95]` |
+| `saturation_crossover` | `0.45` | `[0, 1]` in raw input saturation `C/abs(J_A)` |
 | `shadow_chroma`, `highlight_chroma` | `0` | `[-2, 2]` stops |
 | `tone_crossover` | `45` | `[10, 160]` in `abs(J_A)` units |
 
@@ -54,10 +54,12 @@ Warp and Adaptance work with either path.
 
 For a chroma map with positive endpoint gains L and H, define
 `R(C; L, H, k) = C*(L*k + H*C)/(k + C)`. At `k = 0` it maps to `H*C`.
-At input `j = abs(J_A)`, set `B = (35/75)*j`. The Muted/Vivid map uses
-`L = 2^muted_gain`, `H = 2^vivid_gain`, and
-`k = B*p/(1-p)*sqrt(H/L)` with saturation crossover `p`. The second map
-uses `L = 1`, `k = B/9`, and `H = 2^amount`. The amount is the Shadow
+At input `j = abs(J_A)`, the Muted/Vivid map uses `L = 2^muted_gain`,
+`H = 2^vivid_gain`, and `k = j*s*sqrt(H/L)` for crossover `s`.
+For positive `j` and `s`, the gain at `C = j*s` is `sqrt(L*H)`.
+At `s = 0`, every chromatic sample receives the Vivid Gain in this map.
+The second map uses `L = 1`, `k = (35/75)*j/9`, and `H = 2^amount`.
+The amount is the Shadow
 or Highlight setting multiplied by cubic smoothstep of the clamped
 distance `abs(j/tone_crossover - 1)` from the crossover. Both maps scale
 `(a,b)` along its original direction and use the original lightness.

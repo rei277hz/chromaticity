@@ -27,6 +27,12 @@ and the Unified Chroma sliders are in the Stage 2 sidebar. Previously saved
 Grades retain their four Tone anchors, Fit, Peak, and Warp settings. Retired
 Input Black and Stage 3 tonal J/C values have no equivalent slider migration.
 
+**Saturation Crossover** sets the input ratio `C/|J_A|` where the gain is
+halfway between Muted Gain and Vivid Gain in stops. Its range is 0 to 1 and
+its default is 0.45. At zero, every chromatic input receives Vivid Gain before
+the shadow and highlight adjustments. Saved slider values and keyframes are
+interpreted directly in these units.
+
 Adaptance drags use 0.01 increments and tonal soft spans of ±4, ±10, ±20,
 and ±25. Finite requests beyond the physical response domain are limited
 radially, preserving the a/b tint direction. Warp hue edits maintain at least

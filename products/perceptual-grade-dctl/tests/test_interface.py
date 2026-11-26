@@ -150,7 +150,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual({path.name for path in oracle.TONE_FIT_UNIFIED_CHROMA_DIR.iterdir()},
                          {filename(stage, locale) for locale in LOCALES})
         limits = {"cMutedGain": (0., -2., 2.), "cVividGain": (0., -2., 2.),
-                  "cSaturationCrossover": (.5, .05, .95)}
+                  "cSaturationCrossover": (.45, 0., 1.)}
         for locale in LOCALES:
             with self.subTest(locale=locale):
                 baseline = controls(oracle.source("jc_tone_fit_linear_gain", locale))

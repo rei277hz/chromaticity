@@ -352,6 +352,13 @@ original softplus Tone curve with Black Compression and fixed H–K influence of
 `-2` to `2`. Exact reset bypasses Stage 2 computation. Persistent graphs retain
 the initialized parameter image and nodes.
 
+Saturation Crossover sets the raw input ratio `s = C/|J_A|` in `[0, 1]`,
+defaulting to `0.45`. For muted and vivid gains `L` and `H` in linear units,
+the radial knee is `|J_A| * s * sqrt(H/L)`. This places the gain midpoint in
+stops at the selected input saturation. A zero knee gives gain `H` for all
+chromatic inputs. The subsequent shadow/highlight fade retains its knee at
+`(35/75) * |J_A| / 9`.
+
 Stage 3 applies the six-handle tonal Web, selective Adaptance, and Web final
 scale. Its tonal selectors use the post-Tone state. Signed energy is carried
 independently, preserving negative and cancellation-sensitive states. The

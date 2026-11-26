@@ -196,7 +196,7 @@ vec4 pg_unified_chroma(vec4 q,float ja,bool invert) {
     float lightness=abs(ja),base=PG_CHROMA_CROSSOVER*lightness;
     float p=pg_param(PG_P_SATURATION_CROSSOVER);
     float low=exp2(muted),high=exp2(vivid);
-    float knee=base*(p/(1.0-p))*sqrt(high/low);
+    float knee=lightness*p*sqrt(high/low);
     float offset=lightness/pg_param(PG_P_CHROMA_TONE_CROSSOVER)-1.0;
     float t=min(abs(offset),1.0);
     float stops=offset<0.0?shadow:highlight;

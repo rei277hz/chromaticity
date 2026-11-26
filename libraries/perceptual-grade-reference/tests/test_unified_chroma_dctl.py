@@ -19,22 +19,25 @@ class UnifiedChromaDCTLTests(unittest.TestCase):
         inputs = np.column_stack([chart.ja, chart.q[:, 1:]])
         controls = dict(inputShadows=2.4, inputMidtones=42., inputWhite=225., inputHighlights=1600.,
                         blackCompression=1.1, cMutedGain=-1.3, cVividGain=1.7,
-                        cSaturationCrossover=.22, shadowChroma=1.5, highlightChroma=-1.3,
+                        shadowChroma=1.5, highlightChroma=-1.3,
                         cToneCrossover=35.)
         settings = UnifiedChromaSettings(
             input_nits=(2.4, 42., 225., 1600.), black_compression_nits=1.1,
-            muted_gain=-1.3, vivid_gain=1.7, saturation_crossover=.22,
+            muted_gain=-1.3, vivid_gain=1.7,
             shadow_chroma=1.5, highlight_chroma=-1.3, tone_crossover=35.,
         )
-        for peak_index, peak in enumerate((500, 1000, 2000, 4000)):
+        for peak_index, (peak, crossover) in enumerate(((500, 0.), (1000, .45),
+                                                        (2000, .5), (4000, 1.))):
             for fit in (-2, 0, 2):
-                stage = UnifiedChroma(replace(settings, peak_nits=peak, fit=fit))
+                stage = UnifiedChroma(replace(settings, peak_nits=peak, fit=fit,
+                                              saturation_crossover=crossover))
                 for direction, evaluate in enumerate((stage.forward, stage.inverse)):
-                    with self.subTest(peak=peak, fit=fit, direction=direction):
+                    with self.subTest(peak=peak, crossover=crossover, fit=fit, direction=direction):
                         expected = cone.pack(*evaluate(inputs).T)
                         actual = oracle.run(
                             "jc_tone_fit_unified_chroma", wire,
-                            dict(controls, peakNits=peak_index, remapFit=fit, direction=direction),
+                            dict(controls, peakNits=peak_index, remapFit=fit, direction=direction,
+                                 cSaturationCrossover=crossover),
                         )
                         error = np.max(abs(actual - expected), axis=-1)
                         limit = np.maximum(2.e-4 * np.max(abs(expected), axis=-1), 1.e-7)

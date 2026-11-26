@@ -49,7 +49,7 @@ class Kernel(_Kernel):
             p = tone_chroma.settings
             controls = (p.muted_gain, p.vivid_gain, p.saturation_crossover,
                         p.shadow_chroma, p.highlight_chroma, p.tone_crossover)
-            key += b"unified-chroma-v1" + np.asarray(controls, dtype="<f8").tobytes()
+            key += b"unified-chroma-v2" + np.asarray(controls, dtype="<f8").tobytes()
             self.identity = self.identity and not tone_chroma.chroma_active
         self.resource_key = hashlib.sha256(key).hexdigest()
 

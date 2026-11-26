@@ -12,6 +12,7 @@ class UnifiedChromaTests(unittest.TestCase):
     def test_default_is_identity_in_both_directions(self):
         points = [[0., -0., 0.], [-40., 12., 1.], [0., 25., -20.], [230., 15., -30.]]
         stage = UnifiedChroma(UnifiedChromaSettings())
+        self.assertEqual(stage.settings.saturation_crossover, .45)
         for evaluate in (stage.forward, stage.inverse):
             actual = evaluate(points)
             np.testing.assert_array_equal(actual, points)
@@ -56,15 +57,36 @@ class UnifiedChromaTests(unittest.TestCase):
         np.testing.assert_allclose(stage.inverse(actual), points, atol=0., rtol=2.e-12)
 
     def test_chroma_crossover_and_tonal_gain_use_incoming_lightness(self):
-        p, tone_crossover, muted, vivid = .32, 45., -1., 1.7
+        crossover, tone_crossover, muted, vivid = .45, 45., -1., 1.7
         settings = UnifiedChromaSettings(
-            muted_gain=muted, vivid_gain=vivid, saturation_crossover=p,
+            muted_gain=muted, vivid_gain=vivid, saturation_crossover=crossover,
             shadow_chroma=-2., highlight_chroma=2., tone_crossover=tone_crossover,
         )
-        a = (35. / 75.) * tone_crossover * p / (1. - p)
+        a = tone_crossover * crossover
         points = np.array([[tone_crossover, a, 0.], [-tone_crossover, a, 0.], [0., 1., 0.]])
         mapped = UnifiedChroma(settings).forward(points)
         expected = [a * 2. ** ((muted + vivid) / 2.), a * 2. ** ((muted + vivid) / 2.),
                     2. ** (vivid - 2.)]
         np.testing.assert_allclose(mapped[:, 1], expected, rtol=1.e-14)
         np.testing.assert_array_equal(mapped[:, 0], points[:, 0])
+
+    def test_raw_saturation_crossover_across_signed_ramps(self):
+        radius = np.array([0., .01, 1., 45., 50., 100., 200.])
+        for crossover in (0., .45, .5, 1.):
+            for muted, vivid in ((-2., 2.), (2., -2.)):
+                stage = UnifiedChroma(UnifiedChromaSettings(
+                    muted_gain=muted, vivid_gain=vivid, saturation_crossover=crossover,
+                ))
+                for ja in (-100., 0., 100.):
+                    with self.subTest(crossover=crossover, muted=muted, vivid=vivid, ja=ja):
+                        mapped = stage.chroma_map(ja, radius)
+                        self.assertEqual(mapped[0], 0.)
+                        self.assertTrue(np.all(np.diff(mapped) > 0.))
+                        if ja == 0. or crossover == 0.:
+                            np.testing.assert_allclose(mapped, radius * 2.**vivid)
+                        else:
+                            # Opposite gain stops yield unity at the raw crossover.
+                            midpoint = crossover * abs(ja)
+                            self.assertAlmostEqual(stage.chroma_map(ja, midpoint), midpoint)
+                        np.testing.assert_allclose(stage.chroma_map(ja, mapped, invert=True),
+                                                   radius, rtol=2.e-12)

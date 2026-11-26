@@ -53,8 +53,8 @@ def chroma_map(height, chroma, settings, *, linear_gain=False):
 
 def unified_chroma_map(height, chroma, settings):
     c_base = (35. / 75.) * height
-    pivot = settings.get("cSaturationCrossover", .5)
-    knee = c_base * pivot / (1. - pivot)
+    pivot = settings.get("cSaturationCrossover", .45)
+    knee = height * pivot
     muted = np.exp2(settings.get("cMutedGain", 0.))
     vivid = np.exp2(settings.get("cVividGain", 0.))
     ratio = np.sqrt(vivid / muted)

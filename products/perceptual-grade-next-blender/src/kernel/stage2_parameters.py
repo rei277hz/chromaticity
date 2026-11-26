@@ -83,7 +83,7 @@ class PreparedParameters:
             raise ValueError("Stage 2 Tone parameters are outside their valid domain")
         low, high, knee, chroma_active = data[0, TONE_CHROMA_GAIN_SLOT]
         shadow, highlight, crossover, curve_active = data[0, TONE_CHROMA_TONE_SLOT]
-        if (not .25 <= low <= 4. or not .25 <= high <= 4. or knee <= 0.
+        if (not .25 <= low <= 4. or not .25 <= high <= 4. or knee < 0.
                 or not -2. <= shadow <= 2. or not -2. <= highlight <= 2.
                 or not 10. <= crossover <= 160.
                 or chroma_active not in (0., 1.) or curve_active not in (0., 1.)):

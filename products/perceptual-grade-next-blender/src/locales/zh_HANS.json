@@ -137,7 +137,7 @@
   "property.tone_crossover": "C 影调交叉点",
   "tooltip.muted_gain": "趋近中性色时的彩度增益限制，单位为档。",
   "tooltip.vivid_gain": "鲜艳色彩的彩度增益限制，单位为档。",
-  "tooltip.saturation_crossover": "输入饱和度位于柔和与鲜艳增益档位中点的位置。",
+  "tooltip.saturation_crossover": "彩度增益位于柔和与鲜艳增益档位中点时的输入饱和度 C/|J_A|。取零时，所有有彩色输入均使用鲜艳色彩增益。",
   "tooltip.shadow_chroma": "额外的阴影彩度增益，并在影调交叉点平滑衰减至零。",
   "tooltip.highlight_chroma": "额外的高光彩度增益，并在影调交叉点平滑衰减至零。",
   "tooltip.tone_crossover": "阴影与高光彩度调节之间的绝对 J_A 交叉点。",

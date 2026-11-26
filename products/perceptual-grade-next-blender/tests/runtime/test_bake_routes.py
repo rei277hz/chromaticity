@@ -98,7 +98,7 @@ def settings():
         pg_tone=SimpleNamespace(input_shadows=1., input_midtones=36.54,
                                 input_white=203., input_highlights=1000.,
                                 black_compression_nits=0., muted_gain=0., vivid_gain=0.,
-                                saturation_crossover=.5, shadow_chroma=0.,
+                                saturation_crossover=.45, shadow_chroma=0.,
                                 highlight_chroma=0., tone_crossover=45., fit=0.,
                                 peak_nits="1000"))
 

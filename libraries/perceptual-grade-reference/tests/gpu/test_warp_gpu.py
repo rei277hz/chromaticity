@@ -136,6 +136,8 @@ class WarpGPUComputeTests(unittest.TestCase):
         cases = [
             Settings(tone_chroma=chroma),
             Settings(tone_chroma=tone),
+            Settings(tone_chroma=replace(chroma, saturation_crossover=0.)),
+            Settings(tone_chroma=replace(chroma, saturation_crossover=1.)),
             Settings(tone_chroma=tone, color=ColorSettings(
                 web=WebSettings(log_scale=((.05,) * 6,) * 4),
                 adaptance=((.02, -.01),) * 4)),

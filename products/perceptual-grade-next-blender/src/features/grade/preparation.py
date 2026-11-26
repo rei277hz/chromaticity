@@ -24,7 +24,7 @@ from ...kernel.settings import Settings
 from ...kernel.stage2_parameters import prepare_parameters
 
 
-PREPARATION_SCHEMA = 2
+PREPARATION_SCHEMA = 3
 
 
 def preparation_signature(settings: Settings) -> str:

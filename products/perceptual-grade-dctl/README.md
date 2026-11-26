@@ -63,12 +63,12 @@ Each variant replaces Cone Tone and Color J/C in the cone chain. Forward
 applies global chroma shaping, then Shadow and Highlight Chroma, then
 saturation-preserving Tone. **C Tone Crossover**
 sets the input lightness where both tonal chroma adjustments reach zero.
-The pivots and crossovers in the table use normalized saturation
-`s = C / (C + (35/75) * abs(J_A))`.
+The Unified Chroma crossover uses raw input saturation `C / abs(J_A)`.
+Legacy variants use `s = C / (C + (35/75) * abs(J_A))` for their pivots.
 
 | Variant and Buck target | Tone Fit and H–K Influence | Global chroma controls | Saturation pivot or crossover | Global gain near gray | Shadow and Highlight Chroma fade | Inverse |
 | --- | --- | --- | --- | --- | --- | --- |
-| [Unified Chroma baseline](#unified-chroma-baseline) (`:jc_tone_fit_unified_chroma_prototype`) | Fit `-2` to `+2`, H–K Influence fixed at `1.0` | C Muted Gain and C Vivid Gain shape one curve | One adjustable input crossover. Gain there is halfway between the endpoint gains in stops. | Approaches `2^(C Muted Gain)` | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
+| [Unified Chroma baseline](#unified-chroma-baseline) (`:jc_tone_fit_unified_chroma_prototype`) | Fit `-2` to `+2`, H–K Influence fixed at `1.0` | C Muted Gain and C Vivid Gain shape one curve | Raw input saturation `C / abs(J_A)`, default `0.45`. At a positive crossover the gain is halfway between the endpoints in stops. | Approaches `2^(C Muted Gain)` at a positive crossover. Zero crossover gives Vivid Gain. | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
 | [Legacy Log Gain](#integrated-tone-and-color-jc-prototype) (`:jc_tone_fit_prototype`) | Fit `-2` to `+6`, H–K Influence `0` to `1` | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates in stops and approaches unity near gray | Global curve closed form. Tonal gain and Tone use scalar solves. |
 | [Linear Gain](#linear-gain-audition) (`:jc_tone_fit_linear_gain_prototype`) | Fit `-2` to `+6`, H–K Influence `0` to `1` | C Contrast followed by C Muted and C Vivid | Adjustable C Pivot for contrast. Muted and Vivid meet at `s = 0.50` after contrast. | Approaches `2^(-C Contrast)` as Muted and Vivid fade | Interpolates the gain multiplier and approaches unity near gray | Chroma closed form. Tone uses a scalar solve. |
 
@@ -161,10 +161,12 @@ Tone's inverse still uses a scalar solve. [Linear Gain behavior and Resolve audi
 
 ### Unified Chroma baseline
 
-C Muted Gain and C Vivid Gain shape incoming saturation together. At C
-Saturation Crossover, the applied gain in stops is the average of the two
-settings. The baseline uses the original smooth Tone curve and the Linear Gain
-fade for Shadow and Highlight Chroma. H–K Influence is fixed at `1.0` and
+C Muted Gain and C Vivid Gain shape incoming saturation together. C Saturation
+Crossover selects raw input saturation `C / abs(J_A)` from `0` to `1`,
+with a default of `0.45`. At a positive crossover, the applied gain in stops
+is the average of the two settings. A zero crossover applies Vivid Gain to
+every chromatic sample. The baseline uses the original smooth Tone curve and
+the Linear Gain fade for Shadow and Highlight Chroma. H–K Influence is fixed at `1.0` and
 Remap Fit is limited to `-2` through `+2`. The target builds English and
 Simplified Chinese DCTLs.
 
