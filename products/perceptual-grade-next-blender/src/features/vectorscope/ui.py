@@ -236,9 +236,10 @@ def _draw():
     callbacks = _interaction.callbacks
     linear = callbacks.linear_settings(node)
     tone = callbacks.tone_settings(node) if preferences.stage == "TONE" else None
-    crossover_active = tone is not None and _interaction.crossover_active(key, box, tone)
+    active_crossover = (None if tone is None else
+                        _interaction.active_crossover(key, box, tone))
     display.draw(region, box, state, key, preferences.stage, linear, tone,
-                 preferences.tone_anchor, crossover_active)
+                 preferences.tone_anchor, active_crossover)
     if (_runtime.timing is not None and state is not None
             and state.status == "current" and state.rgba is not None):
         _runtime.record_draw(key, state.rgba)

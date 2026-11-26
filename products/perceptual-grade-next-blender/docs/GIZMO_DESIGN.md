@@ -71,7 +71,7 @@ unavailable contexts appear in the scope.
 
 ## Tone Appearance Distribution
 
-The read-only 2:1 plot sits to the left of the Tone Curve. It measures the
+The 2:1 plot sits to the left of the Tone Curve. It measures the
 selected Grade's appearance after Warp, H–K
 repair, and AP1-D65 boundary mapping, immediately before conversion to RGB.
 It uses the same Compositor input or Shader viewport context as the other
@@ -84,6 +84,14 @@ height. A single smooth curve maps the full range. The horizontal axis is
 Saturation, with position \(s/\sqrt{1+s^2}\), where \(s=C/|J_A|\). Tick
 labels show the uncompressed saturation from zero to infinity. Black has zero
 saturation.
+
+Drag the vertical orange guide to adjust Saturation Crossover. Drag the
+dashed cyan guide or its left handle to adjust C Tone Crossover, where the
+Shadow Chroma and Highlight Chroma contributions reach zero. The cyan guide
+marks where a neutral at that input lightness lands through the Tone curve.
+Its hover readout shows the input value in normalized lightness units. An
+upward arrow marks a crossover above the selected peak. Drag down from the
+top edge to bring it into view. The sidebar covers the full crossover range.
 
 Opacity shows alpha-weighted density. Each bin's tint follows its weighted
 circular mean hue, with tint strength set by how closely its hues agree.

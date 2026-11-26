@@ -18,12 +18,14 @@ from .geometry import (
 from .white_drag import WhiteDrag
 
 if TYPE_CHECKING:
+    from ...kernel.prepare import PreparedTone
     from .runtime import WhiteDragReceipt
 
 
 _POINTER_BUTTONS = {"LEFTMOUSE", "MIDDLEMOUSE", "RIGHTMOUSE", "BUTTON4MOUSE",
                     "BUTTON5MOUSE", "BUTTON6MOUSE", "BUTTON7MOUSE", "PEN", "ERASER"}
 _POINTER_MOVES = {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
+_CROSSOVERS = {"saturation_crossover", "tone_crossover"}
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ class _Drag:
     token: int | None = None
     panel_position: tuple | None = None
     panel_size: float | tuple | None = None
+    tone_model: "PreparedTone | None" = None
 
 
 def _tone_hit(rect, point, model, selected, scale, peak_j):
@@ -84,7 +87,7 @@ def _control_cursor(stage, mode):
         handle = mode.removeprefix("resize_")
         return {"w": "MOVE_X", "e": "MOVE_X", "s": "MOVE_Y", "n": "MOVE_Y"}.get(
             handle, "SCROLL_XY")
-    if mode in {"fit", "cr_balance"} or (mode == "exposure" and stage == "LINEAR"):
+    if mode in {"fit", "cr_balance", "tone_crossover"} or (mode == "exposure" and stage == "LINEAR"):
         return "SCROLL_Y"
     if mode in {"curve", "exposure", "yb_balance", "saturation_crossover"}:
         return "SCROLL_X"
@@ -114,20 +117,22 @@ class Interaction:
         drag = self.drags.get(key[0])
         return drag is not None and drag.key == key and drag.token is not None
 
-    def crossover_active(self, key, box, tone):
+    def active_crossover(self, key, box, tone):
         drag = self.drags.get(key[0])
         if drag is not None:
-            return drag.key == key and drag.mode == "saturation_crossover"
+            return drag.mode if drag.key == key and drag.mode in _CROSSOVERS else None
         hover = self.crossover_hover.get(key[0])
         if hover is None:
-            return False
+            return None
+        area, point = hover
         try:
-            return (hover[0].as_pointer() == key[1]
-                    and geometry.saturation_crossover_hit(
-                        box["appearance"], tone.saturation_crossover,
-                        hover[1], box["scale"]))
+            if area.as_pointer() == key[1]:
+                return geometry.appearance_crossover_at(
+                    box["appearance"], tone, point, box["scale"],
+                )
         except (AttributeError, ReferenceError, RuntimeError):
-            return False
+            pass
+        return None
 
     def release(self, key):
         drag = self.drags.get(key[0])
@@ -183,13 +188,16 @@ class Interaction:
             pass
 
     def _set_crossover_hover(self, window_key, area=None, point=None):
-        previous = self.crossover_hover.pop(window_key, None)
-        if area is not None:
-            self.crossover_hover[window_key] = (area, point)
-        previous_area = None if previous is None else previous[0]
-        if previous_area == area:
+        current = None if area is None else (area, point)
+        previous = self.crossover_hover.get(window_key)
+        if previous == current:
             return
-        if previous_area is not None:
+        if current is None:
+            self.crossover_hover.pop(window_key, None)
+        else:
+            self.crossover_hover[window_key] = current
+        previous_area = None if previous is None else previous[0]
+        if previous_area is not None and previous_area != area:
             try:
                 previous_area.tag_redraw()
             except ReferenceError:
@@ -247,8 +255,8 @@ class Interaction:
             tone = self.callbacks.tone_settings(node)
             return ((tone.fit,) if mode == "fit"
                     else (tone.input_nits[TONE_LEVEL_FIELDS.index(fields[0])],))
-        if mode == "saturation_crossover":
-            return (self.callbacks.tone_settings(node).saturation_crossover,)
+        if mode in _CROSSOVERS:
+            return (getattr(self.callbacks.tone_settings(node), mode),)
         linear = self.callbacks.linear_settings(node)
         if mode == "scope":
             return linear.source_xy
@@ -281,9 +289,11 @@ class Interaction:
                     return "curve", (TONE_LEVEL_FIELDS[index],)
         if "appearance" in box:
             tone = self.callbacks.tone_settings(node)
-            if geometry.saturation_crossover_hit(
-                    box["appearance"], tone.saturation_crossover, point, box["scale"]):
-                return "saturation_crossover", ("saturation_crossover",)
+            crossover = geometry.appearance_crossover_at(
+                box["appearance"], tone, point, box["scale"],
+            )
+            if crossover is not None:
+                return crossover, (crossover,)
         for item in SLIDER_RANGES:
             if item in box and geometry.contains(box[item], point):
                 return item, (item,)
@@ -320,7 +330,9 @@ class Interaction:
             values = white.linear.source_xy
         else:
             values = self._control_values(mode, node, fields) if fields else ()
-        if mode == "saturation_crossover":
+        model = (tone_model(self.callbacks.tone_settings(node))
+                 if mode == "tone_crossover" else None)
+        if mode in _CROSSOVERS:
             rect = box["appearance"]
         else:
             rect = box["scope"] if mode in AXIS_LABELS else box.get(mode, box["rect"])
@@ -328,7 +340,8 @@ class Interaction:
         return _Drag(key, editor.binding(node), frame, mode, rect, origin, box["scale"],
                      fields, values, white,
                      panel_position=self.editors[key].position if mode == "header" or resizing else None,
-                     panel_size=self.editors[key].sizes.get(self.editors[key].stage) if resizing else None)
+                     panel_size=self.editors[key].sizes.get(self.editors[key].stage) if resizing else None,
+                     tone_model=model)
 
     def _plot_at(self, window, mouse):
         for area in window.screen.areas:
@@ -360,7 +373,7 @@ class Interaction:
             drag = self._press_control(key, node, box, point, origin, editor.frame_key(window.scene))
         self.drags[key[0]] = drag
         self._set_hover_cursor(window, _control_cursor(self.editors[key].stage, drag.mode))
-        if drag.mode == "saturation_crossover":
+        if drag.mode in _CROSSOVERS:
             self._set_crossover_hover(key[0], area, point)
         else:
             self._set_crossover_hover(key[0])
@@ -377,7 +390,7 @@ class Interaction:
         with bpy.context.temp_override(window=window, area=area, region=region):
             mode, _ = self._control_at(key, node, box, point)
         self._set_hover_cursor(window, _control_cursor(self.editors[key].stage, mode))
-        if mode == "saturation_crossover":
+        if mode in _CROSSOVERS:
             self._set_crossover_hover(key[0], area, point)
         else:
             self._set_crossover_hover(key[0])
@@ -406,6 +419,11 @@ class Interaction:
             return (_j_to_nits(float(min(high, max(low, level))), reference),)
         if drag.mode == "saturation_crossover":
             return (geometry.drag_saturation_crossover(drag.rect, drag.values[0], dx),)
+        if drag.mode == "tone_crossover":
+            return (geometry.drag_tone_crossover(
+                drag.rect, drag.tone_model, tone_peak_j(drag.tone_model.settings),
+                drag.values[0], dy,
+            ),)
         lo, hi = SLIDER_RANGES[drag.mode]
         vertical = (drag.mode in ("cr_balance", "fit")
                     or drag.mode == "exposure" and self.editors[drag.key].stage == "LINEAR")
@@ -439,7 +457,7 @@ class Interaction:
                 index = TONE_LEVEL_FIELDS.index(drag.fields[0])
                 target = tone_anchor_levels(tone_model(tone))[1][index]
                 values = (_j_to_nits(float(target), tone.reference_nits),)
-            elif drag.mode in {"fit", "saturation_crossover"}:
+            elif drag.mode == "fit" or drag.mode in _CROSSOVERS:
                 values = (TONE_DEFAULTS[drag.mode],)
             elif drag.white is not None:
                 values = D65

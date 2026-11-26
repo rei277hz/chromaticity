@@ -22,6 +22,8 @@ class GizmoGeometryTests(unittest.TestCase):
         sys.path.insert(0, directory.name)
         cls.addClassCleanup(sys.path.remove, directory.name)
         cls.geometry = importlib.import_module(package_name + ".features.vectorscope.geometry")
+        cls.appearance_scope = importlib.import_module(
+            package_name + ".features.vectorscope.appearance_scope")
         cls.settings = importlib.import_module(package_name + ".kernel.settings")
 
     def test_linear_layout_has_scope_and_three_rails(self):
@@ -115,6 +117,86 @@ class GizmoGeometryTests(unittest.TestCase):
         self.assertEqual(drag(rect, default, -180.), 0.)
         self.assertEqual(drag(rect, default, 180.), 1.)
         self.assertEqual(drag(rect, default, 0.), default)
+
+    def test_tone_crossover_neutral_projection_and_display_drag(self):
+        tone = self.settings.ToneSettings(peak_nits=2000., tone_crossover=45.)
+        rect = self.geometry.layout("TONE", 1200, 900)["appearance"]
+        model = self.geometry.tone_model(tone)
+        peak_j = self.geometry.tone_peak_j(tone)
+        marker, pinned = self.geometry.tone_crossover_point(
+            rect, model, peak_j, tone.tone_crossover,
+        )
+        self.assertFalse(pinned)
+        output_j = float(model.remap(tone.tone_crossover))
+        expected_y = rect[1] + self.appearance_scope.lightness_position(output_j, peak_j) * rect[3]
+        self.assertAlmostEqual(marker[1], expected_y)
+        for target in (10., 45., 80.):
+            start, _ = self.geometry.tone_crossover_point(
+                rect, model, peak_j, tone.tone_crossover,
+            )
+            end, _ = self.geometry.tone_crossover_point(
+                rect, model, peak_j, target,
+            )
+            actual = self.geometry.drag_tone_crossover(
+                rect, model, peak_j, tone.tone_crossover, end[1] - start[1],
+            )
+            self.assertAlmostEqual(actual, target, places=3)
+
+    def test_tone_crossover_pins_above_peak_and_clamps_drag_to_range(self):
+        defaults = self.settings.ToneSettings()
+        tone = self.settings.ToneSettings(
+            input_nits=(*defaults.input_nits[:3], 500.), peak_nits=500., tone_crossover=160.,
+        )
+        rect = self.geometry.layout("TONE", 1200, 900)["appearance"]
+        model = self.geometry.tone_model(tone)
+        peak_j = self.geometry.tone_peak_j(tone)
+        marker, pinned = self.geometry.tone_crossover_point(
+            rect, model, peak_j, tone.tone_crossover,
+        )
+        self.assertTrue(pinned)
+        self.assertEqual(marker, (rect[0], rect[1] + rect[3]))
+        moved = self.geometry.drag_tone_crossover(rect, model, peak_j, 160., -12.)
+        self.assertGreaterEqual(moved, 10.)
+        self.assertLess(moved, 160.)
+        self.assertFalse(self.geometry.tone_crossover_point(rect, model, peak_j, moved)[1])
+        self.assertEqual(
+            self.geometry.drag_tone_crossover(rect, model, peak_j, 10., -1000.), 10.,
+        )
+        self.assertEqual(
+            self.geometry.drag_tone_crossover(rect, model, peak_j, 160., 1000.), 160.,
+        )
+
+    def test_appearance_crossover_hit_priority_prefers_tone_handle_at_intersection(self):
+        tone = self.settings.ToneSettings(saturation_crossover=0., tone_crossover=45.)
+        rect = self.geometry.layout("TONE", 1200, 900)["appearance"]
+        marker, pinned = self.geometry.tone_crossover_point(
+            rect, self.geometry.tone_model(tone), self.geometry.tone_peak_j(tone),
+            tone.tone_crossover,
+        )
+        self.assertFalse(pinned)
+        self.assertEqual(
+            self.geometry.appearance_crossover_at(rect, tone, marker, 1.),
+            "tone_crossover",
+        )
+        saturation = self.geometry.saturation_crossover_point(rect, 0.)
+        self.assertEqual(
+            self.geometry.appearance_crossover_at(
+                rect, tone, (saturation[0], marker[1]), 1.,
+            ),
+            "tone_crossover",
+        )
+        other = self.settings.ToneSettings(saturation_crossover=.45, tone_crossover=45.)
+        other_marker, _ = self.geometry.tone_crossover_point(
+            rect, self.geometry.tone_model(other), self.geometry.tone_peak_j(other),
+            other.tone_crossover,
+        )
+        other_saturation = self.geometry.saturation_crossover_point(rect, .45)
+        self.assertEqual(
+            self.geometry.appearance_crossover_at(
+                rect, other, (other_saturation[0], other_marker[1]), 1.,
+            ),
+            "saturation_crossover",
+        )
 
     def test_moved_panel_obeys_region_bounds_and_dpi(self):
         normal = self.geometry.layout("LINEAR", 900, 660, 1.0, (40, 50))

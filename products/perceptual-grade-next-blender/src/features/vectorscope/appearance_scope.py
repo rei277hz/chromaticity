@@ -55,6 +55,23 @@ def lightness_position(j, peak_j):
     return low_slope * value + slope_change * highlight
 
 
+def lightness_at_position(position, peak_j):
+    """Return raw J_HK at a scalar position on the visible lightness axis."""
+    peak = lightness_max(peak_j)
+    if position <= 0.:
+        return 0.
+    if position >= 1.:
+        return peak
+    low, high = 0., peak
+    for _ in range(48):
+        middle = .5 * (low + high)
+        if lightness_position(middle, peak_j) < position:
+            low = middle
+        else:
+            high = middle
+    return .5 * (low + high)
+
+
 def saturation_position(s):
     """Compress raw C/|J_A| into [0, 1], including the infinite limit."""
     saturation = np.clip(np.asarray(s, dtype=np.float64), 0., np.finfo(np.float64).max)

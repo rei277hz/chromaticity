@@ -170,8 +170,8 @@ pointer.bind(window, area, region)
 draw_tone = vectorscope_ui.display._draw_tone
 
 
-def track_tone_draw(box, state, key, linear, tone, selected, crossover_active):
-    draw_tone(box, state, key, linear, tone, selected, crossover_active)
+def track_tone_draw(box, state, key, linear, tone, selected, active_crossover):
+    draw_tone(box, state, key, linear, tone, selected, active_crossover)
     if state is not None and state.status == "current" and state.tone_histogram is not None:
         report["tone_gizmo_drawn"] = True
 
@@ -453,6 +453,7 @@ def exercise_gizmo_controls():
     assert adjusted.tone.fit > baseline.tone.fit
     yield from exercise_fit_reset()
     yield from exercise_saturation_crossover()
+    yield from exercise_tone_crossover()
     with bpy.context.temp_override(window=window, area=area, region=region):
         assert bpy.ops.perceptual_grade.gizmo_set_peak(
             peak_nits="2000", node_pointer=str(grade.as_pointer()),
@@ -476,6 +477,8 @@ def exercise_gizmo_controls():
     gap = tone_scope.nits_to_j(grade.input_highlights) - tone_scope.nits_to_j(grade.input_white)
     np.testing.assert_allclose(gap, .001, atol=1e-6)
     grade.input_white = baseline.tone.input_nits[2]
+    grade.input_highlights = 500.
+    yield from exercise_pinned_tone_crossover()
     with bpy.context.temp_override(window=window, area=area, region=region):
         assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="2000") == {"FINISHED"}
     assert grade.input_highlights == 2000.
@@ -621,6 +624,82 @@ def exercise_saturation_crossover():
     report["saturation_crossover_reset_and_cancel"] = True
 
 
+def exercise_tone_crossover():
+    window_key = window.as_pointer()
+    interaction = vectorscope_ui._interaction
+    default = grade.tone_crossover
+    default_saturation = grade.saturation_crossover
+    grade.saturation_crossover = 0.
+    grade.tone_crossover = 60.
+    before = pointer.settings(grade)
+    saturation_x, _ = pointer.control_point("saturation_crossover", grade)
+    _, tone_y = pointer.control_point("tone_crossover", grade)
+    intersection = saturation_x, tone_y
+    yield from pointer.press_at(intersection, "tone_crossover", grade)
+    pointer.event_at("LEFTMOUSE", "RELEASE", intersection)
+    yield from wait_for(lambda: window_key not in interaction.drags,
+                        "Crossover intersection click did not finish", 5.)
+    assert nodes._gesture_token(window_key) is None
+    assert pointer.settings(grade) == before
+    grade.saturation_crossover = default_saturation
+    before = pointer.settings(grade)
+
+    # Grab the horizontal guide away from both the handle and the intersection.
+    x, _y, width, _height = pointer.box()["appearance"]
+    start = x + width * .8, tone_y
+    yield from pointer.press_at(start, "tone_crossover", grade)
+    assert interaction.hover_cursors[window_key][1] == "SCROLL_Y"
+    assert pointer.settings(grade) == before
+    moved = start[0], start[1] - 12
+    pointer.event_at("MOUSEMOVE", "NOTHING", moved)
+    yield from wait_for(lambda: grade.tone_crossover < before.tone.tone_crossover,
+                        "Tone crossover drag did not update the sidebar property", 5.)
+    assert pointer.settings(grade) == replace(
+        before, tone=replace(before.tone, tone_crossover=grade.tone_crossover),
+    )
+    yield from pointer.reset_drag_at(moved)
+    assert grade.tone_crossover == default
+    continued = moved[0], moved[1] + 9
+    pointer.event_at("MOUSEMOVE", "NOTHING", continued)
+    yield from wait_for(lambda: grade.tone_crossover > default,
+                        "Tone crossover drag did not rebase on reset", 5.)
+    pointer.event_at("ESC", "PRESS", continued)
+    pointer.event_at("ESC", "RELEASE", continued)
+    pointer.event_at("LEFTMOUSE", "RELEASE", continued)
+    yield from wait_for(lambda: nodes._gesture_token(window_key) is None,
+                        "Tone crossover drag did not cancel", 5.)
+    assert pointer.settings(grade) == before
+    grade.tone_crossover = default
+    report["tone_crossover_reset_and_cancel"] = True
+
+
+def exercise_pinned_tone_crossover():
+    geometry = vectorscope_ui.editor.geometry
+    before = pointer.settings(grade)
+    grade.saturation_crossover = 0.
+    grade.tone_crossover = 160.
+    settings = pointer.settings(grade).tone
+    plot = pointer.box()["appearance"]
+    peak_j = geometry.tone_peak_j(settings)
+    point, pinned = geometry.tone_crossover_point(
+        plot, geometry.tone_model(settings), peak_j, settings.tone_crossover,
+    )
+    plot_x, plot_y, _plot_width, plot_height = plot
+    assert pinned and point == (plot_x, plot_y + plot_height)
+    # Both handles occupy the top-left point when the tone guide is pinned.
+    adjusted = yield from pointer.drag_control("tone_crossover", grade, (0, -12), cancel=True)
+    assert adjusted.tone.tone_crossover < 160.
+    assert adjusted.tone.saturation_crossover == 0.
+    _, pinned = geometry.tone_crossover_point(
+        plot, geometry.tone_model(adjusted.tone), peak_j, adjusted.tone.tone_crossover,
+    )
+    assert not pinned
+    assert grade.tone_crossover == 160.
+    grade.tone_crossover = before.tone.tone_crossover
+    grade.saturation_crossover = before.tone.saturation_crossover
+    report["tone_crossover_pinned_handle"] = True
+
+
 def exercise_drags():
     cleanup()
     tree.links.new(source.outputs["Image"], grade.inputs["Color"])
@@ -740,29 +819,28 @@ def exercise_drags():
     # Verify that the crossover is a single undoable, Auto Key-able node
     # property. Run this after other gestures because Undo may replace the
     # Blender node wrapper while preserving the open Gizmo.
-    cross_node = restored_tree.nodes[NODE_NAME]
     checkpoint("native crossover Auto Key and undo")
-    yield from pointer.click_control("tone_tab", cross_node)
-    before = pointer.settings(cross_node)
-    press_frame = scene.frame_current + scene.frame_subframe
-    assert scene.tool_settings.use_keyframe_insert_auto
-    with bpy.context.temp_override(window=window, area=area, region=region):
-        assert bpy.ops.ed.undo_push(message="Before saturation crossover Auto Key") == {"FINISHED"}
-    edited = yield from pointer.drag_control("saturation_crossover", cross_node, (20, 0))
-    assert edited.tone.saturation_crossover != before.tone.saturation_crossover
-    assert keyframes(restored_tree) == {
-        cross_node.path_from_id("saturation_crossover"): (
-            (press_frame, edited.tone.saturation_crossover),
-        ),
-    }, keyframes(restored_tree)
-    with bpy.context.temp_override(window=window, area=area, region=region):
-        assert bpy.ops.ed.undo() == {"FINISHED"}
-    restored_tree = bpy.data.node_groups[TREE_NAME]
-    restored_node = restored_tree.nodes[NODE_NAME]
-    assert pointer.settings(restored_node) == before
-    assert not keyframes(restored_tree), "Undo left crossover Auto Key data behind"
-    assert vectorscope_ui._editors[gizmo_key].stage == "TONE"
-    report["saturation_crossover_autokey_undo"] = True
+    yield from pointer.click_control("tone_tab", restored_tree.nodes[NODE_NAME])
+    for field, delta in (("saturation_crossover", (20, 0)), ("tone_crossover", (0, 18))):
+        cross_node = restored_tree.nodes[NODE_NAME]
+        before = pointer.settings(cross_node)
+        press_frame = window.scene.frame_current + window.scene.frame_subframe
+        assert window.scene.tool_settings.use_keyframe_insert_auto
+        with bpy.context.temp_override(window=window, area=area, region=region):
+            assert bpy.ops.ed.undo_push(message=f"Before {field} Auto Key") == {"FINISHED"}
+        edited = yield from pointer.drag_control(field, cross_node, delta)
+        value = getattr(edited.tone, field)
+        assert value != getattr(before.tone, field)
+        assert keyframes(restored_tree) == {
+            cross_node.path_from_id(field): ((press_frame, value),),
+        }, keyframes(restored_tree)
+        with bpy.context.temp_override(window=window, area=area, region=region):
+            assert bpy.ops.ed.undo() == {"FINISHED"}
+        restored_tree = bpy.data.node_groups[TREE_NAME]
+        assert pointer.settings(restored_tree.nodes[NODE_NAME]) == before
+        assert not keyframes(restored_tree), "Undo left crossover Auto Key data behind"
+        assert vectorscope_ui._editors[gizmo_key].stage == "TONE"
+        report[field + "_autokey_undo"] = True
 
 
 def exercise_animated_frame_cancel():

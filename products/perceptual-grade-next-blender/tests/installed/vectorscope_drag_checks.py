@@ -304,6 +304,13 @@ class ScopePointer:
             return geometry.saturation_crossover_point(
                 box["appearance"], settings.saturation_crossover,
             )
+        if control == "tone_crossover":
+            settings = self.settings(node).tone
+            point, _pinned = geometry.tone_crossover_point(
+                box["appearance"], geometry.tone_model(settings),
+                geometry.tone_peak_j(settings), settings.tone_crossover,
+            )
+            return point
         x, y, width, height = box[control]
         return x + width / 2, y + height / 2
 

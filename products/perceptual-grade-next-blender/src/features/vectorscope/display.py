@@ -330,7 +330,7 @@ def _draw_tone_curve(rect, model, histogram, selected, scale, peak_j):
           8 * scale, _PALETTE["muted"], width, align=.5)
 
 
-def _draw_appearance(box, state, key, peak_j, crossover, crossover_active):
+def _draw_appearance(box, state, key, peak_j, tone, model, active_crossover):
     rect, scale = box["appearance"], box["scale"]
     x, y, width, height = rect
     top, right = y + height, x + width
@@ -405,24 +405,63 @@ def _draw_appearance(box, state, key, peak_j, crossover, crossover_active):
                   y + height * .5 - 15 * scale, 8 * scale,
                   _PALETTE["muted"], width - 4 * scale, align=.5)
 
-    marker = geometry.saturation_crossover_point(rect, crossover)
-    color = (*_PALETTE["orange"][:3], .9 if crossover_active else .36)
-    stroke = (1.5 if crossover_active else 1.) * scale
-    _lines(((marker[0], y), marker), color, stroke)
-    _circle(marker, geometry.CROSSOVER_HANDLE_RADIUS * scale, color, stroke)
-    if crossover_active:
-        label = localization.tr("gizmo.input_saturation_crossover", value=f"{crossover:.2f}")
+    saturation_marker = geometry.saturation_crossover_point(
+        rect, tone.saturation_crossover,
+    )
+    saturation_active = active_crossover == "saturation_crossover"
+    saturation_color = (*_PALETTE["orange"][:3], .9 if saturation_active else .36)
+    saturation_stroke = (1.5 if saturation_active else 1.) * scale
+    _lines(((saturation_marker[0], y), saturation_marker), saturation_color,
+           saturation_stroke)
+    _circle(saturation_marker, geometry.CROSSOVER_HANDLE_RADIUS * scale,
+            saturation_color, saturation_stroke)
+
+    tone_marker, above_peak = geometry.tone_crossover_point(
+        rect, model, peak_j, tone.tone_crossover,
+    )
+    tone_active = active_crossover == "tone_crossover"
+    tone_color = (*_PALETTE["C"][:3], .92 if tone_active else .46)
+    tone_stroke = (1.5 if tone_active else 1.) * scale
+    dash = 5 * scale
+    segments = [point for start in np.arange(x, right, 2 * dash)
+                for point in ((start, tone_marker[1]),
+                              (min(start + dash, right), tone_marker[1]))]
+    _lines(segments, tone_color, tone_stroke)
+    radius = geometry.CROSSOVER_HANDLE_RADIUS * scale
+    marker_y = tone_marker[1]
+    handle = ((x - radius, marker_y), (x, marker_y + radius),
+              (x + radius, marker_y), (x, marker_y - radius))
+    _lines([point for edge in zip(handle, handle[1:] + handle[:1]) for point in edge],
+           tone_color, tone_stroke)
+    if above_peak:
+        arrow_x = x + 10 * scale
+        arrow_y = top + 7 * scale
+        _lines(((arrow_x, top - 3 * scale), (arrow_x, arrow_y),
+                (arrow_x, arrow_y), (arrow_x - 3 * scale, arrow_y - 3 * scale),
+                (arrow_x, arrow_y), (arrow_x + 3 * scale, arrow_y - 3 * scale)),
+               tone_color, tone_stroke)
+    if active_crossover is not None:
+        if tone_active:
+            message = localization.tr(
+                "gizmo.input_lightness_crossover",
+                value=f"{tone.tone_crossover / 100.:.2f}",
+            )
+        else:
+            message = localization.tr(
+                "gizmo.input_saturation_crossover",
+                value=f"{tone.saturation_crossover:.2f}",
+            )
         _, panel_y, panel_width, _ = box["rect"]
-        _text(label, left, panel_y + 26 * scale, 9 * scale,
+        _text(message, left, panel_y + 26 * scale, 9 * scale,
               _PALETTE["text"], panel_width - 24 * scale)
 
 
-def _draw_tone(box, state, key, linear, tone, selected, crossover_active):
+def _draw_tone(box, state, key, linear, tone, selected, active_crossover):
     scale = box["scale"]
     model = _tone_model(tone)
     peak_j = _tone_peak_j(tone)
     histogram = None if state is None else state.tone_histogram
-    _draw_appearance(box, state, key, peak_j, tone.saturation_crossover, crossover_active)
+    _draw_appearance(box, state, key, peak_j, tone, model, active_crossover)
     _draw_tone_curve(box["curve"], model, histogram, selected, scale, peak_j)
     _slider(box["exposure"], "exposure", linear.exposure, scale, track=box["exposure_track"])
     _slider(box["fit"], "fit", tone.fit, scale, vertical=True, track=box["fit_track"])
@@ -454,7 +493,7 @@ def _draw_status(box, state):
           _PALETTE["orange" if failed else "muted"], width)
 
 
-def draw(region, box, state, key, stage, linear, tone, selected, crossover_active):
+def draw(region, box, state, key, stage, linear, tone, selected, active_crossover):
     """Draw only the supplied view, with GPU state restored on exit."""
     import gpu
     from mathutils import Matrix
@@ -474,7 +513,7 @@ def draw(region, box, state, key, stage, linear, tone, selected, crossover_activ
             if stage == "LINEAR":
                 _draw_linear(box, state, key, linear)
             else:
-                _draw_tone(box, state, key, linear, tone, selected, crossover_active)
+                _draw_tone(box, state, key, linear, tone, selected, active_crossover)
             _draw_status(box, state)
     finally:
         gpu.state.blend_set(blend)
