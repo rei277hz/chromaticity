@@ -55,6 +55,27 @@ def parameter_row_group(prepared, tree_type):
                       count_nodes(tree, graph.images))
 
 
+def alpha_passthrough_group(prepared, tree_type):
+    """Calibrate shader alpha readback without exercising Grade math."""
+    if tree_type != 'ShaderNodeTree':
+        raise ValueError('Alpha pass-through calibration requires a Shader tree')
+    tree = bpy.data.node_groups.new('Alpha pass-through calibration', tree_type)
+    for name, direction, kind in (
+            ('Color', 'INPUT', 'NodeSocketColor'), ('Alpha', 'INPUT', 'NodeSocketFloat'),
+            ('Color', 'OUTPUT', 'NodeSocketColor'), ('Alpha', 'OUTPUT', 'NodeSocketFloat'),
+            ('Decode Valid', 'OUTPUT', 'NodeSocketFloat'), ('Pole Margin', 'OUTPUT', 'NodeSocketFloat'),
+            ('Saturated', 'OUTPUT', 'NodeSocketFloat')):
+        tree.interface.new_socket(name=name, in_out=direction, socket_type=kind)
+    source, output = tree.nodes.new('NodeGroupInput'), tree.nodes.new('NodeGroupOutput')
+    graph = Graph(tree, prepared)
+    graph.connect(source.outputs['Color'], output.inputs['Color'])
+    graph.connect(source.outputs['Alpha'], output.inputs['Alpha'])
+    graph.connect(1., output.inputs['Decode Valid'])
+    graph.connect(0., output.inputs['Pole Margin'])
+    graph.connect(0., output.inputs['Saturated'])
+    return BuiltGrade(tree, (), (), prepared, count_nodes(tree))
+
+
 class FullGradeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -144,9 +165,11 @@ class FullGradeTests(unittest.TestCase):
         # This portable control value puts the post-repair energy beyond
         # float32 while the independent reference still represents it.
         color = ColorSettings(web=WebSettings(log_scale=((64.,) * 6,) * 4))
+        alpha_control_checked = False
         for space in cases.SPACES:
-            # Keep the rendered fixture square so UVs land on pixel centers.
-            colors = np.tile(full_cases.rgba(space, 256)[-4:], (2, 1))
+            # A 16x16 render keeps UV sampling stable while repeating the same
+            # overflow samples in a square fixture.
+            colors = np.tile(full_cases.rgba(space, 256)[-4:], (32, 1))
             values = np.concatenate((colors, np.column_stack((-colors[:, :3], colors[:, 3]))))
             prepared = prepare(linear, tone, space, color=color, boundary=self.boundary)
             expected = oracle.evaluate_full(values[:, :3], linear, tone, color, space)
@@ -155,6 +178,15 @@ class FullGradeTests(unittest.TestCase):
             self.assertTrue(np.isfinite(energy).all())
             self.assertTrue(np.all(energy[:len(colors)] > limit), energy)
             self.assertTrue(np.all(energy[len(colors):] < -limit), energy)
+            if 'shader' in selected_contexts() and not alpha_control_checked:
+                fixture = NativeFixture(prepared, values, 'shader', threads=2,
+                                        builder=alpha_passthrough_group)
+                try:
+                    actual = fixture.render()
+                    np.testing.assert_array_equal(actual['alpha'], values[:, 3])
+                finally:
+                    fixture.close()
+                alpha_control_checked = True
             for context in selected_contexts():
                 with self.subTest(space=space, context=context):
                     fixture = NativeFixture(prepared, values, context, threads=2)
