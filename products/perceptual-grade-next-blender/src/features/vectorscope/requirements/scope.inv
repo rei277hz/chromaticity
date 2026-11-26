@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["initial_state"],
+  "step": "step",
+  "invariants": {},
+  "properties": [
+    {
+      "name": "stale_start_receipt_is_inert",
+      "variables": {
+        "state": "State",
+        "generation": "int"
+      },
+      "assume": [
+        "state.scope.active_generation is None or state.scope.active_generation != generation"
+      ],
+      "lets": {
+        "transition": "step(state, Event('started', ticket_generation=generation))"
+      },
+      "assert": "transition == Transition(state, Effects())"
+    },
+    {
+      "name": "reset_retains_active_capture_for_cancellation",
+      "variables": {
+        "state": "State"
+      },
+      "assume": [
+        "state.scope.active_generation is not None"
+      ],
+      "lets": {
+        "transition": "step(state, Event('reset'))"
+      },
+      "assert": "transition.state.scope.generation == state.scope.generation and transition.state.scope.active_generation == state.scope.active_generation and transition.state.scheduler == state.scheduler and transition.effects.cancel"
+    },
+    {
+      "name": "busy_scheduler_rejects_start",
+      "variables": {
+        "state": "State",
+        "generation": "int"
+      },
+      "assume": [
+        "state.scheduler.busy"
+      ],
+      "lets": {
+        "transition": "step(state, Event('schedule', ticket_generation=generation))"
+      },
+      "assert": "transition == Transition(state, Effects())"
+    },
+    {
+      "name": "waiting_scope_does_not_reserve_capture_slot",
+      "variables": {
+        "state": "State",
+        "generation": "int"
+      },
+      "assume": [
+        "state.scope.waiting",
+        "not state.scheduler.busy",
+        "state.scope.queued_generation == generation",
+        "state.scope.desired_generation == generation"
+      ],
+      "lets": {
+        "transition": "step(state, Event('schedule', ticket_generation=generation))"
+      },
+      "assert": "transition == Transition(state, Effects())"
+    },
+    {
+      "name": "current_capture_result_releases_active_slot",
+      "variables": {
+        "state": "State",
+        "generation": "int"
+      },
+      "assume": [
+        "state.scheduler.busy",
+        "state.scope.active_generation == generation",
+        "state.scope.revision is not None"
+      ],
+      "lets": {
+        "transition": "step(state, Event('capture_result', ticket_generation=generation, success=True, revision=state.scope.revision))"
+      },
+      "assert": "not transition.state.scheduler.busy and transition.state.scope.active_generation is None"
+    },
+    {
+      "name": "released_capture_is_not_analyzable",
+      "variables": {
+        "scope": "ScopeState",
+        "generation": "int"
+      },
+      "assume": [
+        "scope.active_generation == generation",
+        "scope.desired_generation is None"
+      ],
+      "assert": "not result_current(scope, generation)"
+    },
+    {
+      "name": "replacement_source_capture_is_not_analyzable",
+      "variables": {
+        "scope": "ScopeState",
+        "generation": "int"
+      },
+      "assume": [
+        "scope.active_generation == generation",
+        "scope.desired_generation is not None",
+        "scope.source_generation != scope.active_source_generation"
+      ],
+      "assert": "not result_current(scope, generation)"
+    },
+    {
+      "name": "duplicate_release_does_not_replay_cancellation",
+      "variables": {
+        "state": "State"
+      },
+      "assume": [
+        "state.scope.active_generation is not None",
+        "state.scope.desired_generation is None"
+      ],
+      "lets": {
+        "transition": "step(state, Event('release'))"
+      },
+      "assert": "not transition.effects.cancel"
+    },
+    {
+      "name": "duplicate_unavailable_does_not_replay_effects",
+      "variables": {
+        "state": "State",
+        "revision": "int",
+        "error": "str"
+      },
+      "assume": [
+        "state.scope.desired_generation is None",
+        "state.scope.failure_revision == revision",
+        "state.scope.failure_error == error"
+      ],
+      "lets": {
+        "transition": "step(state, Event('unavailable', revision=revision, error=error))"
+      },
+      "assert": "transition == Transition(state, Effects())"
+    }
+  ]
+}

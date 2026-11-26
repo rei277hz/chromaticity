@@ -1,6 +1,6 @@
 """Serialized bake requests and per-node baked-output policy."""
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 
 from dataclasses import dataclass
 from typing import Literal, Optional

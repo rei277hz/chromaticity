@@ -1,6 +1,6 @@
 """Concurrent, host-free preparation of complete Linear, Tone and Color Grades."""
 
-# pg-book: technical-report/en#next-policy.preparation-join
+# pg-book: technical-report/en#grade-policy.preparation-join
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor

@@ -1,6 +1,6 @@
 import unittest
 
-from color_tools.features.bake.policy import (
+from color_tools.features.bake.policy.bake import (
     Effects, Event, State, bake_toggle_available, binding_policy, can_enqueue,
     new, output_policy, persist_source_invalidation, step,
 )

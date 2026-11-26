@@ -26,8 +26,8 @@ class PolicyCoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing=.*helper"):
             verify_policy_coverage(entries, self.manifest(
                 "features/grade/policy/node.py"))
-        entries["features/bake/policy.py"] = b""
-        with self.assertRaisesRegex(ValueError, "missing=.*features/bake/policy"):
+        entries["features/bake/policy/bake.py"] = b""
+        with self.assertRaisesRegex(ValueError, "missing=.*features/bake/policy/bake"):
             verify_policy_coverage(entries, self.manifest(
                 "policy/helper.py", "features/grade/policy/node.py"))
 

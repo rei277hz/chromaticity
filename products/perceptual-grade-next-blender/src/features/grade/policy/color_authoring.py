@@ -1,6 +1,6 @@
 """Single-handle ownership permissions for reversible Color authoring."""
 
-# pg-book: technical-report/en#next-policy.color-authoring
+# pg-book: technical-report/en#grade-policy.color-authoring
 
 from dataclasses import dataclass
 from typing import Literal, Optional

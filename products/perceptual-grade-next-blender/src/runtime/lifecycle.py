@@ -1,6 +1,6 @@
 """Order lifecycle fences around Blender file and undo transitions."""
 
-# pg-book: technical-report/en#next-policy.resources
+# pg-book: technical-report/en#grade-policy.resources
 
 from contextlib import contextmanager
 from dataclasses import dataclass

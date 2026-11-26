@@ -4,7 +4,7 @@ Callers consume bake/node policy effects before invoking any mutation here.
 The live kernel is never copied or modified to store a node's bake selection.
 """
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 
 from ...runtime.effective_grade_graph import (
     DOMAIN, LIVE, OPERATION, READER, SCHEMA, SELECTOR, UV, WRAPPER, live_tree,

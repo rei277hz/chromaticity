@@ -10,7 +10,7 @@ from ..features.grade.policy import bank_publication as policy
 
 def pack_image_for_save(image, *, generated, pack):
     """Apply the separate save fallback without claiming a new publication."""
-    # pg-book: technical-report/en#next-policy.bank-publication
+    # pg-book: technical-report/en#grade-policy.bank-publication
     if not policy.request_save_packing(generated, image.is_dirty):
         return
     failure = None
@@ -38,7 +38,7 @@ def write_metadata(entries):
 
 @dataclass
 class ImageSnapshot:
-    # pg-book: technical-report/en#next-policy.bake
+    # pg-book: technical-report/en#grade-policy.bake
     pixels: object
     metadata: tuple
     colorspace: Optional[str] = None

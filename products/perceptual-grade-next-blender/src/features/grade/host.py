@@ -230,7 +230,7 @@ def _kernel_for_node(node):
     return _live_kernel(node) if bake_graph.eligible(node) else getattr(node, "node_tree", None)
 
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 def _bake_wrapper(node):
     tree = getattr(node, "node_tree", None)
     return tree if tree is not None and tree.get(bake_graph.WRAPPER) else None
@@ -509,7 +509,7 @@ def _unset_color_property(settings, name):
         settings.property_unset(name)
 
 
-# pg-book: technical-report/en#next-policy.color-authoring
+# pg-book: technical-report/en#grade-policy.color-authoring
 def _consume_color_authoring(settings, effects):
     """Apply the complete policy-authorized edit, with one rollback boundary."""
     writes = []
@@ -951,7 +951,7 @@ def _fallback_kernel(mode, tree_type, *, vector=False):
         raise
 
 
-# pg-book: technical-report/en#next-policy.resources
+# pg-book: technical-report/en#grade-policy.resources
 def _retain_fallback_kernel(tree):
     failures = run_resource_lifecycle(_resource_retirement_operations(tree))
     if failures:
@@ -1598,7 +1598,7 @@ def _ensure_timer():
         _register_host_timer(_preparation_tick, first_interval=0.0)
 
 
-# pg-book: technical-report/en#next-policy.node-output
+# pg-book: technical-report/en#grade-policy.node-output
 def _consume_effects(node, effects, preparation=None, record=None, defer_build=False,
                      *, recovery=None):
     if effects.dispose:
@@ -3385,7 +3385,7 @@ def _invoke_gesture_observer(action):
         _gesture_invocations.pop(action.token, None)
 
 
-# pg-book: technical-report/en#next-policy.gesture
+# pg-book: technical-report/en#grade-policy.gesture
 def _consume_gesture_effects(effects):
     refresh = []
 
@@ -3935,7 +3935,7 @@ def _undo_redo_reconcile_tick():
         _ensure_gesture_router_timer()
 
 
-# pg-book: technical-report/en#next-policy.render-preflight
+# pg-book: technical-report/en#grade-policy.render-preflight
 @persistent
 def _render_pre(scene):
     if _grade_resources is None:

@@ -98,6 +98,20 @@ class RecordingInterpreter(Interpreter):
 
 
 class PolicyVerificationTests(unittest.TestCase):
+    def test_transition_record_is_accepted_alongside_legacy_tuple_transitions(self):
+        source_text = SOURCE.replace(
+            "def step(state: State, event: Event) -> tuple[State, Effects]:\n"
+            "    return state, Effects()",
+            "@dataclass(frozen=True)\n"
+            "class Transition:\n"
+            "    state: State\n"
+            "    effects: Effects\n\n"
+            "def step(state: State, event: Event) -> Transition:\n"
+            "    return Transition(state, Effects())",
+        )
+        requirements = copy.deepcopy(REQUIREMENTS)
+        self.assert_all_pass(Checker(Source(source_text), requirements).run())
+
     def verify_claims(self, *, properties=(), witnesses=(), contracts=None):
         requirements = copy.deepcopy(REQUIREMENTS)
         requirements.update(properties=list(properties), witnesses=list(witnesses))

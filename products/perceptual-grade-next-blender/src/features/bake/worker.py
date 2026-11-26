@@ -7,7 +7,7 @@ the numerical Grade implementation or sample a Stack cube in Python: Grade
 helper images and the 65^3 Stack LUT are evaluated by Blender's node graph.
 """
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 
 from pathlib import Path
 import tempfile

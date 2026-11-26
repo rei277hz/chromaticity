@@ -1,6 +1,6 @@
 """Discover a Bake domain and freeze the input identity for its receipt."""
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 
 from collections.abc import Mapping
 import math

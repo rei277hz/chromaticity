@@ -1,6 +1,6 @@
 """One active preparation, one latest demand, and staged results."""
 
-# pg-book: technical-report/en#next-policy.preparation
+# pg-book: technical-report/en#grade-policy.preparation
 
 from dataclasses import dataclass
 from typing import Literal, Optional

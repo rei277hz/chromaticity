@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import patch
 
-from color_tools.features.interaction import policy
+from color_tools.features.interaction.policy import gesture as policy
 from color_tools.features.interaction import runtime
 
 

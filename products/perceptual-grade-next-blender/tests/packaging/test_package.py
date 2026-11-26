@@ -46,7 +46,8 @@ class PackageTests(unittest.TestCase):
                 "features/bake/graph.py",
                 "features/bake/images.py",
                 "features/bake/manager.py",
-                "features/bake/policy.py",
+                "features/bake/policy/__init__.py",
+                "features/bake/policy/bake.py",
                 "features/bake/routes.py",
                 "features/bake/worker.py",
                 "features/grade/__init__.py",
@@ -61,10 +62,12 @@ class PackageTests(unittest.TestCase):
                 "features/grade/resources.py",
                 "features/grade/stack_observations.py",
                 "features/interaction/__init__.py",
-                "features/interaction/policy.py",
+                "features/interaction/policy/__init__.py",
+                "features/interaction/policy/gesture.py",
                 "features/interaction/runtime.py",
                 "features/vectorscope/__init__.py",
-                "features/vectorscope/authority.py",
+                "features/vectorscope/policy/__init__.py",
+                "features/vectorscope/policy/scope.py",
                 "features/vectorscope/capture.py",
                 "features/vectorscope/routes.py",
                 "runtime/execution.py",
@@ -189,10 +192,7 @@ class PackageTests(unittest.TestCase):
             shipped = {
                 name for name in archive.namelist()
                 if name.endswith(".py") and name.rsplit("/", 1)[-1] != "__init__.py"
-                and (name.startswith("policy/") or "/policy/" in name
-                     or name in {"features/bake/policy.py",
-                                 "features/interaction/policy.py",
-                                 "features/vectorscope/authority.py"})
+                and (name.startswith("policy/") or "/policy/" in name)
             }
         self.assertEqual(proved, shipped)
 

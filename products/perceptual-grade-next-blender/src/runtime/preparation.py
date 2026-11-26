@@ -1,6 +1,6 @@
 """Async orchestration of bounded, latest-only value preparation."""
 
-# pg-book: technical-report/en#next-policy.preparation
+# pg-book: technical-report/en#grade-policy.preparation
 
 import asyncio
 from collections import deque

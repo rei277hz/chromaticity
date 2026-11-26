@@ -51,9 +51,10 @@ The common safety rules are:
 * The consumer executes effects in order and reports success or failure. Policy
   code never performs a best-effort side effect in an exception handler.
 
-The `.inv` files in `requirements/` describe these transition contracts and
-examples. The verifier checks the declared properties against the Python source
-under their stated assumptions. It does not prove Blender's native observations, image validity, thread
+The `.inv` files in `src/requirements/` and beside feature policy packages
+describe these transition contracts and examples. The verifier checks the
+declared properties against the Python source under their stated assumptions.
+It does not prove Blender's native observations, image validity, thread
 affinity, worker implementation, or collection bookkeeping. The runtime tests
 and installed Blender tests cover those adapter premises.
 
@@ -571,7 +572,7 @@ around its live kernel and its own baked-output selector.
 source observations, and output selection. It retries deferred selector
 changes under the graph gate, including changes on nodes without a receipt.
 
-`src/features/bake/policy.py` stores the request phase and optional request signature.
+`src/features/bake/policy/bake.py` stores the request phase and optional request signature.
 The signature is present from acceptance through the active request and absent
 in `idle` and `terminal`. Terminal effects carry errors for the manager to
 report. A successful request follows
@@ -891,7 +892,7 @@ current Blender state.
 
 ## Gesture observer and participants
 
-`src/features/interaction/policy.py` supplies scalar decisions to
+`src/features/interaction/policy/gesture.py` supplies scalar decisions to
 `src/features/interaction/runtime.py`. The coordinator owns the per-window gesture
 collections, target filtering, and native event routing. The policy owns token
 allocation, observer handoff, phase checks, deferred completion, participant
@@ -1021,7 +1022,7 @@ edits, source changes, and playback.
 The policy requirements are executable contracts, not a model of all Blender
 behavior. For example:
 
-* `requirements/preparation.inv` proves latest-demand replacement and receipt
+* `src/requirements/preparation.inv` proves latest-demand replacement and receipt
   correlation; it does not prove executor cancellation.
 * `src/features/grade/requirements/color_authoring.inv` proves scalar ownership and capture/clear
   admission. Exact floating-point baselines, cyclic geometry, closest-angle
@@ -1031,7 +1032,7 @@ behavior. For example:
 * `src/features/grade/requirements/node.inv` proves current/full/error presentation decisions;
   runtime checks and host tests must establish kernel structure, image contents,
   and graph ownership.
-* `requirements/helper.inv` proves job and deadline-stage fencing, escalation,
+* `src/requirements/helper.inv` proves job and deadline-stage fencing, escalation,
   exit ordering, and cleanup ownership; transport session/token validation and
   queue ordering remain adapter contracts.
 * The bank and resource requirements prove fail-closed sequencing and
@@ -1043,13 +1044,14 @@ behavior. For example:
   premises.
 * `src/features/interaction/requirements/gesture.inv` proves scalar token, phase, participant, and undo
   decisions. It does not prove the coordinator's collection bookkeeping.
-* `requirements/render_preflight.inv` proves scene/time correlation, exact
+* `src/requirements/render_preflight.inv` proves scene/time correlation, exact
   publication signatures, and fail-closed mismatches. It does not prove
   Blender's live scene observations or exclusive host-scope premises.
-* `src/features/vectorscope/requirements/vectorscope.inv` proves the scalar conditions for publishing
-  a current plot, a lagging plot, a visible failure, or a drag preview. The
-  runtime establishes capture identity, completes density analysis, and applies
-  the effect.
+* `src/features/vectorscope/requirements/authority.inv` proves scalar
+  publication conditions. `scope.inv` proves per-scope freshness and active
+  capture admission. The runtime owns editor-keyed storage and FIFO queue
+  ordering, establishes capture identity, completes density analysis, and
+  applies policy effects.
 * `src/features/bake/requirements/bake.inv` proves bounded queue capacity, signature admission,
   current-input checks, stale-result discard, cancellation, publication and
   activation rollback, and the derived live/baked/error output policy.
@@ -1143,17 +1145,17 @@ The generated figure hashes, layout flags, and renderer pin are recorded in the
 The links below open the policy implementations, formal requirements, and
 runtime consumers.
 
-* Preparation scheduler: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/preparation.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/preparation.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/preparation.py).
+* Preparation scheduler: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/preparation.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/requirements/preparation.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/preparation.py).
 * Color authoring derives its per-handle decision from the stored claim. [Policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/policy/color_authoring.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/requirements/color_authoring.inv) · [composer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/color_authoring.py) · [Blender consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/host.py).
 * The Grade preparation runtime joins the three worker results. [Implementation](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/preparation.py) · [runtime tests](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/tests/runtime/test_grade_preparation.py).
 * Node output: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/policy/node.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/requirements/node.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/host.py).
-* Helper process: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/helper.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/helper.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/execution.py).
+* Helper process: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/helper.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/requirements/helper.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/execution.py).
 * Production bank publication: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/policy/bank_publication.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/requirements/bank_publication.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/bank_publication.py), called from `features/grade/host.py`.
-* Resource lifecycle: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/resources.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/resources.inv) · [consumers](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/resource_lifecycle.py), [Grade resources](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/resources.py), and [fallback acquisition](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/host.py).
-* Gesture coordination: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/interaction/policy.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/interaction/requirements/gesture.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/interaction/runtime.py).
-* Render preflight: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/render_preflight.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/requirements/render_preflight.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/publication.py), resolved from `features/grade/host.py`.
-* Bake requests: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/policy.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/requirements/bake.inv) · [manager](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/manager.py) · [routes](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/routes.py) · [worker](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/worker.py) · [wrapper graph](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/graph.py).
-* Live scope publication. [Policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/vectorscope/authority.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/vectorscope/requirements/vectorscope.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/vectorscope/runtime.py).
+* Resource lifecycle: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/resources.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/requirements/resources.inv) · [consumers](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/resource_lifecycle.py), [Grade resources](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/resources.py), and [fallback acquisition](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/grade/host.py).
+* Gesture coordination: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/interaction/policy/gesture.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/interaction/requirements/gesture.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/interaction/runtime.py).
+* Render preflight: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/policy/render_preflight.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/requirements/render_preflight.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/runtime/publication.py), resolved from `features/grade/host.py`.
+* Bake requests: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/policy/bake.py) · [requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/requirements/bake.inv) · [manager](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/manager.py) · [routes](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/routes.py) · [worker](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/worker.py) · [wrapper graph](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/bake/graph.py).
+* Live scope publication: [policy](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/vectorscope/policy/scope.py) · [publication requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/vectorscope/requirements/authority.inv) · [scope requirements](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/vectorscope/requirements/scope.inv) · [consumer](https://github.com/rei277hz/chromaticity/blob/main/products/perceptual-grade-next-blender/src/features/vectorscope/runtime.py).
 
 Regenerate the diagram assets and both English reading formats from the
 repository root with the declared Buck2 targets:

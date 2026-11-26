@@ -4,7 +4,7 @@ No operation here reads image pixels. Runtime ID keys deliberately never enter
 persisted receipts; load/undo rebuild their baselines from restored provenance.
 """
 
-# pg-book: technical-report/en#next-policy.bake
+# pg-book: technical-report/en#grade-policy.bake
 
 from dataclasses import dataclass
 import json

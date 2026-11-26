@@ -122,7 +122,7 @@
         "products/perceptual-grade-next-blender/tests/numerical/test_color_resolution.py",
         "products/perceptual-grade-next-blender/tests/installed/gesture_undo_runner.py",
         "products/perceptual-grade-next-blender/tests/installed/test_gesture_undo_gui.py",
-        "products/perceptual-grade-next-blender/src/features/bake/policy.py",
+        "products/perceptual-grade-next-blender/src/features/bake/policy/bake.py",
         "products/perceptual-grade-next-blender/src/features/bake/routes.py",
         "products/perceptual-grade-next-blender/src/features/bake/worker.py",
         "products/perceptual-grade-next-blender/src/kernel/color_ui.py",
@@ -143,7 +143,6 @@
         "products/perceptual-grade-next-blender/tests/runtime/test_bake_manager.py",
         "products/perceptual-grade-next-blender/tests/installed/runner.py",
         "products/perceptual-grade-next-blender/tests/installed/stack_ui_checks.py",
-        "products/perceptual-grade-next-blender/src/features/vectorscope/authority.py",
         "products/perceptual-grade-next-blender/src/features/vectorscope/runtime.py",
         "products/perceptual-grade-next-blender/src/features/vectorscope/capture.py",
         "products/perceptual-grade-next-blender/src/features/vectorscope/analysis.py",
@@ -385,7 +384,7 @@
       "kind": "production",
       "sources": [
         "products/perceptual-grade-next-blender/src/features/grade/host.py",
-        "products/perceptual-grade-next-blender/src/features/bake/policy.py",
+        "products/perceptual-grade-next-blender/src/features/bake/policy/bake.py",
         "products/perceptual-grade-next-blender/src/features/bake/freshness.py",
         "products/perceptual-grade-next-blender/src/features/bake/manager.py",
         "products/perceptual-grade-next-blender/src/features/bake/controller.py",
@@ -423,7 +422,7 @@
       "anchor": "grade-policy.observer",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/features/interaction/policy.py"
+        "products/perceptual-grade-next-blender/src/features/interaction/policy/gesture.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/policy/test_policy_gesture_decisions.py",
@@ -434,7 +433,7 @@
       "anchor": "grade-policy.gesture",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/features/interaction/policy.py",
+        "products/perceptual-grade-next-blender/src/features/interaction/policy/gesture.py",
         "products/perceptual-grade-next-blender/src/features/interaction/runtime.py",
         "products/perceptual-grade-next-blender/src/features/grade/host.py"
       ],
@@ -461,9 +460,8 @@
       "anchor": "grade-policy.vectorscope",
       "kind": "production",
       "sources": [
-        "products/perceptual-grade-next-blender/src/features/vectorscope/authority.py",
         "products/perceptual-grade-next-blender/src/features/vectorscope/runtime.py",
-        "products/perceptual-grade-next-blender/src/features/vectorscope/policy.py"
+        "products/perceptual-grade-next-blender/src/features/vectorscope/policy/scope.py"
       ],
       "evidence": [
         "products/perceptual-grade-next-blender/tests/runtime/test_vectorscope.py",

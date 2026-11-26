@@ -1,54 +1,54 @@
 {
   "version": 1,
-  "state": "State",
-  "event": "Event",
+  "state": "PublicationState",
+  "event": "PublicationEvent",
   "initializers": [
-    "new"
+    "new_publication"
   ],
-  "step": "step",
+  "step": "publication_step",
   "invariants": {},
   "properties": [
     {
       "name": "unmatched_or_different_source_receipt_is_inert",
       "variables": {
-        "state": "State",
-        "event": "Event"
+        "state": "PublicationState",
+        "event": "PublicationEvent"
       },
       "assume": [
         "not state.active or not state.same_source"
       ],
-      "assert": "step(state, event) == (state, Effects())"
+      "assert": "publication_step(state, event) == PublicationTransition(state, PublicationDecision(False, False, False))"
     },
     {
       "name": "current_requires_exact_success",
       "variables": {
-        "state": "State",
-        "event": "Event"
+        "state": "PublicationState",
+        "event": "PublicationEvent"
       },
       "lets": {
-        "effects": "step(state, event)[1]"
+        "effects": "publication_step(state, event).effects"
       },
       "assert": "effects.current == (state.active and state.same_source and state.exact and event.success) and (not effects.current or effects.publish)"
     },
     {
       "name": "superseded_success_cannot_overwrite_newer_display",
       "variables": {
-        "state": "State"
+        "state": "PublicationState"
       },
       "assume": [
         "not state.exact",
         "state.display_newer"
       ],
-      "assert": "step(state, Event(True))[1] == Effects()"
+      "assert": "publication_step(state, PublicationEvent(True)) == PublicationTransition(state, PublicationDecision(False, False, False))"
     },
     {
       "name": "only_exact_failure_is_visible",
       "variables": {
-        "state": "State",
-        "event": "Event"
+        "state": "PublicationState",
+        "event": "PublicationEvent"
       },
       "lets": {
-        "effects": "step(state, event)[1]"
+        "effects": "publication_step(state, event).effects"
       },
       "assert": "effects.fail == (state.active and state.same_source and state.exact and not event.success) and (event.success or not effects.publish)"
     },
@@ -74,7 +74,7 @@
   "witnesses": [
     {
       "name": "lagging_same_source_preview_is_reachable",
-      "assert": "publication(True, True, True, False, False) == Effects(True, False, False)"
+      "assert": "publication(True, True, True, False, False) == PublicationDecision(True, False, False)"
     },
     {
       "name": "current_display_is_reachable",
@@ -88,7 +88,7 @@
   "mutations": [
     {
       "name": "unmatched_receipt_is_admitted",
-      "function": "step",
+      "function": "publication_step",
       "target": "not state.active or not state.same_source",
       "replacement": "False",
       "detects": [
@@ -97,7 +97,7 @@
     },
     {
       "name": "superseded_capture_overwrites_newer_display",
-      "function": "step",
+      "function": "publication_step",
       "target": "state.exact or not state.display_newer",
       "replacement": "True",
       "detects": [

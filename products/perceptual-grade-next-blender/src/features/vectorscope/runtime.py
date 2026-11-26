@@ -1,8 +1,8 @@
 """Transient, latest-demand coordination for Grade Gizmo scopes."""
 
-# pg-book: technical-report/en#next-policy.vectorscope
+# pg-book: technical-report/en#grade-policy.vectorscope
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from contextlib import nullcontext
 from dataclasses import dataclass
 import hashlib
@@ -16,9 +16,10 @@ import numpy as np
 from ...kernel.prepare import PreparedLinear, prepare_linear
 from ...kernel.settings import ToneSettings
 from ...runtime.publication import PublicationDeferred
-from . import analysis, appearance_scope, policy, routes, tone_scope
+from . import analysis, appearance_scope, routes, tone_scope
 from .appearance_preview import AppearancePreview, PreviewUnavailable
 from .capture import capture_loaded_image
+from .policy import scope as policy
 
 
 MAX_CAPTURE_BYTES = 512 * 512 * 4 * 4
@@ -53,6 +54,25 @@ class _AppearancePayload:
 
     def analyze(self, rgba):
         return appearance_scope.analyze(rgba)
+
+
+@dataclass(frozen=True)
+class _CaptureTicket:
+    key: object
+    generation: int
+    capture_signature: str
+    source_signature: str
+    analysis_signature: str
+    source_generation: int
+    revision: int
+
+
+@dataclass(frozen=True)
+class _PreviewReceipt:
+    key: object
+    revision: int
+    input_signature: str
+    grade_signature: str
 
 
 @dataclass(frozen=True)
@@ -127,7 +147,12 @@ class ScopeRuntime:
         self.preview_roles = preview_roles
         self.preview_backend = preview_backend
         self.preview_unavailable = None
-        self.state = policy.State()
+        self.scope_states = {}
+        self.scheduler = policy.SchedulerState()
+        self.demands = {}
+        self.queue = deque()
+        self.queued = {}
+        self.queue_tokens = count(1)
         self.payloads = {}
         self.displays = {}
         self.samples = OrderedDict()
@@ -186,41 +211,116 @@ class ScopeRuntime:
         grade = getattr(node, "pg_grade", None)
         return int(node.as_pointer()), None if grade is None else int(grade.as_pointer())
 
-    def _dispatch(self, event, *, samples=None, trace=None, timings=()):
-        self.state, effects = policy.step(self.state, event)
+    def _scope_state(self, key):
+        return self.scope_states.get(key, policy.ScopeState())
+
+    def _dispatch(self, key, event, *, samples=None, trace=None, capture=None, timings=()):
+        previous = self._scope_state(key)
+        transition = policy.step(policy.State(previous, self.scheduler), event)
+        self.scope_states[key] = transition.state.scope
+        self.scheduler = transition.state.scheduler
+        effects = transition.effects
+        if event.kind == "request":
+            scope = transition.state.scope
+            if scope.desired_generation is None:
+                self.demands.pop(key, None)
+            else:
+                self.demands[key] = _CaptureTicket(
+                    key, scope.desired_generation, scope.capture_signature,
+                    scope.source_signature, scope.analysis_signature,
+                    scope.source_generation, scope.revision,
+                )
+        elif event.kind in {"release", "unavailable", "reset"}:
+            scope = transition.state.scope
+            if scope.desired_generation is None:
+                self.demands.pop(key, None)
         if timings:
-            ticket = next(item for item in self.state.desired if item.key == event.key)
+            ticket = self.demands[key]
             now = self._clock()
             self._record_timing("request", now, now, ticket)
             for stage, started, finished in timings:
                 self._record_timing(stage, started, finished, ticket)
-        self._apply(effects, samples=samples, trace=trace, capture=event.ticket)
+        self._apply(key, effects, event, samples=samples, trace=trace, capture=capture)
         return effects
 
-    def _apply(self, effects, *, samples=None, trace=None, capture=None):
-        for key in effects.clear:
+    def _apply(self, key, effects, event, *, samples=None, trace=None, capture=None):
+        if effects.clear:
             self.displays.pop(key, None)
-        if effects.retain_samples is not None:
-            self._remember_samples(effects.retain_samples, samples)
-        if effects.publish_preview is not None:
-            self.displays[effects.publish_preview.key] = trace
-        if effects.publish is not None:
-            ticket = effects.publish
+        if effects.remove_queue:
+            self._remove_queued(key, event.ticket_generation)
+        if effects.enqueue:
+            ticket = self.demands.get(key)
+            if ticket is not None:
+                self._enqueue(ticket)
+        if effects.retain_samples and capture is not None:
+            self._remember_samples(capture.capture_signature, samples)
+        if effects.publish_preview:
+            self.displays[key] = trace
+        if effects.publish:
             started = self._clock()
-            self.displays[ticket.key] = trace
+            self.displays[key] = trace
             if started is not None:
-                status, _error = policy.status(self.state, ticket.key)
-                self._record_timing("publish", started, self._clock(), ticket, {
-                    "current": status == "current",
-                    "capture_generation": (ticket.generation if capture is None
-                                           else capture.generation),
-                })
-        if effects.start is not None:
-            self._start(effects.start)
-        if effects.cancel is not None and self.active is not None:
+                demand = self.demands.get(key, capture)
+                readout = policy.status(self._scope_state(key), self._revision(key), True)
+                if demand is not None:
+                    self._record_timing("publish", started, self._clock(), demand, {
+                        "current": readout.status == "current",
+                        "capture_generation": (
+                            demand.generation if capture is None else capture.generation
+                        ),
+                    })
+        if effects.start:
+            queued = self.queued.get(key)
+            if queued is not None and queued[1].generation == event.ticket_generation:
+                self._start(queued[1])
+        if effects.cancel and self.active is not None:
             ticket, job, _root = self.active
-            if ticket == effects.cancel:
+            if ticket.key == key and ticket.generation == self._scope_state(key).active_generation:
                 job.cancel()
+
+    def _enqueue(self, ticket):
+        queued = self.queued.get(ticket.key)
+        if queued is not None:
+            token, _previous = queued
+            self.queued[ticket.key] = (token, ticket)
+            return
+        token = next(self.queue_tokens)
+        self.queue.append((ticket.key, token))
+        self.queued[ticket.key] = (token, ticket)
+
+    def _remove_queued(self, key, generation=None):
+        queued = self.queued.get(key)
+        if queued is None:
+            return
+        token, ticket = queued
+        if generation is not None and ticket.generation != generation:
+            return
+        del self.queued[key]
+        self.queue.remove((key, token))
+
+    def _dispatch_ticket(self, ticket, kind, *, samples=None, trace=None, **values):
+        return self._dispatch(
+            ticket.key,
+            policy.Event(kind, ticket_generation=ticket.generation, **values),
+            samples=samples,
+            trace=trace,
+            capture=ticket,
+        )
+
+    def _schedule_next(self):
+        if self.active is not None or self.scheduler.busy:
+            return
+        for key, token in tuple(self.queue):
+            queued = self.queued.get(key)
+            if queued is None or queued[0] != token:
+                continue
+            ticket = queued[1]
+            effects = self._dispatch(
+                key,
+                policy.Event("schedule", ticket_generation=ticket.generation),
+            )
+            if effects.start:
+                return
 
     def _remember_samples(self, signature, rgba):
         rgba.setflags(write=False)
@@ -289,16 +389,17 @@ class ScopeRuntime:
         self._observe(key, context, node, viewport, tone)
 
         if not appearance_enabled:
-            if (policy.demand_for(self.state, appearance) is not None
-                    or policy.preview_for(self.state, appearance) is not None):
+            appearance_state = self._scope_state(appearance)
+            if (appearance_state.desired_generation is not None
+                    or appearance_state.preview_status != "none"):
                 self._release(appearance)
         elif dragging:
-            if policy.demand_for(self.state, appearance) is not None:
+            if self._scope_state(appearance).desired_generation is not None:
                 self._withdraw_capture(appearance)
             self._observe_appearance_preview(key, node)
         else:
             self._observe(appearance, context, node, viewport, None)
-            if (policy.status(self.state, appearance, self._revision(appearance))[0] == "current"
+            if (policy.status(self._scope_state(appearance), self._revision(appearance), True).status == "current"
                     and self.preview_roles is not None):
                 self._warm_preview()
         return self.display_state(key, node, frame=frame, stage=stage, dragging=dragging)
@@ -307,20 +408,24 @@ class ScopeRuntime:
         key = _AppearanceKey(editor)
         inputs = self._preview_inputs(editor, node)
         if inputs is None or self.preview_roles is None or self.grade_signature is None:
-            self._dispatch(policy.Event("preview_withdraw", key=key))
+            self._dispatch(key, policy.Event("preview_withdraw"))
             return
         demand, samples = inputs
         signature = self.grade_signature(node)
         roles = None if signature is None else self.preview_roles(node, signature)
         if roles is None:
-            self._dispatch(policy.Event("preview_withdraw", key=key))
+            self._dispatch(key, policy.Event("preview_withdraw"))
             return
         revision = self._revision(key)
-        receipt = policy.Preview(key, revision, demand.capture_signature, signature)
-        effects = self._dispatch(policy.Event("preview_request", preview=receipt))
-        if effects.evaluate_preview is None:
+        receipt = _PreviewReceipt(key, revision, demand.capture_signature, signature)
+        effects = self._dispatch(key, policy.Event(
+            "preview_request", revision=revision,
+            preview_input_signature=receipt.input_signature,
+            preview_grade_signature=receipt.grade_signature,
+        ))
+        if not effects.evaluate_preview:
             return
-        self._evaluate_preview(effects.evaluate_preview, demand, samples, roles, node)
+        self._evaluate_preview(receipt, demand, samples, roles, node)
 
     def _evaluate_preview(self, receipt, demand, samples, roles, node):
         started = self._clock()
@@ -331,18 +436,25 @@ class ScopeRuntime:
             )
             trace = appearance_scope.analyze(pixels)
         except Exception as error:
-            self._dispatch(policy.Event("preview_result", preview=receipt,
-                                        revision=self._revision(receipt.key), error=str(error)))
+            self._dispatch(receipt.key, policy.Event(
+                "preview_result", revision=self._revision(receipt.key),
+                preview_input_signature=receipt.input_signature,
+                preview_grade_signature=receipt.grade_signature,
+                error=str(error),
+            ))
             return
         current = self._preview_inputs(receipt.key.editor, node)
         if (current is None or current[0] != demand
                 or self.grade_signature(node) != receipt.grade_signature):
-            self._dispatch(policy.Event("preview_withdraw", key=receipt.key))
+            self._dispatch(receipt.key, policy.Event("preview_withdraw"))
             return
-        effects = self._dispatch(policy.Event("preview_result", preview=receipt,
-                                             revision=self._revision(receipt.key), success=True),
-                                 trace=trace)
-        if effects.publish_preview is not None:
+        effects = self._dispatch(receipt.key, policy.Event(
+            "preview_result", revision=self._revision(receipt.key),
+            preview_input_signature=receipt.input_signature,
+            preview_grade_signature=receipt.grade_signature,
+            success=True,
+        ), trace=trace)
+        if effects.publish_preview:
             self._record_timing("appearance_preview", started, self._clock(), demand,
                                 {"samples": pixels.size // 4})
 
@@ -368,14 +480,16 @@ class ScopeRuntime:
     def _preview_inputs(self, editor, node):
         payload = self.payloads.get(editor)
         if (not isinstance(payload, _Payload) or payload.tone is None
-                or policy.status(self.state, editor, self._revision(editor))[0] != "current"):
+                or policy.status(self._scope_state(editor), self._revision(editor), True).status != "current"):
             return None
         with self._observations:
             observed = self.editors.get(editor)
             if (observed is None or observed.binding != self._target(node)
                     or self.source_epochs.get(editor) != payload.source_epoch):
                 return None
-        demand = next(item for item in self.state.desired if item.key == editor)
+        demand = self.demands.get(editor)
+        if demand is None:
+            return None
         samples = self.samples.get(demand.capture_signature)
         return None if samples is None else (demand, samples)
 
@@ -460,7 +574,7 @@ class ScopeRuntime:
                 capture_signature = self._digest(capture_identity)
                 analysis_signature = self._analysis_signature(capture_signature, linear, space, tone)
             route_finished = self._clock()
-            previous = next((item for item in self.state.desired if item.key == key), None)
+            previous = self.demands.get(key)
             changed = (previous is None or previous.capture_signature != capture_signature
                        or previous.analysis_signature != analysis_signature
                        or previous.source_signature != source_signature
@@ -484,14 +598,14 @@ class ScopeRuntime:
                     if samples is not None:
                         timings += (("cached_density", lookup_finished, self._clock()),)
                 self.payloads[key] = payload
-                self._dispatch(policy.Event(
-                    "request", key=key, capture_signature=capture_signature,
+                self._dispatch(key, policy.Event(
+                    "request", capture_signature=capture_signature,
                     source_signature=source_signature, analysis_signature=analysis_signature,
                     cache_available=samples is not None, ready=ready, revision=revision,
                 ), trace=trace, timings=timings)
-            elif ready == (key in self.state.waiting):
-                self._dispatch(policy.Event(
-                    "request", key=key, capture_signature=capture_signature,
+            elif ready == self._scope_state(key).waiting:
+                self._dispatch(key, policy.Event(
+                    "request", capture_signature=capture_signature,
                     source_signature=source_signature, analysis_signature=analysis_signature,
                     ready=ready, revision=revision,
                 ))
@@ -499,10 +613,10 @@ class ScopeRuntime:
             self._unavailable(key, error, revision)
 
     def _white_drag_receipt(self, key, node, frame):
-        demand = next((item for item in self.state.desired if item.key == key), None)
+        demand = self.demands.get(key)
         payload = self.payloads.get(key)
         if (demand is None or not isinstance(payload, _Payload) or payload.tone is not None
-                or key in self.state.waiting):
+                or self._scope_state(key).waiting):
             return None
         with self._observations:
             editor = self.editors.get(key)
@@ -523,14 +637,16 @@ class ScopeRuntime:
         key = self._key(key)
         capture = self._white_drag_receipt(key, node, frame)
         if (capture is None
-                or policy.status(self.state, key, self._revision(key))[0] != "current"):
+                or policy.status(self._scope_state(key), self._revision(key), True).status != "current"):
             return None
         signature = capture.capture_signature
         samples = self.samples.get(signature)
         if samples is None:
             return None
         linear, space = self.linear_settings(node), self.working_space()
-        demand = next(item for item in self.state.desired if item.key == key)
+        demand = self.demands.get(key)
+        if demand is None:
+            return None
         if demand.analysis_signature != self._analysis_signature(signature, linear, space, None):
             return None
         return capture, samples, linear, space
@@ -557,34 +673,31 @@ class ScopeRuntime:
                          or payload.space == self.working_space())
         tone = stage == "TONE"
         readout = policy.project(
-            self.state, key, appearance,
-            binding_matches=(editor is not None and editor.binding == self._target(node)
-                             and editor.stage == stage and editor.frame[0] == frame[0]),
-            source_valid=(editor is not None and frame == editor.frame and space_matches),
-            tone=tone, compatible=plot is not None and (plot.ndim == 1) == tone,
-            revision=revision, appearance_revision=appearance_revision,
-            mode_matches=editor is not None and dragging == editor.dragging,
-            dragging=dragging, muted=getattr(node, "mute", False),
-            baked=getattr(node, "pg_use_bake", False),
+            self._scope_state(key), self._scope_state(appearance),
+            editor is not None and editor.binding == self._target(node)
+            and editor.stage == stage and editor.frame[0] == frame[0],
+            editor is not None and frame == editor.frame and space_matches,
+            tone, plot is not None and (plot.ndim == 1) == tone,
+            revision, appearance_revision,
+            editor is not None and dragging == editor.dragging,
+            dragging, getattr(node, "mute", False), getattr(node, "pg_use_bake", False),
         )
-        if readout is None:
+        if not readout.visible:
             return None
-        input_plot = readout.input
-        plot = plot if input_plot.show_plot else None
-        appearance_plot = readout.appearance
-        if appearance_plot is None:
-            return DisplayState(plot, input_plot.status, input_plot.error)
-        trace = self.displays.get(appearance) if appearance_plot.show_plot else None
-        return DisplayState(None, input_plot.status, input_plot.error, plot, trace,
-                            appearance_plot.status, appearance_plot.error)
+        plot = plot if readout.input_show_plot else None
+        if readout.appearance_status == "none":
+            return DisplayState(plot, readout.input_status, readout.input_error)
+        trace = self.displays.get(appearance) if readout.appearance_show_plot else None
+        return DisplayState(None, readout.input_status, readout.input_error, plot, trace,
+                            readout.appearance_status, readout.appearance_error)
 
     def record_draw(self, key, trace):
         if self.timing is None or self.displays.get(key) is not trace:
             return
-        status, _error = policy.status(self.state, key, self._revision(key))
-        if status != "current":
+        status = policy.status(self._scope_state(key), self._revision(key), True)
+        if status.status != "current":
             return
-        ticket = next((item for item in self.state.desired if item.key == key), None)
+        ticket = self.demands.get(key)
         if ticket is not None:
             now = self._clock()
             self._record_timing("draw", now, now, ticket)
@@ -611,7 +724,7 @@ class ScopeRuntime:
                 profile = {} if self.timing is None else {"profile": True}
                 job = self.create_job(inputs, operation="vectorscope_capture", **profile)
                 self.active = (ticket, job, root)
-                self._dispatch(policy.Event("started", ticket=ticket))
+                self._dispatch_ticket(ticket, "started")
                 return
             rgba = self._validated_samples(rgba)
             density_started = self._clock()
@@ -621,31 +734,32 @@ class ScopeRuntime:
                 self._record_timing("result_density", density_started, density_finished, ticket,
                                     {"capture_width": rgba.shape[1],
                                      "capture_height": rgba.shape[0]})
-            self._dispatch(policy.Event(
-                "capture_result", ticket=ticket, success=True,
+            self._dispatch_ticket(
+                ticket, "capture_result", success=True,
                 revision=self._revision(ticket.key),
                 allow_lagging=not isinstance(ticket.key, _AppearanceKey),
-            ), samples=rgba, trace=trace)
+                samples=rgba, trace=trace,
+            )
         except PublicationDeferred:
             if root is not None:
                 shutil.rmtree(root, ignore_errors=True)
-            self._dispatch(policy.Event("deferred", ticket=ticket))
+            self._dispatch_ticket(ticket, "deferred")
         except Exception as error:
             if root is not None:
                 shutil.rmtree(root, ignore_errors=True)
             self.active = None
-            self._dispatch(policy.Event(
-                "capture_result", ticket=ticket, error=str(error),
+            self._dispatch_ticket(
+                ticket, "capture_result", error=str(error),
                 revision=self._revision(ticket.key),
-            ))
+            )
 
     def poll(self):
         """Advance at most one helper response without waiting for its render."""
         if threading.current_thread() is not self._main_thread:
             raise RuntimeError("Vectorscope helper polling must run on Blender's main thread")
         if self.active is None:
-            self._dispatch(policy.Event("schedule"))
-            return self.active is not None or bool(self.state.queued)
+            self._schedule_next()
+            return self.active is not None or bool(self.queue)
         ticket, job, root = self.active
         rgba = trace = None
         try:
@@ -654,7 +768,7 @@ class ScopeRuntime:
             self._record_timing("helper_poll", poll_started, self._clock(), ticket)
             if result is None:
                 return True
-            if policy.result_demand(self.state, ticket) is not None:
+            if policy.result_current(self._scope_state(ticket.key), ticket.generation):
                 rgba = self._validated_samples(result["rgba"])
                 payload = self.payloads[ticket.key]
                 density_started = self._clock()
@@ -673,12 +787,13 @@ class ScopeRuntime:
         if root is not None:
             shutil.rmtree(root, ignore_errors=True)
         self.active = None
-        self._dispatch(policy.Event(
-            "capture_result", ticket=ticket, success=failure is None,
+        self._dispatch_ticket(
+            ticket, "capture_result", success=failure is None,
             error=failure, revision=self._revision(ticket.key),
             allow_lagging=not isinstance(ticket.key, _AppearanceKey),
-        ), samples=rgba, trace=trace)
-        return bool(self.state.queued)
+            samples=rgba, trace=trace,
+        )
+        return bool(self.queue)
 
     def invalidate(self, _scene=None, changed_ids=()):
         """Advance only source revisions whose captured dependencies changed."""
@@ -833,8 +948,8 @@ class ScopeRuntime:
         key = self._key(node_editor_key)
         current_revision = self._revision(key) if revision is None else revision
         self._forget_observation(key)
-        self._dispatch(policy.Event("unavailable", key=key, error=str(error),
-                                    revision=current_revision))
+        self._dispatch(key, policy.Event("unavailable", error=str(error),
+                                         revision=current_revision))
 
     def release(self, node_editor_key):
         key = self._key(node_editor_key)
@@ -847,14 +962,15 @@ class ScopeRuntime:
 
     def _release(self, key):
         self._forget_observation(key, release_binding=True)
-        self._dispatch(policy.Event("release", key=key))
+        self._dispatch(key, policy.Event("release"))
 
     def _withdraw_capture(self, key):
         self._forget_observation(key)
-        self._dispatch(policy.Event("release", key=key))
+        self._dispatch(key, policy.Event("release"))
 
     def reset(self):
-        self._dispatch(policy.Event("reset"))
+        for key in tuple(set(self.scope_states) | set(self.demands) | set(self.queued)):
+            self._dispatch(key, policy.Event("reset"))
         self.payloads.clear()
         self.samples.clear()
         self.sample_bytes = 0
@@ -886,10 +1002,11 @@ class ScopeRuntime:
             if root is not None:
                 shutil.rmtree(root, ignore_errors=True)
             self.active = None
-            self._dispatch(policy.Event(
-                "capture_result", ticket=ticket,
+            self._dispatch_ticket(
+                ticket, "capture_result",
                 allow_lagging=not isinstance(ticket.key, _AppearanceKey),
-            ))
+            )
+        self.scope_states.clear()
         self.payloads.clear()
         self.displays.clear()
 
