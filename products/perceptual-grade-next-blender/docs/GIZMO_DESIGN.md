@@ -19,9 +19,10 @@ value. White stays fixed, with Highlights clamped to at least 0.001 normalized
 lightness above it.
 
 Press **R** during a drag to reset the held control and continue from its
-reset value. Tone anchors reset to their current output targets within their
-neighbor bounds. Release confirms the gesture. Escape or right-click restores
-its pre-drag value.
+reset value. Highlights resets to the selected peak within the same White
+constraint as peak selection. The other Tone anchors reset to their current
+output targets within their neighbor bounds. Release confirms the gesture.
+Escape or right-click restores its pre-drag value.
 
 Undo and redo preserve the open stage, position, size, and selected Tone
 anchor. The scopes refresh for the restored Grade after recovery. Drag an
@@ -46,8 +47,14 @@ with share `d` of the total plotted mass has logarithmic density
 `L = log1p(65535 * d) / log1p(65535)`. An endpoint-normalized exponential
 shoulder sets the intensity to `expm1(-L) / expm1(-1)`, lifting sparse bins and
 compressing the upper end of the density range. Each bin adds its measured RGB
-to the dark background at that intensity. The graticule has a fixed circle,
-six outlined 75% RGB/CMY targets, and a dim 123-degree skin-tone guide.
+to the dark background at that intensity. The fixed circle and six outlined
+75% RGB/CMY targets are orange at half opacity. The thin 123-degree skin-tone
+guide is neutral.
+
+Red and Cyan share the CR direction, and Blue and Yellow share the YB
+direction. Drag either color handle to adjust the pair's spread and heading.
+Each handle has a vertical balance slider. Dragging it upward increases that
+side's balance and lowers the opposite slider by the same amount.
 
 Left-drag anywhere in a current plot to steer its cloud in the pointer
 direction. The gesture follows a fixed, alpha-weighted set of representative
@@ -71,8 +78,8 @@ unavailable contexts appear in the scope.
 
 ## Tone Appearance Distribution
 
-The 2:1 plot sits to the left of the Tone Curve. It measures the
-selected Grade's appearance after Warp, H–K
+The plot fills the left column and shares the Tone Curve's height. It
+measures the selected Grade's appearance after Warp, H–K
 repair, and AP1-D65 boundary mapping, immediately before conversion to RGB.
 It uses the same Compositor input or Shader viewport context as the other
 Gizmo scopes. The plot is unavailable while **Use Bake** is active because
@@ -98,9 +105,10 @@ with a default of `0.45` and range of `0.1–1.4`. A value of `1` corresponds to
 neutral output J of 100. Gain transitions use post-Tone `abs(J_A)`.
 
 Hover the plot body to highlight C Muted Gain left of the Saturation Crossover
-or C Vivid Gain to its right. The 5 UI-scaled-pixel top and bottom strips select
-Highlight Chroma above C Tone Crossover and Shadow Chroma below it. Crossover
-guides take priority. The selected region has a slightly brighter background
+or C Vivid Gain to its right. The top and bottom 12% of the plot select
+Highlight Chroma above C Tone Crossover and Shadow Chroma below it, with
+shorter entry zones when the guide is close to an edge. Crossover guides
+take priority. The selected region has a slightly brighter background
 beneath the grid and trace. Its readout shows the gain in stops. Drag
 horizontally right to increase any of the four gains. One plot-width drag
 spans `-4` to `+4` stops. The sidebar provides Highlight Chroma even when the

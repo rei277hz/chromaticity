@@ -351,7 +351,7 @@ def check_additive_trace_pixels():
 
 def exercise_gizmo_controls():
     baseline = pointer.settings(grade)
-    yield from pointer.hover_control("cr", grade)
+    yield from pointer.hover_control("R", grade)
     resized = yield from pointer.resize_control("resize_e", grade, (12, 0))
     assert resized > 300.
     report["gizmo_hover_and_resize"] = True
@@ -422,16 +422,26 @@ def exercise_gizmo_controls():
                for entry in retried_targets), retried_targets
     assert pointer.settings(grade) == baseline
     report["hover_retry_acknowledged"] = True
-    balanced = yield from pointer.drag_control("cr_balance", grade, (0, 25), cancel=True)
-    assert balanced.linear.balance[0] < baseline.linear.balance[0]
-    balanced = yield from pointer.drag_control("yb_balance", grade, (25, 0), cancel=True)
-    assert balanced.linear.balance[1] < baseline.linear.balance[1]
-    for axis, index in (("cr", 0), ("yb", 1)):
-        directed = yield from pointer.drag_control(axis, grade, (13, 19), cancel=True)
+    geometry = vectorscope_ui.editor.geometry
+    axes = (("R", "C", 0, -1.), ("C", "R", 0, 1.),
+            ("B", "Y", 1, -1.), ("Y", "B", 1, 1.))
+    for label, _opposite, index, _reference_sign in axes:
+        directed = yield from pointer.drag_control(label, grade, (13, 19), cancel=True)
         assert directed.linear.spread[index] != baseline.linear.spread[index]
         assert directed.linear.heading[index] != baseline.linear.heading[index]
         assert directed.linear.spread[1 - index] == baseline.linear.spread[1 - index]
         assert directed.linear.heading[1 - index] == baseline.linear.heading[1 - index]
+    for label, opposite, index, reference_sign in axes:
+        control = "balance_" + label
+        yield from pointer.hover_control(control, grade, cursor="SCROLL_Y")
+        balanced = yield from pointer.drag_control(
+            control, grade, (0, 12), cancel=True,
+        )
+        value = geometry.handle_balance(balanced.linear, label)
+        assert value > geometry.handle_balance(baseline.linear, label)
+        assert value == reference_sign * balanced.linear.balance[index]
+        assert geometry.handle_balance(balanced.linear, opposite) == -value
+        assert balanced.linear.balance[1 - index] == baseline.linear.balance[1 - index]
     report["linear_gizmo_controls"] = True
 
     yield from pointer.click_control("tone_tab", grade)
@@ -477,6 +487,24 @@ def exercise_gizmo_controls():
     assert grade.peak_nits == "500" and grade.input_white == 800.
     gap = tone_scope.nits_to_j(grade.input_highlights) - tone_scope.nits_to_j(grade.input_white)
     np.testing.assert_allclose(gap, .001, atol=1e-6)
+    clamped_highlights = grade.input_highlights
+    grade.input_highlights = 1400.
+    low_peak_before = pointer.settings(grade)
+    low_peak_point = pointer.control_point("curve", grade)
+    yield from pointer.hover_control("curve", grade, cursor="SCROLL_X")
+    yield from pointer.press_at(low_peak_point, "curve", grade)
+    yield from pointer.reset_drag_at(low_peak_point)
+    low_peak_reset = pointer.settings(grade)
+    assert low_peak_reset.linear == low_peak_before.linear
+    assert low_peak_reset.tone.input_nits[:3] == low_peak_before.tone.input_nits[:3]
+    np.testing.assert_allclose(
+        low_peak_reset.tone.input_nits[3], clamped_highlights, rtol=0, atol=.01,
+    )
+    pointer.event_at("LEFTMOUSE", "RELEASE", low_peak_point)
+    yield from wait_for(lambda: nodes._gesture_token(window.as_pointer()) is None,
+                        "Clamped Highlights reset gesture did not finish", 5.)
+    assert pointer.settings(grade) == low_peak_reset
+    report["highlight_reset_respects_low_peak_clamp"] = True
     grade.input_white = baseline.tone.input_nits[2]
     grade.input_highlights = 500.
     yield from exercise_upper_tone_crossover()
@@ -497,7 +525,7 @@ def exercise_gizmo_controls():
     grade.web_chroma_1_0 = 0.
     grade.web_chroma_2_0 = 0.
 
-    # With a non-default peak, R resets Highlights to the current output target.
+    # With a non-default peak, R resets Highlights to the selected output peak.
     grade.input_highlights = 1400.
     before = pointer.settings(grade)
     point = pointer.control_point("curve", grade)

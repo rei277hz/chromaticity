@@ -286,9 +286,15 @@ class ScopePointer:
     def control_point(self, control, node):
         box = self.box()
         geometry = self.ui.editor.geometry
-        if control in ("cr", "yb"):
+        if control in ("R", "C", "B", "Y"):
             linear = self.settings(node).linear
             return geometry.handle_positions(box["scope"], linear, box["scale"])[control]
+        if control.startswith("balance_"):
+            linear = self.settings(node).linear
+            positions = geometry.handle_positions(box["scope"], linear, box["scale"])
+            rails = geometry.balance_rails(box["scope"], positions, box["scale"])
+            x, y, width, height = rails[control.removeprefix("balance_")]
+            return x + width / 2, y + height / 2
         if control.startswith("resize_"):
             x, y, width, height = box["resize_grips"][control.removeprefix("resize_")]
             return x + width / 2, y + height / 2
@@ -426,18 +432,14 @@ class ScopePointer:
         self.event_at("LEFTMOUSE", "RELEASE", point)
         yield .05
 
-    def hover_control(self, control, node):
+    def hover_control(self, control, node, *, cursor="SCROLL_XY"):
         point = self.control_point(control, node)
-        injected = self.event_at("MOUSEMOVE", "NOTHING", point)
-        deadline = time.monotonic() + 5
-        while self._acknowledged is None:
-            assert time.monotonic() < deadline, ("Gizmo hover was not acknowledged", control)
-            yield .05
-        assert self._injected is injected and "RUNNING_MODAL" in self._acknowledged["result"], (
+        yield from self.move_to(point, control)
+        assert "RUNNING_MODAL" in self._acknowledged["result"], (
             "Gizmo did not own its hovered handle", control, self._acknowledged,
         )
         window_key = self.window.as_pointer()
-        assert self.ui._interaction.hover_cursors[window_key][1] == "SCROLL_XY"
+        assert self.ui._interaction.hover_cursors[window_key][1] == cursor
         box = self.box()
         outside = (box["rect"][0] - 15, box["rect"][1] + box["rect"][3] / 2)
         injected = self.event_at("MOUSEMOVE", "NOTHING", outside)

@@ -13,7 +13,7 @@ from ...kernel.settings import D65, LinearSettings
 from ...kernel.tone_ui import TONE_DEFAULTS, TONE_LEVEL_FIELDS, TONE_LIMITS, _j_to_nits
 from . import editor, geometry
 from .geometry import (
-    AXIS_LABELS, SLIDER_RANGES, curve_point, tone_anchor_levels, tone_model, tone_peak_j,
+    HANDLE_AXES, SLIDER_RANGES, curve_point, tone_anchor_levels, tone_model, tone_peak_j,
 )
 from .white_drag import WhiteDrag
 
@@ -80,15 +80,16 @@ def _tone_hit(rect, point, model, selected, scale, peak_j):
 def _control_cursor(stage, mode):
     if mode in {"close", "linear_tab", "tone_tab", "peak"}:
         return "HAND_POINT"
-    if mode in {"header", "scope", "cr", "yb"}:
+    if mode in {"header", "scope"} or mode in HANDLE_AXES:
         return "SCROLL_XY"
     if mode.startswith("resize_"):
         handle = mode.removeprefix("resize_")
         return {"w": "MOVE_X", "e": "MOVE_X", "s": "MOVE_Y", "n": "MOVE_Y"}.get(
             handle, "SCROLL_XY")
-    if mode in {"fit", "cr_balance", "tone_crossover"} or (mode == "exposure" and stage == "LINEAR"):
+    if (mode in {"fit", "tone_crossover"} or mode.startswith("balance_")
+            or (mode == "exposure" and stage == "LINEAR")):
         return "SCROLL_Y"
-    if (mode in {"curve", "exposure", "yb_balance", "saturation_crossover"}
+    if (mode in {"curve", "exposure", "saturation_crossover"}
             or mode in geometry.APPEARANCE_GAIN_FIELDS):
         return "SCROLL_X"
     return None
@@ -261,13 +262,13 @@ class Interaction:
         linear = self.callbacks.linear_settings(node)
         if mode == "scope":
             return linear.source_xy
-        if mode in AXIS_LABELS:
-            index = int(mode == "yb")
+        if mode in HANDLE_AXES:
+            index = int(HANDLE_AXES[mode] == "yb")
             return linear.spread[index], linear.heading[index]
         if mode == "exposure":
             return (linear.exposure,)
         # LinearSettings uses the reference convention, opposite to the RNA controls.
-        return (-linear.balance[int(mode == "yb_balance")],)
+        return (-linear.balance[int(fields[0] == "yb_balance")],)
 
     def _control_at(self, key, node, box, point):
         for item in ("close", "linear_tab", "tone_tab"):
@@ -299,11 +300,17 @@ class Interaction:
             if item in box and geometry.contains(box[item], point):
                 return item, (item,)
         if "scope" in box:
-            positions = geometry.handle_positions(box["scope"], self.callbacks.linear_settings(node),
-                                                  box["scale"])
-            distance, axis = min((math.dist(point, pos), axis) for axis, pos in positions.items())
-            if distance <= 7 * box["scale"]:
-                return axis, (axis + "_spread", axis + "_heading")
+            positions = geometry.handle_positions(
+                box["scope"], self.callbacks.linear_settings(node), box["scale"],
+            )
+            rails = geometry.balance_rails(box["scope"], positions, box["scale"])
+            handle = geometry.linear_handle_at(positions, rails, point, box["scale"])
+            if handle in HANDLE_AXES:
+                axis = HANDLE_AXES[handle]
+                return handle, (axis + "_spread", axis + "_heading")
+            if handle is not None:
+                axis = HANDLE_AXES[handle.removeprefix("balance_")]
+                return handle, (axis + "_balance",)
             if geometry.contains(box["scope"], point):
                 return "scope", ("source_x", "source_y")
         elif geometry.contains(box["peak"], point):
@@ -333,8 +340,13 @@ class Interaction:
             values = self._control_values(mode, node, fields) if fields else ()
         if mode in _APPEARANCE_CONTROLS:
             rect = box["appearance"]
+        elif mode.startswith("balance_"):
+            linear = self.callbacks.linear_settings(node)
+            positions = geometry.handle_positions(box["scope"], linear, box["scale"])
+            rails = geometry.balance_rails(box["scope"], positions, box["scale"])
+            rect = rails[mode.removeprefix("balance_")]
         else:
-            rect = box["scope"] if mode in AXIS_LABELS else box.get(mode, box["rect"])
+            rect = box["scope"] if mode in HANDLE_AXES else box.get(mode, box["rect"])
         resizing = mode.startswith("resize_")
         return _Drag(key, editor.binding(node), frame, mode, rect, origin, box["scale"],
                      fields, values, white,
@@ -399,7 +411,7 @@ class Interaction:
         if drag.white is not None:
             white = drag.white
             return white.model.move(white.linear, dx, dy, drag.rect[2])
-        if drag.mode in AXIS_LABELS:
+        if drag.mode in HANDLE_AXES:
             last = drag.origin if drag.last is None else drag.last
             start = self._control_values(drag.mode, node, drag.fields)
             drag.last = mouse
@@ -423,8 +435,13 @@ class Interaction:
             return (geometry.drag_tone_crossover(
                 drag.rect, tone_peak_j(self.callbacks.tone_settings(node)), drag.values[0], dy,
             ),)
+        if drag.mode.startswith("balance_"):
+            low, high = geometry.BALANCE_RANGE
+            sign = geometry.BALANCE_SIGNS[drag.mode.removeprefix("balance_")]
+            value = drag.values[0] + sign * dy / drag.rect[3] * (high - low)
+            return (min(high, max(low, value)),)
         lo, hi = SLIDER_RANGES[drag.mode]
-        vertical = (drag.mode in ("cr_balance", "fit")
+        vertical = (drag.mode == "fit"
                     or drag.mode == "exposure" and self.editors[drag.key].stage == "LINEAR")
         delta = dy / drag.rect[3] if vertical else dx / drag.rect[2]
         return (min(hi, max(lo, drag.values[0] + delta * (hi - lo))),)
@@ -453,9 +470,12 @@ class Interaction:
         else:
             if drag.mode == "curve":
                 tone = self.callbacks.tone_settings(node)
-                index = TONE_LEVEL_FIELDS.index(drag.fields[0])
-                target = tone_anchor_levels(tone_model(tone))[1][index]
-                values = (_j_to_nits(float(target), tone.reference_nits),)
+                if drag.fields[0] == "input_highlights":
+                    values = (tone.peak_nits,)
+                else:
+                    index = TONE_LEVEL_FIELDS.index(drag.fields[0])
+                    target = tone_anchor_levels(tone_model(tone))[1][index]
+                    values = (_j_to_nits(float(target), tone.reference_nits),)
             elif drag.mode == "fit" or drag.mode in _APPEARANCE_CONTROLS:
                 values = (TONE_DEFAULTS[drag.mode],)
             elif drag.white is not None:
@@ -532,9 +552,12 @@ class Interaction:
                 preferences.sizes[preferences.stage] = size
                 area.tag_redraw()
             elif drag.fields:
-                distance = (abs(mouse[0] - drag.origin[0])
-                            if drag.mode in geometry.APPEARANCE_GAIN_FIELDS
-                            else math.dist(mouse, drag.origin))
+                if drag.mode.startswith("balance_"):
+                    distance = abs(mouse[1] - drag.origin[1])
+                elif drag.mode in geometry.APPEARANCE_GAIN_FIELDS:
+                    distance = abs(mouse[0] - drag.origin[0])
+                else:
+                    distance = math.dist(mouse, drag.origin)
                 if drag.token is not None or distance >= 3 * drag.scale:
                     self._edit_drag(drag, node, self._drag_values(drag, node, mouse))
             if releasing and self.drags.pop(window_key, None) is drag:

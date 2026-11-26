@@ -3,6 +3,7 @@
 import importlib
 from functools import partial
 from importlib.resources import files
+from itertools import combinations
 import math
 import numpy as np
 from pathlib import Path
@@ -31,18 +32,18 @@ class GizmoGeometryTests(unittest.TestCase):
         cls.display = importlib.import_module(package_name + ".features.vectorscope.display")
         cls.settings = importlib.import_module(package_name + ".kernel.settings")
 
-    def test_linear_layout_has_scope_and_three_rails(self):
+    def test_linear_layout_has_scope_and_exposure_rail(self):
         box = self.geometry.layout("LINEAR", 1200, 900, 1.0)
         self.assertIsNotNone(box)
-        for name in ("scope", "exposure", "cr_balance", "yb_balance"):
+        for name in ("scope", "exposure"):
             self.assertIn(name, box)
+        self.assertNotIn("cr_balance", box)
+        self.assertNotIn("yb_balance", box)
         x, y, side, height = box["scope"]
         self.assertEqual(side, height)
         self.assertEqual(side, self.geometry.DEFAULT_LINEAR_SIZE)
         self.assertTrue(self.geometry.contains(box["scope"], (x + 1, y + 1)))
         self.assertLess(box["exposure"][0] + box["exposure"][2], x)
-        self.assertGreater(box["cr_balance"][0], x + side)
-        self.assertLess(box["yb_balance"][1] + box["yb_balance"][3], y)
 
     def test_tone_layout_has_side_by_side_plots_and_edge_controls(self):
         for width, height, scale in ((1200, 900, 1.), (304, 256, 1.), (608, 512, 2.)):
@@ -55,10 +56,10 @@ class GizmoGeometryTests(unittest.TestCase):
                 appearance, curve = box["appearance"], box["curve"]
                 self.assertNotIn("before", box)
                 self.assertNotIn("after", box)
-                self.assertAlmostEqual(appearance[2], 2 * appearance[3])
+                self.assertEqual(appearance[3], curve[3])
                 self.assertGreaterEqual(appearance[0], box["rect"][0])
-                self.assertLess(appearance[0] + appearance[2], curve[0])
-                self.assertAlmostEqual(appearance[1] + appearance[3], curve[1] + curve[3])
+                self.assertEqual(appearance[1], curve[1])
+                self.assertAlmostEqual(curve[0] - appearance[0] - appearance[2], 34 * scale)
                 self.assertGreaterEqual(curve[2], 84 * scale)
                 self.assertGreaterEqual(curve[3], 74 * scale)
 
@@ -201,8 +202,8 @@ class GizmoGeometryTests(unittest.TestCase):
                     rect, self.geometry.tone_peak_j(tone), tone.tone_crossover,
                 )
                 strips = self.geometry.appearance_gain_strips(rect, tone_y, scale)
-                self.assertEqual(strips["shadow_chroma"][3], 5 * scale)
-                self.assertEqual(strips["highlight_chroma"][3], 5 * scale)
+                self.assertAlmostEqual(strips["shadow_chroma"][3], plot_height * .12)
+                self.assertAlmostEqual(strips["highlight_chroma"][3], plot_height * .12)
                 guide_clearance = 6 * scale
                 body_y = max(
                     (y + plot_height * .25, y + plot_height * .75),
@@ -216,15 +217,15 @@ class GizmoGeometryTests(unittest.TestCase):
                                  "vivid_gain")
 
                 # Moving vertically through the plot body preserves the horizontal selection.
-                right_body = (vivid[0], y + plot_height - 6 * scale)
+                right_body = (vivid[0], y + plot_height * .85)
                 self.assertEqual(self.geometry.appearance_control_at(rect, tone, right_body, scale),
                                  "vivid_gain")
-                top_strip = (vivid[0], y + plot_height - 2 * scale)
+                top_strip = (vivid[0], y + plot_height * .9)
                 self.assertEqual(
                     self.geometry.appearance_control_at(rect, tone, top_strip, scale),
                     "highlight_chroma",
                 )
-                bottom_strip = (muted[0], y + 2 * scale)
+                bottom_strip = (muted[0], y + plot_height * .1)
                 self.assertEqual(
                     self.geometry.appearance_control_at(rect, tone, bottom_strip, scale),
                     "shadow_chroma",
@@ -254,7 +255,8 @@ class GizmoGeometryTests(unittest.TestCase):
         x, y, width, height = rect
         peak_j = self.geometry.tone_peak_j(tone)
         trace = self.appearance_scope.analyze([[[75., 5., 5., 1.]]], peak_j)
-        state = SimpleNamespace(appearance=trace, appearance_status="current")
+        state = SimpleNamespace(appearance=trace, appearance_status="current",
+                                tone_histogram=None)
         draw = Mock()
         display = self.display
         colors = display._PALETTE
@@ -268,6 +270,9 @@ class GizmoGeometryTests(unittest.TestCase):
                          ((x, y, width * .5, height), colors["plot_highlight"]))
         self.assertGreater(colors["plot_highlight"][0], colors["plot"][0])
         self.assertEqual(colors["plot_highlight"][3], 1.)
+        edge_indicators = [call.args for call in draw.lines.call_args_list
+                           if call.args[1] == (*colors["text"][:3], .42)]
+        self.assertEqual(edge_indicators, [])
         names = [call[0] for call in draw.mock_calls]
         self.assertLess(names.index("fill", 1), names.index("lines"))
         self.assertLess(names.index("lines"), names.index("trace"))
@@ -296,6 +301,61 @@ class GizmoGeometryTests(unittest.TestCase):
                           if call.args[1][:3] == colors["orange"][:3])
         self.assertEqual(horizontal[:4], [(x, tone_y), (x + 5., tone_y),
                                            (x + 10., tone_y), (x + 15., tone_y)])
+
+        appearance_title = next(
+            call.args for call in draw.text.call_args_list
+            if call.args[0] == "Appearance Distribution"
+        )
+        with (patch.multiple(display, _fill=draw.fill, _lines=draw.lines,
+                             _circle=draw.circle, _text=draw.text,
+                             _draw_appearance=Mock(), _draw_tone_curve=Mock(),
+                             _slider=Mock()),
+              patch.object(display.localization, "tr", partial(display.localization.tr, locale="en"))):
+            display._draw_tone(box, None, "grade", self.settings.LinearSettings(),
+                                tone, None, None)
+        tone_title = next(
+            call.args for call in draw.text.call_args_list
+            if call.args[0] == "Tone Curve"
+        )
+        self.assertEqual(appearance_title[3], tone_title[3])
+        self.assertEqual(tone_title[3], 10 * box["scale"])
+
+    def test_linear_guides_use_half_opacity_orange_and_neutral_skin_line(self):
+        rect = self.geometry.layout("LINEAR", 1200, 900)["scope"]
+        center = (rect[0] + rect[2] * .5, rect[1] + rect[3] * .5)
+        targets = self.geometry.scope_targets(rect)
+        colors = self.display._PALETTE
+        lines, circles, labels = Mock(), Mock(), Mock()
+        with patch.multiple(self.display, _lines=lines, _circle=circles, _text=labels):
+            self.display._guides(rect, 1.)
+
+        orange_half = (*colors["orange"][:3], .5)
+        rings = [call.args for call in circles.call_args_list
+                 if call.args[1] == rect[2] * .5]
+        self.assertEqual(len(rings), 1)
+        self.assertEqual(rings[0][2], orange_half)
+        self.assertEqual(rings[0][3], 1.)
+
+        for label, point in targets.items():
+            with self.subTest(target=label):
+                target = next(
+                    call.args for call in lines.call_args_list
+                    if call.kwargs.get("cache") == ("target", rect, 1., label)
+                )
+                self.assertEqual(target[1], orange_half)
+                text_call = next(call.args for call in labels.call_args_list
+                                 if call.args[0] == label)
+                self.assertEqual(text_call[4], orange_half)
+                self.assertFalse(any(
+                    tuple(call.args[0]) == (center, point)
+                    for call in lines.call_args_list
+                    if isinstance(call.args[0], tuple)
+                ), f"Unexpected center-to-{label} target segment")
+
+        skin = next(call.args for call in lines.call_args_list
+                    if call.args[1] == (*colors["reference"][:3], .32))
+        self.assertEqual(skin[0][0], center)
+        self.assertEqual(skin[2], 1.)
 
     def test_appearance_gain_drag_and_prepared_tone_accept_full_stop_range(self):
         rect = (0., 0., 200., 100.)
@@ -370,14 +430,40 @@ class GizmoGeometryTests(unittest.TestCase):
         self.assertEqual(linear["size"], 300.)
         self.assertEqual(tone["size"], (500., 340.))
 
-    def test_targets_and_handles_start_at_red_and_blue_targets(self):
+    def test_targets_and_handles_start_at_all_four_targets(self):
         box = self.geometry.layout("LINEAR", 1200, 900)
         targets = self.geometry.scope_targets(box["scope"])
         settings = self.settings.LinearSettings()
         handles = self.geometry.handle_positions(box["scope"], settings)
-        for axis, target in (("cr", targets["R"]), ("yb", targets["B"])):
-            self.assertAlmostEqual(handles[axis][0], target[0], places=6)
-            self.assertAlmostEqual(handles[axis][1], target[1], places=6)
+        self.assertEqual(set(handles), {"R", "C", "B", "Y"})
+        for label, position in handles.items():
+            np.testing.assert_allclose(position, targets[label], rtol=0., atol=1e-6)
+
+    def test_balance_rails_are_available_for_each_color_handle(self):
+        box = self.geometry.layout("LINEAR", 1200, 900)
+        positions = self.geometry.handle_positions(box["scope"], self.settings.LinearSettings())
+        rails = self.geometry.balance_rails(box["scope"], positions, box["scale"])
+        self.assertEqual(set(rails), {"R", "C", "B", "Y"})
+        for label, rect in rails.items():
+            self.assertGreater(rect[2], 0.)
+            self.assertGreater(rect[3], rect[2])
+            self.assertLessEqual(rect[3], box["scope"][3] * .24)
+            point = (rect[0] + rect[2] * .5, rect[1] + rect[3] * .5)
+            self.assertEqual(
+                self.geometry.linear_handle_at(positions, rails, point, box["scale"]),
+                "balance_" + label,
+            )
+            self.assertEqual(
+                self.geometry.linear_handle_at(positions, rails, positions[label], box["scale"]),
+                label,
+            )
+
+    def test_handle_balance_uses_opposite_signs_on_each_axis(self):
+        settings = self.settings.LinearSettings(balance=(.75, -.5))
+        self.assertAlmostEqual(self.geometry.handle_balance(settings, "R"), -.75)
+        self.assertAlmostEqual(self.geometry.handle_balance(settings, "C"), .75)
+        self.assertAlmostEqual(self.geometry.handle_balance(settings, "B"), .5)
+        self.assertAlmostEqual(self.geometry.handle_balance(settings, "Y"), -.5)
 
     def test_clipped_handle_can_be_dragged_along_its_underlying_radius(self):
         scope = self.geometry.layout("LINEAR", 1200, 900)["scope"]
@@ -388,36 +474,46 @@ class GizmoGeometryTests(unittest.TestCase):
         for point in handles.values():
             self.assertAlmostEqual(math.dist(point, center), radius)
 
-        red = handles["cr"]
+        red = handles["R"]
         dx, dy = (red[0] - center[0]) * -.2, (red[1] - center[1]) * -.2
-        spread, heading = self.geometry.drag_handle(scope, "cr", 150., 0., dx, dy)
+        spread, heading = self.geometry.drag_handle(scope, "R", 150., 0., dx, dy)
         self.assertLess(spread, 150.)
         self.assertAlmostEqual(heading, 0.)
         after = self.settings.LinearSettings(spread=(spread, 150.), heading=(heading, 0.))
-        moved = self.geometry.handle_positions(scope, after)["cr"]
+        moved = self.geometry.handle_positions(scope, after)["R"]
         self.assertAlmostEqual(math.dist(moved, red), 0.)
 
-        spread, heading = self.geometry.drag_handle(scope, "cr", spread, heading, 30 * dx, 30 * dy)
+        spread, heading = self.geometry.drag_handle(scope, "R", spread, heading, 30 * dx, 30 * dy)
         after = self.settings.LinearSettings(spread=(spread, 150.), heading=(heading, 0.))
-        self.assertLess(math.dist(self.geometry.handle_positions(scope, after)["cr"], center),
+        self.assertLess(math.dist(self.geometry.handle_positions(scope, after)["R"], center),
                         radius)
 
-    def test_handle_drag_updates_heading_with_tangential_motion(self):
+    def test_handle_drag_updates_shared_heading_with_tangential_motion(self):
         scope = self.geometry.layout("LINEAR", 1200, 900)["scope"]
         radius = scope[2] / 2
         center = (scope[0] + radius, scope[1] + radius)
-        blue = self.geometry.scope_targets(scope)["B"]
-        spread, heading = self.geometry.drag_handle(
-            scope, "yb", 0., 0., -(blue[1] - center[1]), blue[0] - center[0],
-        )
-        self.assertAlmostEqual(spread, 0.)
-        self.assertAlmostEqual(heading, math.degrees(1.))
+        before = self.geometry.handle_positions(scope, self.settings.LinearSettings())
+        for label, opposite in (("B", "Y"), ("Y", "B")):
+            with self.subTest(handle=label):
+                x, y = before[label]
+                spread, heading = self.geometry.drag_handle(
+                    scope, label, 0., 0., -(y - center[1]), x - center[0],
+                )
+                self.assertAlmostEqual(spread, 0.)
+                self.assertAlmostEqual(heading, math.degrees(1.))
+                after = self.geometry.handle_positions(
+                    scope, self.settings.LinearSettings(heading=(0., heading)),
+                )
+                self.assertNotEqual(after[opposite], before[opposite])
+                self.assertEqual(after["R"], before["R"])
+                self.assertEqual(after["C"], before["C"])
 
     def test_collapsed_handles_have_distinct_hit_locations(self):
         scope = self.geometry.layout("LINEAR", 1200, 900)["scope"]
         settings = self.settings.LinearSettings(spread=(-100., -100.))
         handles = self.geometry.handle_positions(scope, settings)
-        self.assertGreaterEqual(math.dist(handles["cr"], handles["yb"]), 12.)
+        for first, second in combinations(handles.values(), 2):
+            self.assertGreaterEqual(math.dist(first, second), 12.)
 
     def test_small_regions_have_no_gizmo_layout(self):
         for stage in ("LINEAR", "TONE"):

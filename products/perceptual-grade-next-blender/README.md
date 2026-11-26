@@ -309,12 +309,12 @@ The native regression pauses a real compositor worker, verifies that both banks
 and the selector stay unchanged during the lease, then checks that publication
 uses the same two image identities after the reader exits. It also verifies
 intermediate Viewer output and final-value convergence during a CPU Compositor
-slider drag. The drag regression exercises Exposure, CR Balance, and Tone Fit at
-a requested 277 Hz in both editors, using bounded motion that avoids slider
-endpoints:
+slider drag. The dedicated vectorscope acceptance covers Exposure, the paired
+Red/Cyan and Blue/Yellow balance rails, Tone Fit, and selected-peak reset
+behavior:
 
 ```sh
-buck2 test --remote-only //products/perceptual-grade-next-blender/tests:banked_publication_gui
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:vectorscope_native
 ```
 
 The default native fixtures are 128 × 96. Linux software-GPU results do not establish
