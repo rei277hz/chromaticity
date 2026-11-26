@@ -1,4 +1,4 @@
-"""Native WM events exercise the persistent picker and unrelated undo dispatch."""
+"""Exercise native picker input and Image Editor preview in separate scenarios."""
 import importlib
 import json
 import os
@@ -8,15 +8,20 @@ import time
 import traceback
 
 import bpy
+from mathutils import Color
+import numpy as np
 
 
-repository, report_path = map(Path, sys.argv[sys.argv.index('--') + 1:])
+repository_path, report_file, scenario_name = sys.argv[sys.argv.index('--') + 1:]
+repository, report_path = Path(repository_path), Path(report_file)
 bpy.context.preferences.extensions.repos.new(
     name='Component package acceptance', module='picker_tests', custom_directory=str(repository))
 bpy.context.preferences.view.show_splash = False
 bpy.context.preferences.edit.use_global_undo = True
 picker = importlib.import_module('bl_ext.picker_tests.hdr_color_picker')
 picker.register()
+from bl_ext.picker_tests.hdr_color_picker.hdr_color_picker_blender import display, registered_session
+
 report = {'passed': False, 'events': []}
 started = time.monotonic()
 _PROBE = 'hdr_picker_native_undo_probe'
@@ -30,9 +35,6 @@ class HDRPICKERTEST_OT_scene_edit(bpy.types.Operator):
     def execute(self, context):
         context.scene[_PROBE] += 1
         return {'FINISHED'}
-
-
-bpy.utils.register_class(HDRPICKERTEST_OT_scene_edit)
 
 
 def record(event):
@@ -90,7 +92,7 @@ def undo_key(*, redo=False):
     yield from turns()
 
 
-def scenario():
+def prepare_paint():
     window, area, region = viewport()
     with bpy.context.temp_override(window=window, area=area, region=region):
         bpy.ops.object.grease_pencil_add(type='EMPTY')
@@ -100,6 +102,13 @@ def scenario():
         area.spaces.active.show_gizmo = True
         settings().visible = True
         settings().lightness, settings().x, settings().y = .8, .4, .4
+    return window, area, region
+
+
+def gizmo_scenario():
+    window, area, region = prepare_paint()
+    bpy.utils.register_class(HDRPICKERTEST_OT_scene_edit)
+    with bpy.context.temp_override(window=window, area=area, region=region):
         original = brush_color()
         bpy.context.scene[_PROBE] = 0
         bpy.ops.ed.undo_push(message='HDR picker baseline')
@@ -111,7 +120,6 @@ def scenario():
     del keymap
     # Give the real viewport time to compile/draw and register gizmo hit testing.
     yield from turns(40)
-    from bl_ext.picker_tests.hdr_color_picker.hdr_color_picker_blender import registered_session
     assert registered_session().current_controller() is not None, 'Viewport never drew the picker'
     assert not registered_session().current_controller().message, registered_session().current_controller().message
     emit('MOUSEMOVE')
@@ -159,22 +167,98 @@ def scenario():
     settings().visible = False
     assert registered_session().current_controller().arena.physical_counts() == (0, 0)
     record('hide_released_preview')
+    bpy.utils.unregister_class(HDRPICKERTEST_OT_scene_edit)
 
 
-sequence = scenario()
+def preview_scenario():
+    window, area, region = prepare_paint()
+    paint_scene = window.scene
+    controller = registered_session().controller()
+    native = controller.native_preview
+    windows_before = len(bpy.context.window_manager.windows)
+    images_before = {image.session_uid for image in bpy.data.images}
+    devices = tuple(display._ocio().GetCurrentConfig().getDisplays())
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        bpy.ops.wm.set_working_color_space(working_space='ACEScg')
+        settings().x = settings().y = .5
+        assert bpy.ops.hdr_color_picker.confirm() == {'FINISHED'}
+        committed = brush_color()
+        assert max(committed) > 1
+        for device in devices:
+            paint_scene.display_settings.display_device = device
+            paint_scene.view_settings.view_transform = 'Standard'
+            assert bpy.ops.hdr_color_picker.confirm() == {'FINISHED'}, device
+            np.testing.assert_allclose(brush_color(), committed, atol=1e-6, rtol=0)
+        if 'Rec.2100-HLG' in devices:
+            paint_scene.display_settings.display_device = 'Rec.2100-HLG'
+            paint_scene.view_settings.view_transform = 'Standard'
+        assert bpy.ops.hdr_color_picker.open_native_preview() == {'FINISHED'}
+    record('all_display_devices_committed_same_hdr_color')
+
+    def preview_image():
+        target = native.target(bpy.context.window_manager)
+        return target[1].spaces.active.image if target is not None else None
+
+    def check_pixels(working_space):
+        image = preview_image()
+        assert image.colorspace_settings.name == working_space
+        expected = controller.slice_pixels[::-1].copy()
+        sample = expected[expected.shape[0] // 2, expected.shape[1] // 2]
+        actual = np.asarray(image.pixels[:]).reshape(expected.shape)
+        np.testing.assert_array_equal(actual[..., 3], expected[..., 3])
+        color = Color(sample[:3]).from_acescg_to_scene_linear()
+        np.testing.assert_allclose(actual[expected.shape[0] // 2, expected.shape[1] // 2, :3],
+                                   tuple(color), atol=1e-5, rtol=1e-5)
+
+    yield from wait_for(preview_image, 'The native Image Editor never received a float preview')
+    assert len(bpy.context.window_manager.windows) == windows_before + 1
+    image = preview_image()
+    assert image.source == 'FILE' and image.is_float and image.use_view_as_render
+    assert not image.is_dirty
+    path = Path(image.filepath)
+    assert path.is_file() and max(image.pixels[:]) > 1
+    check_pixels('ACEScg')
+    first_uid = image.session_uid
+    first_peak = max(image.pixels[:])
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.hdr_color_picker.open_native_preview() == {'FINISHED'}
+        area.spaces.active.show_gizmo = False
+        settings().lightness = .9
+    yield from wait_for(
+        lambda: preview_image() is not None and max(preview_image().pixels[:]) > first_peak,
+        'Native preview did not refresh after lightness changed')
+    assert len(bpy.context.window_manager.windows) == windows_before + 1
+    assert preview_image().session_uid == first_uid
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        bpy.ops.wm.set_working_color_space(working_space='Linear Rec.709')
+    yield from wait_for(
+        lambda: preview_image() is not None and
+        preview_image().colorspace_settings.name == 'Linear Rec.709',
+        'Native preview did not refresh after the working space changed')
+    check_pixels('Linear Rec.709')
+    del image
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        bpy.ops.wm.save_as_mainfile(filepath=str(report_path.parent / 'preview-cleanup.blend'), copy=True)
+    yield from wait_for(lambda: len(bpy.context.window_manager.windows) == windows_before,
+                        'Saving did not close the temporary preview window')
+    assert {image.session_uid for image in bpy.data.images} == images_before
+    assert not path.exists()
+    record('native_preview_reused_and_cleaned_on_save')
+
+
+sequence = {'gizmo': gizmo_scenario, 'native_preview': preview_scenario}[scenario_name]()
 
 
 def advance():
     try:
         if time.monotonic() - started > 120:
-            raise TimeoutError('Native gizmo scenario exceeded two minutes')
+            raise TimeoutError(f'{scenario_name} scenario exceeded two minutes')
         if getattr(bpy.context.window_manager, 'is_event_handling_break', False):
             return .025
         next(sequence)
         return .025
     except StopIteration:
         picker.unregister()
-        bpy.utils.unregister_class(HDRPICKERTEST_OT_scene_edit)
         report['passed'] = True
         record('complete')
         bpy.ops.wm.quit_blender('EXEC_DEFAULT')
@@ -182,7 +266,9 @@ def advance():
     except BaseException:
         report['error'] = traceback.format_exc()
         report['mode'] = bpy.context.mode
-        report['color'] = brush_color()
+        paint = bpy.context.tool_settings.gpencil_paint
+        if paint is not None and paint.brush is not None:
+            report['color'] = tuple(paint.brush.color)
         report['settings'] = (settings().x, settings().y)
         record('failed')
         print(json.dumps(report), file=sys.stderr, flush=True)

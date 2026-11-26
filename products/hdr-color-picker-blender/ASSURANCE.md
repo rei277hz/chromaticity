@@ -7,12 +7,12 @@ App. Shared source does not create shared live state. See
 The picker uses handwritten Python policies for attempt, GPU health, retry,
 startup and ownership, plus shared lifecycle and execution coordinators.
 Owner-local `.inv` requirements are proved against those sources with Z3. Shared
-actor-owned Stores validate admitted inputs and generated runtime contracts;
-the Blender adapter retains exact App/Store identities and physical retirement.
+actor-owned Stores validate typed inputs and results. The Blender adapter
+retains exact App/Store identities and tracks physical retirement.
 Native observations remain explicit premises with separate integration checks.
 
 Packaging checks the final ZIP inventory and exact bytes against declared source
-inputs and requires proofs bound to the shipped policies and generated contracts.
+inputs and requires proofs bound to the shipped policy sources.
 Unsafe paths, destination conflicts, missing or altered source members,
 and build/proof payloads reject the archive. The ZIP contains private dependency
 packages and product resources. The picker has no runtime JSON resources.
@@ -28,10 +28,10 @@ Python finalizer scheduling and Blender internals remain beyond those finite
 tests. The retained Grade Lean color-model theorems do not certify the picker's
 different color model.
 
-The former INVARIANT/Z3 machine proofs, receipts and unfinished Rocq migration
-are historical material in the external `perceptual-grade-proof-archive`
-directory beside the repository. They are not inputs to current packages and
-do not certify the current Python.
+The picker ships the Blender host's private actor runtime. Its lifecycle
+coordinator runs the policy in `blender_runtime/coordinators/lifecycle.py`.
+The packager checks the source-bound proof for that coordinator. The standalone
+lifecycle example in the verifier library has a separate model and proof.
 
 ```sh
 buck2 test //tools/verification/tests:archive //products/hdr-color-picker-blender/tests:packaging

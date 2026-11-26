@@ -21,11 +21,14 @@ class SliceIdentity:
 class Controller:
     def __init__(self, app):
         from .gpu import Renderer
+        from .native_preview import NativePreview
         self.app = app
         self.arena = app.ownership.arena()
         self.renderer = Renderer()
+        self.native_preview = NativePreview()
         self.closed = False
         self.texture_ref = None
+        self.slice_pixels = None
         self.view = None
         self.identity = None
         self.pending = None
@@ -37,6 +40,7 @@ class Controller:
     def reset(self):
         if self.closed:
             return
+        self.native_preview.close()
         self.renderer.reset()
         if self.pending is not None:
             self.pending.cancel()
@@ -46,6 +50,7 @@ class Controller:
         self.view = None
         self.identity = None
         self.texture_ref = None
+        self.slice_pixels = None
         self.arena.begin()
         self.arena.native_replaced()
         self.arena.recovered(self.arena.state.token)
@@ -54,12 +59,12 @@ class Controller:
         self.view_failure = None
         self.message = ''
 
-    def require_view(self, scene):
+    def require_view(self, scene, window=None):
         """Prepare the real presentation before admitting interaction or writes."""
         self.app.require_open()
         if self.app.lifecycle is not None and self.app.lifecycle.state.phase != 'active':
             raise display.DisplayUnavailable('Picker resources require recovery')
-        key = display.signature(scene)
+        key = display.signature(scene, window)
         if self.view_failure is not None and self.view_failure[0] == key:
             raise display.DisplayUnavailable(self.view_failure[1])
         if self.view is not None and self.view.identity == key:
@@ -69,8 +74,8 @@ class Controller:
         self.view = None
         view = None
         try:
-            view = display.processor(scene)
-            view.gpu()
+            view = display.processor(scene, window)
+            view.gpu(viewport_overlay=True)
         except Exception as exc:
             if view is not None:
                 view.close()
@@ -81,19 +86,20 @@ class Controller:
         self.view_failure = None
         return view
 
-    def update(self, scene, settings):
+    def update(self, scene, settings, window=None):
         self.app.drain_finalizers()
-        view_key = display.signature(scene)
+        view_key = display.signature(scene, window)
         identity = SliceIdentity(float(settings.lightness), bool(settings.full_rec2020))
         if self.failure == (view_key, identity):
             return False
-        self.require_view(scene)
+        self.require_view(scene, window)
         if identity != self.identity:
             if self.pending is not None:
                 self.pending.cancel()
             self.pending = None
             self.identity = identity
             self.texture_ref = None
+            self.slice_pixels = None
             if not self.gpu_failed:
                 try:
                     self._upload(self.renderer.render_slice(**identity.inputs()))
@@ -117,14 +123,37 @@ class Controller:
     def _upload(self, rgba):
         import gpu
         # Model rows run top to bottom; GPU texture origin runs bottom to top.
-        rgba = np.ascontiguousarray(rgba[::-1], dtype=np.float32)
-        texture = gpu.types.GPUTexture((rgba.shape[1], rgba.shape[0]), format='RGBA32F',
-                                      data=gpu.types.Buffer('FLOAT', rgba.shape, rgba))
+        pixels = np.ascontiguousarray(rgba[::-1], dtype=np.float32)
+        texture = gpu.types.GPUTexture((pixels.shape[1], pixels.shape[0]), format='RGBA32F',
+                                      data=gpu.types.Buffer('FLOAT', pixels.shape, pixels))
         self.texture_ref = self.arena.retain(texture, 'picker.slice')
+        self.slice_pixels = rgba
 
-    def draw(self, scene, settings, origin, size):
+    def open_native_preview(self, context, settings):
+        self.require_view(context.scene, context.window)
+        self.native_preview.open(context)
+        self.update_native_preview(context.window_manager, settings)
+
+    def update_native_preview(self, window_manager, settings):
+        target = self.native_preview.target(window_manager)
+        pixels = working_space = error = None
+        if target is not None:
+            window, _ = target
+            try:
+                # A native preview can stay open while the painting gizmo is hidden
+                # or another scene's viewport was the most recent one to draw.
+                if self.update(window.scene, settings, window):
+                    working_space = self.view.identity.working_space
+                    pixels = self.slice_pixels
+                else:
+                    error = self.message
+            except Exception as exc:
+                error = str(exc)
+        self.native_preview.update(window_manager, working_space, pixels, error)
+
+    def draw(self, scene, settings, origin, size, window=None):
         try:
-            if not self.update(scene, settings):
+            if not self.update(scene, settings, window):
                 return False
             texture = self.arena.resolve(self.texture_ref)
             if texture is not None:
@@ -132,14 +161,14 @@ class Controller:
                 previous = gpu.state.blend_get()
                 try:
                     gpu.state.blend_set('ALPHA')
-                    self.view.gpu().draw(texture, origin, size, viewport_overlay=True)
+                    self.view.gpu(viewport_overlay=True).draw(texture, origin, size)
                 finally:
                     gpu.state.blend_set(previous)
                 return True
         except Exception as exc:
             self.message = str(exc)
             try:
-                self.failure = (display.signature(scene),
+                self.failure = (display.signature(scene, window),
                                 SliceIdentity(float(settings.lightness), bool(settings.full_rec2020)))
             except Exception:
                 self.failure = None
@@ -147,6 +176,7 @@ class Controller:
                 self.pending.cancel()
                 self.pending = None
             self.texture_ref = None
+            self.slice_pixels = None
             self.identity = None
         return False
 
@@ -160,5 +190,6 @@ class Controller:
             # abandon the exact arena needed for terminal App cleanup.
             self.renderer.reset()
             self.view = self.texture_ref = self.pending = None
+            self.slice_pixels = None
             self.arena.close()
             self.closed = True

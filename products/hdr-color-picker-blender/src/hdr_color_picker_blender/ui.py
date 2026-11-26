@@ -6,12 +6,15 @@ from . import brush, display
 from .. import hdr_color_picker_core as model
 
 _PROPERTY = 'hdr_color_picker_settings'
+_BOUNDARIES = ('undo_pre', 'redo_pre', 'load_pre')
 
 
 from types import SimpleNamespace
 
 
 def create_ui(session):
+    native_marker = None
+
     def _settings(context):
         return getattr(context.window_manager, _PROPERTY)
 
@@ -21,6 +24,11 @@ def create_ui(session):
             for area in context.screen.areas:
                 if area.type == 'VIEW_3D':
                     area.tag_redraw()
+        controller = session.current_controller()
+        if controller is not None:
+            target = controller.native_preview.target(context.window_manager)
+            if target is not None:
+                target[1].tag_redraw()
 
 
     def _visibility(self, context):
@@ -62,11 +70,31 @@ def create_ui(session):
             settings = _settings(context)
             try:
                 # Fidelity is a gate for both interaction and writing.
-                session.controller().require_view(context.scene)
+                session.controller().require_view(context.scene, context.window)
                 pick = model.evaluate(settings.lightness, settings.x, settings.y, settings.full_rec2020)
                 if not pick.valid:
                     raise brush.BrushUnavailable('Choose a color inside the authoring gamut')
                 brush.commit(context, brush.capture(context), pick.acescg)
+            except (brush.BrushUnavailable, display.DisplayUnavailable) as exc:
+                self.report({'WARNING'}, str(exc))
+                return {'CANCELLED'}
+            return {'FINISHED'}
+
+
+    class HDRPICKER_OT_open_native_preview(bpy.types.Operator):
+        bl_idname = 'hdr_color_picker.open_native_preview'
+        bl_label = 'Open Native Preview'
+        bl_description = 'Open a float Image Editor preview with Blender color management'
+
+        @classmethod
+        def poll(cls, context):
+            return _applicable(context)
+
+        def execute(self, context):
+            settings = _settings(context)
+            settings.visible = True
+            try:
+                session.controller().open_native_preview(context, settings)
             except (brush.BrushUnavailable, display.DisplayUnavailable) as exc:
                 self.report({'WARNING'}, str(exc))
                 return {'CANCELLED'}
@@ -107,20 +135,12 @@ def create_ui(session):
 
         def draw(self, context):
             settings = _settings(context)
-            if not session.controller().draw(context.scene, settings, self._origin, self._size):
+            if not session.controller().draw(context.scene, settings, self._origin, self._size,
+                                             context.window):
                 return
-            # Selected coordinate marker uses the ordinary UI shader; the slice
-            # itself always uses the active scene display processor.
-            import gpu
-            from gpu_extras.batch import batch_for_shader
             x = self._origin[0] + settings.x*self._size[0]
             y = self._origin[1] + settings.y*self._size[1]
-            shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-            vertices = [(x-7,y), (x+7,y), (x,y-7), (x,y+7)]
-            batch = batch_for_shader(shader, 'LINES', {'pos': vertices})
-            shader.bind()
-            shader.uniform_float('color', (1,1,1,1))
-            batch.draw(shader)
+            _crosshair(x, y)
 
         def test_select(self, context, location):
             x, y = location
@@ -142,8 +162,8 @@ def create_ui(session):
             self._active = False
             try:
                 self._brush = brush.capture(context)
-                self._view = display.signature(context.scene)
-                session.controller().require_view(context.scene)
+                self._view = display.signature(context.scene, context.window)
+                session.controller().require_view(context.scene, context.window)
             except (brush.BrushUnavailable, display.DisplayUnavailable):
                 return {'CANCELLED'}
             self._active = True
@@ -152,7 +172,8 @@ def create_ui(session):
 
         def modal(self, context, event, tweak):
             try:
-                if brush.capture(context) != self._brush or display.signature(context.scene) != self._view:
+                if (brush.capture(context) != self._brush
+                        or display.signature(context.scene, context.window) != self._view):
                     return {'CANCELLED'}
             except (brush.BrushUnavailable, display.DisplayUnavailable):
                 return {'CANCELLED'}
@@ -168,7 +189,8 @@ def create_ui(session):
                 settings.x, settings.y = self._initial
             else:
                 try:
-                    if brush.capture(context) != self._brush or display.signature(context.scene) != self._view:
+                    if (brush.capture(context) != self._brush
+                            or display.signature(context.scene, context.window) != self._view):
                         return
                     bpy.ops.hdr_color_picker.confirm('EXEC_DEFAULT')
                 except (brush.BrushUnavailable, display.DisplayUnavailable):
@@ -206,6 +228,7 @@ def create_ui(session):
             row.prop(settings, 'x')
             row.prop(settings, 'y')
             layout.prop(settings, 'full_rec2020')
+            layout.operator('hdr_color_picker.open_native_preview')
             row = layout.row(align=True)
             for preset, label in [('WHITE','White'), ('BLACK','Black'), ('BRUSH','Brush')]:
                 row.operator('hdr_color_picker.preset', text=label).preset = preset
@@ -220,18 +243,57 @@ def create_ui(session):
             message = session.controller().message
             if message:
                 layout.label(text=message, icon='INFO')
+            controller = session.current_controller()
+            if controller is not None:
+                view = controller.view
+                if view is not None and (view.identity.display != 'sRGB' or context.window.support_hdr_color):
+                    layout.label(text='Viewport preview limited to SDR range', icon='INFO')
+                native_status = controller.native_preview.status(context.window_manager)
+                if native_status:
+                    layout.label(text=native_status, icon='INFO')
             if not _applicable(context):
                 layout.label(text='Use GP Draw in Color Attribute mode')
 
 
-    _CLASSES = (HDRPickerSettings, HDRPICKER_OT_confirm, HDRPICKER_OT_preset,
+    _CLASSES = (HDRPickerSettings, HDRPICKER_OT_confirm, HDRPICKER_OT_open_native_preview,
+                HDRPICKER_OT_preset,
                 HDRPICKER_GT_slice, HDRPICKER_GGT_picker, HDRPICKER_PT_panel)
     _registered = session.app.blender.registration
+
+
+    def _crosshair(x, y):
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        vertices = [(x-7, y), (x+7, y), (x, y-7), (x, y+7)]
+        batch = batch_for_shader(shader, 'LINES', {'pos': vertices})
+        shader.bind()
+        shader.uniform_float('color', (1, 1, 1, 1))
+        batch.draw(shader)
+
+
+    def _draw_native_marker():
+        context = bpy.context
+        controller = session.current_controller()
+        if controller is None:
+            return
+        target = controller.native_preview.target(context.window_manager)
+        if target is None or context.area != target[1] or context.space_data.image is None:
+            return
+        settings = _settings(context)
+        x, y = context.region.view2d.view_to_region(settings.x, settings.y, clip=False)
+        _crosshair(x, y)
 
 
     @persistent
     def _boundary(*args):
         session.reset()
+
+    @persistent
+    def _before_save(*args):
+        controller = session.current_controller()
+        if controller is not None:
+            controller.native_preview.close()
 
 
     def _tick():
@@ -253,21 +315,27 @@ def create_ui(session):
                                 with bpy.context.temp_override(window=window, area=area, region=region):
                                     if _applicable(bpy.context):
                                         areas.append(area)
-            if not areas:
+            if not areas and instance.native_preview.target(bpy.context.window_manager) is None:
                 instance.reset()
             for area in areas:
                 area.tag_redraw()
+        if instance is not None:
+            instance.update_native_preview(bpy.context.window_manager, _settings(bpy.context))
         return .1
 
 
     def register():
+        nonlocal native_marker
         try:
             for cls in _CLASSES:
                 _registered.register_class(cls)
             _registered.property(bpy.types.WindowManager, _PROPERTY,
                                  bpy.props.PointerProperty(type=HDRPickerSettings))
-            for name in ('undo_pre', 'redo_pre', 'load_pre'):
+            for name in _BOUNDARIES:
                 _registered.handler(getattr(bpy.app.handlers, name), _boundary)
+            _registered.handler(bpy.app.handlers.save_pre, _before_save)
+            native_marker = bpy.types.SpaceImageEditor.draw_handler_add(
+                _draw_native_marker, (), 'WINDOW', 'POST_PIXEL')
             _registered.timer(_tick, first_interval=.1, persistent=True)
         except Exception:
             session.close()
@@ -276,13 +344,20 @@ def create_ui(session):
 
 
     def stop():
+        nonlocal native_marker
+        if native_marker is not None:
+            bpy.types.SpaceImageEditor.draw_handler_remove(native_marker, 'WINDOW')
+            native_marker = None
         if bpy.app.timers.is_registered(_tick):
             bpy.app.timers.unregister(_tick)
-        for name in ('undo_pre', 'redo_pre', 'load_pre'):
+        if _before_save in bpy.app.handlers.save_pre:
+            bpy.app.handlers.save_pre.remove(_before_save)
+        for name in _BOUNDARIES:
             handlers = getattr(bpy.app.handlers, name)
             if _boundary in handlers:
                 handlers.remove(_boundary)
 
     return SimpleNamespace(classes=_CLASSES, register=register, stop=stop, tick=_tick,
                            HDRPickerSettings=HDRPickerSettings, HDRPICKER_GT_slice=HDRPICKER_GT_slice,
-                           HDRPICKER_OT_confirm=HDRPICKER_OT_confirm)
+                           HDRPICKER_OT_confirm=HDRPICKER_OT_confirm,
+                           HDRPICKER_OT_open_native_preview=HDRPICKER_OT_open_native_preview)

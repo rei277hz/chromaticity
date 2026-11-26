@@ -15,6 +15,41 @@ NATIVE_RESOURCES = {
     "gui_display.py": "//products/perceptual-grade-blender/tests/installed:gui_display_source",
 }
 
+# The display and native preview checks install the picker on its own.
+PICKER_TEST_HOST = {
+    name: NATIVE_RESOURCES[name]
+    for name in ["blender", "hdr_color_picker.zip", "gui_display.py"]
+}
+DISPLAY_RESOURCES = PICKER_TEST_HOST | {
+    "native_runner.py": "native_runner.py",
+    "test_display_blender.py": "test_display_blender.py",
+}
+PREVIEW_RESOURCES = PICKER_TEST_HOST | {"gui_runner.py": "gui_runner.py"}
+
+python_test(
+    name = "display",
+    srcs = ["test_native.py"],
+    base_module = "tests.hdr_picker",
+    env = {"PICKER_NATIVE_SUITE": "display"},
+    labels = ["gpu", "installed", "native"],
+    resources = select({
+        "prelude//os:linux": DISPLAY_RESOURCES | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": DISPLAY_RESOURCES,
+    }),
+)
+
+python_test(
+    name = "native_preview",
+    srcs = ["test_native.py"],
+    base_module = "tests.hdr_picker",
+    env = {"PICKER_NATIVE_SUITE": "native_preview"},
+    labels = ["gpu", "installed", "gui"],
+    resources = select({
+        "prelude//os:linux": PREVIEW_RESOURCES | {"xvfb": "//third_party:xvfb_software_linux"},
+        "prelude//os:macos": PREVIEW_RESOURCES,
+    }),
+)
+
 python_test(
     name = "native",
     srcs = ["test_native.py"],
