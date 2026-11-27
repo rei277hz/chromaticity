@@ -83,6 +83,40 @@
       "assert": "not transition.state.scheduler.busy and transition.state.scope.active_generation is None"
     },
     {
+      "name": "preempted_capture_resumes_pending_demand",
+      "variables": {
+        "state": "State",
+        "generation": "int",
+        "desired": "int"
+      },
+      "assume": [
+        "state.scope.active_generation == generation",
+        "state.scope.desired_generation == desired",
+        "state.scope.queued_generation is None",
+        "state.scope.published_current_generation is None"
+      ],
+      "lets": {
+        "transition": "step(state, Event('deferred', ticket_generation=generation, resume=True))"
+      },
+      "assert": "not transition.state.scheduler.busy and transition.state.scope.active_generation is None and transition.state.scope.queued_generation == desired and transition.effects.enqueue and not transition.effects.publish"
+    },
+    {
+      "name": "retired_capture_cannot_resume_released_demand",
+      "variables": {
+        "state": "State",
+        "generation": "int"
+      },
+      "assume": [
+        "state.scope.active_generation == generation",
+        "state.scope.desired_generation is None",
+        "state.scope.queued_generation is None"
+      ],
+      "lets": {
+        "transition": "step(state, Event('deferred', ticket_generation=generation, resume=True))"
+      },
+      "assert": "not transition.state.scheduler.busy and transition.state.scope.active_generation is None and transition.state.scope.queued_generation is None and transition.effects == Effects()"
+    },
+    {
       "name": "released_capture_is_not_analyzable",
       "variables": {
         "scope": "ScopeState",

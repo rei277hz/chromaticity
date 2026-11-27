@@ -115,6 +115,7 @@ class Event:
     preview_input_signature: Optional[str] = None
     preview_grade_signature: Optional[str] = None
     allow_lagging: bool = True
+    resume: bool = False
 
 
 @dataclass(frozen=True)
@@ -356,14 +357,18 @@ def step(state: State, event: Event) -> Transition:
     if event.kind == "deferred":
         if event.ticket_generation is None or scope.active_generation != event.ticket_generation:
             return Transition(state, Effects())
+        resume = (event.resume and scope.desired_generation is not None
+                  and scope.queued_generation is None
+                  and scope.published_current_generation != scope.desired_generation)
         scope = replace(
             scope,
             active_generation=None,
             active_capture_signature=None,
             active_source_generation=None,
+            queued_generation=scope.desired_generation if resume else scope.queued_generation,
         )
         scheduler = replace(scheduler, busy=False)
-        return Transition(State(scope, scheduler), Effects())
+        return Transition(State(scope, scheduler), Effects(enqueue=resume))
 
     if event.kind == "capture_result":
         if event.ticket_generation is None or scope.active_generation != event.ticket_generation:

@@ -69,7 +69,7 @@ class CompositorGuiTests(unittest.TestCase):
                         }, {("GPU", "AUTO"), ("CPU", "FULL"), ("GPU", "FULL")}, details)
                     else:
                         self.assertEqual(data["loaded_schema"], [3, 3, 3], details)
-                        self.assertEqual(data["repaired_schema"], [7, 7, 7], details)
+                        self.assertEqual(data["repaired_schema"], [data["current_schema"]] * 3, details)
                         self.assertTrue(data["settings_preserved"], details)
                         self.assertEqual(len(data["rows"]), 2, details)
                         self.assertTrue(data["grade_viewer_adoption"], details)

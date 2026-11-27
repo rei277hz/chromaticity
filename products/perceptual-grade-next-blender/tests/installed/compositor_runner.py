@@ -620,7 +620,8 @@ def complete():
         assert bpy.ops.wm.save_as_mainfile(filepath=str(BLEND)) == {"FINISHED"}
     else:
         result["repaired_schema"] = [node.node_tree[nodes._KERNEL_KIND] for node in consumers()]
-        assert result["repaired_schema"] == [nodes._KERNEL_SCHEMA] * 3
+        result["current_schema"] = nodes._KERNEL_SCHEMA
+        assert result["repaired_schema"] == [result["current_schema"]] * 3
         exercise = exercise_viewer_receipts()
         deadline = time.monotonic() + 120
         waiting_for = None

@@ -341,6 +341,19 @@
       ]
     },
     {
+      "anchor": "grade-policy.scheduler",
+      "kind": "production",
+      "sources": [
+        "products/perceptual-grade-next-blender/src/policy/scheduler.py"
+      ],
+      "evidence": [
+        "products/perceptual-grade-next-blender/tests/runtime/test_scheduler.py",
+        "products/perceptual-grade-next-blender/tests/runtime/test_scheduler_render.py",
+        "products/perceptual-grade-next-blender/tests/runtime/test_preparation_runtime.py",
+        "products/perceptual-grade-next-blender/tests/installed/runner.py"
+      ]
+    },
+    {
       "anchor": "grade-policy.node-output",
       "kind": "production",
       "sources": [

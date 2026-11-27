@@ -94,6 +94,31 @@
       "assert": "transition[0].phase == 'terminal' and transition[1].action == 'discard'"
     },
     {
+      "name": "pause_requests_cooperative_cancellation",
+      "lets": {
+        "paused": "step(State('running', 'a'), Event('pause'))",
+        "duplicate": "step(paused[0], Event('pause'))"
+      },
+      "assert": "paused == (State('pausing', 'a'), Effects('cancel')) and duplicate == (paused[0], Effects())"
+    },
+    {
+      "name": "resume_requires_current_retired_request",
+      "variables": {"current": "Optional[str]"},
+      "lets": {
+        "paused": "State('pausing', 'a')",
+        "resume": "step(paused, Event('cancelled', current_signature=current))"
+      },
+      "assert": "resume == ((State('queued', 'a'), Effects('requeue')) if current == 'a' else (State('terminal'), Effects('discard')))"
+    },
+    {
+      "name": "invalidated_pause_cannot_resume",
+      "lets": {
+        "invalidated": "step(State('pausing', 'a'), Event('invalidate', current_signature='b'))",
+        "retired": "step(invalidated[0], Event('cancelled', current_signature='a'))"
+      },
+      "assert": "invalidated == (State('cancelling', 'a'), Effects()) and retired == (State('terminal'), Effects('retire'))"
+    },
+    {
       "name": "terminal_receipts_are_inert",
       "variables": {},
       "lets": {

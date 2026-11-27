@@ -123,6 +123,7 @@ _syncing = set()
 _registered_classes = []
 _registered_menus = []
 _host_callbacks = None
+_scheduler = None
 _reconciling = False
 _last_working_space = None
 _node_stores = {}
@@ -133,12 +134,18 @@ _indexed_node_entries = {}
 _output_registry_ready = False
 _lifecycle_displaced_kernels = None
 _lifecycle = LifecycleCoordinator()
+_lifecycle_inventory_ready = False
+_LIFECYCLE_TASK = ("grade", "recover")
+_STARTUP_TASK = ("grade", "startup")
+_RENDER_TASK = ("grade", "render-preflight")
+_FRAME_TASK = ("grade", "frame")
 _preparation_runtime = None
 _grade_preparer = None
 _grade_resources = None
 _shutdown_admission = None
 _restoring_capture_sources = False
 _preparation_sources = {}
+_scheduled_preparations = {}
 _gesture_state = gesture_policy.new()
 _gesture_node_serial = count(1)
 _gesture_nodes = {}
@@ -325,6 +332,11 @@ def _prepare_bake_kernels(node, upstream_grades):
     """Require every native Grade kernel captured by the route to be current."""
     candidates = tuple({candidate.as_pointer(): candidate
                         for candidate in (node, *upstream_grades)}.values())
+    if _scheduler is not None:
+        for candidate in candidates:
+            if error := _bake_live_error(candidate):
+                raise RuntimeError(error)
+        return not _consistency_keys(candidates)
     failures = _refresh_nodes(candidates)
     if failures:
         raise RuntimeError("Bake requires current Grade kernels: "
@@ -345,6 +357,7 @@ def _prepare_bake_kernels(node, upstream_grades):
                                           state.desired_signature, "full",
                                           stack=_is_stack_node(candidate))):
             raise RuntimeError("Bake source Grade kernel is not current")
+    return True
 
 def _draw_bake_controls(node, context, layout):
     if not (_is_shared_grade_node(node) or _is_stack_node(node)):
@@ -1480,6 +1493,11 @@ def _replace_node_kernel(node, kernel, *, emergency=False):
 def _apply_output_kernel(node, mode):
     if mode not in {"pending", "error"}:
         return
+    if mode == "error" and _kernel_for_node(node) is not None:
+        current = _kernel_for_node(node)
+        if current.get(_ERROR_KERNEL_KIND) == _KERNEL_SCHEMA and validate_fallback_instance(
+                current, mode, vector=node.inputs.get("Vector") is not None):
+            return
     # A pending live child can be replaced inside a selected bake wrapper.
     # A kernel failure must expose the emergency output even with Use Bake on.
     keep_bake = (mode == "pending" and getattr(node, "pg_use_bake", False)
@@ -1537,6 +1555,9 @@ def _release_source(source):
             del _preparation_sources[key]
     if _preparation_runtime is not None:
         _preparation_runtime.forget(source)
+    _scheduled_preparations.pop(source, None)
+    if _scheduler is not None:
+        _scheduler.withdraw(_consistency_task_key(source))
     if _grade_resources is not None:
         _grade_resources.forget(source)
 
@@ -1609,6 +1630,8 @@ def _record_for(node, desired_signature=None, source=None):
 
 
 def _ensure_timer():
+    if _scheduler is not None:
+        return
     if (_preparation_runtime is not None
             and (_preparation_runtime.pending or (_grade_resources is not None and _grade_resources.pending))
             and not _timer_registered(_preparation_tick)):
@@ -1647,9 +1670,7 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
         if not _lifecycle.admits(recovery, pointer):
             return tuple(failures)
         _bake.invalidate(node)
-        failures.extend(
-            error for failed_nodes, error in _refresh_nodes((node,), recovery=recovery)
-        )
+        failures.extend(error for _, error in _refresh_nodes((node,), recovery=recovery))
 
     if effects.prepare_signature is not None:
         if not _lifecycle.admits(recovery, pointer):
@@ -1661,10 +1682,12 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
             if signature != effects.prepare_signature:
                 raise RuntimeError("Preparation effect does not match its snapshot")
             payload = settings if lane == "grade" else (settings, working_space)
-            _preparation_runtime.request(
-                source, signature, payload, lane=lane, progressive=progressive,
-                playback_session=record.get("playback_session"),
-            )
+            request = (signature, payload, lane, progressive, record.get("playback_session"))
+            if _scheduler is not None and recovery is None:
+                _schedule_preparation(source, request)
+            else:
+                _scheduled_preparations.pop(source, None)
+                _submit_preparation(source, request)
             if _grade_resources is not None:
                 key = (source, lane)
                 queued = _grade_resources.pending.get(key)
@@ -1675,8 +1698,7 @@ def _consume_effects(node, effects, preparation=None, record=None, defer_build=F
             failures.extend(_dispatch(node, node_policy.Event(
                 "preparation_result", error=str(error),
                 preparation_signature=effects.prepare_signature), recovery=recovery))
-            if recovery is not None:
-                failures.append(error)
+            failures.append(error)
 
     if effects.build_signature is not None and not defer_build:
         if not _lifecycle.admits(recovery, pointer):
@@ -1792,9 +1814,11 @@ def _request_node(node, working_space, snapshots=None, *, frame_scene=None, reco
          lane == "lut" and bool(state.gesture_active)),
         recovery=recovery,
     ))
-    if (getattr(node, "pg_use_bake", False)
-            or _bake.receipt_signature(node) is not None) and recovery is None:
-        _bake.reconcile((node,))
+    if ((getattr(node, "pg_use_bake", False)
+         or _bake.receipt_signature(node) is not None)
+            and recovery is None
+            and (_scheduler is None or _scheduler.phase != "starting")):
+        _bake.queue_reconcile((node,))
     return tuple(failures)
 
 
@@ -1882,9 +1906,12 @@ def _handle_preparation_result(source, preparation_signature, prepared, error,
                 raise PublicationDeferred("Grade publication recovery was superseded")
             if failure is not None:
                 failures.append(((node,), failure))
-            effects, transition_failures = _dispatch_transition(
-                node, record, event, defer_build=True, transition=transition, recovery=recovery,
-            )
+            if failure is None and transition[0] is record["state"]:
+                effects, transition_failures = transition[1], ()
+            else:
+                effects, transition_failures = _dispatch_transition(
+                    node, record, event, defer_build=True, transition=transition, recovery=recovery,
+                )
             failures.extend(((node,), error) for error in transition_failures)
             if not transition_failures and effects.build_signature is not None:
                 build_quality = effects.build_quality
@@ -2247,8 +2274,10 @@ def _build_and_install(signature, authorized_records, prepared, quality="full",
                 continue
             if previous != kernel:
                 _retire_kernels((previous,))
+            event_kind = ("recovery_result" if record["state"].error is not None
+                          else "installation_result")
             delivery_failures = _dispatch(node, node_policy.Event(
-                "installation_result", signature, quality=quality), recovery=recovery)
+                event_kind, signature, quality=quality), recovery=recovery)
             failures.extend(((node,), error) for error in delivery_failures)
             if previous_bindings:
                 if delivery_failures:
@@ -2334,8 +2363,8 @@ def _publish_pending_preparations(*, drain=False, sources=None, recovery=None):
     return tuple(failures)
 
 
-def _handle_preparation_completions(completions):
-    if _lifecycle.reset_pending:
+def _handle_preparation_completions(completions, sources=None, *, recovery=None):
+    if not _lifecycle.admits(recovery):
         return ()
     _queue_preparation_completions(completions)
     if _grade_resources is None or not _grade_resources.pending:
@@ -2350,7 +2379,7 @@ def _handle_preparation_completions(completions):
                 _reconcile_pending_frames_in_scope()
                 if _frame_reconcile_scenes:
                     return ()
-            return _publish_pending_preparations()
+            return _publish_pending_preparations(sources=sources, recovery=recovery)
     except PublicationDeferred:
         pass
     return ()
@@ -2362,6 +2391,8 @@ def _preparation_tick():
         return None
     if _lifecycle.reset_pending:
         return 0.02
+    for source in tuple(_scheduled_preparations):
+        _start_scheduled_preparation(source)
     try:
         runtime.pump_main_thread()
         if runtime.failure is None:
@@ -2397,6 +2428,152 @@ def _preparation_tick():
     if _grade_resources is not None and _grade_resources.gate.blocked():
         return 0.02
     return 0.0
+
+
+def _consistency_task_key(source):
+    return ("grade-consistency", source)
+
+
+def _node_kernel_current(node):
+    try:
+        record = _node_stores.get(node.as_pointer())
+        if record is None:
+            return False
+        state = record["state"]
+        current_signature = _settings_signature_for(node)
+        return (node_policy.output_allowed(state)
+                and state.desired_signature == current_signature
+                and _kernel_is_current(
+                    _kernel_for_node(node), node.id_data.bl_idname,
+                    state.desired_signature, "full", stack=record["stack"],
+                    validate_graph=False,
+                ))
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _submit_preparation(source, request):
+    signature, payload, lane, progressive, playback_session = request
+    _preparation_runtime.request(
+        source, signature, payload, lane=lane, progressive=progressive,
+        playback_session=playback_session,
+    )
+
+
+def _start_scheduled_preparation(source):
+    request = _scheduled_preparations.pop(source, None)
+    if request is not None:
+        _submit_preparation(source, request)
+
+
+def _advance_preparation(source, lane):
+    runtime = _preparation_runtime
+    records = _publication_records(source, lane)
+    if (source not in _scheduled_preparations and not runtime.pending_for(source)
+            and (source, lane) not in _grade_resources.pending
+            and any(not _node_kernel_current(record["node"]) for record in records)):
+        failures = _refresh_nodes(tuple(record["node"] for record in records))
+        if failures:
+            raise failures[-1][1]
+    if not _preparation_turn_ready(source, lane):
+        return 0.01
+    _start_scheduled_preparation(source)
+    if lane == "lut":
+        runtime.pump_main_thread(
+            (source,), preempt=_scheduler.is_promoted(_consistency_task_key(source)))
+    failures = _handle_preparation_completions(runtime.collect((source,)), (source,))
+    if failures:
+        raise failures[-1][1]
+    key = (source, lane)
+    if (source in _scheduled_preparations or runtime.pending_for(source)
+            or key in _grade_resources.pending):
+        return 0.01
+    if any(not _node_kernel_current(record["node"])
+           for record in _publication_records(source, lane)):
+        raise RuntimeError("Grade preparation retired without a current kernel")
+    return None
+
+
+def _retry_preparation(source, lane, error):
+    records = _publication_records(source, lane)
+    for record in records:
+        node = record["node"]
+        if not _node_kernel_current(node):
+            if record["state"].error is None:
+                _block_nodes((node,), error)
+            _refresh_nodes((node,))
+
+
+def _schedule_preparation(source, request):
+    _scheduled_preparations[source] = request
+    lane = request[2]
+    _ensure_consistency_task(source, lane)
+
+
+def _preparation_turn_ready(source, lane):
+    return (lane != "grade" or source not in _scheduled_preparations
+            or not _preparation_runtime.lane_busy(lane)
+            or _preparation_runtime.is_running(source))
+
+
+def _ensure_consistency_task(source, lane):
+    key = _consistency_task_key(source)
+    if not _scheduler.has(key):
+        _scheduler.submit(
+            key, "consistency", lambda: _advance_preparation(source, lane),
+            ready=lambda: _preparation_turn_ready(source, lane),
+            on_pause=(
+                lambda: _preparation_runtime.request_yield(source)
+                if lane == "lut" else None
+            ),
+            on_error=lambda error: _retry_preparation(source, lane, error),
+            pause_group="stack-preparation" if lane == "lut" else None,
+            promotion_satisfied=(
+                lambda: _stack_preview_current(source) if lane == "lut" else False
+            ),
+        )
+    _scheduler.wake(key)
+
+
+def _stack_preview_current(source):
+    records = _publication_records(source, "lut")
+    if not records:
+        return False
+    for record in records:
+        node = record["node"]
+        state = record["state"]
+        quality = state.applied_quality
+        try:
+            if (state.error is not None
+                    or quality not in ("preview", "full")
+                    or state.desired_signature != _settings_signature_for(node)
+                    or state.applied_signature != state.desired_signature
+                    or not _kernel_is_current(
+                        _kernel_for_node(node), node.id_data.bl_idname,
+                        state.desired_signature, quality, stack=True,
+                        validate_graph=False,
+                    )):
+                return False
+        except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+            return False
+    return True
+
+
+def _consistency_keys(nodes):
+    keys = {}
+    for node in nodes:
+        record = _node_stores.get(node.as_pointer())
+        signature = _settings_signature_for(node)
+        if (record is not None and record["state"].desired_signature == signature
+                and _node_kernel_current(node)):
+            continue
+        space = _working_space()
+        source = _source_for(node, space)
+        record = _record_for(node, signature, source)
+        key = _consistency_task_key(source)
+        _ensure_consistency_task(source, "lut" if record["stack"] else "grade")
+        keys[key] = None
+    return tuple(keys)
 
 
 def _resource_retirement_operations(resource, *, image=False):
@@ -2643,7 +2820,8 @@ def _dispose_node(node):
 
 
 def _invalidate_node_stores():
-    global _lifecycle_displaced_kernels
+    global _lifecycle_displaced_kernels, _lifecycle_inventory_ready
+    _lifecycle_inventory_ready = False
     if _lifecycle_displaced_kernels is None:
         _lifecycle_displaced_kernels = {}
     _frame_reconcile_scenes.clear()
@@ -2657,6 +2835,7 @@ def _invalidate_node_stores():
     _node_stores.clear()
     _clear_output_registry()
     _preparation_sources.clear()
+    _scheduled_preparations.clear()
     if _preparation_runtime is not None:
         for source in sources:
             _preparation_runtime.forget(source)
@@ -3632,7 +3811,7 @@ def _grade_changed(grade):
         armed = _gesture_is_armed(node.as_pointer())
         if not armed:
             refresh.append(node)
-    failures.extend(_refresh_nodes(tuple(refresh)))
+    failures.extend(_refresh_nodes(refresh))
     for failed_nodes, error in failures:
         print("Perceptual Grade kernel repair failed:", error)
 
@@ -3726,7 +3905,7 @@ def _reconcile_pending_frames():
 
 def _observe_evaluated_frame(scene):
     _frame_reconcile_scenes[scene.as_pointer()] = scene
-    if threading.current_thread() is threading.main_thread():
+    if _scheduler is None and threading.current_thread() is threading.main_thread():
         _frame_reconcile_tick()
 
 
@@ -3735,7 +3914,7 @@ def _frame_change_post(scene, *_args):
     global _frame_change_active
     _frame_change_active = False
     _observe_evaluated_frame(scene)
-    if (threading.current_thread() is threading.main_thread()
+    if (_scheduler is None and threading.current_thread() is threading.main_thread()
             and scene.as_pointer() in _playback_sessions
             and _preparation_runtime is not None and not _lifecycle.reset_pending):
         try:
@@ -3843,18 +4022,57 @@ def _cleanup_conversion_backups():
 
 
 def _startup_reconcile_tick():
+    global _lifecycle_inventory_ready
     if PGShaderGrade not in _registered_classes:
         return None
     if _lifecycle.reset_pending:
         return 0.02
-    if not hasattr(bpy.data, "node_groups"):
+    if type(bpy.data).__name__ == "_RestrictData" or not hasattr(bpy.data, "node_groups"):
         return 0.1
-    with _restore_capture_sources():
-        _cleanup_conversion_backups()
-        _rebuild_output_registry()
-        _ensure_all_kernels()
-    _bake.reconcile()
+    if not _lifecycle_inventory_ready:
+        with _restore_capture_sources():
+            _cleanup_conversion_backups()
+            _rebuild_output_registry()
+            _ensure_all_kernels()
+        if _scheduler is not None:
+            _lifecycle_inventory_ready = True
+    if _scheduler is None:
+        _bake.reconcile()
+    elif _scheduler.has(_STARTUP_TASK):
+        if not _startup_grades_current():
+            _scheduler.submit(
+                _STARTUP_TASK, "lifecycle", _startup_reconcile_tick,
+                ready=_startup_grades_current,
+            )
+            return None
+        _bake.reconcile()
+        if _startup_bake_pending():
+            return 0.02
+        _finish_startup_reconciliation()
     return None
+
+
+def _startup_task_ready():
+    """Do not inspect Blender data while registration is restricted."""
+    if _lifecycle.reset_pending:
+        return False
+    try:
+        return type(bpy.data).__name__ != "_RestrictData"
+    except (AttributeError, ReferenceError, RuntimeError):
+        return False
+
+
+def _startup_bake_pending():
+    return bool(_bake.pending_reconciliations or _bake.pending_invalidations)
+
+
+def _startup_grades_current():
+    return all(_node_kernel_current(node) for node in _all_grade_nodes())
+
+
+def _finish_startup_reconciliation():
+    _scheduler.withdraw(_STARTUP_TASK)
+    _scheduler.set_phase("ready")
 
 
 @persistent
@@ -3871,9 +4089,7 @@ def _load_post(_filepath):
     except Exception as error:
         print("Perceptual Grade load repair failed:", error)
     finally:
-        if _undo_redo_reconcile_tick() is not None:
-            _schedule_lifecycle_reconciliation()
-        _bake.ensure_timer()
+        _schedule_lifecycle_reconciliation()
 
 
 @persistent
@@ -3882,6 +4098,11 @@ def _undo_redo_pre(*_args):
 
 
 def _begin_lifecycle_change(*, preserve_gizmo=False):
+    if _scheduler is not None:
+        _scheduler.set_phase("changing")
+        _scheduler.withdraw(_STARTUP_TASK)
+        _scheduler.withdraw(_LIFECYCLE_TASK)
+        _scheduler.discard_ordinary()
     failures = _lifecycle.begin((
         _cancel_color_gestures, _clear_gestures, _bake.withdraw_all,
         lambda: vectorscope_ui.reset(preserve_preferences=preserve_gizmo),
@@ -3898,6 +4119,8 @@ def _invalidate_render_preflights():
 
 def _finish_lifecycle_change():
     _lifecycle.finish(_invalidate_render_preflights)
+    if _scheduler is not None:
+        _scheduler.set_phase("recovering")
 
 
 @persistent
@@ -3910,7 +4133,9 @@ def _undo_redo_post(*_args):
 
 def _schedule_lifecycle_reconciliation():
     _bake.ensure_timer()
-    if not _timer_registered(_undo_redo_reconcile_tick):
+    if _scheduler is not None:
+        _scheduler.submit(_LIFECYCLE_TASK, "lifecycle", _undo_redo_reconcile_tick)
+    elif not _timer_registered(_undo_redo_reconcile_tick):
         _register_host_timer(_undo_redo_reconcile_tick, first_interval=0.0)
 
 
@@ -3921,17 +4146,36 @@ def _release_lifecycle_resources():
 
 
 def _repair_lifecycle_outputs(recovery):
+    global _lifecycle_inventory_ready
     with _grade_resources.gate.commit():
-        with _restore_capture_sources():
-            _cleanup_conversion_backups()
-            _rebuild_output_registry()
-            _clear_frame_color_claims(bpy.context.scene)
-            _ensure_all_kernels(recovery=recovery)
-        if _lifecycle.admits(recovery):
-            _bake.reconcile_in_scope(tuple(_all_grade_nodes()))
+        if not _lifecycle_inventory_ready:
+            with _restore_capture_sources():
+                _cleanup_conversion_backups()
+                _rebuild_output_registry()
+                _clear_frame_color_claims(bpy.context.scene)
+                _ensure_all_kernels(recovery=recovery)
+            _lifecycle_inventory_ready = True
+
+        if _preparation_runtime.failure is not None:
+            raise PreparationCoordinatorError(_preparation_runtime.failure)
+        _preparation_runtime.pump_main_thread()
+        _queue_preparation_completions(_preparation_runtime.collect())
+        failures = _publish_pending_preparations(recovery=recovery)
+        if failures:
+            # Retry the failed owners and allow other sources to finish.
+            failed_nodes = {node.as_pointer(): node
+                            for nodes, _error in failures for node in nodes}
+            _refresh_nodes(failed_nodes.values(), recovery=recovery)
+            raise PublicationDeferred("Grade recovery is retrying failed kernels")
+        if _preparation_runtime.pending or _grade_resources.pending:
+            raise PublicationDeferred("Grade recovery is waiting for current kernels")
+
+        _bake.reconcile_in_scope(tuple(_all_grade_nodes()), retry_errors=True)
 
 
 def _fail_lifecycle_outputs(error, recovery):
+    global _lifecycle_inventory_ready
+    _lifecycle_inventory_ready = False
     print("Perceptual Grade lifecycle repair failed:", error)
     failures = _block_nodes(_all_grade_nodes(), error, recovery=recovery)
     if failures:
@@ -3943,8 +4187,11 @@ def _undo_redo_reconcile_tick():
     if PGShaderGrade not in _registered_classes:
         return None
     try:
-        return _lifecycle.reconcile(
+        result = _lifecycle.reconcile(
             _release_lifecycle_resources, _repair_lifecycle_outputs, _fail_lifecycle_outputs)
+        if result is None and _scheduler is not None and not _lifecycle.reset_pending:
+            _scheduler.set_phase("ready")
+        return result
     except Exception as error:
         print("Perceptual Grade lifecycle error output failed:", error)
         return 0.2
@@ -3965,27 +4212,44 @@ def _render_pre(scene):
             float(scene.frame_subframe).hex(),
         )
     if threading.current_thread() is threading.main_thread():
+        task_key = (_RENDER_TASK, "inline", id(ticket))
         try:
-            _service_render_preflight(defer=False)
-        except PublicationDeferred as error:
-            _block_nodes(_scene_grade_nodes(scene, compositor_mode="render"), error)
+            if _scheduler is None:
+                # Legacy host integration has no application scheduler.
+                _service_render_preflight(defer=False, exact=ticket)
+            else:
+                # Blender cannot return to the timer while this callback holds
+                # the render. Dispatch only this exact render-priority task.
+                _scheduler.submit(
+                    task_key, "render",
+                    lambda: _service_render_preflight(defer=False, exact=ticket),
+                )
+                if not _scheduler.dispatch_render(task_key):
+                    _scheduler.withdraw(task_key)
+                    raise PublicationDeferred(
+                        "Exact render preflight could not enter the scheduler")
+            if ticket.state.phase == "waiting":
+                _fail_render_preflight(
+                    ticket, RuntimeError("Exact render preflight was not serviced"))
+        except Exception as error:
+            _fail_render_preflight(ticket, error)
             print("Perceptual Grade render preflight failed:", error)
     else:
         try:
             # Blender invokes this callback from its render worker. Release the
-            # GIL while the main-thread timer prepares and validates this frame.
+            # GIL while the main-thread scheduler validates this frame.
             ticket.wait()
         except Exception as error:
             print("Perceptual Grade render preflight failed:", error)
 
 
-def _service_render_preflight(*, defer=True):
+def _service_render_preflight(*, defer=True, exact=None):
     if _grade_resources is None:
         return
     gate = _grade_resources.gate
     if _lifecycle.changing and defer:
         return
-    ticket = gate.take_render_preflight()
+    ticket = gate.take_render_preflight(exact)
     if ticket is not None:
         if ticket.failure_authorized:
             _fail_render_preflight(
@@ -4073,7 +4337,8 @@ def _revoke_render_output(ticket):
 
 
 def _fail_render_preflight(ticket, error):
-    ticket.fail(error)
+    if ticket.state.phase == "waiting":
+        ticket.fail(error)
     if ticket.failure_authorized:
         try:
             _revoke_render_output(ticket)
@@ -4088,11 +4353,38 @@ def _render_preflight_tick():
         _service_render_preflight()
     except Exception as error:
         print("Perceptual Grade render preparation failed:", error)
+    collect_viewer_receipts()
+    return 0.02 if _grade_resources.gate.has_render_preflight else 0.1
+
+
+def _advance_render_preflight():
+    _service_render_preflight()
+    return 0.02 if _grade_resources.gate.has_render_preflight else None
+
+
+def _advance_frame_reconciliation():
+    _frame_reconcile_tick()
+    return 0.02 if _frame_reconcile_scenes else None
+
+
+def observe_scheduled_work():
+    # A render worker can post a ticket while the host is between scheduler
+    # turns. Only the host thread mutates the scheduler or Blender data.
+    if _grade_resources is None:
+        return
+    if _grade_resources.gate.has_render_preflight and not _scheduler.has(_RENDER_TASK):
+        _scheduler.submit(_RENDER_TASK, "render", _advance_render_preflight)
+    if _scheduler.phase != "ready":
+        return
+    if _frame_reconcile_scenes and not _scheduler.has(_FRAME_TASK):
+        _scheduler.submit(_FRAME_TASK, "consistency", _advance_frame_reconciliation)
+
+
+def collect_viewer_receipts():
     try:
         _collect_compositor_receipts()
     except Exception as error:
         print("Perceptual Grade compositor Viewer maintenance failed:", error)
-    return 0.02 if _grade_resources.gate.has_render_preflight else 0.1
 
 
 @persistent
@@ -4155,7 +4447,7 @@ def _save_pre(_filepath):
     # deliberately metadata-only and includes nodes with Use Bake disabled.
     if _grade_resources is not None:
         try:
-            _bake.reconcile()
+            _bake.flush_source_invalidations()
         except PublicationDeferred:
             pass
     # Pixels are derived from authoritative settings. Save committed buffers;
@@ -4189,7 +4481,10 @@ def _drain_preparations_in_scope(nodes=None, *, defer_failure_mutations=False, r
                if record.get("source") is not None}
     # The async barrier waits only for preparation, never for Blender mutation.
     try:
-        _queue_preparation_completions(_preparation_runtime.wait(sources))
+        for source in sources:
+            _start_scheduled_preparation(source)
+        _queue_preparation_completions(_preparation_runtime.wait(
+            sources, preempt=defer_failure_mutations))
         failures.extend(_publish_pending_preparations(
             drain=True, sources=sources, recovery=recovery))
     except Exception as error:
@@ -6118,11 +6413,12 @@ def _unregister_handlers():
         raise ExceptionGroup("Grade host handler teardown failed", list(errors))
 
 
-def register(callbacks):
-    global _host_callbacks
+def register(callbacks, *, scheduler=None):
+    global _host_callbacks, _scheduler
     if callbacks is None:
         raise TypeError("Grade registration requires the callback router")
     _host_callbacks = callbacks
+    _scheduler = scheduler
     _bake.set_timer_router(callbacks)
     _register()
 
@@ -6130,11 +6426,12 @@ def register(callbacks):
 def register_bake(create_job):
     snapshot = partial(freeze_snapshot, bpy)
     _bake.start(freeze_snapshot=snapshot, create_job=create_job)
+    _bake.set_scheduler(_scheduler)
     _bake.ensure_timer()
     return _bake
 
 
-def register_scope(create_job):
+def register_scope(create_job, *, scheduler=None):
     if _host_callbacks is None:
         raise RuntimeError("Grade services must be registered before Vectorscope")
     snapshot = partial(freeze_snapshot, bpy)
@@ -6143,10 +6440,12 @@ def register_scope(create_job):
         create_job=create_job, gate=_grade_publication_gate,
         upstream_ready=_scope_upstream_ready,
         grade_signature=_settings_signature_for, preview_roles=_scope_preview_roles,
+        scheduler=scheduler, consistency_keys=_consistency_keys,
     ), begin=_begin_gizmo_gesture, edit=_edit_gizmo_gesture,
         finish=_end_color_gesture, cancel=_cancel_color_gesture,
         linear_settings=_scope_linear_settings, tone_settings=_scope_tone_settings,
-        peak_menu=_show_gizmo_peak_menu, timer_router=_host_callbacks)
+        peak_menu=_show_gizmo_peak_menu, timer_router=_host_callbacks,
+        scheduler=scheduler)
 
 
 def registration_cleanup_needed():
@@ -6219,6 +6518,7 @@ def _scope_preview_roles(node, signature):
 def _register():
     global _preparation_runtime, _grade_preparer, _grade_resources
     global _shutdown_admission
+    initial_registration = PGShaderGrade not in _registered_classes
     if _host_callbacks is None:
         raise RuntimeError("Grade registration must be started by the application")
     if _bake.manager is not None and _bake.manager.closed:
@@ -6276,7 +6576,9 @@ def _register():
             _grade_preparer = GradePreparer(workers=3)
         if _preparation_runtime is None:
             _preparation_runtime = PreparationRuntime(default_lane="grade")
-            _preparation_runtime.register_async_lane("grade", _grade_preparer.prepare)
+            _preparation_runtime.register_async_lane(
+                "grade", _grade_preparer.prepare, serial=True,
+            )
             _preparation_runtime.register_polled_lane(
                 "lut", StackHelperBackend(), progressive=True
             )
@@ -6296,13 +6598,19 @@ def _register():
                     menu_type.append(callback)
                 _registered_menus.append(record)
         _register_handlers()
-        if not _timer_registered(_startup_reconcile_tick):
+        if _scheduler is not None and initial_registration:
+            _scheduler.set_phase("starting")
+            _scheduler.submit(
+                _STARTUP_TASK, "lifecycle", _startup_reconcile_tick,
+                ready=_startup_task_ready,
+            )
+        elif _scheduler is None and not _timer_registered(_startup_reconcile_tick):
             _register_host_timer(_startup_reconcile_tick, first_interval=0.1)
         _ensure_gesture_router_timer()
-        if not _timer_registered(_render_preflight_tick):
+        if _scheduler is None and not _timer_registered(_render_preflight_tick):
             _register_host_timer(_render_preflight_tick, first_interval=0.02,
                                  persistent=True)
-        if not _timer_registered(_frame_reconcile_tick):
+        if _scheduler is None and not _timer_registered(_frame_reconcile_tick):
             _register_host_timer(_frame_reconcile_tick, first_interval=0.1,
                                  persistent=True)
         _shutdown_admission = None
@@ -6312,6 +6620,8 @@ def _register():
 
 def unregister():
     global _preparation_runtime, _grade_preparer, _grade_resources
+    if _scheduler is not None:
+        _scheduler.withdraw(_STARTUP_TASK)
     errors = []
     if _preparation_runtime is not None:
         _preparation_runtime.close()

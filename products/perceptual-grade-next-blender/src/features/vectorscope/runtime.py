@@ -15,6 +15,7 @@ import numpy as np
 
 from ...kernel.prepare import PreparedLinear, prepare_linear
 from ...kernel.settings import ToneSettings
+from ...policy.scheduler import admitted as task_admitted
 from ...runtime.publication import PublicationDeferred
 from . import analysis, appearance_scope, routes, tone_scope
 from .appearance_preview import AppearancePreview, PreviewUnavailable
@@ -143,7 +144,8 @@ class ScopeRuntime:
     def __init__(self, snapshot_scope, linear_settings, working_space, *, create_job,
                  gate=None, upstream_ready=None, grade_signature=None,
                  preview_roles=None, preview_backend=None,
-                 appearance_settle_seconds=0.15, clock=time.monotonic):
+                 appearance_settle_seconds=0.15, clock=time.monotonic,
+                 scheduler=None, consistency_keys=None):
         self.snapshot_scope = snapshot_scope
         self.create_job = create_job
         self.linear_settings = linear_settings
@@ -153,14 +155,22 @@ class ScopeRuntime:
         self.grade_signature = grade_signature
         self.preview_roles = preview_roles
         self.preview_backend = preview_backend
+        self.preview_unavailable = None
         self.appearance_settle_seconds = max(0., float(appearance_settle_seconds))
         self.clock = clock
-        self.preview_unavailable = None
+        # The application scheduler owns ordering when supplied. The scalar
+        # scope policy below still owns generation and publication decisions.
+        self.coordinator = scheduler
+        self.consistency_keys = consistency_keys
         self.scope_states = {}
         self.scheduler = policy.SchedulerState()
         self.demands = {}
         self.queue = deque()
         self.queued = {}
+        self._plot_prerequisites = {}
+        self._plot_grades = {}
+        self._paused_capture = None
+        self.on_display = None
         self.queue_tokens = count(1)
         self.payloads = {}
         self.displays = {}
@@ -245,6 +255,9 @@ class ScopeRuntime:
             scope = transition.state.scope
             if scope.desired_generation is None:
                 self.demands.pop(key, None)
+        if (event.kind == "request" and self.coordinator is not None
+                and previous.waiting and not transition.state.scope.waiting):
+            self.coordinator.wake(self._task_key(key))
         if timings:
             ticket = self.demands[key]
             now = self._clock()
@@ -252,6 +265,10 @@ class ScopeRuntime:
             for stage, started, finished in timings:
                 self._record_timing(stage, started, finished, ticket)
         self._apply(key, effects, event, samples=samples, trace=trace, capture=capture)
+        if self.on_display is not None and (
+                effects.publish or effects.publish_preview or effects.clear or previous.failure_error
+                != transition.state.scope.failure_error):
+            self.on_display((_editor_key(key),))
         return effects
 
     def _apply(self, key, effects, event, *, samples=None, trace=None, capture=None):
@@ -259,12 +276,14 @@ class ScopeRuntime:
             self.displays.pop(key, None)
         if effects.clear_preview:
             self.preview_displays.pop(key, None)
+            self._withdraw_preview_task(key)
         if effects.remove_queue:
-            self._remove_queued(key, event.ticket_generation)
+            self._remove_queued(key, event.ticket_generation,
+                                 keep_task=event.kind == "started")
         if effects.enqueue:
             ticket = self.demands.get(key)
             if ticket is not None:
-                self._enqueue(ticket)
+                self._enqueue(ticket, keep_priority=event.kind == "deferred")
         if effects.retain_samples and capture is not None:
             self._remember_samples(capture.capture_signature, samples)
         if effects.publish_preview:
@@ -289,19 +308,130 @@ class ScopeRuntime:
         if effects.cancel and self.active is not None:
             ticket, job, _root = self.active
             if ticket.key == key and ticket.generation == self._scope_state(key).active_generation:
-                job.cancel()
+                if self.coordinator is None:
+                    job.cancel()
+                else:
+                    self._pause_scheduled(key)
 
-    def _enqueue(self, ticket):
+    def _enqueue(self, ticket, *, keep_priority=False):
         queued = self.queued.get(ticket.key)
-        if queued is not None:
+        if queued is None:
+            token = next(self.queue_tokens)
+            self.queue.append((ticket.key, token))
+        else:
             token, _previous = queued
-            self.queued[ticket.key] = (token, ticket)
-            return
-        token = next(self.queue_tokens)
-        self.queue.append((ticket.key, token))
         self.queued[ticket.key] = (token, ticket)
+        if (keep_priority and self.coordinator is not None
+                and self.coordinator.has(self._task_key(ticket.key))):
+            self.coordinator.wake(self._task_key(ticket.key))
+        else:
+            self._register_task(ticket.key)
 
-    def _remove_queued(self, key, generation=None):
+    @staticmethod
+    def _task_key(key):
+        return ("vectorscope_capture", key)
+
+    @staticmethod
+    def _preview_task_key(key):
+        return ("vectorscope_preview", key)
+
+    def _withdraw_preview_task(self, key):
+        if self.coordinator is not None:
+            self.coordinator.withdraw(self._preview_task_key(key))
+
+    def focus(self, key):
+        if self.coordinator is not None:
+            self.coordinator.focus(key)
+
+    def _register_task(self, key):
+        if self.coordinator is None:
+            return
+        task_key = self._task_key(key)
+        editor_key = _editor_key(key)
+        prerequisites = self._plot_prerequisites.get(key, ())
+        self.coordinator.submit(
+            task_key,
+            "plot",
+            lambda key=key: self._advance_scheduled(key),
+            on_pause=lambda key=key: self._pause_scheduled(key),
+            on_error=lambda error, key=key: self._scheduled_error(key, error),
+            pause_group="capture",
+            ready=lambda key=key: self._task_ready(key),
+            editor=editor_key,
+            prerequisites=prerequisites,
+        )
+
+    def _task_ready(self, key):
+        if self._paused_capture is not None:
+            return False
+        if self.active is not None and self.active[0].key == key:
+            return True
+        if key not in self.queued or self._scope_state(key).waiting:
+            return False
+        return (self.upstream_ready is None
+                or self.upstream_ready(self._plot_grades.get(key, ())))
+
+    def _pause_scheduled(self, key):
+        active = self.active
+        if (active is not None and active[0].key == key
+                and self._paused_capture is None):
+            self._paused_capture = active[0]
+            active[1].cancel()
+            if not self._shutting_down and self.coordinator.phase != "closed":
+                self.coordinator.submit(
+                    self._retirement_task_key(), "lifecycle", self._retire_paused_capture,
+                    pause_group="capture",
+                )
+
+    def _retirement_task_key(self):
+        return ("vectorscope_retirement", id(self))
+
+    def _scheduled_error(self, key, error):
+        if key in self.queued:
+            self._unavailable(key, error, self._revision(key))
+
+    def _retire_paused_capture(self):
+        if self.active is None:
+            return None
+        ticket, job, root = self.active
+        if self._paused_capture != ticket:
+            return None
+        try:
+            if not job.retired():
+                return 1 / 60
+        except Exception as error:
+            self._scheduled_error(ticket.key, error)
+            raise
+        if root is not None:
+            shutil.rmtree(root, ignore_errors=True)
+        self.active = None
+        self._paused_capture = None
+        self._dispatch_ticket(ticket, "deferred", resume=True)
+        return None
+
+    def _withdraw_task(self, key):
+        if self.coordinator is not None:
+            self.coordinator.withdraw(self._task_key(key))
+
+    def _advance_scheduled(self, key):
+        """Advance one capture phase for the coordinator's task slot."""
+        queued = self.queued.get(key)
+        active = self.active
+        if active is None and queued is None:
+            return None
+        if self._paused_capture is not None:
+            return 1 / 60
+        if active is not None and active[0].key != key:
+            return 1 / 60
+        if active is None:
+            ticket = queued[1]
+            self._dispatch(key, policy.Event("schedule", ticket_generation=ticket.generation))
+            active = self.active
+            return 1 / 60 if active is not None or key in self.queued else None
+        self._poll_active_once()
+        return 1 / 60 if self.active is not None or key in self.queued else None
+
+    def _remove_queued(self, key, generation=None, *, keep_task=False):
         queued = self.queued.get(key)
         if queued is None:
             return
@@ -310,6 +440,10 @@ class ScopeRuntime:
             return
         del self.queued[key]
         self.queue.remove((key, token))
+        active = self.active
+        if (self.coordinator is not None and not keep_task
+                and (active is None or active[0].key != key)):
+            self.coordinator.withdraw(self._task_key(key))
 
     def _dispatch_ticket(self, ticket, kind, *, samples=None, trace=None, **values):
         return self._dispatch(
@@ -321,6 +455,8 @@ class ScopeRuntime:
         )
 
     def _schedule_next(self):
+        if self.coordinator is not None:
+            return
         if self.active is not None or self.scheduler.busy:
             return
         for key, token in tuple(self.queue):
@@ -379,7 +515,8 @@ class ScopeRuntime:
     def observe_editor(self, key, context, node, viewport=None, *, frame, stage,
                        dragging, tone=None, viewport_for=None, tone_for=None):
         """Reconcile one editor's input and appearance demands on the host timer."""
-        if self._shutting_down:
+        if self._shutting_down or (self.coordinator is not None
+                                  and not task_admitted("plot", self.coordinator.phase)):
             return None
         key = self._key(key)
         editor = _Editor(self._target(node), frame, stage)
@@ -436,35 +573,48 @@ class ScopeRuntime:
             observation = _AppearanceObservation(signature, self.clock())
             self.appearance_observations[editor] = observation
             self._dispatch(key, policy.Event("preview_withdraw"))
+            self._withdraw_preview_task(key)
         state = self._scope_state(key)
         capture_signature = self._digest((input_signature, "appearance", signature))
         same_capture = state.capture_signature == capture_signature
         if same_capture and policy.status(state, revision, True).status == "current":
             if self.preview_roles is not None and not dragging:
-                self._warm_preview()
+                self._schedule_preview_warmup(key)
             return
         peak_j = tone_scope.peak_j(tone)
-        inputs = self._preview_inputs(editor, node)
-        if inputs is not None and self.preview_roles is not None:
-            self._observe_appearance_preview(key, node, peak_j, inputs, signature, revision)
-        settled = self.clock() - observation.changed_at >= self.appearance_settle_seconds
         source_recapture = state.source_signature != input_signature
-        grade_ready = self.upstream_ready is None or self.upstream_ready((*upstream, node))
-        ready = not dragging and grade_ready and (
-            settled or source_recapture or state.published_capture_generation is None
+        settled = self.clock() - observation.changed_at >= self.appearance_settle_seconds
+        grades = (*upstream, node)
+        ready = self.coordinator is not None or (
+            not dragging
+            and (settled or source_recapture or state.published_capture_generation is None)
+            and (self.upstream_ready is None or self.upstream_ready(grades))
         )
         changed = not same_capture or state.revision != revision
-        if not changed and ready == (not state.waiting):
-            return
-        self.payloads[key] = payload = _AppearancePayload(
-            dict(route, scope_capture="appearance"), peak_j,
-        )
-        samples = self._cached_samples(capture_signature) if changed else None
-        self._dispatch(key, policy.Event(
-            "request", capture_signature=capture_signature,
-            source_signature=input_signature, analysis_signature=capture_signature,
-            cache_available=samples is not None, ready=ready, revision=revision,
-        ), trace=None if samples is None else payload.analyze(samples))
+        if changed or ready == state.waiting:
+            self.payloads[key] = payload = _AppearancePayload(
+                dict(route, scope_capture="appearance"), peak_j,
+            )
+            self._plot_grades[key] = grades
+            if self.consistency_keys is not None:
+                self._plot_prerequisites[key] = tuple(dict.fromkeys((
+                    *self.consistency_keys(grades), self._task_key(editor),
+                )))
+            else:
+                self._plot_prerequisites[key] = (self._task_key(editor),)
+            samples = (self._cached_samples(capture_signature)
+                       if self.coordinator is None and changed and ready else None)
+            self._dispatch(key, policy.Event(
+                "request", capture_signature=capture_signature,
+                source_signature=input_signature, analysis_signature=capture_signature,
+                cache_available=samples is not None, ready=ready, revision=revision,
+            ), trace=None if samples is None else payload.analyze(samples))
+            if samples is not None:
+                return
+        if self.preview_roles is not None:
+            inputs = self._preview_inputs(editor, node)
+            if inputs is not None:
+                self._observe_appearance_preview(key, node, peak_j, inputs, signature, revision)
 
     def _observe_appearance_preview(self, key, node, peak_j, inputs, signature, revision):
         demand, samples = inputs
@@ -473,8 +623,8 @@ class ScopeRuntime:
                 and state.preview_grade_signature == signature
                 and state.preview_revision == revision):
             return
-        roles = self.preview_roles(node, signature)
-        if roles is None:
+        roles = self.preview_roles(node, signature) if self.coordinator is None else None
+        if self.coordinator is None and roles is None:
             return
         receipt = _PreviewReceipt(key, revision, demand.capture_signature, signature)
         effects = self._dispatch(key, policy.Event(
@@ -484,7 +634,46 @@ class ScopeRuntime:
         ))
         if not effects.evaluate_preview:
             return
-        self._evaluate_preview(receipt, demand, samples, roles, node, peak_j)
+        if self.coordinator is None:
+            self._evaluate_preview(receipt, demand, samples, roles, node, peak_j)
+        else:
+            # Current input samples are already available. Only exact capture
+            # waits for the paired input plot task to finish.
+            input_task = self._task_key(key.editor)
+            prerequisites = tuple(
+                task for task in self._plot_prerequisites.get(key, ()) if task != input_task
+            )
+            self.coordinator.submit(
+                self._preview_task_key(key), "plot",
+                lambda: self._advance_preview(receipt, demand, node, peak_j),
+                editor=key.editor, prerequisites=prerequisites,
+            )
+
+    def _advance_preview(self, receipt, demand, node, peak_j):
+        """Read validated parameter images and evaluate the current GPU preview."""
+        current = self._preview_inputs(receipt.key.editor, node)
+        if (current is None or current[0] != demand
+                or self._revision(receipt.key) != receipt.revision
+                or self.grade_signature(node) != receipt.grade_signature):
+            self._dispatch(receipt.key, policy.Event("preview_withdraw"))
+            return
+        roles = self.preview_roles(node, receipt.grade_signature)
+        if roles is not None:
+            self._evaluate_preview(receipt, demand, current[1], roles, node, peak_j)
+        else:
+            self._dispatch(receipt.key, policy.Event(
+                "preview_result", revision=receipt.revision,
+                preview_input_signature=receipt.input_signature,
+                preview_grade_signature=receipt.grade_signature,
+            ))
+
+    def _schedule_preview_warmup(self, key):
+        if self.coordinator is None:
+            self._warm_preview()
+        elif (self.preview_backend is None
+              and not self.coordinator.has(self._preview_task_key(key))):
+            self.coordinator.submit(self._preview_task_key(key), "plot", self._warm_preview,
+                                    editor=key.editor)
 
     def _evaluate_preview(self, receipt, demand, samples, roles, node, peak_j):
         started = self._clock()
@@ -622,12 +811,15 @@ class ScopeRuntime:
                        or previous.analysis_signature != analysis_signature
                        or previous.source_signature != source_signature
                        or previous.revision != revision)
-            ready = self.upstream_ready is None or self.upstream_ready(tuple(upstream))
+            grades = tuple(upstream)
+            ready = (self.coordinator is not None or self.upstream_ready is None
+                     or self.upstream_ready(grades))
             if changed:
                 capture_started = self._clock()
                 payload = _Payload(route, prepare_linear(linear, space), epoch, tone)
                 capture_finished = self._clock()
-                samples = self._cached_samples(capture_signature)
+                samples = (self._cached_samples(capture_signature)
+                           if self.coordinator is None and ready else None)
                 lookup_finished = self._clock()
                 trace = None if samples is None else payload.analyze(samples)
                 timings = ()
@@ -640,6 +832,9 @@ class ScopeRuntime:
                     if samples is not None:
                         timings += (("cached_density", lookup_finished, self._clock()),)
                 self.payloads[key] = payload
+                self._plot_grades[key] = grades
+                if self.consistency_keys is not None:
+                    self._plot_prerequisites[key] = tuple(self.consistency_keys(grades))
                 self._dispatch(key, policy.Event(
                     "request", capture_signature=capture_signature,
                     source_signature=source_signature, analysis_signature=analysis_signature,
@@ -754,6 +949,17 @@ class ScopeRuntime:
         payload = self.payloads[ticket.key]
         root = None
         try:
+            lookup_started = self._clock()
+            samples = self._cached_samples(ticket.capture_signature)
+            if samples is not None:
+                lookup_finished = self._clock()
+                trace = payload.analyze(samples)
+                self._record_timing("cache_lookup", lookup_started, lookup_finished, ticket)
+                self._record_timing("cached_density", lookup_finished, self._clock(), ticket)
+                self._dispatch_ticket(ticket, "capture_result", success=True,
+                                      revision=self._revision(ticket.key),
+                                      samples=samples, trace=trace)
+                return
             gate = None if self.gate is None else self.gate()
             with nullcontext() if gate is None else gate.commit():
                 direct_started = self._clock()
@@ -785,7 +991,7 @@ class ScopeRuntime:
             self._dispatch_ticket(
                 ticket, "capture_result", success=True,
                 revision=self._revision(ticket.key),
-                allow_lagging=not isinstance(ticket.key, _AppearanceKey),
+                allow_lagging=self.coordinator is None and not isinstance(ticket.key, _AppearanceKey),
                 samples=rgba, trace=trace,
             )
         except PublicationDeferred:
@@ -805,9 +1011,14 @@ class ScopeRuntime:
         """Advance at most one helper response without waiting for its render."""
         if threading.current_thread() is not self._main_thread:
             raise RuntimeError("Vectorscope helper polling must run on Blender's main thread")
+        if self.coordinator is not None:
+            return bool(self.active is not None or self.queued)
         if self.active is None:
             self._schedule_next()
             return self.active is not None or bool(self.queue)
+        return self._poll_active_once()
+
+    def _poll_active_once(self):
         ticket, job, root = self.active
         rgba = trace = None
         try:
@@ -816,7 +1027,9 @@ class ScopeRuntime:
             self._record_timing("helper_poll", poll_started, self._clock(), ticket)
             if result is None:
                 return True
-            if policy.result_current(self._scope_state(ticket.key), ticket.generation):
+            scope = self._scope_state(ticket.key)
+            if (policy.result_current(scope, ticket.generation)
+                    and (self.coordinator is None or scope.capture_signature == ticket.capture_signature)):
                 rgba = self._validated_samples(result["rgba"])
                 payload = self.payloads[ticket.key]
                 density_started = self._clock()
@@ -838,7 +1051,7 @@ class ScopeRuntime:
         self._dispatch_ticket(
             ticket, "capture_result", success=failure is None,
             error=failure, revision=self._revision(ticket.key),
-            allow_lagging=not isinstance(ticket.key, _AppearanceKey),
+            allow_lagging=self.coordinator is None and not isinstance(ticket.key, _AppearanceKey),
             samples=rgba, trace=trace,
         )
         return bool(self.queue)
@@ -981,6 +1194,8 @@ class ScopeRuntime:
 
     def _forget_observation(self, key, *, release_binding=False):
         self.payloads.pop(key, None)
+        self._plot_prerequisites.pop(key, None)
+        self._plot_grades.pop(key, None)
         with self._observations:
             self.dependencies.pop(key, None)
             self.watches.pop(key, None)
@@ -1010,12 +1225,16 @@ class ScopeRuntime:
         if isinstance(key, _AppearanceKey):
             self.appearance_observations.pop(key.editor, None)
         self._forget_observation(key, release_binding=True)
+        self._withdraw_task(key)
         self._dispatch(key, policy.Event("release"))
 
     def reset(self):
-        for key in tuple(set(self.scope_states) | set(self.demands) | set(self.queued)):
+        for key in tuple(self.scope_states):
             self._dispatch(key, policy.Event("reset"))
+            self._withdraw_task(key)
         self.payloads.clear()
+        self._plot_prerequisites.clear()
+        self._plot_grades.clear()
         self.samples.clear()
         self.appearance_observations.clear()
         self.sample_bytes = 0
@@ -1047,6 +1266,7 @@ class ScopeRuntime:
             if root is not None:
                 shutil.rmtree(root, ignore_errors=True)
             self.active = None
+            self._paused_capture = None
             self._dispatch_ticket(
                 ticket, "capture_result",
                 allow_lagging=not isinstance(ticket.key, _AppearanceKey),

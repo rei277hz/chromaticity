@@ -2,7 +2,7 @@
 
 import atexit
 import asyncio
-from concurrent.futures import Future
+from concurrent.futures import CancelledError, Future
 import importlib
 import json
 from pathlib import Path
@@ -52,6 +52,7 @@ bpy.context.preferences.extensions.repos.new(
 
 with _timings.operation("extension imports"):
     extension = importlib.import_module("bl_ext.pg_grade_smoke.perceptual_grade")
+    application = importlib.import_module(extension.__name__ + ".application")
     nodes = importlib.import_module(
         "bl_ext.pg_grade_smoke.perceptual_grade.features.grade.host"
     )
@@ -89,8 +90,22 @@ with _timings.operation("enable extension"):
         extension.__name__, default_set=False, handle_error=enable_errors.append
     )
 assert enabled_extension is extension and not enable_errors, enable_errors
+addon_runtime = application._runtime
 assert not initial_scans
-assert bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
+
+
+def wait_for_lifecycle_recovery():
+    deadline = time.monotonic() + 120
+    while addon_runtime.scheduler.has(nodes._LIFECYCLE_TASK) and time.monotonic() < deadline:
+        addon_runtime._scheduler_tick()
+        time.sleep(.01)
+    assert not nodes._lifecycle.reset_pending
+    assert addon_runtime.scheduler.phase == "ready"
+
+
+assert addon_runtime.scheduler.has(nodes._STARTUP_TASK)
+assert addon_runtime.scheduler.phase == "starting"
+assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
 localization = nodes.localization
 assert localization._registered
 assert localization.resolve_locale("zh_CN") == "zh_HANS"
@@ -101,7 +116,10 @@ assert localization.host_messages("zh_CN")[("*", "Color")] == "颜色"
 assert localization.host_messages("zh_CN")[("*", "Alpha")] == "Alpha"
 with restricted.RestrictBlend():
     assert type(bpy.data).__name__ == "_RestrictData"
+    addon_runtime.scheduler.advance()
     assert nodes._startup_reconcile_tick() == 0.1
+assert addon_runtime.scheduler.has(nodes._STARTUP_TASK)
+assert addon_runtime.scheduler.phase == "starting"
 assert not initial_scans
 
 
@@ -117,7 +135,11 @@ def reconcile_for_render(scene):
 
 def wait_for_receipt(event, name):
     with _timings.operation(name):
-        return event.wait(10)
+        deadline = time.monotonic() + 10
+        while not event.is_set() and time.monotonic() < deadline:
+            addon_runtime._scheduler_tick()
+            event.wait(.01)
+        return event.is_set()
 
 
 def assert_menu_item(tree):
@@ -579,14 +601,20 @@ class TestStackJob:
         self.make_cube = make_cube
         self.progressive = progressive
         self.step = 0
+        self.cancelled = False
 
     def advance(self):
+        if self.cancelled:
+            raise CancelledError("Synthetic Stack preparation yielded")
         self.step += 1
         if self.progressive and self.step == 1:
             with _timings.operation("synthetic CPU Stack fixture preview (33)"):
                 return "preview", self.make_cube(lut_kernel.PREVIEW_SIZE)
         with _timings.operation("synthetic CPU Stack fixture full (65)"):
             return "full", self.make_cube(lut_kernel.SIZE)
+
+    def cancel(self):
+        self.cancelled = True
 
     def close(self):
         pass
@@ -599,7 +627,8 @@ nodes._preparation_runtime._lanes["lut"].host_owner = TestStackBackend()
 with _timings.operation("repeat extension registration"):
     extension.register()
 assert not initial_scans
-assert bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
+assert addon_runtime.scheduler.pending().count(nodes._STARTUP_TASK) == 1
+assert addon_runtime.scheduler.phase == "starting"
 assert nodes.PGShaderGrade.is_registered
 assert nodes.PGCompositorGrade.is_registered
 assert nodes.PGShaderGradePerNode.is_registered
@@ -649,11 +678,13 @@ assert nodes.PG_OT_add_grade.poll(first_context)
 assert nodes.PG_OT_add_grade.execute(None, first_context) == {"FINISHED"}
 first_node = first_material.node_tree.nodes.active
 assert first_node.pg_grade is None
-assert nodes._startup_reconcile_tick() is None
+deadline = time.monotonic() + 120
+while addon_runtime.scheduler.has(nodes._STARTUP_TASK) and time.monotonic() < deadline:
+    addon_runtime._scheduler_tick()
+    time.sleep(.01)
 assert len(initial_scans) == 1
-if bpy.app.timers.is_registered(nodes._startup_reconcile_tick):
-    bpy.app.timers.unregister(nodes._startup_reconcile_tick)
-assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
+assert not addon_runtime.scheduler.has(nodes._STARTUP_TASK)
+assert addon_runtime.scheduler.phase == "ready"
 reconcile_for_render(bpy.context.scene)
 failures = nodes._drain_preparations()
 assert not failures, failures
@@ -1460,6 +1491,7 @@ with tempfile.TemporaryDirectory(prefix="perceptual-grade-recovery-") as temp:
         bpy.ops.wm.open_mainfile(filepath=str(saved_file))
 
 with _timings.operation("post-load preparation drain"):
+    wait_for_lifecycle_recovery()
     nodes._drain_preparations()
 
 with _timings.operation("Grade conversion persistence checks"):
@@ -1512,7 +1544,7 @@ before_repeat_local_pointers = tuple(
     for kernel, images in saved_local_resources
 )
 nodes._load_post("")
-nodes._drain_preparations()
+wait_for_lifecycle_recovery()
 assert all(node.node_tree == before_repeat for node in shared_shader_nodes)
 assert grade_resource_inventory(shared_shader_nodes[0]) == before_repeat_resources
 assert assert_local_grade_resources(local_grade_identities) == saved_local_resources
@@ -1636,6 +1668,8 @@ def check_preparation_publication_isolation():
         stale_signature = records[0]["state"].applied_signature
         for node in grades:
             node.exposure = 0.5
+        for record in records:
+            nodes._start_scheduled_preparation(record["source"])
         publications = {
             publication.source: publication
             for publication in nodes._preparation_runtime.wait()
@@ -1866,9 +1900,11 @@ class HoldingStackJob:
         self.progressive = progressive
         self.retired = retired
         self.preview_sent = False
+        self.cancelled = False
 
     def advance(self):
-        if self.progressive and self.preview_sent and not self.release.is_set():
+        if (self.progressive and self.preview_sent and not self.cancelled
+                and not self.release.is_set()):
             if self.retired is stale_refinement_retired:
                 stale_refinement_advanced.set()
             return None
@@ -1877,6 +1913,10 @@ class HoldingStackJob:
             self.preview_sent = True
             self.ready.set()
         return receipt
+
+    def cancel(self):
+        self.cancelled = True
+        self.job.cancel()
 
     def close(self):
         self.job.close()
@@ -1888,7 +1928,7 @@ class HoldingStackJob:
 def pump_until(event):
     deadline = time.monotonic() + 10
     while not event.is_set() and time.monotonic() < deadline:
-        nodes._preparation_tick()
+        addon_runtime._scheduler_tick()
         time.sleep(.001)
     assert event.is_set(), "GPU host lane did not reach the expected receipt"
 
@@ -1897,7 +1937,7 @@ def pump_until(event):
 def pump_until_latest_stack_previews():
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        nodes._preparation_tick()
+        addon_runtime._scheduler_tick()
         states = tuple(nodes._record_for(stack_node)["state"]
                        for stack_node in (shader_stack, compositor_stack))
         if all(state.applied_quality == "preview"
@@ -2023,7 +2063,7 @@ try:
 
     for exposure in (0.75, 0.90625):
         local_grade.pg_linear.exposure = exposure
-    nodes._preparation_tick()
+    addon_runtime._scheduler_tick()
     assert local_preparation_exposures == [0.8125], local_preparation_exposures
     local_record = nodes._record_for(local_drag_node)
     local_state = local_record["state"]
@@ -2064,7 +2104,7 @@ try:
     assert wait_for_receipt(local_latest_started, "wait for latest local preparation"), (
         "latest local value was not prepared"
     )
-    nodes._preparation_tick()
+    addon_runtime._scheduler_tick()
     assert local_drag_node.node_tree == local_old_kernel
     assert local_drag_node.node_tree.get(nodes._ERROR_KERNEL_KIND) is None
     release_local_latest.set()
@@ -2351,7 +2391,7 @@ try:
     assert wait_for_receipt(latest_preparation_started, "wait for successor preparation"), (
         "successor waited for Blender timer"
     )
-    nodes._preparation_tick()
+    addon_runtime._scheduler_tick()
     assert preparation_exposures == [0.4375, 0.875], preparation_exposures
     assert stale_node.node_tree.get(nodes._KERNEL_KIND) == nodes._KERNEL_SCHEMA
     assert stale_node.get(nodes._NODE_PENDING) == "status.showing_last_good"
@@ -2368,7 +2408,7 @@ try:
     assert_grade_graph(stale_shader_graph)
     assert_grade_graph(stale_compositor_graph)
     preview = stale_node.node_tree
-    nodes._preparation_tick()
+    addon_runtime._scheduler_tick()
     assert stale_node.node_tree == preview
 
     nodes._end_gesture(732, gesture_token)
@@ -2776,18 +2816,16 @@ del local_undo_node
 assert bpy.ops.ed.undo.poll()
 with _timings.operation("native undo material Grade"):
     assert bpy.ops.ed.undo() == {"FINISHED"}
-assert bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
+assert addon_runtime.scheduler.has(nodes._LIFECYCLE_TASK)
 with _timings.operation("material Grade undo reconciliation"):
-    nodes._undo_redo_reconcile_tick()
-    nodes._drain_preparations()
+    wait_for_lifecycle_recovery()
 assert_local_grade_resources(local_grade_identities)
 assert bpy.ops.ed.redo.poll()
 with _timings.operation("native redo material Grade"):
     assert bpy.ops.ed.redo() == {"FINISHED"}
-assert bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
+assert addon_runtime.scheduler.has(nodes._LIFECYCLE_TASK)
 with _timings.operation("material Grade redo reconciliation"):
-    nodes._undo_redo_reconcile_tick()
-    nodes._drain_preparations()
+    wait_for_lifecycle_recovery()
 local_undo_node = bpy.data.materials[first_material_name].node_tree.nodes[first_node_name]
 assert local_undo_node.pg_grade.name == local_undo_grade_name
 assert_grade_current(local_undo_node)
@@ -2831,9 +2869,8 @@ def reconcile_after_test_undo(node_name):
     pointer = node.as_pointer()
     assert pointer not in nodes._node_stores
     del node
-    assert bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
-    nodes._undo_redo_reconcile_tick()
-    nodes._drain_preparations()
+    assert addon_runtime.scheduler.has(nodes._LIFECYCLE_TASK)
+    wait_for_lifecycle_recovery()
     node = bpy.data.node_groups[undo_tree_name].nodes[node_name]
     record = nodes._node_stores[node.as_pointer()]
     signature = nodes._kernel_signature(
@@ -2941,7 +2978,7 @@ assert not nodes.PGToneSettings.is_registered
 assert not nodes.PGColorSettings.is_registered
 assert not nodes.PG_OT_convert_grade.is_registered
 assert not nodes.PG_PT_linear.is_registered
-assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
+assert not addon_runtime.scheduler.has(nodes._STARTUP_TASK)
 for menu_type in nodes.MENU_TYPES:
     assert nodes.draw_add_menu not in menu_type.draw._draw_funcs
 assert nodes.draw_context_menu not in bpy.types.NODE_MT_context_menu.draw._draw_funcs
@@ -2967,14 +3004,21 @@ with _timings.operation("re-enable extension"):
 assert enabled_extension is extension and not enable_errors, enable_errors
 assert localization._registered
 assert len(initial_scans) == scans_before_reenable
-assert bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
+assert addon_runtime.scheduler.has(nodes._STARTUP_TASK)
+assert addon_runtime.scheduler.phase == "starting"
 with restricted.RestrictBlend():
-    assert nodes._startup_reconcile_tick() == 0.1
+    addon_runtime.scheduler.advance()
 assert len(initial_scans) == scans_before_reenable
+assert addon_runtime.scheduler.has(nodes._STARTUP_TASK)
+nodes._undo_redo_pre()
+assert not addon_runtime.scheduler.has(nodes._STARTUP_TASK)
+nodes._undo_redo_post()
+assert addon_runtime.scheduler.has(nodes._LIFECYCLE_TASK)
 with _timings.operation("disable re-enabled extension"):
     addon_utils.disable(extension.__name__, default_set=False)
 assert not localization._registered
-assert not bpy.app.timers.is_registered(nodes._startup_reconcile_tick)
+assert addon_runtime.scheduler.phase == "closed"
+assert not addon_runtime.scheduler.has_work()
 nodes._ensure_all_kernels = original_ensure_all_kernels
 
 _timings.complete(metadata=_timing_metadata())

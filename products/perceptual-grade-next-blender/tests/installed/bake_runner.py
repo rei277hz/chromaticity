@@ -20,37 +20,70 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_bake.perceptual_grade")
+application = importlib.import_module("bl_ext.pg_bake.perceptual_grade.application")
 nodes = importlib.import_module("bl_ext.pg_bake.perceptual_grade.features.grade.host")
 errors = []
 assert addon_utils.enable(extension.__name__, default_set=False, handle_error=errors.append) is extension
 assert not errors, errors
+runtime = application._runtime
+
+
+def wait_until(complete, message, *, timeout=120):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if complete():
+            return
+        runtime._scheduler_tick()
+        time.sleep(.01)
+    raise TimeoutError(message)
 
 
 def wait_ready(node, *, stack=False):
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        nodes._preparation_tick()
+    def current():
         state = nodes._record_for(node)["state"]
-        if state.error is None and nodes.node_policy.output_allowed(state):
-            assert state.applied_quality == "full"
-            assert nodes._kernel_is_current(
+        return (
+            state.error is None and nodes.node_policy.output_allowed(state)
+            and state.applied_quality == "full"
+            and nodes._kernel_is_current(
                 node.node_tree, node.id_data.bl_idname, state.desired_signature,
                 "full", stack=stack,
             )
-            return
-        time.sleep(.01)
-    raise TimeoutError("Grade kernel did not become ready")
+        )
+
+    wait_until(current, "Grade kernel did not become ready")
 
 
 def wait_bake(node):
-    deadline = time.monotonic() + 300
-    while time.monotonic() < deadline:
-        nodes._bake_tick()
-        manager = nodes._bake.manager
-        if manager is None or manager._node_key(node) not in manager.jobs:
-            return
-        time.sleep(.01)
-    raise TimeoutError("Bake did not retire")
+    manager = nodes._bake.manager
+    key = manager._node_key(node)
+    try:
+        wait_until(lambda: key not in manager.jobs, "Bake did not retire", timeout=300)
+    except TimeoutError as error:
+        request = manager.jobs[key]
+        raise RuntimeError((
+            node.name, request["state"], request["prepared"],
+            request["inputs"] is not None,
+            manager.active is request, runtime.scheduler.phase,
+            runtime.scheduler.pending(),
+            [(candidate.name, nodes._node_kernel_current(candidate))
+             for candidate in (node, *request["upstream_grades"])],
+        )) from error
+
+
+def wait_bake_start(manager, request):
+    wait_until(
+        lambda: manager.active is request or request["node_key"] not in manager.jobs,
+        "Bake did not start",
+    )
+    assert manager.active is request, request["node"].get(nodes.bake_controller.BAKE_ERROR)
+
+
+def wait_bake_reconciliation(node):
+    pointer = node.as_pointer()
+    wait_until(
+        lambda: pointer not in nodes._bake.pending_reconciliations,
+        "Bake output did not reconcile",
+    )
 
 
 def image(name, pixels, width, height, *, float_buffer=True):
@@ -154,7 +187,9 @@ def bake(node, context, *, on_queued=None):
     original_render_settings = foreground_render_settings(context.scene)
     operator = SimpleNamespace(cancel=False, node_pointer="", tree_pointer="")
     assert nodes.PG_OT_bake.execute(operator, context) == {"FINISHED"}
-    assert bpy.app.timers.is_registered(nodes._bake_tick), "Bake request did not wake its timer"
+    assert runtime.scheduler.has(nodes._bake._scheduler_jobs_key), (
+        "Bake request did not wake its scheduler"
+    )
     request = nodes._bake.manager.jobs[nodes._bake.manager._node_key(node)]
     if on_queued is not None:
         on_queued()
@@ -340,37 +375,33 @@ def check_bake_upstream_grade_identity(scene, directory):
     wait_ready(target)
 
     context = shader_context(material, scene, node=target)
-    original_refresh = nodes._refresh_nodes
+    original_live_error = nodes._bake_live_error
     manager = nodes._bake.manager
-    failure = RuntimeError("Injected Bake upstream preparation failure")
+    failure = "Injected Bake upstream preparation failure"
     failed_pointer = upstream.as_pointer()
-    queued = []
 
-    def refresh_with_failure(candidates, *args, **kwargs):
-        candidates = tuple(candidates)
-        for candidate in candidates:
-            if candidate.as_pointer() == failed_pointer:
-                return (((candidate,), failure),)
-        return original_refresh(candidates, *args, **kwargs)
+    def live_error_with_failure(node):
+        if node.as_pointer() == failed_pointer:
+            return failure
+        return original_live_error(node)
 
-    try:
-        nodes._refresh_nodes = refresh_with_failure
-        manager.request = lambda node, *_args, **_kwargs: queued.append(node.as_pointer())
-        try:
-            nodes._bake.request(target, context)
-        except RuntimeError as error:
-            assert str(failure) in str(error)
-        else:
-            raise AssertionError("Bake accepted a failed upstream Grade")
-        assert not queued
+    key = target.as_pointer()
+    with patch.object(nodes, "_bake_live_error", live_error_with_failure):
+        nodes._bake.request(target, context)
+        wait_bake(target)
+        assert failure in target.get(nodes.bake_controller.BAKE_ERROR, "")
+        assert target.pg_bake_image is None
 
         failed_pointer = decoy.as_pointer()
         nodes._bake.request(target, context)
-        assert queued == [target.as_pointer()]
-    finally:
-        nodes._refresh_nodes = original_refresh
-        del manager.request
-        nodes._bake.sources.forget(("request", target.as_pointer()))
+        request = manager.jobs[key]
+        wait_until(
+            lambda: request["prepared"] or key not in manager.jobs,
+            "Bake did not validate the upstream Grade",
+        )
+        assert request["prepared"], target.get(nodes.bake_controller.BAKE_ERROR)
+        assert target.get(nodes.bake_controller.BAKE_ERROR) is None
+        nodes._bake.cancel(target)
 
 
 def check_render_layers_indirect_sources(scene, target, context):
@@ -420,7 +451,7 @@ def check_render_layers_indirect_sources(scene, target, context):
             signature = pending["route"]["request_signature"]
             grade.pg_grade.pg_linear.exposure += .25
             assert nodes._bake.current_signature(target, pending["route"]) != signature, binding
-            nodes._bake_tick()
+            wait_bake(target)
             assert key not in nodes._bake.manager.jobs, binding
             assert target.pg_use_bake and target.pg_bake_image is not None
 
@@ -487,8 +518,7 @@ nodes._bake.request(shader, shader_context(material, scene, node=shader))
 manager = nodes._bake.manager
 node_key = manager._node_key(shader)
 request = manager.jobs[node_key]
-manager._start_next()
-assert manager.active is request
+wait_bake_start(manager, request)
 original_describe = nodes.bake_routes.describe
 
 
@@ -518,11 +548,7 @@ try:
     nodes.invalidate_source(source_image)
     assert nodes._bake.current_signature(shader, request["route"]) is None
     nodes._bake.reconcile((shader,))
-    deadline = time.monotonic() + 300
-    while node_key in manager.jobs and time.monotonic() < deadline:
-        manager.poll()
-        time.sleep(.01)
-    assert node_key not in manager.jobs, "Stale Bake helper did not retire"
+    wait_bake(shader)
     assert manager.active is None
     assert shader.pg_bake_image is None and not shader.pg_use_bake
     assert shader.get(nodes.bake_controller.BAKE_NODE_SIGNATURE) is None
@@ -667,7 +693,7 @@ try:
     assert unverified.as_pointer() in nodes._bake.pending_reconciliations
 finally:
     gate.evaluation_finished("render", scene.as_pointer())
-nodes._bake_tick()
+wait_bake_reconciliation(unverified)
 assert unverified.pg_bake_image is None and not unverified.pg_use_bake
 assert nodes._bake.receipt_signature(unverified) is None
 unverified_reader = nodes.bake_graph.marked(unverified.node_tree, nodes.bake_graph.READER)
@@ -677,32 +703,6 @@ unverified_selectors = tuple(
 assert unverified_reader.image is None
 assert unverified_selectors and all(float(item.inputs[0].default_value) == 0.0
                                     for item in unverified_selectors)
-
-# Polling remains available when the passive node inventory is temporarily
-# unavailable. The manager must advance before the inventory is inspected.
-manager = nodes._bake.manager
-original_nodes = nodes._bake.nodes
-original_poll = manager.poll
-polls = []
-
-
-def unavailable_nodes():
-    raise RuntimeError("Injected Bake inventory failure")
-
-
-def tracked_poll():
-    polls.append(True)
-    return original_poll()
-
-
-try:
-    nodes._bake.nodes = unavailable_nodes
-    manager.poll = tracked_poll
-    assert nodes._bake_tick() == 0.02
-finally:
-    nodes._bake.nodes = original_nodes
-    manager.poll = original_poll
-assert polls
 
 # Use Bake can be disabled and restored without unbinding the managed Image.
 shader.pg_use_bake = False
@@ -782,11 +782,11 @@ gate = nodes._grade_resources.gate
 gate.evaluation_started("render", scene.as_pointer())
 try:
     shader.pg_use_bake = False
-    nodes._bake_tick()
+    runtime._scheduler_tick()
     assert all(float(item.inputs[0].default_value) == 1.0 for item in shader_selectors)
 finally:
     gate.evaluation_finished("render", scene.as_pointer())
-nodes._bake_tick()
+wait_bake_reconciliation(shader)
 assert all(float(item.inputs[0].default_value) == 0.0 for item in shader_selectors)
 shader.pg_use_bake = True
 assert shader.pg_use_bake
@@ -908,17 +908,16 @@ wait_ready(shared)
 shared.pg_bake_image = shader.pg_bake_image
 shared.pg_use_bake = True
 assert shared.pg_use_bake, shared.get(nodes.bake_controller.BAKE_ERROR)
-# The request timer must be re-armed after its idle callback returned None.
-if bpy.app.timers.is_registered(nodes._bake_tick):
-    bpy.app.timers.unregister(nodes._bake_tick)
-assert not bpy.app.timers.is_registered(nodes._bake_tick)
+# A new request must be eligible after the previous scheduler task retired.
+assert not runtime.scheduler.has(nodes._bake._scheduler_jobs_key)
 shared_context = shader_context(material, scene, node=shared)
 shared_image = shader.pg_bake_image
 original_reader_receipt = nodes._bake.receipt_signature(shader)
 assert original_reader_receipt is not None
 assert_bake_controls(shader, image_context)
 shared_values = bake(shared, shared_context)
-nodes._bake_tick()
+wait_bake_reconciliation(shader)
+wait_bake_reconciliation(shared)
 assert_shader_uses_image(shader, shared_image)
 assert_shader_uses_image(shared, shared_image)
 assert nodes._bake.receipt_signature(shader) == original_reader_receipt
@@ -936,7 +935,7 @@ grade_data.pg_tone.vivid_gain = 0.375
 assert_shader_uses_image(shared, shared_image)
 assert_bake_controls(shared, shared_context, "status.bake_stale_inputs")
 wait_ready(shared)
-nodes._bake_tick()
+wait_bake_reconciliation(shared)
 assert_shader_uses_image(shared, shared_image)
 new_live = nodes.bake_graph.live_tree(shared.node_tree)
 assert new_live is not None and new_live.get(nodes._KERNEL_SIGNATURE) != old_signature
@@ -1044,7 +1043,7 @@ nodes._depsgraph_update_post(scene, SimpleNamespace(updates=(
     SimpleNamespace(id=mesh, is_updated_geometry=True,
                     is_updated_transform=False, is_updated_shading=False),
 )))
-nodes._bake_tick()
+wait_bake(attribute_grade)
 assert attribute_key not in manager.jobs
 assert_shader_uses_image(attribute_grade, attribute_image)
 assert attribute_image.get(nodes.bake_controller.BAKE_OPERATION) == attribute_operation
@@ -1150,7 +1149,7 @@ nodes._bake.request(constant_grade, constant_context)
 constant_key = manager._node_key(constant_grade)
 assert manager.jobs[constant_key]["state"].phase == "queued"
 scene.render.resolution_x = 48
-nodes._bake_tick()
+wait_bake(constant_grade)
 assert constant_key not in manager.jobs
 assert constant_grade.pg_use_bake and constant_grade.pg_bake_image == constant_image
 assert constant_image.get(nodes.bake_controller.BAKE_OPERATION) == constant_operation
@@ -1197,7 +1196,7 @@ link_source(shader_tree, stale, source, uv=True)
 wait_ready(stale)
 nodes._bake.request(stale, shader_context(material, scene, obj, stale))
 stale_grade.pg_color.adaptance_a_1 = .75
-nodes._bake_tick()
+wait_bake(stale)
 assert not stale.pg_use_bake and stale.pg_bake_image is None
 assert nodes._bake.manager._node_key(stale) not in nodes._bake.manager.jobs
 stale_discarded = True
@@ -1218,7 +1217,7 @@ scene.cycles.device = "GPU"
 bpy.context.view_layer.update()
 nodes._bake.reconcile((pending,))
 assert manager.jobs[pending_key] is pending_request and pending_request["state"].phase == "queued"
-manager._start_next()
+wait_bake_start(manager, pending_request)
 assert manager.active is pending_request and pending_request["state"].phase == "running"
 scene.render.engine = "CYCLES"
 scene.cycles.device = "CPU"
@@ -1261,16 +1260,22 @@ ignored_entry.direction = "INVERSE"
 image_stack.pg_active_index = 1
 assert manager.jobs[stack_key] is queued_stack_request
 inverse_entry.direction = "FORWARD"
-assert stack_key not in manager.jobs
+wait_bake(image_stack)
+assert queued_stack_request["state"].phase == "terminal"
+assert queued_stack_request["inputs"] is None
 assert image_stack.pg_bake_image is None and not image_stack.pg_use_bake
 
 inverse_entry.direction = "INVERSE"
 nodes._bake.request(image_stack, image_stack_context)
-manager._start_next()
 running_stack_request = manager.jobs[stack_key]
+wait_bake_start(manager, running_stack_request)
 assert manager.active is running_stack_request
 assert running_stack_request["state"].phase == "running"
 inverse_entry.enabled = False
+wait_until(
+    lambda: running_stack_request["state"].phase != "running",
+    "Changed Stack did not withdraw the active Bake",
+)
 assert running_stack_request["state"].phase == "cancelling"
 assert manager.active is running_stack_request
 wait_bake(image_stack)
@@ -1405,6 +1410,26 @@ report = {
 bpy.context.view_layer.update()
 uv_values = bake(uv_node, shader_context(material, scene, obj, uv_node))
 
+# Create two current Stack consumers before editing their shared Grade.
+queued_stack_names = []
+queued_stack_grade = nodes._make_grade()
+for _ in range(2):
+    queued_stack = nodes.create_stack_node(shader_tree)
+    queued_stack_context = SimpleNamespace(pg_stack_node=queued_stack)
+    assert nodes.PG_OT_stack_action.execute(
+        SimpleNamespace(action="ADD"), queued_stack_context,
+    ) == {"FINISHED"}
+    assert nodes.PG_OT_new_stack_grade.execute(
+        SimpleNamespace(index=0), queued_stack_context,
+    ) == {"FINISHED"}
+    queued_stack.pg_stack_entries[0].grade = queued_stack_grade
+    wait_ready(queued_stack, stack=True)
+    queued_stack_names.append(queued_stack.name)
+queued_stack_signatures = tuple(
+    nodes._record_for(shader_tree.nodes[name])["state"].applied_signature
+    for name in queued_stack_names
+)
+
 # Preserve the latest active bake across a real save/load; resolve every RNA
 # pointer again after open_mainfile, including the nested live kernel.
 stack_tree_name, stack_name = stack_tree.name, stack.name
@@ -1415,15 +1440,47 @@ other_effect_name = add_solid_effect(scene).name
 assert uv_node.pg_use_bake and nodes._bake.toggle_available(uv_node)
 with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     blend_path = str(Path(directory) / "bake.blend")
+    nodes._bake.request(uv_node, shader_context(material, scene, obj, uv_node))
+    pending_save_bake = manager.jobs[uv_node.as_pointer()]
+    wait_bake_start(manager, pending_save_bake)
+    snapshot_directory = pending_save_bake["root"]
+    operation_before_save = uv_node.pg_bake_image.get(nodes.bake_controller.BAKE_OPERATION)
+    assert snapshot_directory.exists()
+    queued_stack_grade.pg_linear.exposure = .25
+    for name, previous_signature in zip(queued_stack_names, queued_stack_signatures):
+        candidate = shader_tree.nodes[name]
+        expected_signature = nodes._stack_signature(nodes._settings_for_node(candidate),
+                                                    nodes._working_space())
+        assert previous_signature != expected_signature
+        assert not nodes._kernel_is_current(
+            candidate.node_tree, nodes.SHADER_TREE, expected_signature, stack=True,
+        )
     assert "FINISHED" in bpy.ops.wm.save_as_mainfile(filepath=blend_path)
     assert uv_node.pg_use_bake and nodes._bake.toggle_available(uv_node)
     assert "FINISHED" in bpy.ops.wm.open_mainfile(filepath=blend_path)
+    wait_until(lambda: not snapshot_directory.exists(), "Old Bake snapshot did not retire")
+    assert pending_save_bake["state"].phase == "terminal"
     restored_uv = bpy.data.materials.get(material_name).node_tree.nodes.get(uv_name)
+    assert restored_uv.pg_bake_image.get(nodes.bake_controller.BAKE_OPERATION) == operation_before_save
     assert restored_uv.pg_use_bake and nodes._bake.toggle_available(restored_uv)
     restored_tree = bpy.data.node_groups.get(stack_tree_name)
     assert restored_tree is not None
     restored_stack = restored_tree.nodes.get(stack_name)
     assert restored_stack is not None
+    reopened_material = bpy.data.materials.get(material_name)
+    reopened_shader_tree = reopened_material.node_tree
+    restored_queued_stacks = tuple(
+        reopened_shader_tree.nodes.get(name) for name in queued_stack_names
+    )
+    assert all(restored_queued_stacks)
+    for restored_queued_stack, previous_signature in zip(
+            restored_queued_stacks, queued_stack_signatures):
+        wait_ready(restored_queued_stack, stack=True)
+        state = nodes._record_for(restored_queued_stack)["state"]
+        expected_signature = nodes._stack_signature(
+            nodes._settings_for_node(restored_queued_stack), nodes._working_space(),
+        )
+        assert state.applied_signature == expected_signature != previous_signature
     reopened_scene = bpy.context.scene
     assert reopened_scene.compositor_effects.active.name == other_effect_name
     stack_context = compositor_context(reopened_scene, restored_tree, restored_stack)
@@ -1441,7 +1498,7 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     reopened_scene.compositor_effects.active = reopened_scene.compositor_effects[stored["effect_name"]]
     reopened_scene.compositor_effects.remove(reopened_scene.compositor_effects[other_effect_name])
     wait_ready(restored_stack, stack=True)
-    nodes._bake_tick()
+    wait_bake_reconciliation(restored_stack)
     assert restored_stack.pg_use_bake, restored_stack.get(nodes.bake_controller.BAKE_ERROR)
     assert nodes._bake.toggle_available(restored_stack)
     restored_image = restored_stack.pg_bake_image
@@ -1468,12 +1525,12 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
     del restored_stack, restored_uv, restored_source
     assert bpy.ops.ed.undo.poll()
     assert bpy.ops.ed.undo() == {"FINISHED"}
-    if bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick):
-        nodes._undo_redo_reconcile_tick()
+    wait_until(lambda: runtime.scheduler.phase == "ready",
+               "Grade undo recovery did not complete")
     restored_tree = bpy.data.node_groups.get(stack_tree_name)
     restored_stack = restored_tree.nodes.get(stack_name)
     wait_ready(restored_stack, stack=True)
-    nodes._bake_tick()
+    wait_bake_reconciliation(restored_stack)
     assert restored_stack.pg_use_bake and nodes._bake.toggle_available(restored_stack)
     restored_material = bpy.data.materials.get(material_name)
     restored_uv = restored_material.node_tree.nodes.get(uv_name)
@@ -1501,6 +1558,8 @@ with tempfile.TemporaryDirectory(prefix="pg-next-bake-save-") as directory:
                          "status.bake_stale_source", legacy=True)
     assert "FINISHED" in bpy.ops.wm.save_as_mainfile(filepath=blend_path)
     assert "FINISHED" in bpy.ops.wm.open_mainfile(filepath=blend_path)
+    wait_until(lambda: runtime.scheduler.phase == "ready",
+               "Grade lifecycle recovery did not complete")
     restored_scene = bpy.context.scene
     restored_material = bpy.data.materials.get(material_name)
     restored_uv = restored_material.node_tree.nodes.get(uv_name)

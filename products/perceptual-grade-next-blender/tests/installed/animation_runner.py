@@ -20,9 +20,31 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_grade_animation.perceptual_grade")
+application = importlib.import_module(extension.__name__ + ".application")
 nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
 addon_utils.enable(extension.__name__, default_set=False)
+runtime = application._runtime
 
+
+def pump_lifecycle_recovery(*, timeout=120):
+    deadline = time.monotonic() + timeout
+    while runtime.scheduler.phase != "ready" and time.monotonic() < deadline:
+        runtime._scheduler_tick()
+        time.sleep(.01)
+    assert not nodes._lifecycle.reset_pending
+    assert runtime.scheduler.phase == "ready", runtime.scheduler.pending()
+
+
+def pump_frame_reconciliation(scene_identity, *, timeout=10):
+    deadline = time.monotonic() + timeout
+    while scene_identity in nodes._frame_reconcile_scenes and time.monotonic() < deadline:
+        runtime._scheduler_tick()
+        time.sleep(.01)
+    assert scene_identity not in nodes._frame_reconcile_scenes
+
+
+# The script can run before Blender pumps the addon timer after enable.
+pump_lifecycle_recovery()
 scene = bpy.context.scene
 scene.render.engine = "BLENDER_EEVEE"
 scene.render.use_compositing = True
@@ -111,6 +133,29 @@ failures = nodes._refresh_nodes((shader_node, compositor_node))
 assert not failures, failures
 failures = nodes._drain_preparations()
 assert not failures, failures
+
+# A queued preparation belongs to the shared Grade until its final user leaves.
+shared_grade = nodes._make_grade()
+removed_user = nodes.create_node(material.node_tree)
+remaining_user = nodes.create_node(material.node_tree)
+removed_user.pg_grade = remaining_user.pg_grade = shared_grade
+shared_grade.pg_linear.exposure = 0.375
+source = nodes._record_for(remaining_user)["source"]
+assert nodes._record_for(removed_user)["source"] is source
+key = nodes._consistency_task_key(source)
+assert runtime.scheduler.has(key)
+material.node_tree.nodes.remove(removed_user)
+assert runtime.scheduler.has(key)
+assert tuple(record["node"] for record in nodes._publication_records(source, "grade")) == (
+    remaining_user,
+)
+deadline = time.monotonic() + 10
+while runtime.scheduler.has(key) and time.monotonic() < deadline:
+    runtime._scheduler_tick()
+    time.sleep(.01)
+assert nodes._node_kernel_current(remaining_user)
+material.node_tree.nodes.remove(remaining_user)
+bpy.data.node_groups.remove(shared_grade)
 
 # Auto Key is captured at gesture press and inserted at the captured frame.
 scene.frame_set(6)
@@ -235,12 +280,11 @@ try:
             app=SimpleNamespace(is_job_running=lambda name: name == job),
             data=SimpleNamespace(window_managers=(manager,)),
         )
-        nodes._frame_reconcile_tick()
+        nodes._advance_frame_reconciliation()
         assert scene_identity in nodes._frame_reconcile_scenes, (job, locked, modal)
 finally:
     gate._bpy = original_host
-nodes._frame_reconcile_tick()
-assert scene_identity not in nodes._frame_reconcile_scenes
+pump_frame_reconciliation(scene_identity)
 assert nodes._hue_claims(shared_claim_grade.pg_color) == shared_claims
 bpy.data.node_groups.remove(shared_claim_grade)
 
@@ -353,6 +397,7 @@ node_names = shader_node.name, compositor_node.name
 saved_file = report_path.parent / "animated-grade-roundtrip.blend"
 assert bpy.ops.wm.save_as_mainfile(filepath=str(saved_file)) == {"FINISHED"}
 assert bpy.ops.wm.open_mainfile(filepath=str(saved_file)) == {"FINISHED"}
+pump_lifecycle_recovery()
 
 scene = bpy.context.scene
 material = bpy.data.materials[tree_names[0]]
@@ -392,6 +437,14 @@ def check_playback_publication():
     baseline = record["state"].applied_signature
 
     def prepared_frame():
+        # Frame observation and Grade demand are scheduler-owned. Advance that
+        # task before waiting on the coordinator's receipt.
+        deadline = time.monotonic() + 10
+        while (not nodes._preparation_runtime.pending_for(record["source"])
+               and time.monotonic() < deadline):
+            runtime._scheduler_tick()
+            time.sleep(.01)
+        nodes._start_scheduled_preparation(record["source"])
         publications = nodes._preparation_runtime.wait()
         receipt, = (item for item in publications if item.source is record["source"])
         assert receipt.error is None and receipt.quality == "full", receipt.error
@@ -601,7 +654,7 @@ def check_viewer_failure_during_render_preflight():
         nodes._preparation_tick()
         assert not maintenance_phases
         assert not ticket._finished.is_set()
-        assert nodes._render_preflight_tick() == 0.1
+        runtime._scheduler_tick()
         assert ticket.state.phase == "released" and ticket._finished.is_set(), ticket.state
         assert (ticket.state.scene_identity, ticket.state.frame, ticket.state.subframe) == render_time
         assert maintenance_phases == ["released"]
@@ -613,7 +666,7 @@ def check_viewer_failure_during_render_preflight():
 
     try:
         nodes._collect_compositor_receipts = collect_with_one_failure
-        assert nodes._render_preflight_tick() == 0.1
+        runtime._scheduler_tick()
         assert maintenance_phases == ["released", "released"]
     finally:
         nodes._collect_compositor_receipts = original_collect
@@ -626,10 +679,8 @@ if bpy.app.background:
 def defer_undo_reconciliation():
     nodes._undo_redo_pre()
     nodes._undo_redo_post()
-    # Keep the race deterministic. The render starts before the queued whole-file
-    # repair can run, even if Blender services timers during render startup.
-    if bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick):
-        bpy.app.timers.unregister(nodes._undo_redo_reconcile_tick)
+    # The fixture invokes render preflight before advancing queued recovery.
+    assert runtime.scheduler.has(nodes._LIFECYCLE_TASK)
     assert not nodes._node_stores
 
 
@@ -683,8 +734,8 @@ def check_render_recovery_failure():
 
     nodes._rebuild_output_registry = fail_registry_rebuild
     try:
-        retry = nodes._undo_redo_reconcile_tick()
-        assert retry is not None and retry > 0
+        runtime.scheduler.advance()
+        assert runtime.scheduler.has(nodes._LIFECYCLE_TASK)
         assert repair_attempts == [True]
         assert nodes._lifecycle.reset_pending
         assert_recovery_error_output()
@@ -723,8 +774,7 @@ def check_render_recovery_failure():
         gate.request_render_preflight = original_request
     frame_nodes, signatures, _ = nodes._animation_snapshot(scene)
     assert nodes._animation_outputs_current(frame_nodes, signatures) == (True, None)
-    assert nodes._undo_redo_reconcile_tick() is None
-    assert not nodes._lifecycle.reset_pending
+    pump_lifecycle_recovery()
     assert nodes._animation_outputs_current(frame_nodes, signatures) == (True, None)
 
 
@@ -796,8 +846,7 @@ def check_render_recovery_shared_bank():
         assert off_scene_receipt() == receipt
         assert off_scene.as_pointer() not in nodes._node_stores
 
-        assert nodes._undo_redo_reconcile_tick() is None
-        assert not nodes._lifecycle.reset_pending
+        pump_lifecycle_recovery()
         failures = nodes._drain_preparations()
         assert not failures, failures
         frame_nodes, signatures, _ = nodes._animation_snapshot(scene)

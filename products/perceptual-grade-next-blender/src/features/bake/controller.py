@@ -47,6 +47,9 @@ class BakeController:
         self.block_nodes = block_nodes
         self.timer_callback = timer_callback
         self.timer_router = None
+        self.scheduler = None
+        self._scheduler_jobs_key = ("bake", "jobs")
+        self._scheduler_reconcile_prefix = ("bake", "consistency")
         self.manager = None
         self.sources = BakeSources()
         self.mode_updates = set()
@@ -61,6 +64,20 @@ class BakeController:
     def set_timer_router(self, timer_router):
         self.timer_router = timer_router
 
+    def set_scheduler(self, scheduler):
+        """Attach the shared admission scheduler for foreground Bake work."""
+        previous = self.scheduler
+        if previous is not None and previous is not scheduler:
+            previous.withdraw(self._scheduler_jobs_key)
+            for pointer in tuple(self.pending_invalidations | self.pending_reconciliations):
+                previous.withdraw(self._reconcile_task_key(pointer))
+        self.scheduler = scheduler
+        if scheduler is not None and self.manager is not None:
+            self.ensure_timer()
+
+    def _reconcile_task_key(self, pointer):
+        return (*self._scheduler_reconcile_prefix, pointer)
+
     def begin_shutdown(self):
         if self.manager is not None:
             self.manager.begin_shutdown()
@@ -72,6 +89,10 @@ class BakeController:
     def stop_timer(self):
         if self.timer_router is not None:
             self.timer_router.unregister_timer("bake", self.timer_callback)
+        if self.scheduler is not None:
+            self.scheduler.withdraw(self._scheduler_jobs_key)
+            for pointer in tuple(self.pending_invalidations | self.pending_reconciliations):
+                self.scheduler.withdraw(self._reconcile_task_key(pointer))
         self.manager = None
 
     def busy(self, node):
@@ -79,7 +100,9 @@ class BakeController:
 
     def cancel(self, node):
         if self.manager is not None:
-            self.manager.withdraw(node.as_pointer())
+            pointer = node.as_pointer()
+            self.manager.withdraw(pointer)
+            self._update_jobs_schedule()
 
     def withdraw_all(self):
         if self.manager is not None:
@@ -92,8 +115,15 @@ class BakeController:
         self.pending_reconciliations.discard(pointer)
         if self.manager is not None:
             self.manager.withdraw(pointer)
+        if self.scheduler is not None:
+            self.scheduler.withdraw(self._reconcile_task_key(pointer))
+            self._update_jobs_schedule()
 
     def clear(self):
+        if self.scheduler is not None:
+            self.scheduler.withdraw(self._scheduler_jobs_key)
+            for pointer in self.pending_invalidations | self.pending_reconciliations:
+                self.scheduler.withdraw(self._reconcile_task_key(pointer))
         self.sources.clear()
         self.pending_invalidations.clear()
         self.pending_reconciliations.clear()
@@ -113,6 +143,10 @@ class BakeController:
         """Keep the foreground bake queue alive after an idle timer retires."""
         if self.manager is None:
             return
+        if self.scheduler is not None:
+            self._update_jobs_schedule()
+            self._schedule_reconciliations()
+            return
         try:
             if self.timer_router is not None:
                 self.timer_router.ensure_timer(
@@ -121,6 +155,101 @@ class BakeController:
                 )
         except (AttributeError, RuntimeError, TypeError):
             return
+
+    def _update_jobs_schedule(self):
+        scheduler = self.scheduler
+        if scheduler is None:
+            return
+        key = self._scheduler_jobs_key
+        manager = self.manager
+        if manager is None or manager.closed or not manager.jobs:
+            scheduler.withdraw(key)
+        elif not scheduler.has(key):
+            scheduler.submit(
+                key, "bake", self._scheduler_jobs_advance,
+                on_pause=self._scheduler_pause, pause_group="capture",
+                on_error=self._scheduler_jobs_error,
+            )
+        else:
+            scheduler.wake(key)
+
+    def _scheduler_jobs_advance(self):
+        manager = self.manager
+        if manager is None or manager.closed or not manager.jobs:
+            return None
+        manager.poll(one_phase=True)
+        self._release_request_sources(manager)
+        return 0.02 if manager.jobs else None
+
+    def _scheduler_pause(self):
+        if self.manager is not None:
+            self.manager.pause()
+
+    def _scheduler_jobs_error(self, error):
+        manager = self.manager
+        entry = None if manager is None else manager.active
+        if entry is not None:
+            self._report_failure(entry, error)
+            manager.pause()
+
+    def _schedule_reconciliations(self):
+        scheduler = self.scheduler
+        if scheduler is None or scheduler.phase not in {"ready", "recovering"}:
+            return
+        targets = self.pending_invalidations | self.pending_reconciliations
+        for pointer in targets:
+            key = self._reconcile_task_key(pointer)
+            if not scheduler.has(key):
+                kind = "lifecycle" if scheduler.phase == "recovering" else "consistency"
+                scheduler.submit(
+                    key, kind,
+                    lambda pointer=pointer: self._scheduler_reconcile_advance(pointer),
+                    on_error=lambda error, pointer=pointer: self._scheduler_reconcile_error(
+                        pointer, error),
+                )
+
+    def _scheduler_reconcile_error(self, pointer, error):
+        node = next((candidate for candidate in self.nodes()
+                     if bake_routes.is_bake_target(candidate)
+                     and candidate.as_pointer() == pointer), None)
+        if node is not None:
+            node[BAKE_ERROR] = str(error)
+
+    def _scheduler_reconcile_advance(self, pointer):
+        if pointer not in self.pending_invalidations and pointer not in self.pending_reconciliations:
+            return None
+        nodes = {node.as_pointer(): node for node in self.nodes()
+                 if bake_routes.is_bake_target(node)}
+        node = nodes.get(pointer)
+        if node is None:
+            self.pending_invalidations.discard(pointer)
+            self.pending_reconciliations.discard(pointer)
+            return None
+        gate = self.gate()
+        if gate is None:
+            return 0.02
+        try:
+            with gate.graph_commit():
+                self.reconcile_in_scope(
+                    (node,), inventory={pointer: node}, scoped=True,
+                    retry_errors=True,
+                )
+        except PublicationDeferred:
+            self.pending_reconciliations.add(pointer)
+            return 0.02
+        except Exception as error:
+            self.pending_reconciliations.add(pointer)
+            self.fail_output(node, str(error))
+            raise
+        pending = (pointer in self.pending_invalidations
+                   or pointer in self.pending_reconciliations)
+        return 0.02 if pending else None
+
+    def _release_request_sources(self, manager):
+        for key in tuple(self.sources.bindings):
+            if (isinstance(key, tuple) and len(key) == 2
+                    and key[0] == "request" and key[1] not in manager.jobs):
+                self.sources.forget(key)
 
     def image_valid(self, node):
         return bake_graph.image_valid(node, getattr(node, "pg_bake_image", None))
@@ -465,9 +594,13 @@ class BakeController:
         dependencies = []
         upstream_grades = []
         with self.gate().commit():
-            self.reconcile()
+            if self.scheduler is None:
+                self.reconcile()
             route = self._route(node, context, dependencies, upstream_grades)
-        self.prepare_kernels(node, upstream_grades)
+        # Scheduler-owned requests defer Grade preparation and snapshotting to
+        # the admitted Bake task. Legacy callers retain synchronous validation.
+        if self.scheduler is None:
+            self.prepare_kernels(node, upstream_grades)
         with self.gate().commit():
             if self.wrapper(node) is None:
                 self.ensure_wrapper(node)
@@ -481,6 +614,9 @@ class BakeController:
                     rollback_callback=self._rollback,
                     failure_callback=self._report_failure,
                     publication_context=self.gate().commit,
+                    prepare_kernels=(self.prepare_kernels if self.scheduler is not None else None),
+                    defer_snapshot=self.scheduler is not None,
+                    upstream_grades=upstream_grades,
                 )
             except BaseException:
                 self.sources.forget(request_key)
@@ -569,7 +705,10 @@ class BakeController:
                 self.set_mode(node, False)
         if (getattr(node, "pg_use_bake", False)
                 or self.receipt_signature(node) is not None):
-            self.reconcile((node,))
+            if self.scheduler is None:
+                self.reconcile((node,))
+            else:
+                self.queue_reconcile((node,))
         self.ensure_timer()
 
     def invalidate(self, node):
@@ -581,7 +720,10 @@ class BakeController:
                      or node.as_pointer() not in self.manager.jobs)
                 and node.as_pointer() not in self.pending_reconciliations):
             return
-        self.reconcile((node,))
+        if self.scheduler is None:
+            self.reconcile((node,))
+        else:
+            self.queue_reconcile((node,))
 
     def mark_sources(self, dependencies):
         affected = self.sources.invalidate(dependencies)
@@ -604,10 +746,16 @@ class BakeController:
             raise TypeError("Bake source invalidation requires a Blender Image")
         affected = self.mark_sources((image,))
         if affected:
-            self.reconcile(
-                tuple(node for node in self.nodes()
-                      if node.as_pointer() in affected),
-            )
+            nodes = tuple(node for node in self.nodes()
+                          if node.as_pointer() in affected)
+            for node in nodes:
+                self._persist_source_change(node)
+                self.sources.forget(node.as_pointer())
+            self.pending_invalidations.difference_update(affected)
+            if self.scheduler is None:
+                self.reconcile(nodes)
+            else:
+                self.queue_reconcile(nodes)
         return len(affected)
 
     def reconcile(self, nodes=None, *, inventory=None):
@@ -625,7 +773,31 @@ class BakeController:
             )
             self.ensure_timer()
 
-    def reconcile_in_scope(self, nodes, *, inventory=None, scoped=False):
+    def queue_reconcile(self, nodes):
+        if self.scheduler is None:
+            return self.reconcile(nodes)
+        self.pending_reconciliations.update(
+            node.as_pointer() for node in nodes if bake_routes.is_bake_target(node)
+        )
+        self.ensure_timer()
+
+    def flush_source_invalidations(self):
+        """Persist pending provenance before Blender serializes receipts."""
+        if not self.pending_invalidations:
+            return
+        inventory = {node.as_pointer(): node for node in self.nodes()
+                     if bake_routes.is_bake_target(node)}
+        for pointer in tuple(self.pending_invalidations):
+            node = inventory.get(pointer)
+            if node is not None:
+                self._persist_source_change(node)
+                self.sources.forget(pointer)
+                self.pending_reconciliations.add(pointer)
+            self.pending_invalidations.discard(pointer)
+        self.ensure_timer()
+
+    def reconcile_in_scope(self, nodes, *, inventory=None, scoped=False,
+                           retry_errors=False):
         selected = {node.as_pointer(): node for node in nodes
                     if bake_routes.is_bake_target(node)}
         if self.pending_invalidations:
@@ -672,5 +844,7 @@ class BakeController:
                 self.pending_reconciliations.add(pointer)
                 raise
             except Exception as error:
+                if retry_errors:
+                    raise
                 self.fail_output(node, str(error))
             self.pending_reconciliations.discard(pointer)

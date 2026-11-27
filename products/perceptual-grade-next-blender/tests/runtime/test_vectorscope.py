@@ -30,6 +30,7 @@ class VectorscopeTests(unittest.TestCase):
         scope = package_name + ".features.vectorscope."
         cls.policy = importlib.import_module(scope + "policy.scope")
         cls.runtime = importlib.import_module(scope + "runtime")
+        cls.scheduler = importlib.import_module(package_name + ".runtime.scheduler").WorkScheduler
         cls.analysis = importlib.import_module(scope + "analysis")
         cls.appearance_scope = importlib.import_module(scope + "appearance_scope")
         cls.tone_scope = importlib.import_module(scope + "tone_scope")
@@ -297,6 +298,158 @@ class VectorscopeTests(unittest.TestCase):
         self.assertEqual(runtime.queued, {})
         self.assertTrue(all(state.desired_generation is None
                             for state in runtime.scope_states.values()))
+
+    def test_coordinator_admission_blocks_plots_during_recovery(self):
+        scheduler = self.scheduler()
+        scheduler.set_phase("recovering")
+        runtime = self.runtime.ScopeRuntime(
+            Mock(), lambda _node: self.kernel.LinearSettings(),
+            lambda: "Linear Rec.709", create_job=Mock(), scheduler=scheduler,
+        )
+        node = self.changed_id(1, "Grade", id_data=self.changed_id(100, "CompositorNodeTree"))
+
+        self.assertIsNone(self.observe(runtime, node))
+        self.assertEqual(runtime.demands, {})
+        self.assertEqual(runtime.queued, {})
+        self.assertFalse(scheduler.has_work())
+
+    def test_coordinator_reuses_samples_only_when_its_plot_task_runs(self):
+        pixels = np.ones((2, 2, 4), dtype=np.float32)
+        scheduler = self.scheduler()
+        runtime = self.runtime.ScopeRuntime(
+            Mock(), lambda _node: self.kernel.LinearSettings(),
+            lambda: "Linear Rec.709", create_job=Mock(), scheduler=scheduler,
+        )
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree)
+        route = {"owner_kind": "compositor", "capture_signature": "frame",
+                 "source_signature": "source"}
+        with patch.object(self.runtime.routes, "describe_vectorscope", return_value=route):
+            self.observe(runtime, node)
+            ticket = runtime.demands[1]
+            runtime._remember_samples(ticket.capture_signature, pixels)
+
+            self.assertEqual(self.input_result(self.observe(runtime, node))[1], "updating")
+            scheduler.advance()
+            trace, status, error = self.input_result(self.observe(runtime, node))
+
+        self.assertEqual((status, error), ("current", None))
+        self.assertEqual(trace.shape, (self.analysis.SIZE, self.analysis.SIZE, 4))
+        runtime.create_job.assert_not_called()
+
+    def test_coordinator_publishes_preview_before_exact_appearance_capture(self):
+        pixels = np.array([[[55., 4., 1., 1.], [70., -3., 2., .5]]], dtype=np.float32)
+        exact_pixels = np.array([[[80., 2., -1., 1.], [92., -1., 3., .75]]],
+                                dtype=np.float32)
+        now = [0.]
+        scheduler = self.scheduler(clock=lambda: now[0])
+        preview = Mock()
+        preview.evaluate.return_value = pixels
+        roles = Mock(return_value=object())
+        signature = Mock(return_value="current Grade")
+        job = Mock()
+        job.advance.return_value = {"rgba": exact_pixels}
+        create_job = Mock(return_value=job)
+        grade_key = ("grade-consistency", 1)
+        runtime = self.runtime.ScopeRuntime(
+            lambda _route: (None, "snapshot.blend", []),
+            lambda _node: self.kernel.LinearSettings(), lambda: "Linear Rec.709",
+            create_job=create_job, grade_signature=signature, preview_roles=roles,
+            preview_backend=preview, scheduler=scheduler, appearance_settle_seconds=0.,
+            consistency_keys=lambda grades: (grade_key,) if grades else (),
+        )
+        tree = self.changed_id(100, "CompositorNodeTree")
+        node = self.changed_id(1, "Grade", id_data=tree, pg_use_bake=False, mute=False)
+        route_frame = "current frame"
+
+        def describe(*_args, scope_capture="input", **_kwargs):
+            return {
+                "owner_kind": "compositor",
+                "capture_signature": (route_frame, scope_capture),
+                "source_signature": route_frame,
+                "scope_capture": scope_capture,
+            }
+
+        def capture(route):
+            return pixels if route["scope_capture"] == "input" else None
+
+        with (patch.object(self.runtime.routes, "describe_vectorscope", side_effect=describe),
+              patch.object(self.runtime, "capture_loaded_image", side_effect=capture)):
+            self.observe(runtime, node, tone=self.kernel.ToneSettings())
+            scheduler.advance()
+            input_key = runtime._task_key(1)
+            analyze_input = Mock(return_value=None)
+            prepare_grade = Mock(return_value=None)
+            scheduler.submit(input_key, "plot", analyze_input)
+            scheduler.submit(grade_key, "consistency", prepare_grade)
+            self.assertEqual(self.input_result(self.observe(
+                runtime, node, tone=self.kernel.ToneSettings(),
+            ))[1], "current")
+
+            self.assertEqual(self.observe_appearance(runtime, node, dragging=True)[1],
+                             "updating")
+            appearance_key = self.runtime._AppearanceKey(1)
+            capture_key = runtime._task_key(appearance_key)
+            preview_key = runtime._preview_task_key(appearance_key)
+            self.assertEqual(scheduler._tasks[capture_key].kind, "plot")
+            self.assertEqual(scheduler._tasks[preview_key].kind, "plot")
+            self.assertIn(input_key, scheduler._tasks[capture_key].prerequisites)
+            self.assertEqual(scheduler._tasks[preview_key].prerequisites, (grade_key,))
+
+            now[0] += 1.
+            scheduler.advance()
+            prepare_grade.assert_called_once()
+            preview.evaluate.assert_not_called()
+            analyze_input.assert_not_called()
+            scheduler.advance()
+            preview_trace, preview_status, error = self.observe_appearance(
+                runtime, node, dragging=True,
+            )
+            self.assertEqual((preview_status, error), ("preview", None))
+            self.assertIsInstance(preview_trace, self.appearance_scope.AppearanceScope)
+            preview.evaluate.assert_called_once()
+            analyze_input.assert_not_called()
+            create_job.assert_not_called()
+
+            now[0] += 1.
+            scheduler.advance()
+            analyze_input.assert_called_once()
+            create_job.assert_not_called()
+            scheduler.advance()
+            self.assertIsNotNone(runtime.active)
+            now[0] += 1.
+            scheduler.advance()
+            exact_trace, exact_status, error = self.observe_appearance(
+                runtime, node, dragging=True,
+            )
+
+        self.assertEqual((exact_status, error), ("current", None))
+        self.assertIsInstance(exact_trace, self.appearance_scope.AppearanceScope)
+        self.assertIsNot(exact_trace, preview_trace)
+        create_job.assert_called_once()
+
+    def test_retired_capture_keeps_its_original_plot_priority(self):
+        scheduler = self.scheduler()
+        runtime = self.runtime.ScopeRuntime(
+            Mock(), lambda _node: None, lambda: None,
+            create_job=Mock(), scheduler=scheduler,
+        )
+        runtime._start = Mock()
+        runtime._dispatch(1, self.policy.Event(
+            "request", capture_signature="scope", source_signature="source",
+            analysis_signature="analysis",
+        ))
+        ticket = runtime.demands[1]
+        runtime._dispatch_ticket(ticket, "schedule")
+        runtime._dispatch_ticket(ticket, "started")
+        scope_key = runtime._task_key(ticket.key)
+        original_serial = scheduler._tasks[scope_key].serial
+        scheduler.submit("newer foreground plot", "plot", lambda: None)
+
+        runtime._dispatch_ticket(ticket, "deferred", resume=True)
+
+        self.assertEqual(scheduler._tasks[scope_key].serial, original_serial)
+        self.assertEqual(tuple(key for key, _token in runtime.queue), (1,))
 
     def test_runtime_release_rejects_late_success_and_advances_queue(self):
         first, second = Mock(), Mock()

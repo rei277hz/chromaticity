@@ -5,6 +5,7 @@ import importlib
 import json
 from pathlib import Path
 import sys
+import time
 
 import bpy
 import numpy as np
@@ -17,6 +18,7 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_image_save.perceptual_grade")
+application = importlib.import_module(extension.__name__ + ".application")
 nodes = importlib.import_module("bl_ext.pg_image_save.perceptual_grade.features.grade.host")
 stage2_bindings = importlib.import_module(extension.__name__ + ".kernel.stage2_bindings")
 errors = []
@@ -35,6 +37,16 @@ def reconcile():
     # The synchronous drain admits publication through its own quiescent gate.
     failures = nodes._refresh_nodes(users)
     return failures + nodes._drain_preparations(users)
+
+
+def wait_for_lifecycle_recovery():
+    runtime = application._runtime
+    deadline = time.monotonic() + 120
+    while runtime.scheduler.has(nodes._LIFECYCLE_TASK) and time.monotonic() < deadline:
+        runtime._scheduler_tick()
+        time.sleep(.01)
+    assert not nodes._lifecycle.reset_pending
+    assert runtime.scheduler.phase == "ready"
 
 
 def parameter_banks(node):
@@ -223,6 +235,7 @@ assert nodes._kernel_for_node(shader)[nodes.PARAMETER_ACTIVE_BANK] == saved_acti
 assert parameter_image(shader) == parameter_image(compositor)
 np.testing.assert_array_equal(parameter_image(shader).pixels[:], saved_pixels)
 assert grade.pg_linear.exposure == 0.8125
+wait_for_lifecycle_recovery()
 reconcile()
 assert_clean_shared_image(users)
 

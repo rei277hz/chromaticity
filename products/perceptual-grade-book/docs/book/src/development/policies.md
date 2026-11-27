@@ -233,6 +233,45 @@ boundary geometry share the same appearance context and assembles a
 `PreparedGrade`. The parameter atlas is assembled in a final shielded worker
 call before the runtime returns the complete parameter bundle.
 
+## Central scheduling and recovery
+
+<a id="grade-policy.scheduler"></a>
+
+`src/policy/scheduler.py` defines the scalar priority contract used by
+`src/runtime/scheduler.py`. The scheduler admits and orders host-thread work.
+Feature owners still run their worker lanes and retain authority over source
+signatures, publication, and rollback. Render preflight and lifecycle recovery
+remain correctness work. A foreground plot is selected before unrelated Grade
+consistency or Bake work, and the Grade tasks required by that plot are
+promoted until the exact plot can run. Plot generations are latest-only.
+
+Initial extension enable uses a `starting` phase. It permits Grade consistency
+and exact render work while fencing plot captures and manual Bake. The startup
+task inventories project data after Blender releases its restricted
+registration context, repairs Grade kernels, and then reconciles Bake output
+selection. File load and undo use a stricter `recovering` phase. They discard
+old task demand, repair Grade kernels before Bake output reconciliation, and
+admit plots only after the saved project is coherent. Exact render preflight
+can establish consistency for its own scene and frame during that fence.
+
+Appearance Distribution can publish a bounded GPU preview from current input
+samples and validated Grade parameter images. Exact capture remains queued to
+replace that preview after the controls settle. A retained trace remains
+visible while either replacement is being prepared, with its freshness
+reported separately.
+
+The host scheduler advances one bounded unit at a time. A higher-priority task
+may request cancellation at a worker checkpoint, while the feature owning the
+physical operation continues polling until retirement. Failed owners remain
+visible and retry with bounded backoff. Saving never serializes executor
+queues. Load recovery discards plot demand and reconstructs consistency from
+authoritative settings, receipts, and Bake provenance before accepting new
+plots.
+
+The scalar policy proof is paired with scheduler selection, coalescing,
+startup and recovery admission, synchronous render dispatch, and source-scoped
+preparation tests. Runtime ordering tests do not import Blender.
+
 ## Node output policy
 
 <a id="grade-policy.node-output"></a>

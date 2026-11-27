@@ -1,10 +1,12 @@
-# Grade Gizmo checklist
+# Grade scheduling checklist
 
-- [x] Replace the task tracking scope before implementation.
-- [x] Preserve Gizmo visibility and layout through undo and redo.
-- [x] Normalize Linear vectorscope tint independently of density and position.
-- [x] Route pointer events and cursors through the panel hit geometry.
-- [x] Add compact defaults and edge and corner resizing.
-- [x] Localize Appearance Distribution and label its normalized lightness axis.
-- [x] Preview final appearance during Tone drags and capture the exact settled result.
-- [x] Update the Gizmo design notes and run scoped remote Buck2 validation.
+- [x] Replace the previous goal and checklist.
+- [x] Centralize host-thread admission, priority, task coalescing, yielding, and retry timing.
+- [x] Schedule exact plots and previews, promoting their Grade kernel prerequisites.
+- [x] Schedule Grade preparation, publication, and Bake work with safe yielding.
+- [x] Fence startup, load, and undo recovery, repairing Grade kernels before Bake outputs.
+- [x] Preserve exact render preflight and per-owner fail-closed recovery.
+- [x] Add scheduler proofs and save/load and priority regression coverage.
+- [x] Run product-scoped Buck2 validation with remote execution. Scheduler,
+  preparation-runtime, and installed lifecycle tests passed. Policy proofs and
+  extension packaging built successfully.

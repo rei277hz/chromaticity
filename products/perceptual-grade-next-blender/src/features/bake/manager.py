@@ -70,7 +70,9 @@ class BakeManager:
 
     def request(self, node, route, publish_callback, current_signature,
                 activate_callback=None, rollback_callback=None,
-                failure_callback=None, publication_context=None):
+                failure_callback=None, publication_context=None,
+                prepare_kernels=None, defer_snapshot=False,
+                upstream_grades=()):
         if self.closed:
             raise RuntimeError("Bake manager is closed")
         if not callable(publish_callback) or not callable(current_signature):
@@ -87,34 +89,36 @@ class BakeManager:
         if current_signature(node, route) != signature:
             raise RuntimeError("Bake inputs changed before the request was accepted")
 
-        root, snapshot, images = self.freeze_snapshot(route)
+        entry = {
+            "node": node, "node_key": node_key, "route": route,
+            "inputs": None, "root": None, "publish_callback": publish_callback,
+            "activate_callback": activate_callback, "rollback_callback": rollback_callback,
+            "failure_callback": failure_callback, "current_signature": current_signature,
+            "publication_context": publication_context, "prepare_kernels": prepare_kernels,
+            "upstream_grades": tuple(upstream_grades),
+            "prepared": not defer_snapshot, "state": bake_policy.new(),
+        }
         try:
-            inputs = {
-                "snapshot_path": str(snapshot),
-                "artifact_dir": str(root), "images": images,
-                "route": route,
-            }
-            entry = {
-                "node": node, "node_key": node_key,
-                "route": route, "inputs": inputs,
-                "root": root, "publish_callback": publish_callback,
-                "activate_callback": activate_callback,
-                "rollback_callback": rollback_callback,
-                "failure_callback": failure_callback,
-                "current_signature": current_signature,
-                "publication_context": publication_context,
-                "state": bake_policy.new(),
-            }
-            effects = self._event(entry, bake_policy.Event(
-                "request", signature,
-            ))
+            effects = self._event(entry, bake_policy.Event("request", signature))
             if effects.action != "enqueue":
                 raise RuntimeError("Bake policy rejected the request")
+            if not defer_snapshot:
+                self._freeze(entry)
         except BaseException:
-            self._remove_files(root)
+            self._remove_files(entry["root"])
             raise
         self.queue.append(entry)
         self.jobs[node_key] = entry
+        return entry
+
+    def _freeze(self, entry):
+        root, snapshot, images = self.freeze_snapshot(entry["route"])
+        entry["root"] = root
+        entry["inputs"] = {
+            "snapshot_path": str(snapshot),
+            "artifact_dir": str(root), "images": images,
+            "route": entry["route"],
+        }
 
     def invalidate(self, node, signature):
         """Withdraw stale demand; active helper ownership lasts until terminal."""
@@ -132,19 +136,28 @@ class BakeManager:
             current_signature=signature,
         ))
         if effects.action == "cancel":
-            if self.active is entry and entry.get("job") is not None:
-                try:
-                    entry["job"].cancel()
-                except Exception as error:
-                    entry.setdefault("callback_errors", []).append(error)
+            self._cancel_job(entry)
             return True
         if effects.action == "discard":
             self._retire(entry)
             return True
         return False
 
+    @staticmethod
+    def _cancel_job(entry):
+        job = entry.get("job")
+        if job is None:
+            return False
+        try:
+            job.cancel()
+        except Exception as error:
+            entry.setdefault("callback_errors", []).append(error)
+            return False
+        return True
+
     def _remove_files(self, root):
-        shutil.rmtree(root, ignore_errors=True)
+        if root is not None:
+            shutil.rmtree(root, ignore_errors=True)
 
     def _retire(self, entry):
         for queue in (self.queue, self.publication_queue):
@@ -233,10 +246,10 @@ class BakeManager:
             error = ExceptionGroup("Bake rollback failed", [error, rollback_error])
         return error
 
-    def _retry_publications(self):
-        pending = tuple(self.publication_queue)
-        self.publication_queue.clear()
-        for entry in pending:
+    def _retry_publications(self, *, one=False):
+        count = min(1, len(self.publication_queue)) if one else len(self.publication_queue)
+        for _ in range(count):
+            entry = self.publication_queue.popleft()
             if self.jobs.get(entry["node_key"]) is not entry:
                 continue
             if self._publish(entry, entry["result"]):
@@ -250,13 +263,47 @@ class BakeManager:
         for entry in tuple(self.jobs.values()):
             self._withdraw(entry, event_kind)
 
-    def _start_next(self):
+    def _start_next(self, *, one_phase=False):
         while self.active is None and self.queue and not self.closed:
             entry = self.queue.popleft()
             signature = self._resolve_signature(entry)
             if (signature != entry["route"]["request_signature"]
                     and self._withdraw(entry, "invalidate", signature)):
                 continue
+            if entry["inputs"] is None:
+                if not entry["prepared"]:
+                    try:
+                        prepare = entry["prepare_kernels"]
+                        if prepare is not None:
+                            ready = prepare(entry["node"], entry["upstream_grades"])
+                            if ready is False:
+                                self.queue.appendleft(entry)
+                                return
+                    except PublicationDeferred:
+                        self.queue.appendleft(entry)
+                        return
+                    except Exception as error:
+                        self._failure(entry, error)
+                        continue
+                    entry["prepared"] = True
+                    self.queue.appendleft(entry)
+                    return
+                try:
+                    factory = entry["publication_context"]
+                    with nullcontext() if factory is None else factory():
+                        if self._resolve_signature(entry) != entry["route"]["request_signature"]:
+                            self._withdraw(entry, "invalidate")
+                            continue
+                        self._freeze(entry)
+                except PublicationDeferred:
+                    self.queue.appendleft(entry)
+                    return
+                except Exception as error:
+                    self._failure(entry, error)
+                    continue
+                if one_phase:
+                    self.queue.appendleft(entry)
+                    return
             effects = self._event(entry, bake_policy.Event(
                 "start",
             ))
@@ -281,11 +328,24 @@ class BakeManager:
     def _finish_active(self, entry, result):
         self.active = None
         if isinstance(result, CancelledError):
+            phase = entry["state"].phase
             effects = self._event(entry, bake_policy.Event(
-                "cancelled" if entry["state"].phase == "cancelling" else "completed",
+                "cancelled" if phase in {"pausing", "cancelling"} else "completed",
+                current_signature=self._resolve_signature(entry) if phase == "pausing" else None,
                 error=str(result),
             ))
-            if effects.action == "retire":
+            if effects.action == "requeue":
+                # The helper has no durable phase artifact for Bake. Retain
+                # the immutable request and restart it after cancellation
+                # physically retires the current helper operation.
+                entry["job"] = None
+                try:
+                    (entry["root"] / "bake.exr").unlink(missing_ok=True)
+                except OSError as error:
+                    self._failure(entry, error)
+                    return
+                self.queue.appendleft(entry)
+            elif effects.action in {"retire", "discard"}:
                 self._retire(entry)
             return
         if isinstance(result, BaseException):
@@ -323,12 +383,26 @@ class BakeManager:
             return
         self._retire(entry)
 
-    def poll(self):
+    def pause(self):
+        """Cooperatively withdraw the active helper operation for plot work."""
+        entry = self.active
+        if entry is None:
+            return False
+        effects = self._event(entry, bake_policy.Event("pause"))
+        return self._cancel_job(entry) if effects.action == "cancel" else False
+
+    def poll(self, *, one_phase=False):
         if self.closed:
             return bool(self.jobs)
-        if self.active is None:
-            self._start_next()
         entry = self.active
+        if entry is None:
+            if one_phase and self.publication_queue:
+                self._retry_publications(one=True)
+                return bool(self.jobs)
+            self._start_next(one_phase=one_phase)
+            if one_phase:
+                return bool(self.jobs)
+            entry = self.active
         if entry is not None:
             try:
                 result = entry["job"].advance()
@@ -336,7 +410,7 @@ class BakeManager:
                 result = error
             if result is not None:
                 self._finish_active(entry, result)
-        if self.publication_queue:
+        if not one_phase and self.publication_queue:
             self._retry_publications()
         return self.active is not None or bool(self.queue) or bool(self.publication_queue)
 

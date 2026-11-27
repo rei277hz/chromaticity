@@ -98,6 +98,26 @@ def _check_color_sidebar(nodes, context, owner, *, enabled):
     assert sidebar.operator_states == [(nodes.PG_OT_reset_color.bl_idname, enabled)]
 
 
+def _check_tone_sidebar(nodes, context, node, owner, settings):
+    sidebar = Layout()
+    assert nodes.PG_PT_tone.poll(context)
+    nodes.PG_PT_tone.draw(SimpleNamespace(layout=sidebar), context)
+    expected = {(settings.as_pointer(), field) for field in nodes._TONE_FIELDS
+                if field != "peak_nits"}
+    assert set(sidebar.properties) == expected
+    enabled = owner is not None
+    assert all(state == enabled for _owner, _name, state in sidebar.property_states)
+    assert sidebar.operator_states == [
+        (nodes.PG_OT_gizmo_set_peak.bl_idname, enabled),
+        (nodes.PG_OT_reset_tone.bl_idname, enabled),
+    ]
+    peak = sidebar.operators[0][1]
+    assert vars(peak) == ({} if owner is None else {
+        "node_pointer": str(node.as_pointer()),
+        "owner_pointer": str(owner.as_pointer()),
+    })
+
+
 def check_color_storage(nodes, node):
     """Exercise native RNA reset and rollback for custom Color backing keys."""
     context = SimpleNamespace(pg_node=node, space_data=SimpleNamespace(edit_tree=node.id_data))
@@ -267,15 +287,7 @@ def check_grade_ui(nodes, tree):
         ]
         assert not sidebar.templates
 
-        tone_sidebar = Layout()
-        assert nodes.PG_PT_tone.poll(context)
-        nodes.PG_PT_tone.draw(SimpleNamespace(layout=tone_sidebar), context)
-        expected_tone = {(node.pg_tone.as_pointer(), field)
-                         for field in nodes._TONE_FIELDS}
-        assert set(tone_sidebar.properties) == expected_tone
-        assert not any(enabled for _owner, _name, enabled
-                       in tone_sidebar.property_states)
-        assert tone_sidebar.operator_states == [(nodes.PG_OT_reset_tone.bl_idname, False)]
+        _check_tone_sidebar(nodes, context, node, None, node.pg_tone)
         _check_color_sidebar(nodes, context, node.pg_color, enabled=False)
         assert not nodes.PG_OT_reset_color.poll(context)
 
@@ -305,14 +317,7 @@ def check_grade_ui(nodes, tree):
         assert all(operator.poll(context)
                    for operator in (nodes.PG_OT_match_white, nodes.PG_OT_reset_directions))
 
-        tone_sidebar = Layout()
-        nodes.PG_PT_tone.draw(SimpleNamespace(layout=tone_sidebar), context)
-        expected_tone = {(grade.pg_tone.as_pointer(), field)
-                         for field in nodes._TONE_FIELDS}
-        assert set(tone_sidebar.properties) == expected_tone
-        assert all(enabled for _owner, _name, enabled
-                   in tone_sidebar.property_states)
-        assert tone_sidebar.operator_states == [(nodes.PG_OT_reset_tone.bl_idname, True)]
+        _check_tone_sidebar(nodes, context, node, grade, grade.pg_tone)
         _check_color_sidebar(nodes, context, grade.pg_color, enabled=True)
         assert nodes.PG_OT_reset_color.poll(context)
         with nodes._suspend(grade.pg_color):
@@ -438,16 +443,9 @@ def check_stack_ui(nodes, tree):
         assert all(enabled for owner, _field, enabled in sidebar.property_states
                    if owner == settings)
 
-        tone_sidebar = Layout()
-        nodes.PG_PT_tone.draw(SimpleNamespace(layout=tone_sidebar), sidebar_context)
-        tone_settings = nodes._stack_active_grade(node).pg_tone.as_pointer()
-        assert all((tone_settings, field) in tone_sidebar.properties
-                   for field in nodes._TONE_FIELDS)
-        assert all(enabled for owner, _field, enabled
-                   in tone_sidebar.property_states if owner == tone_settings)
-        assert tone_sidebar.operator_states == [(nodes.PG_OT_reset_tone.bl_idname, True)]
-        _check_color_sidebar(nodes, sidebar_context,
-                             nodes._stack_active_grade(node).pg_color, enabled=True)
+        active_grade = nodes._stack_active_grade(node)
+        _check_tone_sidebar(nodes, sidebar_context, node, active_grade, active_grade.pg_tone)
+        _check_color_sidebar(nodes, sidebar_context, active_grade.pg_color, enabled=True)
     finally:
         tree.nodes.remove(node)
         tree.nodes.active = previous_active
