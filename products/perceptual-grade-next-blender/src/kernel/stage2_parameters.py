@@ -16,11 +16,12 @@ import numpy as np
 
 from .layouts import TONE_CELLS, packed_shape
 from .prepare import PreparedGrade
+from .settings import TONE_CHROMA_LIMITS
 from .stage2_bindings import PARAMETER_IMAGE, PARAMETER_ROLE
 from .tables import TEXTURE_WIDTH
 
 
-PARAMETER_SCHEMA = 5
+PARAMETER_SCHEMA = 6
 PARAMETER_SHAPE = (1, TEXTURE_WIDTH, 4)
 PARAMETER_CONTENT_SIGNATURE = "_perceptual_grade_parameter_content_signature"
 PARAMETER_BUNDLE_SIGNATURE = "_perceptual_grade_parameter_bundle_signature"
@@ -42,6 +43,11 @@ ADAPTANCE_ANCHORS_SLOT = ADAPTANCE_BOUNDS_SLOT + 1
 ADAPTANCE_SUPPORT_SLOT = ADAPTANCE_ANCHORS_SLOT + 1
 TONE_CHROMA_GAIN_SLOT = ADAPTANCE_SUPPORT_SLOT + 1
 TONE_CHROMA_TONE_SLOT = TONE_CHROMA_GAIN_SLOT + 1
+_MUTED_GAIN_MIN, _MUTED_GAIN_MAX = map(math.exp2, TONE_CHROMA_LIMITS['muted_gain'])
+_VIVID_GAIN_MIN, _VIVID_GAIN_MAX = map(math.exp2, TONE_CHROMA_LIMITS['vivid_gain'])
+_SHADOW_MIN, _SHADOW_MAX = TONE_CHROMA_LIMITS['shadow_chroma']
+_HIGHLIGHT_MIN, _HIGHLIGHT_MAX = TONE_CHROMA_LIMITS['highlight_chroma']
+_CROSSOVER_MIN, _CROSSOVER_MAX = (100. * value for value in TONE_CHROMA_LIMITS['tone_crossover'])
 LAST_PARAMETER_SLOT = TONE_CHROMA_TONE_SLOT
 PARAMETER_ROLES = ('parameter', 'web', 'web_toe', 'adaptance')
 COLOR_ROLE_FIELDS = MappingProxyType({
@@ -83,9 +89,11 @@ class PreparedParameters:
             raise ValueError("Stage 2 Tone parameters are outside their valid domain")
         low, high, knee, chroma_active = data[0, TONE_CHROMA_GAIN_SLOT]
         shadow, highlight, crossover, curve_active = data[0, TONE_CHROMA_TONE_SLOT]
-        if (not .25 <= low <= 4. or not .25 <= high <= 4. or knee <= 0.
-                or not -2. <= shadow <= 2. or not -2. <= highlight <= 2.
-                or not 10. <= crossover <= 160.
+        if (not _MUTED_GAIN_MIN <= low <= _MUTED_GAIN_MAX
+                or not _VIVID_GAIN_MIN <= high <= _VIVID_GAIN_MAX or knee < 0.
+                or not _SHADOW_MIN <= shadow <= _SHADOW_MAX
+                or not _HIGHLIGHT_MIN <= highlight <= _HIGHLIGHT_MAX
+                or not _CROSSOVER_MIN <= crossover <= _CROSSOVER_MAX
                 or chroma_active not in (0., 1.) or curve_active not in (0., 1.)):
             raise ValueError("Stage 2 chroma parameters are outside their valid domain")
         if (np.any(data[0, TONE_DOMAIN_SLOT, 1:3] != 0.)

@@ -4,6 +4,7 @@ import copy
 from dataclasses import replace
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +23,15 @@ CASES = (
     ('ACES 2.0', 'None', 0., 1.),
     ('Filmic', 'High Contrast', 0., 1.),
     ('Raw', 'None', 0., 1.),
+)
+DISPLAYS = ('sRGB', 'Display P3', 'Rec.1886', 'Rec.2020', 'Rec.2100-PQ', 'Rec.2100-HLG')
+GPU_CASES = (
+    *(('sRGB', *case) for case in CASES),
+    ('Display P3', 'AgX', 'None', 0., 1.),
+    ('Rec.1886', 'Standard', 'None', 0., 1.),
+    ('Rec.2020', 'False Color', 'False Color - Punchy', 0., 1.),
+    ('Rec.2100-PQ', 'ACES 2.0 - HDR 1000 nits', 'None', 0., 1.),
+    ('Rec.2100-HLG', 'AgX - HDR 1000 nits', 'None', 0., 1.),
 )
 SAMPLES = np.array([[[0, 0, 0, 1], [.001, .001, .001, 1], [.18, .18, .18, 1],
                      [1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1],
@@ -45,7 +55,10 @@ class DisplayTests(unittest.TestCase):
         self.scene.render.dither_intensity = 0
 
     def test_matches_native_image_save_view_transform(self):
-        """Native processor is independent of our OCIO transform assembly."""
+        """Check raw selected-device values against Blender's PNG export."""
+        config = display._ocio().GetCurrentConfig()
+        self.assertEqual(set(config.getDisplays()), set(DISPLAYS))
+        self.scene.display_settings.emulation = 'OFF'
         for working_space in ('ACEScg', 'Linear Rec.709'):
             bpy.ops.wm.set_working_color_space(working_space=working_space)
             image = bpy.data.images.new('Native picker reference', width=8, height=1,
@@ -58,8 +71,13 @@ class DisplayTests(unittest.TestCase):
                 samples[0, index, :3] = color
             image.pixels.foreach_set(samples.ravel())
             try:
-                for view, look, exposure, gamma in CASES:
-                    with self.subTest(working_space=working_space, view=view, look=look):
+                cases = list(('sRGB', *case) for case in CASES)
+                cases.extend((device, view, 'None', 0., 1.)
+                             for device in DISPLAYS for view in config.getViews(device)
+                             if (device, view, 'None', 0., 1.) not in cases)
+                for device, view, look, exposure, gamma in cases:
+                    with self.subTest(working_space=working_space, device=device, view=view, look=look):
+                        self.scene.display_settings.display_device = device
                         settings = self.scene.view_settings
                         settings.view_transform = view
                         settings.look = look
@@ -74,7 +92,18 @@ class DisplayTests(unittest.TestCase):
                             native = np.array(result.pixels[:]).reshape(1, 8, 4)
                             bpy.data.images.remove(result)
                         expected = transform.apply(SAMPLES)
-                        np.testing.assert_allclose(native[..., :3], expected[..., :3],
+                        # Blender exports PQ/HLG still images with 203-nit
+                        # reference white. The display view itself uses 100 nits.
+                        selected = config.getDisplayViewColorSpaceName(device, view)
+                        hdr_files = {
+                            'Rec.2100-PQ': 'blender:pq_rec2020_display_203nits',
+                            'Rec.2100-HLG': 'blender:hlg_rec2020_display_203nits',
+                        }
+                        if selected in hdr_files:
+                            file_cpu = config.getProcessor(
+                                selected, hdr_files[selected]).getDefaultCPUProcessor()
+                            file_cpu.applyRGBA(expected.reshape(-1, 4))
+                        np.testing.assert_allclose(native[..., :3], np.clip(expected[..., :3], 0, 1),
                                                    atol=2 / 65535, rtol=0)
             finally:
                 bpy.data.images.remove(image)
@@ -86,8 +115,9 @@ class DisplayTests(unittest.TestCase):
         texture.filter_mode(False)
         offscreen = gpu.types.GPUOffScreen(8, 1, format='RGBA32F')
         try:
-            for view, look, exposure, gamma in CASES:
-                with self.subTest(view=view, look=look):
+            for device, view, look, exposure, gamma in GPU_CASES:
+                with self.subTest(device=device, view=view, look=look):
+                    self.scene.display_settings.display_device = device
                     settings = self.scene.view_settings
                     settings.view_transform = view
                     settings.look = look
@@ -116,10 +146,12 @@ class DisplayTests(unittest.TestCase):
             with self.assertRaises(display.DisplayUnavailable):
                 display.processor(self.scene)
             setattr(self.scene.view_settings, property_name, False)
-        self.scene.display_settings.display_device = 'Display P3'
+        identity = replace(display.signature(self.scene), display='Unknown Display')
         with self.assertRaises(display.DisplayUnavailable):
-            display.processor(self.scene)
-        self.scene.display_settings.display_device = 'sRGB'
+            display._processor(identity)
+        identity = replace(display.signature(self.scene), display='Rec.2100-HLG', view='Filmic')
+        with self.assertRaises(display.DisplayUnavailable):
+            display._processor(identity)
         with patch.dict(os.environ, {'OCIO': '/not-validated/config.ocio'}):
             with self.assertRaises(display.DisplayUnavailable):
                 display.processor(self.scene)
@@ -131,10 +163,35 @@ class DisplayTests(unittest.TestCase):
         identity = display.signature(self.scene)
         self.scene.view_settings.exposure = 1
         self.assertNotEqual(identity, display.signature(self.scene))
+        sdr = display.signature(self.scene, SimpleNamespace(support_hdr_color=False))
+        hdr = display.signature(self.scene, SimpleNamespace(support_hdr_color=True))
+        self.assertNotEqual(sdr, hdr)
         pixels = SAMPLES.copy()
         pixels[..., 3] = np.linspace(0, 1, 8)
         output = display.processor(self.scene).apply(pixels)
         np.testing.assert_array_equal(output[..., 3], pixels[..., 3])
+
+    def test_auto_emulation_preserves_extended_gamut_and_hdr(self):
+        self.scene.display_settings.display_device = 'Display P3'
+        self.scene.view_settings.view_transform = 'Standard'
+        self.scene.display_settings.emulation = 'AUTO'
+        pixels = np.array([[[1., 0., 0., .25], [4., 4., 4., .5]]], dtype=np.float32)
+        transform = display.processor(self.scene)
+        raw = transform.apply(pixels)
+        auto = transform.apply(pixels, viewport_overlay=True)
+        self.assertLess(float(auto[0, 0, :3].min()), 0.)
+        self.assertGreater(float(auto[0, 0, :3].max()), 1.)
+        np.testing.assert_allclose(auto[0, 1, :3], np.ones(3), atol=2e-5)
+        np.testing.assert_array_equal(auto[..., 3], pixels[..., 3])
+        self.scene.display_settings.emulation = 'OFF'
+        off = display.processor(self.scene)
+        np.testing.assert_allclose(off.apply(pixels, viewport_overlay=True), raw, atol=1e-6)
+        self.scene.display_settings.emulation = 'AUTO'
+        for device in ('Rec.2100-PQ', 'Rec.2100-HLG'):
+            self.scene.display_settings.display_device = device
+            self.scene.view_settings.view_transform = 'Standard'
+            hdr = display.processor(self.scene).apply(pixels, viewport_overlay=True)
+            self.assertGreater(float(hdr[0, 1, :3].min()), 1.)
 
     def test_runtime_custom_config_without_environment_is_rejected(self):
         ocio = display._ocio()

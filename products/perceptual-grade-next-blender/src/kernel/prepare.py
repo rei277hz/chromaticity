@@ -6,7 +6,7 @@ import numpy as np
 
 from ..color_core import linear as color_linear
 from ..color_core.modcam16 import HK
-from .settings import D65, LOW_Y, SPACES, TONE_CHROMA_LIMITS
+from .settings import D65, LOW_Y, SATURATION_AXIS_SCALE, SPACES, TONE_CHROMA_LIMITS
 from .settings import LinearSettings, ToneSettings, ColorSettings, Settings
 from .color_prepare import PreparedColor, prepare_color
 from .tables import TEXTURE_WIDTH, kernel, readonly, build_runtime_table
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 GAMMA = .525*(1.48+math.sqrt(.1))
 CAT16 = np.asarray(color_linear.CAT16, dtype=np.float64)
 WHITE_XYZ = np.asarray(color_linear.xyz(D65), dtype=np.float64)
+_CHROMA_BASE_RATIO = 35. / 75.
 
 
 def _finite(value, shape, description):
@@ -236,8 +237,10 @@ class PreparedTone:
     def chroma_parameters(self):
         p = self.settings
         low, high = math.exp2(p.muted_gain), math.exp2(p.vivid_gain)
-        knee_multiplier = (p.saturation_crossover / (1-p.saturation_crossover)
-                           * math.sqrt(high / low))
+        position = p.saturation_crossover
+        raw_ratio = SATURATION_AXIS_SCALE * position / math.sqrt((1. - position) * (1. + position))
+        # Packed knees multiply (35/75)*|J_A| in both native graphs and the Stack.
+        knee_multiplier = raw_ratio * math.sqrt(high / low) / _CHROMA_BASE_RATIO
         return low, high, knee_multiplier
 
     @property
@@ -249,13 +252,13 @@ class PreparedTone:
     @property
     def chroma_tone(self):
         p = self.settings
-        return p.shadow_chroma, p.highlight_chroma, p.tone_crossover
+        return p.shadow_chroma, p.highlight_chroma, 100. * p.tone_crossover
 
     def chroma_gain(self, ja, chroma, *, invert=False):
-        """Evaluate the two monotone chroma maps at incoming signed J_A."""
+        """Evaluate both monotone chroma maps at the Tone output's signed J_A."""
         lightness, chroma = np.broadcast_arrays(np.abs(np.asarray(ja, dtype=float)),
                                               np.asarray(chroma, dtype=float))
-        base = (35. / 75.)*lightness
+        base = _CHROMA_BASE_RATIO*lightness
         shadow, highlight, crossover = self.chroma_tone
         offset = lightness/crossover-1.
         t = np.minimum(1., np.abs(offset))
@@ -322,8 +325,8 @@ class PreparedTone:
             return points.copy()
         ja, ab = points[..., 0], points[..., 1:]
         chroma = np.hypot(ab[..., 0], ab[..., 1])
-        if self.chroma_active and not invert:
-            gain = self.chroma_gain(ja, chroma)
+        if self.chroma_active and invert:
+            gain = self.chroma_gain(ja, chroma, invert=True)
             chroma, ab = chroma*gain, ab*gain[..., None]
         if self.active:
             root_chroma = math.sqrt(HK)*np.sqrt(chroma)
@@ -335,8 +338,8 @@ class PreparedTone:
             denominator = np.hypot(c_fraction, 2*j_fraction*ratio)+c_fraction
             gain = np.divide(2*ratio**2, denominator, out=np.ones_like(height), where=height > 0.)
             ja, chroma, ab = ja*gain, chroma*gain, ab*gain[..., None]
-        if self.chroma_active and invert:
-            ab = ab*self.chroma_gain(ja, chroma, invert=True)[..., None]
+        if self.chroma_active and not invert:
+            ab = ab*self.chroma_gain(ja, chroma)[..., None]
         return np.concatenate((ja[..., None], ab), axis=-1)
 
     def forward(self, points):

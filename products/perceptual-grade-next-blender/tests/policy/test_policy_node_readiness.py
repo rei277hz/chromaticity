@@ -207,8 +207,12 @@ class KernelReadinessTests(unittest.TestCase):
         self.assertEqual(unchanged, failed)
         self.assertEqual(effects.output_mode, "error")
         retried, effects = self.transition(failed, "request", "grade-b")
-        self.assertIsNone(retried.error)
+        self.assertEqual(retried.error, failed.error)
         self.assertEqual(effects.prepare_signature, "grade-b")
+        prepared, effects = self.transition(retried, "preparation_result", "grade-b")
+        self.assertEqual(prepared, retried)
+        self.assertEqual(effects.build_signature, "grade-b")
+        self.assertEqual(effects.output_mode, "error")
 
     def test_only_current_full_recovery_receipt_clears_a_failed_output(self):
         failed, _ = self.transition(

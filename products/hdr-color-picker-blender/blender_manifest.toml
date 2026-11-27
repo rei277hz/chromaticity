@@ -11,4 +11,4 @@ license = ["SPDX:GPL-3.0-or-later"]
 copyright = ["2026 Rei277Hz"]
 
 [permissions]
-files = "Store private immutable picker jobs and helper recovery journals"
+files = "Store picker jobs, helper recovery journals and temporary EXR previews"

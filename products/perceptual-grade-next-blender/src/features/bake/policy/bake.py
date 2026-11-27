@@ -12,7 +12,7 @@ MAX_ACCEPTED = 8
 @dataclass(frozen=True)
 class State:
     phase: Literal[
-        "idle", "queued", "running", "cancelling", "ready",
+        "idle", "queued", "running", "pausing", "cancelling", "ready",
         "publishing", "activating", "terminal",
     ]
     signature: Optional[str] = None
@@ -22,7 +22,7 @@ class State:
 class Event:
     kind: Literal[
         "request", "start", "completed", "publish", "published",
-        "activated", "invalidate", "cancelled", "close",
+        "activated", "invalidate", "pause", "cancelled", "close",
     ]
     signature: Optional[str] = None
     current_signature: Optional[str] = None
@@ -86,8 +86,13 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         running = State("running", state.signature)
         return running, Effects("start")
 
+    if event.kind == "pause":
+        if state.phase != "running":
+            return state, Effects()
+        return State("pausing", state.signature), Effects("cancel")
+
     if event.kind == "completed":
-        if state.phase not in ("running", "cancelling"):
+        if state.phase not in ("running", "pausing", "cancelling"):
             return state, Effects()
         if state.phase == "cancelling":
             terminal = State("terminal")
@@ -142,6 +147,8 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         if state.phase == "running":
             cancelling = State("cancelling", state.signature)
             return cancelling, Effects("cancel")
+        if state.phase == "pausing":
+            return State("cancelling", state.signature), Effects()
         if state.phase in ("queued", "ready"):
             terminal = State("terminal")
             return terminal, Effects("discard")
@@ -151,6 +158,10 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         return state, Effects()
 
     if event.kind == "cancelled":
+        if state.phase == "pausing":
+            if _current(state, event):
+                return State("queued", state.signature), Effects("requeue")
+            return State("terminal"), Effects("discard")
         if state.phase != "cancelling":
             return state, Effects()
         terminal = State("terminal")
@@ -160,9 +171,9 @@ def step(state: State, event: Event) -> tuple[State, Effects]:
         if state.phase in ("queued", "ready"):
             terminal = State("terminal")
             return terminal, Effects("discard")
-        if state.phase == "running":
+        if state.phase in ("running", "pausing"):
             cancelling = State("cancelling", state.signature)
-            return cancelling, Effects("cancel")
+            return cancelling, Effects("cancel" if state.phase == "running" else None)
         return state, Effects()
 
     return state, Effects()

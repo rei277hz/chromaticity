@@ -24,6 +24,7 @@ bpy.context.preferences.extensions.repos.new(
 extension = importlib.import_module("bl_ext.pg_vectorscope.perceptual_grade")
 nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
 vectorscope = importlib.import_module(extension.__name__ + ".features.vectorscope.analysis")
+tone_scope = importlib.import_module(extension.__name__ + ".features.vectorscope.tone_scope")
 vectorscope_ui = importlib.import_module(extension.__name__ + ".features.vectorscope.ui")
 drag_checks = runpy.run_path(str(Path(__file__).with_name("vectorscope_drag_checks.py")))
 pointer = drag_checks["ScopePointer"](nodes, vectorscope_ui)
@@ -169,8 +170,8 @@ pointer.bind(window, area, region)
 draw_tone = vectorscope_ui.display._draw_tone
 
 
-def track_tone_draw(box, state, key, linear, tone, selected):
-    draw_tone(box, state, key, linear, tone, selected)
+def track_tone_draw(box, state, key, linear, tone, selected, active_crossover):
+    draw_tone(box, state, key, linear, tone, selected, active_crossover)
     if state is not None and state.status == "current" and state.tone_histogram is not None:
         report["tone_gizmo_drawn"] = True
 
@@ -350,7 +351,7 @@ def check_additive_trace_pixels():
 
 def exercise_gizmo_controls():
     baseline = pointer.settings(grade)
-    yield from pointer.hover_control("cr", grade)
+    yield from pointer.hover_control("R", grade)
     resized = yield from pointer.resize_control("resize_e", grade, (12, 0))
     assert resized > 300.
     report["gizmo_hover_and_resize"] = True
@@ -421,16 +422,26 @@ def exercise_gizmo_controls():
                for entry in retried_targets), retried_targets
     assert pointer.settings(grade) == baseline
     report["hover_retry_acknowledged"] = True
-    balanced = yield from pointer.drag_control("cr_balance", grade, (0, 25), cancel=True)
-    assert balanced.linear.balance[0] < baseline.linear.balance[0]
-    balanced = yield from pointer.drag_control("yb_balance", grade, (25, 0), cancel=True)
-    assert balanced.linear.balance[1] < baseline.linear.balance[1]
-    for axis, index in (("cr", 0), ("yb", 1)):
-        directed = yield from pointer.drag_control(axis, grade, (13, 19), cancel=True)
+    geometry = vectorscope_ui.editor.geometry
+    axes = (("R", "C", 0, -1.), ("C", "R", 0, 1.),
+            ("B", "Y", 1, -1.), ("Y", "B", 1, 1.))
+    for label, _opposite, index, _reference_sign in axes:
+        directed = yield from pointer.drag_control(label, grade, (13, 19), cancel=True)
         assert directed.linear.spread[index] != baseline.linear.spread[index]
         assert directed.linear.heading[index] != baseline.linear.heading[index]
         assert directed.linear.spread[1 - index] == baseline.linear.spread[1 - index]
         assert directed.linear.heading[1 - index] == baseline.linear.heading[1 - index]
+    for label, opposite, index, reference_sign in axes:
+        control = "balance_" + label
+        yield from pointer.hover_control(control, grade, cursor="SCROLL_Y")
+        balanced = yield from pointer.drag_control(
+            control, grade, (0, 12), cancel=True,
+        )
+        value = geometry.handle_balance(balanced.linear, label)
+        assert value > geometry.handle_balance(baseline.linear, label)
+        assert value == reference_sign * balanced.linear.balance[index]
+        assert geometry.handle_balance(balanced.linear, opposite) == -value
+        assert balanced.linear.balance[1 - index] == baseline.linear.balance[1 - index]
     report["linear_gizmo_controls"] = True
 
     yield from pointer.click_control("tone_tab", grade)
@@ -445,12 +456,15 @@ def exercise_gizmo_controls():
     original_appearance = state().appearance.rgba
     adjusted = yield from pointer.drag_control("exposure", grade, (25, 0), cancel=True)
     assert adjusted.linear.exposure > baseline.linear.exposure
-    adjusted = yield from pointer.drag_control("curve", grade, (20, 0), cancel=True)
-    assert adjusted.tone.input_nits[3] > baseline.tone.input_nits[3]
+    adjusted = yield from pointer.drag_control("curve", grade, (-20, 0), cancel=True)
+    assert adjusted.tone.input_nits[3] < baseline.tone.input_nits[3]
     assert adjusted.tone.input_nits[:3] == baseline.tone.input_nits[:3]
     adjusted = yield from pointer.drag_control("fit", grade, (0, 35), cancel=True)
     assert adjusted.tone.fit > baseline.tone.fit
     yield from exercise_fit_reset()
+    yield from exercise_saturation_crossover()
+    yield from exercise_tone_crossover()
+    yield from exercise_appearance_chroma_gains()
     with bpy.context.temp_override(window=window, area=area, region=region):
         assert bpy.ops.perceptual_grade.gizmo_set_peak(
             peak_nits="2000", node_pointer=str(grade.as_pointer()),
@@ -462,6 +476,41 @@ def exercise_gizmo_controls():
         "Peak edit did not update the Tone histogram",
     )
     assert pointer.settings(grade).tone.peak_nits == 2000
+    assert grade.input_highlights == 2000.
+    grade.input_highlights = 600.
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="2000") == {"FINISHED"}
+    assert grade.input_highlights == 2000.
+    grade.input_white = 800.
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="500") == {"FINISHED"}
+    assert grade.peak_nits == "500" and grade.input_white == 800.
+    gap = tone_scope.nits_to_j(grade.input_highlights) - tone_scope.nits_to_j(grade.input_white)
+    np.testing.assert_allclose(gap, .001, atol=1e-6)
+    clamped_highlights = grade.input_highlights
+    grade.input_highlights = 1400.
+    low_peak_before = pointer.settings(grade)
+    low_peak_point = pointer.control_point("curve", grade)
+    yield from pointer.hover_control("curve", grade, cursor="SCROLL_X")
+    yield from pointer.press_at(low_peak_point, "curve", grade)
+    yield from pointer.reset_drag_at(low_peak_point)
+    low_peak_reset = pointer.settings(grade)
+    assert low_peak_reset.linear == low_peak_before.linear
+    assert low_peak_reset.tone.input_nits[:3] == low_peak_before.tone.input_nits[:3]
+    np.testing.assert_allclose(
+        low_peak_reset.tone.input_nits[3], clamped_highlights, rtol=0, atol=.01,
+    )
+    pointer.event_at("LEFTMOUSE", "RELEASE", low_peak_point)
+    yield from wait_for(lambda: nodes._gesture_token(window.as_pointer()) is None,
+                        "Clamped Highlights reset gesture did not finish", 5.)
+    assert pointer.settings(grade) == low_peak_reset
+    report["highlight_reset_respects_low_peak_clamp"] = True
+    grade.input_white = baseline.tone.input_nits[2]
+    grade.input_highlights = 500.
+    yield from exercise_upper_tone_crossover()
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="2000") == {"FINISHED"}
+    assert grade.input_highlights == 2000.
     yield from wait_for(lambda: appearance_current(original_appearance),
                         "Peak edit did not update final appearance")
     tone_appearance = state().appearance.rgba
@@ -476,7 +525,8 @@ def exercise_gizmo_controls():
     grade.web_chroma_1_0 = 0.
     grade.web_chroma_2_0 = 0.
 
-    # With a non-default peak, R resets Highlights to the current output target.
+    # With a non-default peak, R resets Highlights to the selected output peak.
+    grade.input_highlights = 1400.
     before = pointer.settings(grade)
     point = pointer.control_point("curve", grade)
     yield from pointer.press_at(point, "curve", grade)
@@ -490,7 +540,6 @@ def exercise_gizmo_controls():
                         "Highlights reset gesture did not finish", 5.)
     assert pointer.settings(grade) == reset_settings
     report["highlight_reset_to_peak"] = True
-    grade.input_highlights = before.tone.input_nits[3]
     grade.peak_nits = "1000"
 
     # Guarded black and white must be sampled at the returned endpoints.
@@ -507,8 +556,9 @@ def exercise_gizmo_controls():
     yield from wait_for(
         lambda: (value := state()) is not None and value.appearance_status == "current"
         and value.appearance is not None and value.appearance.rgba is not black_appearance
-        and value.appearance.overflow_fraction == 1.,
-        "Final appearance did not report guarded white overflow",
+        and value.appearance.peak_j == tone_scope.peak_j(pointer.settings(grade).tone)
+        and not value.appearance.rgba[..., 3].any(),
+        "Final appearance did not exclude guarded white above the selected peak",
     )
     white = appearance_samples[0]
     assert np.all(white[..., 0] > 100.)
@@ -558,6 +608,179 @@ def exercise_fit_reset():
     assert pointer.settings(grade) == before
     report["fit_reset_continues_and_cancels"] = True
     grade.fit = reset.tone.fit
+
+
+def exercise_saturation_crossover():
+    """Exercise the Appearance Distribution's saturation crossover."""
+    window_key = window.as_pointer()
+    default = grade.saturation_crossover
+    grade.saturation_crossover = .7
+    before = pointer.settings(grade)
+    _, y, width, height = pointer.box()["appearance"]
+    start = pointer.control_point("saturation_crossover", grade)
+    # Press off the line's center to distinguish relative drag from click-to-set.
+    start = start[0] + 2, y + height / 2
+    yield from pointer.press_at(start, "saturation_crossover", grade)
+    assert vectorscope_ui._interaction.hover_cursors[window_key][1] == "SCROLL_X"
+    assert pointer.settings(grade) == before
+    moved = start[0] - 24, start[1]
+    pointer.event_at("MOUSEMOVE", "NOTHING", moved)
+    yield from wait_for(lambda: grade.saturation_crossover < before.tone.saturation_crossover,
+                        "Saturation crossover drag did not update the sidebar property", 5.)
+    edited = grade.saturation_crossover
+    old = before.tone.saturation_crossover
+    expected_value = max(0., old - 24 / width)
+    assert abs(edited - expected_value) < 1e-6, (edited, expected_value)
+    assert pointer.settings(grade) == replace(
+        before, tone=replace(before.tone, saturation_crossover=edited),
+    )
+    report["saturation_crossover_sidebar_sync"] = True
+
+    yield from pointer.reset_drag_at(moved)
+    assert grade.saturation_crossover == default
+    continued = moved[0] + 12, moved[1]
+    pointer.event_at("MOUSEMOVE", "NOTHING", continued)
+    yield from wait_for(lambda: grade.saturation_crossover > default,
+                        "Saturation crossover drag did not rebase on reset", 5.)
+    pointer.event_at("ESC", "PRESS", continued)
+    pointer.event_at("ESC", "RELEASE", continued)
+    pointer.event_at("LEFTMOUSE", "RELEASE", continued)
+    yield from wait_for(lambda: nodes._gesture_token(window_key) is None,
+                        "Saturation crossover drag did not cancel", 5.)
+    assert pointer.settings(grade) == before
+    grade.saturation_crossover = default
+    report["saturation_crossover_reset_and_cancel"] = True
+
+
+def exercise_tone_crossover():
+    window_key = window.as_pointer()
+    interaction = vectorscope_ui._interaction
+    default = grade.tone_crossover
+    default_saturation = grade.saturation_crossover
+    grade.saturation_crossover = 0.
+    grade.tone_crossover = .60
+    before = pointer.settings(grade)
+    saturation_x, _ = pointer.control_point("saturation_crossover", grade)
+    _, tone_y = pointer.control_point("tone_crossover", grade)
+    intersection = saturation_x, tone_y
+    yield from pointer.press_at(intersection, "tone_crossover", grade)
+    pointer.event_at("LEFTMOUSE", "RELEASE", intersection)
+    yield from wait_for(lambda: window_key not in interaction.drags,
+                        "Crossover intersection click did not finish", 5.)
+    assert nodes._gesture_token(window_key) is None
+    assert pointer.settings(grade) == before
+    grade.saturation_crossover = default_saturation
+    before = pointer.settings(grade)
+
+    # Grab the horizontal guide away from both the handle and the intersection.
+    x, _y, width, _height = pointer.box()["appearance"]
+    start = x + width * .8, tone_y
+    yield from pointer.press_at(start, "tone_crossover", grade)
+    assert interaction.hover_cursors[window_key][1] == "SCROLL_Y"
+    assert pointer.settings(grade) == before
+    moved = start[0], start[1] - 12
+    pointer.event_at("MOUSEMOVE", "NOTHING", moved)
+    yield from wait_for(lambda: grade.tone_crossover < before.tone.tone_crossover,
+                        "Tone crossover drag did not update the sidebar property", 5.)
+    assert pointer.settings(grade) == replace(
+        before, tone=replace(before.tone, tone_crossover=grade.tone_crossover),
+    )
+    yield from pointer.reset_drag_at(moved)
+    assert grade.tone_crossover == default
+    continued = moved[0], moved[1] + 9
+    pointer.event_at("MOUSEMOVE", "NOTHING", continued)
+    yield from wait_for(lambda: grade.tone_crossover > default,
+                        "Tone crossover drag did not rebase on reset", 5.)
+    pointer.event_at("ESC", "PRESS", continued)
+    pointer.event_at("ESC", "RELEASE", continued)
+    pointer.event_at("LEFTMOUSE", "RELEASE", continued)
+    yield from wait_for(lambda: nodes._gesture_token(window_key) is None,
+                        "Tone crossover drag did not cancel", 5.)
+    assert pointer.settings(grade) == before
+    grade.tone_crossover = default
+    report["tone_crossover_reset_and_cancel"] = True
+
+
+def exercise_upper_tone_crossover():
+    geometry = vectorscope_ui.editor.geometry
+    before = pointer.settings(grade)
+    grade.saturation_crossover = 0.
+    grade.tone_crossover = 1.4
+    settings = pointer.settings(grade).tone
+    plot = pointer.box()["appearance"]
+    peak_j = geometry.tone_peak_j(settings)
+    point, pinned = geometry.tone_crossover_point(
+        plot, peak_j, settings.tone_crossover,
+    )
+    _, plot_y, _, plot_height = plot
+    assert not pinned
+    assert abs(point[1] - (plot_y + geometry.appearance_scope.lightness_position(140., peak_j)
+                           * plot_height)) < 1e-6
+    # The maximum value maps directly to output-neutral J=140.
+    adjusted = yield from pointer.drag_control("tone_crossover", grade, (0, -12), cancel=True)
+    assert adjusted.tone.tone_crossover < 1.4
+    assert adjusted.tone.saturation_crossover == 0.
+    _, still_pinned = geometry.tone_crossover_point(
+        plot, peak_j, adjusted.tone.tone_crossover,
+    )
+    assert not still_pinned
+    assert pointer.settings(grade).tone.tone_crossover == 1.4
+    grade.tone_crossover = before.tone.tone_crossover
+    grade.saturation_crossover = before.tone.saturation_crossover
+    report["tone_crossover_upper_range_drag"] = True
+
+
+def exercise_appearance_chroma_gains():
+    fields = ("muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma")
+    for field in fields:
+        point = yield from pointer.hover_appearance_control(field, grade)
+        before = pointer.settings(grade)
+        start = point
+        yield from pointer.press_at(start, field, grade)
+        vertical_only = start[0], start[1] + 4
+        injected = pointer.event_at("MOUSEMOVE", "NOTHING", vertical_only)
+        yield from wait_for(
+            lambda: pointer._acknowledged is not None,
+            f"{field} vertical-only motion was not acknowledged", 5.,
+        )
+        assert pointer._injected is injected
+        drag = vectorscope_ui._interaction.drags.get(window.as_pointer())
+        assert drag is not None and drag.mode == field and drag.token is None
+        assert getattr(grade, field) == getattr(before.tone, field)
+        assert nodes._gesture_token(window.as_pointer()) is None
+        injected = pointer.event_at("LEFTMOUSE", "RELEASE", vertical_only)
+        yield from wait_for(
+            lambda: pointer._acknowledged is not None
+            and pointer._injected is injected
+            and window.as_pointer() not in vectorscope_ui._interaction.drags,
+            f"{field} click did not release", 5.,
+        )
+        edited = yield from pointer.drag_control(field, grade, (12, 0), cancel=True)
+        assert getattr(edited.tone, field) > getattr(before.tone, field)
+        assert all(getattr(edited.tone, other) == getattr(before.tone, other)
+                   for other in fields if other != field)
+        assert pointer.settings(grade) == before
+    report["appearance_chroma_gain_drag_and_vertical_lock"] = True
+
+    field = "vivid_gain"
+    grade.vivid_gain = 1.5
+    before = pointer.settings(grade)
+    start = pointer.control_point(field, grade)
+    yield from pointer.press_at(start, field, grade)
+    end = start[0] + 8, start[1]
+    pointer.event_at("MOUSEMOVE", "NOTHING", end)
+    yield from wait_for(lambda: grade.vivid_gain > before.tone.vivid_gain,
+                        "Vivid gain drag did not start", 5.)
+    yield from pointer.reset_drag_at(end)
+    assert grade.vivid_gain == 0.
+    pointer.event_at("ESC", "PRESS", end)
+    pointer.event_at("ESC", "RELEASE", end)
+    pointer.event_at("LEFTMOUSE", "RELEASE", end)
+    yield from wait_for(lambda: nodes._gesture_token(window.as_pointer()) is None,
+                        "Vivid gain reset gesture did not cancel", 5.)
+    assert pointer.settings(grade) == before
+    grade.vivid_gain = 0.
+    report["appearance_chroma_gain_reset_and_cancel"] = True
 
 
 def exercise_drags():
@@ -675,6 +898,34 @@ def exercise_drags():
     report["per_node_drag"] = True
     report["source_keys_undone"] = True
     report["undo_preserved_gizmo"] = True
+
+    # Verify that the crossover is a single undoable, Auto Key-able node
+    # property. Run this after other gestures because Undo may replace the
+    # Blender node wrapper while preserving the open Gizmo.
+    checkpoint("native crossover Auto Key and undo")
+    yield from pointer.click_control("tone_tab", restored_tree.nodes[NODE_NAME])
+    for field, delta in (("saturation_crossover", (20, 0)), ("tone_crossover", (0, 18)),
+                         ("muted_gain", (12, 0)), ("vivid_gain", (12, 0)),
+                         ("shadow_chroma", (12, 0)), ("highlight_chroma", (12, 0))):
+        cross_node = restored_tree.nodes[NODE_NAME]
+        before = pointer.settings(cross_node)
+        press_frame = window.scene.frame_current + window.scene.frame_subframe
+        assert window.scene.tool_settings.use_keyframe_insert_auto
+        with bpy.context.temp_override(window=window, area=area, region=region):
+            assert bpy.ops.ed.undo_push(message=f"Before {field} Auto Key") == {"FINISHED"}
+        edited = yield from pointer.drag_control(field, cross_node, delta)
+        value = getattr(edited.tone, field)
+        assert value != getattr(before.tone, field)
+        assert keyframes(restored_tree) == {
+            cross_node.path_from_id(field): ((press_frame, value),),
+        }, keyframes(restored_tree)
+        with bpy.context.temp_override(window=window, area=area, region=region):
+            assert bpy.ops.ed.undo() == {"FINISHED"}
+        restored_tree = bpy.data.node_groups[TREE_NAME]
+        assert pointer.settings(restored_tree.nodes[NODE_NAME]) == before
+        assert not keyframes(restored_tree), "Undo left crossover Auto Key data behind"
+        assert vectorscope_ui._editors[gizmo_key].stage == "TONE"
+        report[field + "_autokey_undo"] = True
 
 
 def exercise_animated_frame_cancel():

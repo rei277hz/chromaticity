@@ -36,7 +36,7 @@ GUI_SOFTWARE_PACKAGES = {
     "zlib1g": ("https://deb.debian.org/debian/pool/main/z/zlib/zlib1g_1.3.dfsg+really1.3.1-1+b1_amd64.deb", "015be740d6236ad114582dea500c1d907f29e16d6db00566ca32fb68d71ac90d"),
     "libzstd1": ("https://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-1_amd64.deb", "2f6a2aeacfc925eba8b00ac9139bc4bfccf8cacb09eb93de067074b26948eef9"),
     "libpixman_1_0": ("https://deb.debian.org/debian/pool/main/p/pixman/libpixman-1-0_0.44.0-3_amd64.deb", "3862c87596f6b4b60fc916395fd69aa10af28a875a8e5c081a8cf30ddd120bd6"),
-    "libfreetype6": ("https://deb.debian.org/debian/pool/main/f/freetype/libfreetype6_2.13.3+dfsg-1+deb13u1_amd64.deb", "e4947f3291528f03d574f2b01d5c5fc45c58c47480f32888a5cdf0f231ab584e"),
+    "libfreetype6": ("https://security.debian.org/debian-security/pool/updates/main/f/freetype/libfreetype6_2.13.3+dfsg-1+deb13u1_amd64.deb", "e4947f3291528f03d574f2b01d5c5fc45c58c47480f32888a5cdf0f231ab584e"),
     "libpng16_16t64": ("https://security.debian.org/debian-security/pool/updates/main/libp/libpng1.6/libpng16-16t64_1.6.48-1+deb13u6_amd64.deb", "0f8034d1c2547760430c81e8d87e5d6acd533a3493c80cf76dbecd0343b6773c"),
     "libbrotli1": ("https://security.debian.org/debian-security/pool/updates/main/b/brotli/libbrotli1_1.1.0-2+deb13u1_amd64.deb", "db46824c60fee46aff3cc0be3e5f736bc606cae669b1fb17516a41e8073251a9"),
     "libexpat1": ("https://security.debian.org/debian-security/pool/updates/main/e/expat/libexpat1_2.9.0-1~deb13u1_amd64.deb", "feff874772cae904ae4d24e917b35664952bec4b4ae9100a4edda5a7fa746832"),

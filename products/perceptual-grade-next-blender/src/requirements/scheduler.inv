@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "state": "State",
+  "event": "Event",
+  "initializers": ["new"],
+  "step": "step",
+  "invariants": {},
+  "contracts": {
+    "retry_delay_ms": {
+      "requires": ["attempt >= 1"]
+    }
+  },
+  "properties": [
+    {
+      "name": "render_precedes_plot",
+      "lets": {
+        "render": "WorkPriority('render', 1)",
+        "plot": "WorkPriority('plot', 2, foreground=True)"
+      },
+      "assert": "precedes(render, plot) and not precedes(plot, render)"
+    },
+    {
+      "name": "newest_plot_generation_precedes_older_plot",
+      "lets": {
+        "newest": "WorkPriority('plot', 9)",
+        "older": "WorkPriority('plot', 8)"
+      },
+      "assert": "precedes(newest, older)"
+    },
+    {
+      "name": "consistency_precedes_bake",
+      "lets": {
+        "consistency": "WorkPriority('consistency', 1)",
+        "bake": "WorkPriority('bake', 9)"
+      },
+      "assert": "precedes(consistency, bake)"
+    },
+    {
+      "name": "foreground_plot_precedes_background_plot",
+      "lets": {
+        "foreground": "WorkPriority('plot', 2, foreground=True)",
+        "background": "WorkPriority('plot', 3)"
+      },
+      "assert": "precedes(foreground, background)"
+    },
+    {
+      "name": "promoted_consistency_has_plot_rank",
+      "lets": {
+        "promoted": "WorkPriority('consistency', 2, promoted=True)",
+        "plot": "WorkPriority('plot', 1)"
+      },
+      "assert": "precedes(promoted, plot)"
+    },
+    {
+      "name": "promoted_consistency_does_not_precede_foreground_plot",
+      "lets": {
+        "promoted": "WorkPriority('consistency', 1, promoted=True)",
+        "foreground": "WorkPriority('plot', 2, foreground=True)"
+      },
+      "assert": "not precedes(promoted, foreground)"
+    },
+    {
+      "name": "higher_priority_plot_can_pause_consistency",
+      "lets": {
+        "plot": "WorkPriority('plot', 2, foreground=True)",
+        "consistency": "WorkPriority('consistency', 1)"
+      },
+      "assert": "may_preempt(plot, consistency)"
+    },
+    {
+      "name": "ordinary_work_is_fenced_during_recovery",
+      "assert": "not admitted('plot', 'recovering') and not admitted('consistency', 'recovering') and not admitted('bake', 'recovering')"
+    },
+    {
+      "name": "startup_admits_consistency_but_fences_interactive_work",
+      "assert": "admitted('render', 'starting') and admitted('lifecycle', 'starting') and admitted('consistency', 'starting') and not admitted('plot', 'starting') and not admitted('bake', 'starting')"
+    },
+    {
+      "name": "render_is_admitted_during_recovery",
+      "assert": "admitted('render', 'recovering')"
+    },
+    {
+      "name": "retry_delay_is_bounded",
+      "assert": "retry_delay_ms(1) == 200 and retry_delay_ms(10) == 3200"
+    },
+    {
+      "name": "closed_admission_is_terminal",
+      "variables": {"event": "Event"},
+      "lets": {
+        "closed": "step(new(), Event('closed'))[0]"
+      },
+      "assert": "step(closed, event) == (closed, Effects())"
+    },
+    {
+      "name": "changed_host_data_fences_admission",
+      "variables": {"kind": "str"},
+      "assert": "not admitted(kind, 'changing')"
+    }
+  ],
+  "witnesses": [
+    {
+      "name": "recovery_can_complete",
+      "lets": {
+        "started": "step(new(), Event('recovering'))[0]"
+      },
+      "assert": "step(started, Event('ready'))[0] == new()"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "ignore_class_order",
+      "function": "precedes",
+      "target": "candidate_rank < incumbent_rank",
+      "replacement": "True",
+      "detects": ["property.render_precedes_plot"]
+    },
+    {
+      "name": "recovery_admits_bake",
+      "function": "step",
+      "target": "state.phase == \"ready\"",
+      "replacement": "True",
+      "detects": ["property.ordinary_work_is_fenced_during_recovery"]
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 # Debian 13 amd64 XeTeX, PGFPlots, dvisvgm and their native runtime.
 # Only xetex and dvisvgm are invoked; package-manager tools are not executed.
-# Pinned from Debian trixie main/binary-amd64/Packages on 2026-11-11.
+# Baseline pins are from Debian trixie main/binary-amd64/Packages on 2026-11-11.
+# Obsolete package artifacts were refreshed from the current Trixie index on 2026-11-26.
 TEX_PACKAGES = {
     "dvisvgm": {
         "version": "3.4.4+ds-1",
@@ -105,10 +106,10 @@ TEX_PACKAGES = {
         "sha256": "5fe37fb79d53f5c91da6ba3ac4c1a8453e1f2b1ff0e0ea45189c5338bbfdbf82",
     },
     "libexpat1": {
-        "version": "2.8.3-1~deb13u1",
-        "filename": "libexpat1_2.8.3-1~deb13u1_amd64.deb",
-        "url": "https://deb.debian.org/debian/pool/main/e/expat/libexpat1_2.8.3-1~deb13u1_amd64.deb",
-        "sha256": "38abe0e710a07688e9c149d74536e67cfee0364bdb64dd6d644c32a1cfad389f",
+        "version": "2.9.0-1~deb13u1",
+        "filename": "libexpat1_2.9.0-1~deb13u1_amd64.deb",
+        "url": "https://deb.debian.org/debian/pool/main/e/expat/libexpat1_2.9.0-1~deb13u1_amd64.deb",
+        "sha256": "feff874772cae904ae4d24e917b35664952bec4b4ae9100a4edda5a7fa746832",
     },
     "libffi8": {
         "version": "3.4.8-2",
@@ -159,22 +160,22 @@ TEX_PACKAGES = {
         "sha256": "1769ba3ed3c1fc75b7fbe02678e32aa24391205813eceef4e1e3500015d12ee3",
     },
     "libgs_common": {
-        "version": "10.05.1~dfsg-1+deb13u1",
-        "filename": "libgs-common_10.05.1~dfsg-1+deb13u1_all.deb",
-        "url": "https://deb.debian.org/debian/pool/main/g/ghostscript/libgs-common_10.05.1~dfsg-1+deb13u1_all.deb",
-        "sha256": "695829a596975d46ad1edd97557500dfd6ccbe67bdc88512607bb57967ebc8c1",
+        "version": "10.05.1~dfsg-1+deb13u3",
+        "filename": "libgs-common_10.05.1~dfsg-1+deb13u3_all.deb",
+        "url": "https://deb.debian.org/debian/pool/main/g/ghostscript/libgs-common_10.05.1~dfsg-1+deb13u3_all.deb",
+        "sha256": "345d3eba04c00f652903e2aac59c5347ea74054e53fcf5d0dbc7500ea5e93a48",
     },
     "libgs10": {
-        "version": "10.05.1~dfsg-1+deb13u1",
-        "filename": "libgs10_10.05.1~dfsg-1+deb13u1_amd64.deb",
-        "url": "https://deb.debian.org/debian/pool/main/g/ghostscript/libgs10_10.05.1~dfsg-1+deb13u1_amd64.deb",
-        "sha256": "64d591dce496f176c41e212d70ef3a312c5273d55294e81dc485d884da9f2e65",
+        "version": "10.05.1~dfsg-1+deb13u3",
+        "filename": "libgs10_10.05.1~dfsg-1+deb13u3_amd64.deb",
+        "url": "https://deb.debian.org/debian/pool/main/g/ghostscript/libgs10_10.05.1~dfsg-1+deb13u3_amd64.deb",
+        "sha256": "6b304d55801354de3fbaec0b000c8b31aa25335ebea25593b72832aff2228655",
     },
     "libgs10_common": {
-        "version": "10.05.1~dfsg-1+deb13u1",
-        "filename": "libgs10-common_10.05.1~dfsg-1+deb13u1_all.deb",
-        "url": "https://deb.debian.org/debian/pool/main/g/ghostscript/libgs10-common_10.05.1~dfsg-1+deb13u1_all.deb",
-        "sha256": "05b4cb3b0f9012a0d1e7024e5ce1cc13db4c70cc7554e8b64bc00db95a69f47e",
+        "version": "10.05.1~dfsg-1+deb13u3",
+        "filename": "libgs10-common_10.05.1~dfsg-1+deb13u3_all.deb",
+        "url": "https://deb.debian.org/debian/pool/main/g/ghostscript/libgs10-common_10.05.1~dfsg-1+deb13u3_all.deb",
+        "sha256": "d068356a8e7285cf8e74d2c66b3c198822570120704becf7211beed2f05c094f",
     },
     "libgssapi_krb5_2": {
         "version": "1.21.3-5+deb13u1",
@@ -231,10 +232,10 @@ TEX_PACKAGES = {
         "sha256": "95cbc44561651e1b3385454df08e8f2efe84498f6963a85259be2cc2fe798709",
     },
     "libjbig2dec0": {
-        "version": "0.20-1+b3",
-        "filename": "libjbig2dec0_0.20-1+b3_amd64.deb",
-        "url": "https://deb.debian.org/debian/pool/main/j/jbig2dec/libjbig2dec0_0.20-1+b3_amd64.deb",
-        "sha256": "68be3775d14813d3a0e5db36fa79a0a241640c069e2183396689ea30a43db0a0",
+        "version": "0.20-1+deb13u1",
+        "filename": "libjbig2dec0_0.20-1+deb13u1_amd64.deb",
+        "url": "https://deb.debian.org/debian/pool/main/j/jbig2dec/libjbig2dec0_0.20-1+deb13u1_amd64.deb",
+        "sha256": "7d3f9b4e62b8ec477dd781234be02b8649dc563f8e67f91bbc02691a7ea3d4e3",
     },
     "libjpeg62_turbo": {
         "version": "1:2.1.5-4",
@@ -327,10 +328,10 @@ TEX_PACKAGES = {
         "sha256": "1252b96a5bc44bb5db982bef8eb18e54f5047cede2aff641bce4f8e1edb91c3e",
     },
     "libpng16_16t64": {
-        "version": "1.6.48-1+deb13u5",
-        "filename": "libpng16-16t64_1.6.48-1+deb13u5_amd64.deb",
-        "url": "https://deb.debian.org/debian/pool/main/libp/libpng1.6/libpng16-16t64_1.6.48-1+deb13u5_amd64.deb",
-        "sha256": "2465b4e9fa85cff54dc10a6da3e64074d8d9292c86e4a8f989b809d6b158e97e",
+        "version": "1.6.48-1+deb13u6",
+        "filename": "libpng16-16t64_1.6.48-1+deb13u6_amd64.deb",
+        "url": "https://deb.debian.org/debian/pool/main/libp/libpng1.6/libpng16-16t64_1.6.48-1+deb13u6_amd64.deb",
+        "sha256": "0f8034d1c2547760430c81e8d87e5d6acd533a3493c80cf76dbecd0343b6773c",
     },
     "libpotrace0": {
         "version": "1.16-2+b2",
@@ -357,10 +358,10 @@ TEX_PACKAGES = {
         "sha256": "03038b3002e6f44322554e335d60d8ff87acfcf2e21c904b6866610a9913ee00",
     },
     "libssl3t64": {
-        "version": "3.5.7-1~deb13u2",
-        "filename": "libssl3t64_3.5.7-1~deb13u2_amd64.deb",
-        "url": "https://deb.debian.org/debian/pool/main/o/openssl/libssl3t64_3.5.7-1~deb13u2_amd64.deb",
-        "sha256": "916f7f40b34a06e6ebfaefcdab331bff458328411da672598f126a760472467d",
+        "version": "3.5.9-1~deb13u1",
+        "filename": "libssl3t64_3.5.9-1~deb13u1_amd64.deb",
+        "url": "https://deb.debian.org/debian/pool/main/o/openssl/libssl3t64_3.5.9-1~deb13u1_amd64.deb",
+        "sha256": "ffefb9af363e0e4592251b2533eb06453c8e470f7772e40263c4b2129251a6d5",
     },
     "libstdc__6": {
         "version": "14.2.0-19",

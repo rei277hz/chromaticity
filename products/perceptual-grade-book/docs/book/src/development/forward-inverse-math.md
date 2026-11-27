@@ -35,7 +35,7 @@ controls and runtime behavior.
 | --- | --- | --- |
 | Analytic reference `Model` | Linear, appearance encoding, selected Tone/Chroma path, Color/Warp, H--K repair, decode, and reference RGB boundary handling | Full RGB inverse searches and forward-validates candidates. The integrated Tone/Chroma sub-map has a separate uniqueness proof. |
 | Blender Grade Stack | Ordered Grade entries in fixed AP1-D65 coordinates, then one sampled Stack LUT and the scene boundary | Per-entry inverse uses a bounded GPU solve where needed. The LUT records approximation residuals for affected vertices. |
-| Resolve DCTL chain | Linear, XYZ input, Tone, Color J/C, Warp, then XYZ output with H--K repair | Color J/C and Warp expose local Direction controls. There is no single full-grade inverse node. |
+| Resolve DCTL chain | Linear, XYZ input, integrated Tone J/C, Warp, then XYZ output with H--K repair, Subtractive Density, and optional saturation compression | Tone J/C and Warp expose local Direction controls. |
 
 ## Coordinates and carried state
 
@@ -130,16 +130,20 @@ R(C;L,H,k)=C\frac{Lk+HC}{k+C},
 $$
 
 where (L,H>0) are endpoint gains and (k\ge0) is the radial knee. For
-Muted/Vivid gains (g_m,g_v) in stops and crossover (p\in(0,1)),
+Muted/Vivid gains (g_m,g_v) in stops, the crossover (s_c\in[0,1])
+is expressed in raw input saturation (C/\lvert J_A\rvert) and defaults
+to 0.45.
 
 $$
 L=2^{g_m},\qquad H=2^{g_v},\qquad
-k=B_C\frac{p}{1-p}\sqrt{\frac{H}{L}},\qquad
+k=\lvert J_A\rvert s_c\sqrt{\frac{H}{L}},\qquad
 C_1=R(C;L,H,k).
 $$
 
-This one curve combines the two chroma controls. The neutral axis remains
-neutral. At small nonzero chroma the gain tends toward the Muted endpoint.
+At a positive crossover and nonzero (J_A), the curve applies the geometric
+mean gain (\sqrt{LH}) at (C=\lvert J_A\rvert s_c). When (k=0), the map is
+(R(C;L,H,0)=HC). Exact neutrals stay neutral. For positive (k), the gain
+tends toward the Muted endpoint as chroma approaches zero.
 
 Shadow and Highlight Chroma apply a second radial map. Define
 
@@ -292,10 +296,17 @@ LUT lifecycle and user-visible approximation report.
 
 ### Resolve DCTL
 
-Resolve uses six serial DCTLs. Linear adjusts scene-linear XYZ D65. XYZ Input
-converts to signed cone responses. Cone Tone applies the Tone curve, Cone
-Color J/C applies its J/C controls, Cone Warp applies hue/chroma, Adaptance,
-and Scale, and XYZ Output performs H--K repair before decoding to XYZ D65.
+Resolve uses five serial DCTLs. Linear adjusts scene-linear XYZ D65. XYZ Input
+converts to signed cone responses. Cone Tone J/C applies Unified Chroma and
+the saturation-preserving Tone curve. Cone Warp applies hue/chroma, Adaptance,
+and Scale. XYZ Output performs H--K repair, applies Subtractive Density to
+achromatic lightness, optionally compresses saturation, and decodes to XYZ D65.
+Subtractive Density scales \(|J_A|\) by \(10^{-D s^2/(s^2+p^2)}\) for
+nonzero \(J_A\), where \(s=C/|J_A|\), \(D\) is Subtractive Density, and
+\(p\) is Density Pivot. The operation preserves the sign of \(J_A\), chroma,
+and hue. Subtractive Density defaults to 0 (off) and ranges from 0 to 0.60.
+Density Pivot defaults to 0.50 and ranges from 0.05 to 8. Saturation
+Compression uses the resulting saturation and defaults to off.
 Resolve does not apply the Blender AP1 input repair or AP1 cube boundary.
 Signed and above-range XYZ values are retained by the cone chain.
 
@@ -340,13 +351,13 @@ not claimed globally unique.
 
 ### Resolve DCTL Direction
 
-Color J/C and Warp can be placed in inverse Direction. Their local inverse
+Tone J/C and Warp can be placed in inverse Direction. Their local inverse
 branches reverse their corresponding forward operations. Some components use
 bounded iteration, including Tone and Warp inversions in the Resolve product
 DCTLs.
-The six-node chain does not provide one inverse for Linear through XYZ Output,
-and the final H--K repair has no paired inverse node. For two Color operations,
-reverse their serial order when applying their inverses.
+To undo the two appearance nodes, apply inverse Warp followed by inverse
+Tone J/C before XYZ Output. Final H--K repair, Subtractive Density, and
+optional saturation compression occur after those inverses.
 
 The distinction is between a unique inverse for the integrated 2–3A map on
 signed appearance triples and a full product inverse. Only the former has the

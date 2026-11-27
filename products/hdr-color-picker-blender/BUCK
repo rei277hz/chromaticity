@@ -11,7 +11,7 @@ invariant_bundle(
         proof
         for proof in COMMON_PROOFS
         if not proof.endswith(":proof_edge_effect")
-    ] + HOST_WORKFLOWS + ["//libraries/invariant:lifecycle_proof"],
+    ] + HOST_WORKFLOWS,
 )
 
 extension_tree(

@@ -4,6 +4,11 @@ import numpy as np
 from . import cone_reference as cone, jc_gain, jc_surface
 
 
+def saturation_at_position(position):
+    """Decode the HDR Color Picker coordinate into raw C/abs(J_A)."""
+    return (34.09902169100728 / 75.) * position / np.sqrt(1. - position**2)
+
+
 def spline(value, knots, outputs, slopes):
     result = outputs[-1] + (value - knots[-1])
     for index, (left, right) in enumerate(zip(knots, knots[1:])):
@@ -48,23 +53,24 @@ def chroma_map(height, chroma, settings, *, linear_gain=False):
     c_result = end_shape(c_position, 1., settings.get("cMuted", 0.), c_upper)
     c_mapped = np.where(height == 0., contrasted * np.exp2(c_upper),
                         c_base * np.expm1(c_result * np.log(2.)))
-    return tonal_chroma_gain(height, c_base, c_mapped, settings, linear_gain)
+    tone_ratio = height / settings.get("cToneCrossover", 45.)
+    return tonal_chroma_gain(tone_ratio, c_base, c_mapped, settings, linear_gain)
 
 
 def unified_chroma_map(height, chroma, settings):
     c_base = (35. / 75.) * height
-    pivot = settings.get("cSaturationCrossover", .5)
-    knee = c_base * pivot / (1. - pivot)
+    pivot = saturation_at_position(settings.get("cSaturationCrossover", .5))
+    knee = height * pivot
     muted = np.exp2(settings.get("cMutedGain", 0.))
     vivid = np.exp2(settings.get("cVividGain", 0.))
     ratio = np.sqrt(vivid / muted)
     gain = np.divide(np.sqrt(muted * vivid) * (ratio * chroma + knee), chroma + ratio * knee,
                      out=np.full_like(chroma, vivid), where=(chroma + ratio * knee) > 0.)
-    return tonal_chroma_gain(height, c_base, chroma * gain, settings, linear_gain=True)
+    tone_ratio = (height / 100.) / settings.get("cToneCrossover", .45)
+    return tonal_chroma_gain(tone_ratio, c_base, chroma * gain, settings, linear_gain=True)
 
 
-def tonal_chroma_gain(height, c_base, c_mapped, settings, linear_gain):
-    tone = height / settings.get("cToneCrossover", 45.)
+def tonal_chroma_gain(tone, c_base, c_mapped, settings, linear_gain):
     gain_stops = (settings.get("shadowChroma", 0.) * jc_surface.smoothstep(1. - tone)
                   + settings.get("highlightChroma", 0.) * jc_surface.smoothstep(tone - 1.))
     fade = np.divide(c_mapped, c_mapped + c_base / 9., out=np.zeros_like(c_mapped),

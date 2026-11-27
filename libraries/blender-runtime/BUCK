@@ -25,6 +25,12 @@ EXECUTION_POLICIES = [
 ]
 
 component_library(
+    name = "actors",
+    srcs = {path[len("actors/"):]: path for path in glob(["actors/*.py"])},
+    package = "invariant",
+)
+
+component_library(
     name = "execution",
     srcs = {
                "__init__.py": PREFIX + "__init__.py",
@@ -42,7 +48,7 @@ component_library(
     name = "abi",
     srcs = ABI_SOURCES,
     package = "blender_runtime",
-    deps = [":execution"],
+    deps = [":actors", ":execution"],
 )
 
 [

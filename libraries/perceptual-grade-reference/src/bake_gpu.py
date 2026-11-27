@@ -2,6 +2,7 @@
 import numpy as np
 from . import boundary_gpu
 from .grading import CHROMA_CROSSOVER
+from .unified_chroma import _raw_saturation_crossover
 
 
 # One 256-float header shared by forward/inverse shaders. Following rows
@@ -10,11 +11,13 @@ LAYOUT=dict(TONE_ACTIVE=0,BLACK=1,SPAN=2,SLOPE=3,HIGH=4,TONE_WIDTH=5,
     TONE_KNOTS=6,TONE_RESIDUAL=11,COEFF_KNOTS=15,FIT_WIDTHS=20,GAIN=22,HALF_SATURATION=23,
     LIGHT_ACTIVE=24,CHROMA_ACTIVE=25,ADAPTANCE_ACTIVE=26,WEB_ACTIVE=27,IDENTITY=28,
     HK_GUARD=29,DIRECTIONAL=30,INVERSE_SIMPLE=31,LIGHT=32,CHROMA=48,
+    OUTPUT_DENSITY_AMOUNT=64,OUTPUT_DENSITY_PIVOT=65,
     TONE_NORMALIZERS=72,TONE_CONSTANTS=76,COEFF_NORMALIZERS=80,COEFF_CONSTANTS=88,
     ANCHORS=96,LOG_RADII=100,ANGLES=124,LOG_CHROMA=148,HUE_RADIANS=172,LOG_SCALE=196,
     CANONICAL_FIRST=220,CANONICAL_LAST=223,Y_WEIGHTS=226,TONE_TABLE=229,ADAPTANCE_LOG_GAINS=234,
-    UNIFIED_CHROMA=246,MUTED_GAIN=247,VIVID_GAIN=248,SATURATION_CROSSOVER=249,
-    SHADOW_CHROMA=250,HIGHLIGHT_CHROMA=251,CHROMA_TONE_CROSSOVER=252)
+    UNIFIED_CHROMA=246,MUTED_GAIN=247,VIVID_GAIN=248,SATURATION_RATIO=249,
+    SHADOW_CHROMA=250,HIGHLIGHT_CHROMA=251,CHROMA_TONE_CROSSOVER=252,
+    OUTPUT_COMPRESSION=253,OUTPUT_KNEE=254,OUTPUT_SPAN=255)
 HEADER_SIZE=256
 
 
@@ -45,8 +48,14 @@ def parameters(kernel):
     if kernel.tone_chroma is not None:
         controls=kernel.tone_chroma.settings
         put('UNIFIED_CHROMA',1.)
-        put('MUTED_GAIN',[controls.muted_gain,controls.vivid_gain,controls.saturation_crossover,
+        put('MUTED_GAIN',[controls.muted_gain,controls.vivid_gain,
+                         _raw_saturation_crossover(controls.saturation_crossover),
                          controls.shadow_chroma,controls.highlight_chroma,controls.tone_crossover])
+    put('OUTPUT_COMPRESSION',kernel.output_compression.enabled)
+    put('OUTPUT_KNEE',kernel.output_compression.knee)
+    put('OUTPUT_SPAN',kernel.output_compression.ceiling-kernel.output_compression.knee)
+    put('OUTPUT_DENSITY_AMOUNT',kernel.output_density.amount)
+    put('OUTPUT_DENSITY_PIVOT',kernel.output_density.pivot)
     return result
 
 
@@ -194,10 +203,10 @@ vec4 pg_unified_chroma(vec4 q,float ja,bool invert) {
     float c=pg_hypot(q.yz);
     if(c==0.0)return q;
     float lightness=abs(ja),base=PG_CHROMA_CROSSOVER*lightness;
-    float p=pg_param(PG_P_SATURATION_CROSSOVER);
+    float ratio=pg_param(PG_P_SATURATION_RATIO);
     float low=exp2(muted),high=exp2(vivid);
-    float knee=base*(p/(1.0-p))*sqrt(high/low);
-    float offset=lightness/pg_param(PG_P_CHROMA_TONE_CROSSOVER)-1.0;
+    float knee=lightness*ratio*sqrt(high/low);
+    float offset=lightness/(100.0*pg_param(PG_P_CHROMA_TONE_CROSSOVER))-1.0;
     float t=min(abs(offset),1.0);
     float stops=offset<0.0?shadow:highlight;
     float tonal=exp2(stops*t*t*(3.0-2.0*t)),gain;
@@ -230,8 +239,8 @@ vec4 pg_scale_hk_ray(vec4 q,float ja,float c,float source_height,float target_he
 vec4 pg_tone(vec4 q) {
     float ja=sign(q.w)*sqrt(abs(q.w));
     bool unified=pg_param(PG_P_UNIFIED_CHROMA)!=0.0;
-    if(unified)q=pg_unified_chroma(q,ja,false);
-    if(pg_param(PG_P_TONE_ACTIVE)==0.0)return q;
+    if(pg_param(PG_P_TONE_ACTIVE)==0.0)
+        return unified?pg_unified_chroma(q,ja,false):q;
     float c=unified?pg_hypot(q.yz):length(q.yz);
     vec2 components=vec2(ja,sqrt(66.0*c));
     float magnitude=unified?pg_hypot(components):length(components);
@@ -241,7 +250,11 @@ vec4 pg_tone(vec4 q) {
     vec4 k=pg_kernels(t,PG_P_TONE_KNOTS,pg_param(PG_P_TONE_WIDTH),PG_P_TONE_NORMALIZERS,PG_P_TONE_CONSTANTS),residual;
     for(int i=0;i<4;i++)residual[i]=pg_param(11+i);
     float h=100.0*(pg_param(3)*t+dot(k,residual));if(t==1.0)h=pg_param(4);
-    if(unified)return pg_scale_hk_ray(q,ja,c,magnitude,h);
+    if(unified) {
+        q=pg_scale_hk_ray(q,ja,c,magnitude,h);
+        ja=sign(q.w)*sqrt(abs(q.w));
+        return pg_unified_chroma(q,ja,false);
+    }
     float gain=pg_div(2.0*h*h,length(vec2(66.0*c,2.0*ja*h))+66.0*c);
     float j=ja*gain;vec2 ab=q.yz*gain;
     return vec4(pg_hk(j,length(ab)),ab,j*abs(j));
@@ -475,6 +488,46 @@ vec4 pg_export_state(vec4 q,out vec3 rgb) {
 vec3 pg_export(vec4 q) {
     vec3 rgb;pg_export_state(q,rgb);return rgb;
 }
+vec4 pg_apply_density(vec4 q) {
+    float amount=pg_param(PG_P_OUTPUT_DENSITY_AMOUNT);
+    if(amount==0.0||q.w==0.0||all(equal(q.yz,vec2(0.0))))return q;
+    float ja=sign(q.w)*sqrt(abs(q.w));
+    float chroma=pg_hypot(q.yz),scale=max(chroma,abs(ja));
+    float chroma_unit=chroma/scale;
+    float pivot_unit=pg_param(PG_P_OUTPUT_DENSITY_PIVOT)*(abs(ja)/scale);
+    float chroma_squared=chroma_unit*chroma_unit;
+    float weight=chroma_squared/(chroma_squared+pivot_unit*pivot_unit);
+    float gain=exp2(-3.321928094887362*amount*weight);
+    float energy=q.w*(gain*gain);
+    if(energy==q.w)return q;
+    return vec4(pg_hk(ja*gain,chroma),q.yz,energy);
+}
+vec4 pg_compress_output(vec4 q) {
+    if(pg_param(PG_P_OUTPUT_COMPRESSION)==0.0)return q;
+    float ja=sign(q.w)*sqrt(abs(q.w));
+    float c=pg_hypot(q.yz),knee=abs(ja)*pg_param(PG_P_OUTPUT_KNEE);
+    if(c<=knee)return q;
+    float span=abs(ja)*pg_param(PG_P_OUTPUT_SPAN),excess=c-knee;
+    float radius=knee+span*(isinf(excess)?1.0:excess/(span+excess));
+    vec2 direction=q.yz/max(abs(q.y),abs(q.z));
+    q.yz=(direction/length(direction))*radius;
+    float base=sqrt(66.0*radius),magnitude=pg_hypot(vec2(ja,base));
+    q.x=ja>=0.0?magnitude:2.0*base-magnitude;
+    return q;
+}
+bool pg_output_effects_enabled() {
+    return pg_param(PG_P_OUTPUT_DENSITY_AMOUNT)!=0.0||pg_param(PG_P_OUTPUT_COMPRESSION)!=0.0;
+}
+vec4 pg_apply_output_effects(vec4 q) {
+    return pg_compress_output(pg_apply_density(q));
+}
+vec3 pg_release_native(vec3 rgb) {
+    bool legal=all(greaterThanEqual(rgb,vec3(0.0)))&&all(lessThanEqual(rgb,vec3(1024.0)));
+    if(legal&&!pg_output_effects_enabled())return rgb;
+    vec4 entered=pg_enter(rgb),mapped=pg_apply_output_effects(entered);
+    if(legal&&all(equal(entered.yzw,mapped.yzw)))return rgb;
+    return pg_export(mapped);
+}
 vec4 pg_hk_guard(vec4 q,float reference_energy) {
     if(pg_param(PG_P_HK_GUARD)==0.0||q.x<0.0||any(isnan(q))||any(isinf(q)))return q;
     float c=length(q.yz),b=sqrt(66.0*c),d=q.w;
@@ -495,9 +548,12 @@ vec4 pg_hk_guard(vec4 q,float reference_energy) {
     return vec4(sqrt(max(x+lift,0.0)),q.yz*(c>0.0?cg/c:1.0),e);
 }
 vec3 pg_forward(vec3 rgb) {
-    if(pg_param(PG_P_IDENTITY)!=0.0)return rgb;
+    if(pg_param(PG_P_IDENTITY)!=0.0) {
+        if(!pg_output_effects_enabled())return rgb;
+        return pg_release_native(rgb);
+    }
     vec4 toned=pg_tone(pg_enter(rgb));
-    return pg_export(pg_grade(toned));
+    return pg_export(pg_apply_output_effects(pg_grade(toned)));
 }
 '''
 
@@ -507,12 +563,8 @@ void main() {
     int id=int(gl_GlobalInvocationID.x);if(id>=sample_count)return;
     ivec2 address=ivec2(id%256,id/256);vec4 input_value=texelFetch(input_pixels,address,0),result;
     if(operation==0)result=pg_enter(input_value.xyz);
-    else if(operation==2&&pg_param(PG_P_IDENTITY)!=0.0)result=vec4(input_value.xyz,1.0);
-    else {
-        vec4 state=operation==1?input_value:pg_enter(input_value.xyz);
-        vec4 toned=pg_tone(state);
-        result=vec4(pg_export(pg_grade(toned)),1.0);
-    }
+    else if(operation==1)result=vec4(pg_export(pg_apply_output_effects(pg_grade(pg_tone(input_value)))),1.0);
+    else result=vec4(pg_forward(input_value.xyz),1.0);
     imageStore(output_pixels,address,result);
 }
 '''

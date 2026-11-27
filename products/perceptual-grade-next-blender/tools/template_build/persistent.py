@@ -145,8 +145,9 @@ class _PersistentGraph(Graph):
             rho = sum(math.hypot(a,b) for a,b in ((.0582,.1475),(.0258,.0308),(.1347,.0385),(.0289,.0096)))
             ja = 100*(1220/prepared.aw)**prepared.gamma
             c = 1204*(1+rho)/prepared.aw*400*math.hypot(24/11,4/9)
-            gain = prepared.tone.maximum_chroma_gain
-            height = float(prepared.tone.remap(math.sqrt(ja*ja+66*c*gain)))
+            source_height = math.hypot(ja, math.sqrt(66*c))
+            height = (float(prepared.tone.remap(source_height))
+                      * math.sqrt(prepared.tone.maximum_chroma_gain))
             pixels=prepared.color.adaptance_table.pixels
             self._bound_cache = key, prepared.color.finite_bounds(height), height, {
                 'log_bound':float(abs(pixels[...,:3]).max()),

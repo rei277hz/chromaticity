@@ -4,10 +4,13 @@ from dctl_testing.parser import controls as parse_controls, section
 STAGES = {
     "linear": "1-Linear",
     "input": "1B-XYZ-Input",
-    "tone": "2-Cone-Tone",
-    "jc": "3A-Cone-Color-JC",
+    "tone_jc": "2-3A-Cone-Tone-JC",
     "warp": "3B-Cone-Warp",
     "output": "4-XYZ-Output",
+}
+STANDALONE_STAGES = {
+    "tone": "2-Cone-Tone",
+    "jc": "3A-Cone-Color-JC",
 }
 PROTOTYPES = {
     "lgg": "3A-Color-JC-LGG-Prototype",
@@ -34,10 +37,11 @@ TONE_FIT_LINEAR_GAIN_PROTOTYPES = {
 TONE_FIT_UNIFIED_CHROMA_PROTOTYPES = {
     "jc_tone_fit_unified_chroma": "2-3A-Cone-Tone-JC-Unified-Chroma-Prototype",
 }
+UNIFIED_CHROMA_STAGES = ("tone_jc", *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES)
 WARP_QUADRATIC_SCALE_PROTOTYPES = {
     "warp_quadratic_scale": "3B-Cone-Warp-Quadratic-Scale-Prototype",
 }
-ALL_STAGES = (STAGES | PROTOTYPES | SURFACE_PROTOTYPES | OVERLAP_PROTOTYPES
+ALL_STAGES = (STAGES | STANDALONE_STAGES | PROTOTYPES | SURFACE_PROTOTYPES | OVERLAP_PROTOTYPES
               | ANCHOR_CENTER_PROTOTYPES | GAIN_PROTOTYPES | GLOBAL_SHAPE_PROTOTYPES | TONE_FIT_PROTOTYPES
               | TONE_FIT_LINEAR_GAIN_PROTOTYPES | TONE_FIT_UNIFIED_CHROMA_PROTOTYPES
               | WARP_QUADRATIC_SCALE_PROTOTYPES)

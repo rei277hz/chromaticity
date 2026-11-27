@@ -211,14 +211,22 @@ class PublicationGate:
                 ticket.fail(PublicationDeferred(
                     "Render preflight was invalidated by host lifecycle reset"))
 
-    def take_render_preflight(self) -> Optional[RenderPreflightTicket]:
-        """Take one request on the main thread; a timer should poll this method."""
+    def take_render_preflight(
+            self, exact: Optional[RenderPreflightTicket] = None,
+    ) -> Optional[RenderPreflightTicket]:
+        """Claim the next worker ticket or the exact synchronous callback ticket."""
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("Render preflight must be taken on Blender's main thread")
         with self._lock:
             if self._preflight_active is not None or not self._preflight_queue:
                 return None
-            ticket = self._preflight_queue.popleft()
+            if exact is None:
+                ticket = self._preflight_queue.popleft()
+            elif exact in self._preflight_queue:
+                self._preflight_queue.remove(exact)
+                ticket = exact
+            else:
+                return None
             self._preflight_active = ticket
             return ticket
 
@@ -502,9 +510,12 @@ class PublicationGate:
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("Render preflight failure requires Blender's main thread")
         with self._lock:
-            if self._preflight_active is not ticket:
-                return False
             if ticket.state.phase != "failed":
                 return False
-            self._preflight_active = None
+            if self._preflight_active is ticket:
+                self._preflight_active = None
+            elif ticket in self._preflight_queue:
+                self._preflight_queue.remove(ticket)
+            else:
+                return False
         return ticket.deliver()

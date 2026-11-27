@@ -17,8 +17,8 @@ model. Regular Grade controls remain disabled until a Grade datablock is selecte
 The [Perceptual Grade handbook](../perceptual-grade-book/README.md) follows the
 latest mathematical reference in English and Simplified Chinese, with HTML,
 PDF, and EPUB editions. Its bilingual User Manual describes current Next
-behavior and retains a clearly labeled legacy 1.23.2 ZIP link. Stage 2 supplies
-Tone, Black Compression, and Unified Chroma controls. Stage 3 contains Warp and
+behavior. Stage 2 supplies Tone, Black Compression, and Unified Chroma
+controls. Stage 3 contains Warp and
 selective Adaptance controls; the draggable Warp diagram is deferred.
 Warp hue is displayed as its stored degree offset. All Grade paths follow the
 reference's Adaptance → H–K repair → common positive Scale order.
@@ -26,6 +26,15 @@ The Tone Gizmo edits its four Tone anchors, Fit, and Peak. Black Compression
 and the Unified Chroma sliders are in the Stage 2 sidebar. Previously saved
 Grades retain their four Tone anchors, Fit, Peak, and Warp settings. Retired
 Input Black and Stage 3 tonal J/C values have no equivalent slider migration.
+
+Tone remaps the neutral axis before applying Unified Chroma. **Saturation
+Crossover** uses the same compressed coordinate as the HDR Color Picker.
+For raw saturation `s = C/|J_A|`, its axis coordinate is
+`u = s/sqrt(k²+s²)`, where `k = 34.09902169100728/75`. The numerator is the
+fitted `K` from `//libraries/hdr-color-picker-core:radius_fit`. The slider ranges
+from `0` to `0.99` and defaults to `0.5`. **C Tone Crossover** is normalized output
+neutral J, where `1` means `J=100`. It ranges from `0.1` to `1.4` and defaults
+to `0.45`. Shadow and Highlight Chroma meet at that output-lightness point.
 
 Adaptance drags use 0.01 increments and tonal soft spans of ±4, ±10, ±20,
 and ±25. Finite requests beyond the physical response domain are limited
@@ -71,7 +80,7 @@ contain the Tone scalars and domain; slots 262–264 contain the output conversi
 matrix rows. Further slots carry Stage 3 flags, scalars, and field domains;
 two texels hold the tonal anchors and authored Adaptance-row activity flags.
 These preserve exact-zero cardinal support across atlas interpolation without
-tolerance-based suppression. Parameter schema 5 retains the 512×1 scalar image
+tolerance-based suppression. Parameter schema 6 retains the 512×1 scalar image
 and packs the Unified Chroma controls into two texels. The other role images
 carry the prepared Warp data. Fixed texture
 samples read these values instead of baking them into socket defaults. The
@@ -300,12 +309,12 @@ The native regression pauses a real compositor worker, verifies that both banks
 and the selector stay unchanged during the lease, then checks that publication
 uses the same two image identities after the reader exits. It also verifies
 intermediate Viewer output and final-value convergence during a CPU Compositor
-slider drag. The drag regression exercises Exposure, CR Balance, and Tone Fit at
-a requested 277 Hz in both editors, using bounded motion that avoids slider
-endpoints:
+slider drag. The dedicated vectorscope acceptance covers Exposure, the paired
+Red/Cyan and Blue/Yellow balance rails, Tone Fit, and selected-peak reset
+behavior:
 
 ```sh
-buck2 test --remote-only //products/perceptual-grade-next-blender/tests:banked_publication_gui
+buck2 test --remote-only //products/perceptual-grade-next-blender/tests:vectorscope_native
 ```
 
 The default native fixtures are 128 × 96. Linux software-GPU results do not establish

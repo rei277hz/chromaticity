@@ -4,6 +4,8 @@ from .model import Model
 from .grading import ColorSettings
 from .stack import Stack,FROM_NATIVE,matrix_native
 from .bake import Kernel, Inverse
+from .bake_inverse_gpu import RELEASE_NATIVE_OPERATION
+from .export import OutputCompressionSettings, OutputDensitySettings
 from ..perceptual_grade_core.model.boundary_polynomial import PolynomialTable
 from ..perceptual_grade_core.model.stack_kernel import StackKernel
 from ..perceptual_grade_core.model.tone_table import ToneTable
@@ -25,8 +27,14 @@ class BakeStack(StackKernel,Stack):
         model=self.models[0] if self.models else Model(hk_guard=hk_guard)
         data=model.boundary.cache
         self.table=PolynomialTable(data) if table is None else table
-        kernels=tuple(Kernel(data,m.tone,m.color,self.table,hk_guard=self.hk_guard,
-                             tone_chroma=m.tone_chroma) for m in self.models)
+        kernels = []
+        for i, m in enumerate(self.models):
+            terminal = i == len(self.models) - 1
+            kernels.append(Kernel(
+                data, m.tone, m.color, self.table, hk_guard=self.hk_guard, tone_chroma=m.tone_chroma,
+                output_compression=m.settings.output_compression if terminal else OutputCompressionSettings(),
+                output_density=m.settings.output_density if terminal else OutputDensitySettings(),
+            ))
         StackKernel.__init__(self,kernels,[matrix_native(m) for m in self.models],self.inverses,
             self.directions,FROM_NATIVE,model.acescg_y,[m.nonlinear_key for m in self.models],
             tone_factory=ToneTable)
@@ -42,6 +50,15 @@ class BakeStack(StackKernel,Stack):
             replacement.tone_table=solver.tone_table
             solvers.append(replacement)
         self.solvers=tuple(solvers)
+        # Terminal inverse release must see the final Stage 1 inverse matrix.
+        # bake_native applies it before the output effects and AP1 projection.
+        self.output_matrix = np.eye(3, dtype='f4')
+
+    @staticmethod
+    def matrix(rgb, matrix):
+        if np.array_equal(matrix, np.eye(3, dtype=matrix.dtype)):
+            return rgb
+        return StackKernel.matrix(rgb, matrix)
 
     def prepare_gpu(self):
         if self.program is None:
@@ -56,4 +73,20 @@ class BakeStack(StackKernel,Stack):
     def bake_native(self, values, backend='CPU', checkpoint=None, program=None):
         if backend == 'GPU' and self.solvers and program is None:
             program = self.prepare_gpu()
-        return super().bake_native(values, backend, checkpoint, program)
+        baked = super().bake_native(values, backend, checkpoint, program)
+        if self.directions and self.directions[-1] == 'INVERSE':
+            if checkpoint is not None:
+                checkpoint()
+            native = self.matrix(baked[..., :3], self.inverses[-1])
+            if not np.isfinite(native).all():
+                raise ArithmeticError('Nonfinite terminal inverse matrix result')
+            kernel = self.kernels[-1]
+            if backend == 'GPU':
+                program.set_inverse(self.solvers[-1])
+                rgb = program.evaluate(native, RELEASE_NATIVE_OPERATION)[..., :3].reshape(native.shape)
+            else:
+                rgb = kernel.final_export(kernel.enter(native), native)
+            if not np.isfinite(rgb).all():
+                raise ArithmeticError('Nonfinite terminal inverse release')
+            baked[..., :3] = rgb
+        return baked

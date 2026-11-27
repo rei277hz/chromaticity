@@ -1,17 +1,34 @@
 """Composition root for the Blender extension."""
 
 from .host.callbacks import HostCallbackRouter
+from .runtime.scheduler import WorkScheduler
 
 
 class AddonRuntime:
     def __init__(self, bpy):
         self.callbacks = HostCallbackRouter(bpy)
+        self.scheduler = WorkScheduler()
+        self._scheduler_timer = self._scheduler_tick
         self.grade = None
         self.bake = None
         self.capture_helper = None
         self._shutdown_phase = None
         self._shutdown_retry = self._retry_unregister
         self._retrying_shutdown = False
+
+    def _scheduler_tick(self):
+        try:
+            if self.grade is not None and self.scheduler.phase != "closed":
+                self.grade.observe_scheduled_work()
+            delay = self.scheduler.advance()
+            if self.grade is not None and self.scheduler.phase == "ready":
+                self.grade.collect_viewer_receipts()
+        except Exception as error:
+            print("Perceptual Grade scheduler failed:", error)
+            return 0.2
+        if self.scheduler.phase == "closed":
+            return None
+        return 0.02 if delay is None else max(0.005, min(0.02, delay))
 
     def register(self):
         from .runtime.capture_helper import CaptureHelperBackend
@@ -23,11 +40,17 @@ class AddonRuntime:
             self.unregister()
         if self.capture_helper is None:
             self.capture_helper = CaptureHelperBackend()
+        if self.scheduler.phase == "closed":
+            self.scheduler = WorkScheduler()
         self.grade = grade
         try:
-            grade.register(self.callbacks)
+            grade.register(self.callbacks, scheduler=self.scheduler)
             self.bake = grade.register_bake(self.capture_helper.create_job)
-            grade.register_scope(self.capture_helper.create_job)
+            grade.register_scope(self.capture_helper.create_job, scheduler=self.scheduler)
+            self.callbacks.ensure_timer(
+                "application", self._scheduler_timer, first_interval=0.0,
+                persistent=True,
+            )
         except Exception as startup_error:
             try:
                 self.unregister()
@@ -55,6 +78,7 @@ class AddonRuntime:
                 self._shutdown_phase = "vectorscope_begin"
             if self._shutdown_phase == "vectorscope_begin":
                 vectorscope.begin_shutdown()
+                self.scheduler.close()
                 self._shutdown_phase = "capture_retirement"
             if self._shutdown_phase == "capture_retirement":
                 if self.capture_helper is not None:
@@ -73,6 +97,10 @@ class AddonRuntime:
 
         self.capture_helper = None
         errors = []
+        try:
+            self.callbacks.unregister_timer("application", self._scheduler_timer)
+        except Exception as error:
+            errors.append(error)
         try:
             vectorscope.unregister()
         except Exception as error:

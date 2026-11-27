@@ -15,7 +15,7 @@ from ...runtime.capture_images import datablock_key, route_datablock
 
 SCHEMA = 1
 # Version the persisted digest independently of the worker route payload.
-FINGERPRINT_SCHEMA = 3
+FINGERPRINT_SCHEMA = 4
 DEFAULT_UV_SIZE = 2048
 MAX_UV_SIZE = 16384
 # These modifiers preserve loop topology and UV coordinates. Blender exposes

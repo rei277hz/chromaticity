@@ -1,6 +1,7 @@
 """Exercise the packaged asyncio coordinator without importing Blender."""
 
 import asyncio
+from concurrent.futures import CancelledError
 import importlib
 from importlib.resources import files
 import json
@@ -414,6 +415,42 @@ class PreparationRuntimeTests(unittest.TestCase):
         self.assertIsNone(latest[0].playback_session)
         self.assertEqual(created, ["A", "B"])
 
+    def test_scheduler_yield_requests_active_source_cancellation_once(self):
+        retire = threading.Event()
+
+        class HeldJob:
+            cancelled = False
+
+            def advance(self):
+                if not retire.is_set():
+                    return None
+                raise CancelledError("yielded Stack job retired")
+
+            def cancel(self):
+                self.cancelled = True
+
+            def close(self):
+                assert retire.is_set()
+
+        job = HeldJob()
+        runtime = self.runtime()
+        self.register_lut_lane(runtime, lambda *_args: job)
+        source = object()
+        runtime.request(source, "current", "current", lane="lut")
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pump_main_thread())
+
+        self.assertTrue(runtime.request_yield(source))
+        self.assertTrue(job.cancelled)
+        self.assertFalse(runtime.request_yield(source))
+
+        retire.set()
+        self.addCleanup(retire.set)
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertTrue(runtime.pending_for(source))
+        self.assertTrue(runtime.is_running(source))
+        runtime.close()
+
     def test_polled_stack_advances_while_async_grade_is_pending(self):
         started_grade = threading.Event()
         release = threading.Event()
@@ -559,6 +596,136 @@ class PreparationRuntimeTests(unittest.TestCase):
                           for item in result], [("A", "prepared", "full")])
         self.assertTrue(calls)
         self.assertEqual(set(calls), {threading.get_ident()})
+
+    def test_scoped_wait_starts_only_selected_host_work(self):
+        started = []
+
+        def create_job(value, _progressive):
+            started.append(value)
+            return PolledJob((("full", value),))
+
+        runtime = self.runtime()
+        self.register_lut_lane(runtime, create_job)
+        older, selected = object(), object()
+        runtime.request(older, "older", "older", lane="lut", progressive=False)
+        self.wait_host_work(runtime)
+        runtime.request(selected, "selected", "selected", lane="lut", progressive=False)
+
+        receipt, = runtime.wait(iter((selected,)))
+        self.assertIs(receipt.source, selected)
+        self.assertEqual(started, ["selected"])
+        receipt, = runtime.wait()
+        self.assertIs(receipt.source, older)
+        self.assertEqual(started, ["selected", "older"])
+
+    def test_scoped_collection_leaves_unrelated_mailbox_pending(self):
+        runtime = self.runtime(lambda value: value)
+        older, selected = object(), object()
+        runtime.request(older, "older", "older")
+        runtime.request(selected, "selected", "selected")
+        self.wait_settled(runtime, older)
+        self.wait_settled(runtime, selected)
+
+        receipt, = runtime.collect((selected,))
+        self.assertIs(receipt.source, selected)
+        self.assertTrue(runtime.pending)
+        self.assertTrue(runtime.pending_for(older))
+        self.assertFalse(runtime.pending_for(selected))
+        receipt, = runtime.collect()
+        self.assertIs(receipt.source, older)
+
+    def test_priority_host_work_waits_for_retirement_then_runs_before_resume(self):
+        retire = threading.Event()
+        calls = []
+
+        class BackgroundJob:
+            def advance(self):
+                if not retire.is_set():
+                    return None
+                raise CancelledError("background writer retired")
+
+            def cancel(self):
+                calls.append("cancel")
+
+            def close(self):
+                if not retire.is_set():
+                    raise RuntimeError("background writer still active")
+                calls.append("close")
+
+        def create_job(value, _progressive):
+            first = not calls
+            calls.append(value)
+            return BackgroundJob() if first else PolledJob((("full", value),))
+
+        runtime = self.runtime()
+        self.addCleanup(retire.set)
+        self.register_lut_lane(runtime, create_job)
+        background, foreground = object(), object()
+        runtime.request(background, "background", "background", lane="lut")
+        self.wait_host_work(runtime)
+        self.assertTrue(runtime.pump_main_thread())
+        self.assertTrue(runtime.pump_main_thread((foreground,), preempt=True))
+        self.assertEqual(calls, ["background"])
+
+        runtime.request(foreground, "foreground", "foreground", lane="lut")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with runtime._host_lock:
+                if runtime._host_queue:
+                    break
+            time.sleep(.001)
+        else:
+            self.fail("foreground preparation was not queued")
+
+        self.assertTrue(runtime.pump_main_thread((foreground,), preempt=True))
+        self.assertTrue(runtime.pump_main_thread((foreground,), preempt=True))
+        self.assertEqual(calls, ["background", "cancel"])
+        self.assertTrue(runtime.is_running(background))
+        self.assertEqual(runtime.collect((background,)), ())
+
+        retire.set()
+        receipt, = runtime.wait((foreground,), preempt=True)
+        self.assertIs(receipt.source, foreground)
+        self.assertEqual(calls, ["background", "cancel", "close", "foreground"])
+        self.assertTrue(runtime.pending_for(background))
+        self.assertTrue(runtime.is_running(background))
+        receipt, = runtime.wait((background,))
+        self.assertIs(receipt.source, background)
+        self.assertEqual(calls[-1], "background")
+        self.assertIsNone(receipt.error)
+        self.assertFalse(runtime.is_running(background))
+
+    def test_serial_lane_skips_superseded_work_before_worker_start(self):
+        release_first = threading.Event()
+        first_started = threading.Event()
+        started = []
+
+        async def prepare(value):
+            started.append(value)
+            if value == "first":
+                first_started.set()
+                await asyncio.to_thread(release_first.wait, 10)
+            return value
+
+        runtime = self.runtime()
+        self.addCleanup(release_first.set)
+        runtime.register_async_lane(runtime.default_lane, prepare, serial=True)
+        first, second = object(), object()
+        runtime.request(first, "first", "first")
+        self.assertTrue(runtime.lane_busy(runtime.default_lane))
+        self.wait_started(first_started)
+        self.assertTrue(runtime.is_running(first))
+        self.assertFalse(runtime.is_running(second))
+        runtime.request(second, "obsolete", "obsolete")
+        self.loop_read(runtime, lambda: None)
+        runtime.request(second, "latest", "latest")
+        release_first.set()
+
+        receipts = runtime.wait()
+        self.assertEqual(started, ["first", "latest"])
+        self.assertEqual({receipt.signature for receipt in receipts}, {"first", "latest"})
+        self.assertFalse(runtime.lane_busy(runtime.default_lane))
+        self.assertFalse(runtime.is_running(first))
 
     def test_forgotten_host_request_is_removed_before_gpu_job_starts(self):
         created = []

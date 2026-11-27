@@ -12,8 +12,9 @@ from ...kernel.prepare import nits_to_j
 from ...kernel.settings import D65, LinearSettings
 from ...kernel.tone_ui import TONE_DEFAULTS, TONE_LEVEL_FIELDS, TONE_LIMITS, _j_to_nits
 from . import editor, geometry
-from .geometry import AXIS_LABELS, SLIDER_RANGES, curve_point, tone_anchor_levels, tone_model
-from .tone_scope import PLOT_MAX
+from .geometry import (
+    HANDLE_AXES, SLIDER_RANGES, curve_point, tone_anchor_levels, tone_model, tone_peak_j,
+)
 from .white_drag import WhiteDrag
 
 if TYPE_CHECKING:
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
 _POINTER_BUTTONS = {"LEFTMOUSE", "MIDDLEMOUSE", "RIGHTMOUSE", "BUTTON4MOUSE",
                     "BUTTON5MOUSE", "BUTTON6MOUSE", "BUTTON7MOUSE", "PEN", "ERASER"}
 _POINTER_MOVES = {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}
+_CROSSOVERS = {"saturation_crossover", "tone_crossover"}
+_APPEARANCE_CONTROLS = _CROSSOVERS | geometry.APPEARANCE_GAIN_FIELDS
 
 
 @dataclass(frozen=True)
@@ -61,12 +64,15 @@ class _Drag:
     panel_size: float | tuple | None = None
 
 
-def _tone_hit(rect, point, model, selected, scale):
+def _tone_hit(rect, point, model, selected, scale, peak_j):
     sources, targets = tone_anchor_levels(model)
     actual = model.remap(sources * 100.) / 100.
-    choices = ((math.dist(point, curve_point(rect, source, target)), index != selected, index)
-               for index, source in enumerate(sources) if source <= PLOT_MAX
-               for target in (targets[index], actual[index]) if target <= PLOT_MAX)
+    choices = ((math.dist(point, curve_point(rect, source, target, peak_j)),
+                index != selected, index)
+               for index, source in enumerate(sources)
+               for target in ((targets[index], actual[index])
+                              if source <= peak_j and actual[index] <= peak_j
+                              else (targets[index],)))
     distance, _, index = min(choices, default=(math.inf, False, None))
     return index if distance <= 7 * scale else None
 
@@ -74,15 +80,17 @@ def _tone_hit(rect, point, model, selected, scale):
 def _control_cursor(stage, mode):
     if mode in {"close", "linear_tab", "tone_tab", "peak"}:
         return "HAND_POINT"
-    if mode in {"header", "scope", "cr", "yb"}:
+    if mode in {"header", "scope"} or mode in HANDLE_AXES:
         return "SCROLL_XY"
     if mode.startswith("resize_"):
         handle = mode.removeprefix("resize_")
         return {"w": "MOVE_X", "e": "MOVE_X", "s": "MOVE_Y", "n": "MOVE_Y"}.get(
             handle, "SCROLL_XY")
-    if mode in {"fit", "cr_balance"} or (mode == "exposure" and stage == "LINEAR"):
+    if (mode in {"fit", "tone_crossover"} or mode.startswith("balance_")
+            or (mode == "exposure" and stage == "LINEAR")):
         return "SCROLL_Y"
-    if mode in {"curve", "exposure", "yb_balance"}:
+    if (mode in {"curve", "exposure", "saturation_crossover"}
+            or mode in geometry.APPEARANCE_GAIN_FIELDS):
         return "SCROLL_X"
     return None
 
@@ -103,27 +111,51 @@ class Interaction:
         self.observe = observe
         self.drags = {}
         self.hover_cursors = {}
+        self.appearance_hover = {}
         self.outside_buttons = {}
 
     def dragging(self, key):
         drag = self.drags.get(key[0])
         return drag is not None and drag.key == key and drag.token is not None
 
+    def active_appearance_control(self, key, box, tone):
+        drag = self.drags.get(key[0])
+        if drag is not None:
+            return (drag.mode if drag.key == key
+                    and drag.mode in _APPEARANCE_CONTROLS else None)
+        hover = self.appearance_hover.get(key[0])
+        if hover is None:
+            return None
+        area, point = hover
+        try:
+            if area.as_pointer() == key[1]:
+                return geometry.appearance_control_at(
+                    box["appearance"], tone, point, box["scale"],
+                )
+        except (AttributeError, ReferenceError, RuntimeError):
+            pass
+        return None
+
     def release(self, key):
         drag = self.drags.get(key[0])
         if drag is not None and drag.key == key:
             self._cancel_drag(key[0])
         self._restore_hover_cursor(key[0])
+        self._set_appearance_hover(key[0])
 
     def reconcile_windows(self, windows):
         for window_key in self.outside_buttons.keys() - windows:
             del self.outside_buttons[window_key]
+        for window_key in self.appearance_hover.keys() - windows:
+            del self.appearance_hover[window_key]
 
     def reset(self):
         for window_key in tuple(self.drags):
             self._cancel_drag(window_key)
         for window_key in tuple(self.hover_cursors):
             self._restore_hover_cursor(window_key)
+        for window_key in tuple(self.appearance_hover):
+            self._set_appearance_hover(window_key)
         self.outside_buttons.clear()
 
     def reconcile(self, key, window, node):
@@ -157,11 +189,30 @@ class Interaction:
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             pass
 
+    def _set_appearance_hover(self, window_key, area=None, point=None):
+        current = None if area is None else (area, point)
+        previous = self.appearance_hover.get(window_key)
+        if previous == current:
+            return
+        if current is None:
+            self.appearance_hover.pop(window_key, None)
+        else:
+            self.appearance_hover[window_key] = current
+        previous_area = None if previous is None else previous[0]
+        if previous_area is not None and previous_area != area:
+            try:
+                previous_area.tag_redraw()
+            except ReferenceError:
+                pass
+        if area is not None:
+            area.tag_redraw()
+
     def _cancel_drag(self, window_key, *, before_frame_change=False):
         drag = self.drags.pop(window_key, None)
         if drag is None:
             return
         self._restore_hover_cursor(window_key)
+        self._set_appearance_hover(window_key)
         manager = bpy.context.window_manager
         window = None if manager is None else next(
             (item for item in manager.windows if item.as_pointer() == window_key), None)
@@ -206,16 +257,18 @@ class Interaction:
             tone = self.callbacks.tone_settings(node)
             return ((tone.fit,) if mode == "fit"
                     else (tone.input_nits[TONE_LEVEL_FIELDS.index(fields[0])],))
+        if mode in _APPEARANCE_CONTROLS:
+            return (getattr(self.callbacks.tone_settings(node), mode),)
         linear = self.callbacks.linear_settings(node)
         if mode == "scope":
             return linear.source_xy
-        if mode in AXIS_LABELS:
-            index = int(mode == "yb")
+        if mode in HANDLE_AXES:
+            index = int(HANDLE_AXES[mode] == "yb")
             return linear.spread[index], linear.heading[index]
         if mode == "exposure":
             return (linear.exposure,)
         # LinearSettings uses the reference convention, opposite to the RNA controls.
-        return (-linear.balance[int(mode == "yb_balance")],)
+        return (-linear.balance[int(fields[0] == "yb_balance")],)
 
     def _control_at(self, key, node, box, point):
         for item in ("close", "linear_tab", "tone_tab"):
@@ -226,25 +279,42 @@ class Interaction:
                 return "resize_" + handle, ()
         if geometry.contains(box["header"], point):
             return "header", ()
+        if "curve" in box:
+            x, y, w, h = box["curve"]
+            # Endpoint markers straddle the plot border and the edge sliders.
+            pad = 3 * box["scale"]
+            if geometry.contains((x - pad, y - pad, w + 2 * pad, h + 2 * pad), point):
+                tone = self.callbacks.tone_settings(node)
+                index = _tone_hit(box["curve"], point, tone_model(tone),
+                                  self.editors[key].tone_anchor, box["scale"], tone_peak_j(tone))
+                if index is not None:
+                    return "curve", (TONE_LEVEL_FIELDS[index],)
+        if "appearance" in box:
+            tone = self.callbacks.tone_settings(node)
+            appearance_control = geometry.appearance_control_at(
+                box["appearance"], tone, point, box["scale"],
+            )
+            if appearance_control is not None:
+                return appearance_control, (appearance_control,)
         for item in SLIDER_RANGES:
             if item in box and geometry.contains(box[item], point):
                 return item, (item,)
         if "scope" in box:
-            positions = geometry.handle_positions(box["scope"], self.callbacks.linear_settings(node),
-                                                  box["scale"])
-            distance, axis = min((math.dist(point, pos), axis) for axis, pos in positions.items())
-            if distance <= 7 * box["scale"]:
-                return axis, (axis + "_spread", axis + "_heading")
+            positions = geometry.handle_positions(
+                box["scope"], self.callbacks.linear_settings(node), box["scale"],
+            )
+            rails = geometry.balance_rails(box["scope"], positions, box["scale"])
+            handle = geometry.linear_handle_at(positions, rails, point, box["scale"])
+            if handle in HANDLE_AXES:
+                axis = HANDLE_AXES[handle]
+                return handle, (axis + "_spread", axis + "_heading")
+            if handle is not None:
+                axis = HANDLE_AXES[handle.removeprefix("balance_")]
+                return handle, (axis + "_balance",)
             if geometry.contains(box["scope"], point):
                 return "scope", ("source_x", "source_y")
         elif geometry.contains(box["peak"], point):
             return "peak", ()
-        elif geometry.contains(box["curve"], point):
-            model = tone_model(self.callbacks.tone_settings(node))
-            index = _tone_hit(box["curve"], point, model,
-                              self.editors[key].tone_anchor, box["scale"])
-            if index is not None:
-                return "curve", (TONE_LEVEL_FIELDS[index],)
         return "body", ()
 
     def _white_control(self, key, node, frame):
@@ -268,7 +338,15 @@ class Interaction:
             values = white.linear.source_xy
         else:
             values = self._control_values(mode, node, fields) if fields else ()
-        rect = box["scope"] if mode in AXIS_LABELS else box.get(mode, box["rect"])
+        if mode in _APPEARANCE_CONTROLS:
+            rect = box["appearance"]
+        elif mode.startswith("balance_"):
+            linear = self.callbacks.linear_settings(node)
+            positions = geometry.handle_positions(box["scope"], linear, box["scale"])
+            rails = geometry.balance_rails(box["scope"], positions, box["scale"])
+            rect = rails[mode.removeprefix("balance_")]
+        else:
+            rect = box["scope"] if mode in HANDLE_AXES else box.get(mode, box["rect"])
         resizing = mode.startswith("resize_")
         return _Drag(key, editor.binding(node), frame, mode, rect, origin, box["scale"],
                      fields, values, white,
@@ -305,6 +383,10 @@ class Interaction:
             drag = self._press_control(key, node, box, point, origin, editor.frame_key(window.scene))
         self.drags[key[0]] = drag
         self._set_hover_cursor(window, _control_cursor(self.editors[key].stage, drag.mode))
+        if drag.mode in _APPEARANCE_CONTROLS:
+            self._set_appearance_hover(key[0], area, point)
+        else:
+            self._set_appearance_hover(key[0])
         area.tag_redraw()
         return True
 
@@ -312,11 +394,16 @@ class Interaction:
         hit = self._plot_at(window, mouse)
         if hit is None:
             self._set_hover_cursor(window)
+            self._set_appearance_hover(window.as_pointer())
             return False
         key, area, region, node, box, point = hit
         with bpy.context.temp_override(window=window, area=area, region=region):
             mode, _ = self._control_at(key, node, box, point)
         self._set_hover_cursor(window, _control_cursor(self.editors[key].stage, mode))
+        if mode in _APPEARANCE_CONTROLS:
+            self._set_appearance_hover(key[0], area, point)
+        else:
+            self._set_appearance_hover(key[0])
         return True
 
     def _drag_values(self, drag, node, mouse):
@@ -324,23 +411,37 @@ class Interaction:
         if drag.white is not None:
             white = drag.white
             return white.model.move(white.linear, dx, dy, drag.rect[2])
-        if drag.mode in AXIS_LABELS:
+        if drag.mode in HANDLE_AXES:
             last = drag.origin if drag.last is None else drag.last
             start = self._control_values(drag.mode, node, drag.fields)
             drag.last = mouse
             return geometry.drag_handle(drag.rect, drag.mode, *start,
                                         mouse[0] - last[0], mouse[1] - last[1])
         if drag.mode == "curve":
-            reference = self.callbacks.tone_settings(node).reference_nits
+            tone = self.callbacks.tone_settings(node)
+            reference = tone.reference_nits
             if dx == 0:
                 return drag.values
             delta = dx / drag.rect[2]
-            level = float(nits_to_j(drag.values[0], reference)) + delta * .1 * PLOT_MAX
+            level = float(nits_to_j(drag.values[0], reference)) + delta * .1 * tone_peak_j(tone)
             limits = TONE_LIMITS[TONE_LEVEL_FIELDS.index(drag.fields[0])]
             low, high = nits_to_j(limits, reference)
             return (_j_to_nits(float(min(high, max(low, level))), reference),)
+        if drag.mode in geometry.APPEARANCE_GAIN_FIELDS:
+            return (geometry.drag_appearance_gain(drag.rect, drag.mode, drag.values[0], dx),)
+        if drag.mode == "saturation_crossover":
+            return (geometry.drag_saturation_crossover(drag.rect, drag.values[0], dx),)
+        if drag.mode == "tone_crossover":
+            return (geometry.drag_tone_crossover(
+                drag.rect, tone_peak_j(self.callbacks.tone_settings(node)), drag.values[0], dy,
+            ),)
+        if drag.mode.startswith("balance_"):
+            low, high = geometry.BALANCE_RANGE
+            sign = geometry.BALANCE_SIGNS[drag.mode.removeprefix("balance_")]
+            value = drag.values[0] + sign * dy / drag.rect[3] * (high - low)
+            return (min(high, max(low, value)),)
         lo, hi = SLIDER_RANGES[drag.mode]
-        vertical = (drag.mode in ("cr_balance", "fit")
+        vertical = (drag.mode == "fit"
                     or drag.mode == "exposure" and self.editors[drag.key].stage == "LINEAR")
         delta = dy / drag.rect[3] if vertical else dx / drag.rect[2]
         return (min(hi, max(lo, drag.values[0] + delta * (hi - lo))),)
@@ -369,11 +470,14 @@ class Interaction:
         else:
             if drag.mode == "curve":
                 tone = self.callbacks.tone_settings(node)
-                index = TONE_LEVEL_FIELDS.index(drag.fields[0])
-                target = tone_anchor_levels(tone_model(tone))[1][index]
-                values = (_j_to_nits(float(target), tone.reference_nits),)
-            elif drag.mode == "fit":
-                values = (TONE_DEFAULTS["fit"],)
+                if drag.fields[0] == "input_highlights":
+                    values = (tone.peak_nits,)
+                else:
+                    index = TONE_LEVEL_FIELDS.index(drag.fields[0])
+                    target = tone_anchor_levels(tone_model(tone))[1][index]
+                    values = (_j_to_nits(float(target), tone.reference_nits),)
+            elif drag.mode == "fit" or drag.mode in _APPEARANCE_CONTROLS:
+                values = (TONE_DEFAULTS[drag.mode],)
             elif drag.white is not None:
                 values = D65
             else:
@@ -447,8 +551,15 @@ class Interaction:
                 preferences.position = position
                 preferences.sizes[preferences.stage] = size
                 area.tag_redraw()
-            elif drag.fields and (drag.token is not None or math.dist(mouse, drag.origin) >= 3 * drag.scale):
-                self._edit_drag(drag, node, self._drag_values(drag, node, mouse))
+            elif drag.fields:
+                if drag.mode.startswith("balance_"):
+                    distance = abs(mouse[1] - drag.origin[1])
+                elif drag.mode in geometry.APPEARANCE_GAIN_FIELDS:
+                    distance = abs(mouse[0] - drag.origin[0])
+                else:
+                    distance = math.dist(mouse, drag.origin)
+                if drag.token is not None or distance >= 3 * drag.scale:
+                    self._edit_drag(drag, node, self._drag_values(drag, node, mouse))
             if releasing and self.drags.pop(window_key, None) is drag:
                 if drag.token is not None:
                     self.callbacks.finish(window_key, drag.token, node)
@@ -467,6 +578,7 @@ class Interaction:
         if event.type == "WINDOW_DEACTIVATE":
             self._cancel_drag(window_key)
             self._restore_hover_cursor(window_key)
+            self._set_appearance_hover(window_key)
             self.outside_buttons.pop(window_key, None)
             return False
         if drag is not None:
@@ -492,6 +604,7 @@ class Interaction:
         elif self._hover_plot(window, mouse):
             return True
         self._restore_hover_cursor(window_key)
+        self._set_appearance_hover(window_key)
         if event.type in _POINTER_BUTTONS and event.value == "PRESS":
             self.outside_buttons[window_key] = event.type
         return False

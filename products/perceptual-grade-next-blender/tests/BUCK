@@ -27,6 +27,20 @@ python_test(
 )
 
 python_test(
+    name = "scheduler",
+    srcs = ["runtime/test_scheduler.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender:scheduler_runtime"],
+)
+
+python_test(
+    name = "scheduler_render",
+    srcs = ["runtime/test_scheduler_render.py"],
+    base_module = "tests.perceptual_grade_blender",
+    deps = ["//products/perceptual-grade-next-blender:scheduler_runtime"],
+)
+
+python_test(
     name = "policy_node",
     srcs = [
         "policy/test_policy_node_readiness.py",

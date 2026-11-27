@@ -4,7 +4,8 @@ import unittest
 from unittest.mock import patch
 import numpy as np
 from color_tools.perceptual_grade_core.model import bake_inverse
-from color_tools.perceptual_grade_reference.model import Model, Settings
+from color_tools.perceptual_grade_reference.export import OutputCompressionSettings, OutputDensitySettings
+from color_tools.perceptual_grade_reference.model import LinearSettings, Model, Settings
 from color_tools.perceptual_grade_reference.grading import ColorSettings, ToneSettings
 from color_tools.perceptual_grade_reference.stack import Stack
 from color_tools.perceptual_grade_reference.stack_bake import BakeStack
@@ -78,6 +79,54 @@ class ReferenceBakeSupportTests(unittest.TestCase):
         self.assertEqual(len(BakeStack(iter([])).models), 0)
         with self.assertRaisesRegex(ValueError, 'finite with shape'):
             BakeStack([Settings(color=ColorSettings(lightness=((0.,),)))])
+
+    def test_output_effects_only_run_at_the_final_rgb_export(self):
+        points = np.array([[.6, .1, .2], [.03, .05, 1.], [.2, .2, .2]], dtype='f4')
+        compressed = Settings(output_compression=OutputCompressionSettings(True, .1, .3))
+        density = OutputDensitySettings(amount=.6, pivot=.5)
+        baseline_kernel = BakeStack([Settings()], table=self.table).kernels[0]
+        density_kernel = BakeStack([Settings(output_density=density)], table=self.table).kernels[0]
+        self.assertNotEqual(baseline_kernel.resource_key, density_kernel.resource_key)
+        disabled_kernel = BakeStack([Settings(output_density=OutputDensitySettings(0., 4.))],
+                                    table=self.table).kernels[0]
+        self.assertEqual(baseline_kernel.resource_key, disabled_kernel.resource_key)
+        baseline = Model().forward_native(points)
+        for output in (compressed, Settings(output_density=density), replace(compressed, output_density=density)):
+            expected = Model(output).forward_native(points)
+            self.assertGreater(np.max(abs(expected - baseline)), .01)
+            np.testing.assert_allclose(expected[-1], baseline[-1], rtol=0., atol=2e-15)
+            for settings, directions, target in (
+                ([output], None, expected),
+                ([output, Settings()], None, points),
+                ([output, output], None, expected),
+                ([output, output], ['FORWARD', 'INVERSE'], expected),
+            ):
+                with self.subTest(settings=settings, directions=directions):
+                    stack = BakeStack(settings, directions, table=self.table)
+                    result = stack.bake_native(points)
+                    np.testing.assert_allclose(result[..., :3], target, rtol=3e-4, atol=1e-6)
+                    np.testing.assert_array_equal(result[..., 3], 0.)
+                    np.testing.assert_array_equal(result[-1, :3], points[-1])
+
+    def test_inverse_bake_folds_linear_matrix_before_final_export(self):
+        points = np.array([[[.6, .1, .2], [.03, .05, 1.], [800., 2., 3.]]], dtype='f4')
+        model = Model()
+        native_to_xyz = model.cones_to_xyz @ np.linalg.inv(model.boundary.matrix)
+        gains = np.array([.5, 1., 2.])
+        matrix = native_to_xyz @ np.diag(gains) @ np.linalg.inv(native_to_xyz)
+        linear = LinearSettings(matrix=tuple(map(tuple, matrix)))
+        for output in (Settings(),
+                       Settings(output_compression=OutputCompressionSettings(True, .1, .3)),
+                       Settings(output_density=OutputDensitySettings(amount=.6, pivot=.5))):
+            settings = replace(output, linear=linear)
+            stack = BakeStack([settings], ['INVERSE'], table=self.table)
+            expected = Model(settings).release_native_output(points / gains)
+            with self.subTest(output=output):
+                actual = stack.bake_native(points)
+                np.testing.assert_allclose(actual[..., :3], expected, rtol=3e-4, atol=1e-5)
+                np.testing.assert_array_equal(actual[..., 3], 0.)
+                np.testing.assert_array_equal(stack.output_matrix, np.eye(3))
+                np.testing.assert_array_equal(stack.apply_native(points), actual[..., :3])
 
     def test_unchanged_controls_remain_accelerated_and_match_analytic(self):
         points = np.array([[.1, .2, .3], [.7, .2, .1], [.02, .08, .4], [0., 0., 0.]], dtype='f4')

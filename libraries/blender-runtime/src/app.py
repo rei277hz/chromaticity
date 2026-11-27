@@ -4,13 +4,10 @@ from pathlib import Path
 from uuid import uuid4
 from weakref import WeakValueDictionary, finalize
 
+from .execution.owner import ForeignOwnerError
 from .machine import DomainError, Machine
-from ..invariant import AdmissionError, ActorFailed, ActorSystem
+from ..invariant import AdmissionError, ActorSystem
 from ..invariant.machine import validate
-
-
-class ForeignOwnerError(ValueError):
-    """A value or capability belongs to a different App lifecycle."""
 
 
 class ClosedError(RuntimeError):

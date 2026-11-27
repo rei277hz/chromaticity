@@ -65,22 +65,22 @@ See the [product README](../../README.md) and
 [Technical Report](../../../perceptual-grade-book/docs/book/src/development/next-policies.md)
 for current publication and output behavior.
 
-## Current Stage 2/3 contract — 2026-11-24
+## Current Stage 2/3 contract
 
-Next uses field layout schema 7 and parameter schema 5. Stage 2 owns Original
-Unified Chroma before the full H-K Tone curve. Its controls include Black
-Compression, Muted/Vivid, Saturation Crossover, Shadow/Highlight Chroma, and
-Tone Crossover. H-K influence remains fixed at 1.0. Stage 3 retains Warp and
-Adaptance, without tonal J/C or opponent a/b controls. The Tone Gizmo still
-edits only the four Tone anchors, Fit, and Peak.
+Next uses field layout schema 7 and parameter schema 6. Stage 2 applies the
+full H–K Tone curve and then Unified Chroma. Saturation Crossover uses the
+compressed HDR Color Picker coordinate. C Tone Crossover uses normalized
+output-neutral J, with `1` representing `J=100`. Stage 3 retains Warp and
+Adaptance.
 
 The 512 x 1 scalar/Tone image packs two texels of Unified Chroma controls. The
 other three role images contain Web parameters (4097 x 32), Web toes
 (1537 x 1), and Compact Adaptance (8193 x 8). A complete four-role bank is
 3,179,152 bytes. Two banks use 6,358,304 bytes, excluding the shared boundary.
-The Stack uses composition schema 3 and inverse schema 2. Its inverse handles
-Warp with the guarded solve, then bisects the packed Tone curve and analytically
-inverts Black Compression and the Unified Chroma radial maps.
+The Stack uses composition schema 5 and inverse schema 3. Its inverse handles
+Warp with the guarded solve, analytically inverts the post-Tone Unified Chroma
+maps, then bisects the packed Tone curve and analytically inverts Black
+Compression.
 
 The authoritative layouts are in
 [`src/kernel/layouts.py`](../../src/kernel/layouts.py); the four-role bank
@@ -169,7 +169,8 @@ passes **86 test methods across nine Buck2 targets**: 40 layout, 30 tool and
 16 native/persistent/gate-policy methods.
 
 The preceding schema-4 generation, complete-preparation and prepared-edit
-timings remain historical measurements; they do not measure schema 5 or 6.
+timings remain historical measurements; they do not measure parameter schema 6
+or Stack composition schema 5.
 Accuracy-run durations are not performance evidence.
 
 ## Historical schema-4 layout sensitivity

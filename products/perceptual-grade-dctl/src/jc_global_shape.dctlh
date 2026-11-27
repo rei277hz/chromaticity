@@ -122,14 +122,18 @@ __DEVICE__ float pg_jc_chroma_end_gain(float chroma, float base, float muted, fl
     return pg_expm1(0.6931471805599453f * mapped) / units;
 }
 
-__DEVICE__ float pg_jc_unified_chroma_gain(float chroma, float base, PGFour curve, int invert) {
+__DEVICE__ float pg_jc_unified_chroma_gain(float chroma, float height, PGFour curve, int invert) {
     float mutedGain = _exp2f(curve.w);
     if (curve.w == curve.h) return invert ? 1.0f / mutedGain : mutedGain;
 
     float vividGain = _exp2f(curve.h);
     float relativeGain = vividGain / mutedGain;
-    // Scale the knee so the crossover has the geometric mean of the endpoint gains.
-    float knee = base * (curve.m / (1.0f - curve.m)) * _sqrtf(relativeGain);
+    // Decode the HDR Color Picker radius into C/|J_A| and place the knee
+    // so the gain at that saturation is the geometric mean.
+    float u = curve.m;
+    // Picker RADIUS_K / 75; RADIUS_K comes from //libraries/hdr-color-picker-core:radius_fit.
+    float saturation = (34.09902169100728f / 75.0f) * u / _sqrtf((1.0f - u) * (1.0f + u));
+    float knee = height * saturation * _sqrtf(relativeGain);
     if (knee == 0.0f) return invert ? 1.0f / vividGain : vividGain;
     if (invert) {
         // The helper returns input / normalized output. Convert to input / observed output.
@@ -152,7 +156,7 @@ __DEVICE__ float3 pg_jc_global_chroma(float3 point, PGFour curve, float toneAmou
         gain = pg_jc_gain_multiplier(chroma, height, toneAmount, invert, logGain);
     int adjustEnds = curve.w != 0.0f || curve.h != 0.0f;
     if (mode == PG_JC_CHROMA_UNIFIED) {
-        if (adjustEnds) gain *= pg_jc_unified_chroma_gain(chroma * gain, base, curve, invert);
+        if (adjustEnds) gain *= pg_jc_unified_chroma_gain(chroma * gain, height, curve, invert);
     } else {
         if (invert && adjustEnds)
             gain *= pg_jc_chroma_end_gain(chroma * gain, base, curve.w, curve.h, invert);
@@ -175,17 +179,22 @@ __DEVICE__ int pg_jc_global_chroma_valid(PGFour saturation, float shadow, float 
                                         int mode) {
     if (mode != PG_JC_CHROMA_LINEAR_GAIN && mode != PG_JC_CHROMA_LOG_GAIN && mode != PG_JC_CHROMA_UNIFIED)
         return 0;
-    int validCurve = mode == PG_JC_CHROMA_UNIFIED
-        ? saturation.s == 0.0f && saturation.m >= 0.05f && saturation.m <= 0.95f &&
-          _fabs(saturation.w) <= 2.0f && _fabs(saturation.h) <= 2.0f
+    int unified = mode == PG_JC_CHROMA_UNIFIED;
+    float tonalLimit = unified ? 4.0f : 2.0f;
+    int validCurve = unified
+        ? saturation.s == 0.0f && saturation.m >= 0.0f && saturation.m <= 0.99f &&
+          _fabs(saturation.w) <= tonalLimit && _fabs(saturation.h) <= tonalLimit
         : pg_jc_global_curve_valid(saturation, 0.05f, 0.95f);
-    return validCurve && _fabs(shadow) <= 2.0f && _fabs(highlight) <= 2.0f &&
-           crossover >= 10.0f && crossover <= 160.0f;
+    int validCrossover = unified ? crossover >= 0.1f && crossover <= 1.4f
+                                 : crossover >= 10.0f && crossover <= 160.0f;
+    return validCurve && _fabs(shadow) <= tonalLimit && _fabs(highlight) <= tonalLimit &&
+           validCrossover;
 }
 
 __DEVICE__ float3 pg_jc_global_chroma_at_tone(float3 point, PGFour saturation, float shadow,
                                               float highlight, float crossover, int invert, int mode) {
-    float offset = _fabs(point.x) / crossover - 1.0f;
+    float crossoverJ = mode == PG_JC_CHROMA_UNIFIED ? 100.0f * crossover : crossover;
+    float offset = _fabs(point.x) / crossoverJ - 1.0f;
     float toneAmount = (offset < 0.0f ? shadow : highlight) * pg_jc_surface_smoothstep(_fabs(offset));
     return pg_jc_global_chroma(point, saturation, toneAmount, invert, mode);
 }

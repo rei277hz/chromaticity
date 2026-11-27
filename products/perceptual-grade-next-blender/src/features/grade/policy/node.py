@@ -167,6 +167,7 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
             state.applied_signature if keep_applied else None,
             state.applied_quality if keep_applied else None,
             state.gesture_active,
+            state.error if event.signature is not None else None,
             desired_preparation_signature=preparation_signature,
         )
         prepare = (
@@ -217,8 +218,7 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
         )
         return next_state, _effects(next_state)
 
-    if (event.signature is None or state.desired_signature is None
-            or state.error is not None):
+    if event.signature is None or state.desired_signature is None:
         return state, _effects(state)
 
     is_current = event.signature == state.desired_signature
@@ -230,6 +230,9 @@ def _transition(state: State, event: Event) -> tuple[State, Effects]:
         )
         if is_current and preparation_signature != state.desired_preparation_signature:
             return state, _effects(state)
+    if state.error is not None and not (
+            event.kind == "preparation_result" and is_current and event.quality == "full"):
+        return state, _effects(state)
     lagging_preview_allowed = state.gesture_active or (
         event.playback_preview and event.quality == "full"
     )

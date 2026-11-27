@@ -738,7 +738,7 @@ class Graph(ColorGraph):
     def tone(self, state, *, force=False):
         if state.graph is not self:
             raise ValueError("Appearance sockets belong to another Graph")
-        return self.tone_curve(self.tone_chroma(state))
+        return self.tone_chroma(self.tone_curve(state))
 
     def tone_curve(self, state):
         active = self.tone_parameters.active

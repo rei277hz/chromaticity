@@ -40,6 +40,7 @@ class PG_OT_toggle_vectorscope(bpy.types.Operator):
             _close(key)
         else:
             _editors[key] = editor.Preferences()
+            _runtime.focus(key)
             _ensure_timer()
         context.area.tag_redraw()
         return {"FINISHED"}
@@ -53,7 +54,8 @@ def draw_toggle(layout, context, node):
 
 
 def remember_viewport(window, x, y):
-    if _shutting_down or window is None or window.screen is None:
+    if (_shutting_down or window is None or window.screen is None
+            or not callable(getattr(window, "as_pointer", None))):
         return
     for area in window.screen.areas:
         if area.type != "VIEW_3D":
@@ -129,7 +131,6 @@ def _close(key):
 def _readout(key, node, scene):
     return _runtime.display_state(
         key, node, frame=editor.frame_key(scene), stage=_editors[key].stage,
-        dragging=_interaction.dragging(key),
     )
 
 
@@ -182,6 +183,10 @@ def _tick():
     areas = {editor.key(window, area): (window, area)
              for window in windows if window.screen is not None
              for area in window.screen.areas if area.type == "NODE_EDITOR"}
+    foreground = (bpy.context.window, bpy.context.area)
+    if (foreground[0] is not None and foreground[1] is not None
+            and editor.key(*foreground) in _editors):
+        _runtime.focus(editor.key(*foreground))
     for key, preferences in tuple(_editors.items()):
         area_context = areas.get(key)
         if area_context is None:
@@ -201,7 +206,8 @@ def _tick():
     for key in _last_view.keys() - live_windows:
         del _last_view[key]
     _interaction.reconcile_windows(live_windows)
-    active = _runtime.poll()
+    active = (_runtime.poll() if _runtime.coordinator is None
+              else bool(_runtime.active is not None or _runtime.queued))
     for key, window, area, node, previous in observed:
         current = _readout(key, node, window.scene)
         if _display_changed(previous, current):
@@ -237,16 +243,31 @@ def _draw():
     callbacks = _interaction.callbacks
     linear = callbacks.linear_settings(node)
     tone = callbacks.tone_settings(node) if preferences.stage == "TONE" else None
+    active_control = (None if tone is None else
+                      _interaction.active_appearance_control(key, box, tone))
     display.draw(region, box, state, key, preferences.stage, linear, tone,
-                 preferences.tone_anchor)
+                 preferences.tone_anchor, active_control)
     if (_runtime.timing is not None and state is not None
             and state.status == "current" and state.rgba is not None):
         _runtime.record_draw(key, state.rgba)
 
 
 def pointer_event(window, event):
-    return (not _shutting_down and _interaction is not None
-            and _interaction.pointer_event(window, event))
+    if _shutting_down or _interaction is None:
+        return False
+    consumed = _interaction.pointer_event(window, event)
+    if (window is None or window.screen is None
+            or not callable(getattr(window, "as_pointer", None))):
+        return consumed
+    x, y = getattr(event, "mouse_x", None), getattr(event, "mouse_y", None)
+    if x is not None and y is not None:
+        for area in window.screen.areas:
+            key = editor.key(window, area)
+            if (key in _editors and area.x <= x < area.x + area.width
+                    and area.y <= y < area.y + area.height):
+                _runtime.focus(key)
+                break
+    return consumed
 
 
 def frame_change_pre(scene):
@@ -317,11 +338,15 @@ def reset(*, preserve_preferences=False):
 
 
 def register(create_runtime, *, begin, edit, finish, cancel,
-             linear_settings, tone_settings, peak_menu, timer_router):
+             linear_settings, tone_settings, peak_menu, timer_router,
+             scheduler=None):
     global _runtime, _interaction, _draw_handle, _shutting_down, _timer_router
     _timer_router = timer_router
     if _runtime is None:
         _runtime = create_runtime()
+        if scheduler is not None and _runtime.coordinator is not scheduler:
+            raise ValueError("Vectorscope runtime must share the application scheduler")
+        _runtime.on_display = _tag_redraw
         callbacks = GestureCallbacks(begin, edit, finish, cancel, linear_settings,
                                      tone_settings, peak_menu)
         _interaction = Interaction(_runtime, callbacks, _editors, _close, _change_stage, _observe)

@@ -1,4 +1,4 @@
-"""Reference accelerated Grade kernel with the reference Stage 3 ordering."""
+"""Reference accelerated Grade kernel with post-Tone Unified Chroma."""
 
 import hashlib
 
@@ -6,6 +6,7 @@ import numpy as np
 
 from ..perceptual_grade_core.model.bake import Kernel as _Kernel
 from ..perceptual_grade_core.model.bake_inverse import Inverse as _Inverse
+from .export import OutputCompressionSettings, OutputDensitySettings, apply_output_effects
 from .grading import Color
 from .responses import HK, State, signed_hk
 from .unified_chroma import radial_gain
@@ -39,18 +40,28 @@ def _scale_ray(state, ja, chroma, source_height, target_height):
 class Kernel(_Kernel):
     """Use the reference Color implementation for accelerated Grade rows."""
 
-    def __init__(self, data, tone, color, table=None, *, hk_guard=True, tone_chroma=None):
+    def __init__(self, data, tone, color, table=None, *, hk_guard=True, tone_chroma=None,
+                 output_compression=OutputCompressionSettings(),
+                 output_density=OutputDensitySettings()):
         self.color_model = (color if color.hk_guard == bool(hk_guard) else
                             Color(color.settings, tone, color.boundary, hk_guard=hk_guard))
         self.tone_chroma = tone_chroma
+        self.output_compression = output_compression
+        self.output_density = output_density
         super().__init__(data, tone, color, table, hk_guard=hk_guard)
         key = self.resource_key.encode("ascii") + b"reference-warp-v3"
         if tone_chroma is not None:
             p = tone_chroma.settings
             controls = (p.muted_gain, p.vivid_gain, p.saturation_crossover,
                         p.shadow_chroma, p.highlight_chroma, p.tone_crossover)
-            key += b"unified-chroma-v1" + np.asarray(controls, dtype="<f8").tobytes()
+            key += b"unified-chroma-v3" + np.asarray(controls, dtype="<f8").tobytes()
             self.identity = self.identity and not tone_chroma.chroma_active
+        if output_compression.enabled:
+            key += b"output-saturation-v1" + np.asarray(
+                (output_compression.knee, output_compression.ceiling), dtype="<f8").tobytes()
+        if output_density.enabled:
+            key += b"output-density-v1" + np.asarray(
+                (output_density.amount, output_density.pivot), dtype="<f8").tobytes()
         self.resource_key = hashlib.sha256(key).hexdigest()
 
     def _chroma_state(self, state, ja, *, invert=False):
@@ -67,10 +78,9 @@ class Kernel(_Kernel):
             return super().tone_state(state)
         q = np.asarray(state, dtype="f4")
         ja = _signed_ja(q)
-        q = self._chroma_state(q, ja)
         tone = self.tone
         if not tone.active:
-            return q.copy()
+            return self._chroma_state(q, ja).copy()
 
         chroma = np.hypot(q[..., 1], q[..., 2])
         height = np.hypot(ja, np.sqrt(np.float32(HK) * chroma))
@@ -80,7 +90,8 @@ class Kernel(_Kernel):
         k = self.tone_curve.evaluate(t)
         out = 100 * (np.float32(tone.slope) * t + np.sum(k * self.tone_curve_residual, axis=-1))
         out = np.where(t == 1, np.float32(tone.high), out)
-        return _scale_ray(q, ja, chroma, height, out)
+        q = _scale_ray(q, ja, chroma, height, out)
+        return self._chroma_state(q, _signed_ja(q))
 
     def grade(self, state, tonal=None):
         q = np.asarray(state, dtype=np.float32)
@@ -88,8 +99,32 @@ class Kernel(_Kernel):
         return np.concatenate((result.q, np.asarray(result.energy)[..., None]), -1).astype("f4")
 
     def export(self, state, reference=None):
-        """Export by cube containment only; grading already performed repair."""
+        """Project raw appearance to AP1, including inverse candidates and handoffs."""
         return super().export(state, None)
+
+    def final_export(self, state, native=None):
+        """Apply output effects, retaining the supplied native RGB on exact identity."""
+        original = State(state[..., :3], state[..., 3])
+        mapped = apply_output_effects(original, self.output_density, self.output_compression)
+        if native is None:
+            return self.export(np.concatenate((mapped.q, mapped.energy[..., None]), axis=-1))
+        unchanged = ((mapped.energy == original.energy)
+                     & np.all(mapped.q[..., 1:] == original.q[..., 1:], axis=-1))
+        keep = unchanged & np.all((native >= 0.) & (native <= 1024.), axis=-1)
+        out = native.copy()
+        if not np.all(keep):
+            rows = np.concatenate((mapped.q[~keep], mapped.energy[~keep, None]), axis=-1)
+            out[~keep] = self.export(rows)
+        return out
+
+    def evaluate(self, rgb):
+        if not (self.output_density.enabled or self.output_compression.enabled):
+            return super().evaluate(rgb)
+        rgb = np.asarray(rgb, dtype=np.float32)
+        entered = self.enter(rgb)
+        if self.identity:
+            return self.final_export(entered, rgb)
+        return self.final_export(self.grade(self.tone_state(entered)))
 
 
 class Inverse(_Inverse):
@@ -101,6 +136,7 @@ class Inverse(_Inverse):
             return super().undo_tone(q)
         q = np.asarray(q, dtype="f4")
         ja = _signed_ja(q)
+        q = kernel._chroma_state(q, ja, invert=True)
         tone = kernel.tone
         if tone.active:
             if self.tone_table is None:
@@ -113,5 +149,4 @@ class Inverse(_Inverse):
             original = 100 * compressed * radial_gain(compressed, np.float32(2 * tone.black),
                                                       .5, 1., invert=True)
             q = _scale_ray(q, ja, chroma, height, original)
-            ja = _signed_ja(q)
-        return kernel._chroma_state(q, ja, invert=True).copy()
+        return q.copy()

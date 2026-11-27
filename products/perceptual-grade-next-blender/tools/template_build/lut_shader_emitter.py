@@ -329,7 +329,7 @@ def grade_source(boundary):
     max_eccentricity = sum((.2312, .5388, .2828, .3459, 1.0547, .0768, .154, .1, .186))
     max_chroma = (1204. / boundary.aw * max_eccentricity * response_limit
                   * math.hypot(24./11., 4./9.))
-    max_magnitude = math.hypot(max_ja, math.sqrt(66. * 16. * max_chroma))
+    max_magnitude = math.hypot(max_ja, math.sqrt(66. * max_chroma))
     body = "\n".join((
         _PREAMBLE,
         "#ifdef SCOPE_PREVIEW",

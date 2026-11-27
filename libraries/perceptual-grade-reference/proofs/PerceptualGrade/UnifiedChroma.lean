@@ -311,9 +311,27 @@ theorem unified_opponent_bijective (f : ℝ → ℝ) (hf : f 0 = 0)
 def unifiedStops (s : ℝ) : ℝ := Real.exp (s*Real.log 2)
 
 def unifiedToneStops (shadow highlight crossover j : ℝ) : ℝ :=
-  let offset := |j|/crossover-1
+  let offset := |j|/(100*crossover)-1
   let t := clipUnit |offset|
   (if offset < 0 then shadow else highlight) * (t^2*(3-2*t))
+
+def unifiedSaturationScale : ℝ := 3409902169100728/(100000000000000*75)
+
+def unifiedSaturationRatio (coordinate : ℝ) : ℝ :=
+  unifiedSaturationScale * coordinate /
+    Real.sqrt ((1-coordinate)*(1+coordinate))
+
+theorem unified_saturation_ratio_nonneg (coordinate : ℝ)
+    (hcoordinate : 0 ≤ coordinate) (hupper : coordinate ≤ 99/100) :
+    0 ≤ unifiedSaturationRatio coordinate := by
+  have hleft : 0 < 1-coordinate := by linarith
+  have hright : 0 < 1+coordinate := by linarith
+  have hscale : 0 < unifiedSaturationScale := by
+    norm_num [unifiedSaturationScale]
+  have hroot : 0 < Real.sqrt ((1-coordinate)*(1+coordinate)) :=
+    Real.sqrt_pos.2 (mul_pos hleft hright)
+  unfold unifiedSaturationRatio
+  exact div_nonneg (mul_nonneg hscale.le hcoordinate) hroot.le
 
 structure UnifiedChromaControls where
   muted : ℝ
@@ -323,13 +341,15 @@ structure UnifiedChromaControls where
   highlight : ℝ
   tone_crossover : ℝ
   saturation_nonneg : 0 ≤ saturation_crossover
-  saturation_lt_one : saturation_crossover < 1
+  saturation_le_cap : saturation_crossover ≤ 99/100
+  tone_crossover_min : 1/10 ≤ tone_crossover
+  tone_crossover_max : tone_crossover ≤ 14/10
 
 def unifiedChromaRadius (c : UnifiedChromaControls) (j x : ℝ) : ℝ :=
   let base := (35/75 : ℝ)*|j|
   let a := unifiedStops c.muted
   let b := unifiedStops c.vivid
-  let k := base*(c.saturation_crossover/(1-c.saturation_crossover))*Real.sqrt (b/a)
+  let k := |j| * unifiedSaturationRatio c.saturation_crossover * Real.sqrt (b/a)
   let g := unifiedStops (unifiedToneStops c.shadow c.highlight c.tone_crossover j)
   unifiedRadial 1 g (base/9) (unifiedRadial a b k x)
 
@@ -343,27 +363,28 @@ theorem unified_chroma_radius_nonneg (c : UnifiedChromaControls) (j x : ℝ) (hx
   have h (a b k x : ℝ) (ha : 0 ≤ a) (hb : 0 ≤ b) (hk : 0 ≤ k) (hx : 0 ≤ x) :
       0 ≤ unifiedRadial a b k x :=
     (mul_nonneg (le_min ha hb) hx).trans (unified_radial_lower a b k x hk hx)
-  have hs := c.saturation_nonneg
-  have hp : 0 ≤ 1-c.saturation_crossover := (sub_pos.mpr c.saturation_lt_one).le
+  have hsraw := unified_saturation_ratio_nonneg c.saturation_crossover
+    c.saturation_nonneg c.saturation_le_cap
   apply h _ _ _ _ (by norm_num) (by unfold unifiedStops; positivity) (by positivity)
   exact h _ _ _ _ (by unfold unifiedStops; positivity) (by unfold unifiedStops; positivity)
-    (by positivity) hx
+    (mul_nonneg (mul_nonneg (abs_nonneg j) hsraw) (Real.sqrt_nonneg _)) hx
 
 theorem unified_chroma_radius_inverse_exists (c : UnifiedChromaControls) (j y : ℝ) (hy : 0 ≤ y) :
     ∃! x, 0 ≤ x ∧ unifiedChromaRadius c j x = y := by
   let base := (35/75 : ℝ)*|j|
   let a := unifiedStops c.muted
   let b := unifiedStops c.vivid
-  let k := base*(c.saturation_crossover/(1-c.saturation_crossover))*Real.sqrt (b/a)
+  let k := |j| * unifiedSaturationRatio c.saturation_crossover * Real.sqrt (b/a)
   let g := unifiedStops (unifiedToneStops c.shadow c.highlight c.tone_crossover j)
   have hg : 0 < g := Real.exp_pos _
   have ha : 0 < a := Real.exp_pos _
   have hb : 0 < b := Real.exp_pos _
   have hbase : 0 ≤ base := by dsimp [base]; positivity
   have htoe : 0 ≤ base/9 := by positivity
-  have hnum := c.saturation_nonneg
-  have hden : 0 < 1-c.saturation_crossover := sub_pos.mpr c.saturation_lt_one
-  have hk : 0 ≤ k := by dsimp [k]; positivity
+  have hnum := unified_saturation_ratio_nonneg c.saturation_crossover
+    c.saturation_nonneg c.saturation_le_cap
+  have hk : 0 ≤ k :=
+    mul_nonneg (mul_nonneg (abs_nonneg j) hnum) (Real.sqrt_nonneg _)
   obtain ⟨r, hr, hru⟩ := unified_radial_inverse_exists 1 g (base/9) y (by norm_num) hg htoe hy
   obtain ⟨x, hx, hxu⟩ := unified_radial_inverse_exists a b k r ha hb hk hr.1
   refine ⟨x, ⟨hx.1, ?_⟩, ?_⟩
@@ -535,14 +556,14 @@ theorem unified_tone_bijective (f : ℝ → ℝ) (hf : f 0 = 0)
       rw [unified_ray_mul, hscale, unified_ray_one]
 
 def unifiedChromaTone (c : UnifiedChromaControls) (f : ℝ → ℝ) (p : UnifiedPoint) : UnifiedPoint :=
-  unifiedToneMap f (unifiedChromaMap c p)
+  unifiedChromaMap c (unifiedToneMap f p)
 
 theorem unified_chroma_tone_inverse_exists_unique (controls : UnifiedChromaControls)
     (curve : UnifiedToneCurve) (y : UnifiedPoint) :
     ∃! x, unifiedChromaTone controls (unifiedToneCurve curve) x = y := by
-  have h := (unified_tone_bijective (unifiedToneCurve curve) (unified_tone_curve_zero curve)
-    (unified_tone_curve_nonneg curve) (unified_tone_curve_inverse_exists curve)).comp
-    (unified_chroma_bijective controls)
+  have h := (unified_chroma_bijective controls).comp
+    (unified_tone_bijective (unifiedToneCurve curve) (unified_tone_curve_zero curve)
+      (unified_tone_curve_nonneg curve) (unified_tone_curve_inverse_exists curve))
   obtain ⟨x, hx⟩ := h.2 y
   exact ⟨x, hx, fun z hz => h.1 (hz.trans hx.symm)⟩
 

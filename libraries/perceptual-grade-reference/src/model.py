@@ -1,11 +1,11 @@
 """Independent complete grade in XYZ, with explicit RGB boundary adapters."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import colour
 import numpy as np
 from .appearance import CAT16, response_constants, encode_cones
 from .grading import ToneSettings, ColorSettings, Tone, Color
 from ..color_core.scaled import Scalar as S, dot
-from .export import input_repair
+from .export import OutputCompressionSettings, OutputDensitySettings, apply_output_effects, input_repair
 from .cube import context as cube_context
 from .cube_guard import guard as cube_guard, guard_scaled as cube_guard_scaled
 from .responses import compress, coordinates, requested_energy, State
@@ -36,6 +36,8 @@ class Settings:
     tone: ToneSettings = field(default_factory=ToneSettings)
     color: ColorSettings = field(default_factory=ColorSettings)
     tone_chroma: UnifiedChromaSettings | None = None
+    output_compression: OutputCompressionSettings = field(default_factory=OutputCompressionSettings)
+    output_density: OutputDensitySettings = field(default_factory=OutputDensitySettings)
 
 
 def xyz_from_xy(xy):
@@ -130,6 +132,10 @@ class Model:
             raise ValueError('Unknown grading white or RGB space')
         if settings.white != 'D65' or settings.tone.reference_nits != 203.:
             raise ValueError('Only cached D65 / 203 nits is supported')
+        if not isinstance(settings.output_compression, OutputCompressionSettings):
+            raise ValueError('Unknown output compression settings schema')
+        if not isinstance(settings.output_density, OutputDensitySettings):
+            raise ValueError('Unknown output density settings schema')
         self.hk_guard = bool(hk_guard)
         self.settings, self.space = settings, space
         self.white = xyz_from_xy(WHITES[settings.white])
@@ -214,8 +220,13 @@ class Model:
         return encode_cones(cones, self.tone.reference, (boundary.fl, boundary.aw))
 
     def enter_native(self, values):
-        from .responses import State
-        native=input_repair(values,self.acescg_y)
+        return self.encode_native(input_repair(values, self.acescg_y))
+
+    def encode_native(self, values):
+        """Encode native AP1 RGB, including signed final inverse results."""
+        native = np.asarray(values, dtype=np.float64)
+        if native.shape[-1:] != (3,) or not np.isfinite(native).all():
+            raise ValueError('Appearance encoding requires finite RGB triples')
         inverse=np.linalg.inv(self.boundary.matrix)
         cones=native[...,1,None]+np.einsum('ij,...j->...i',inverse,native-native[...,1,None])
         source=self.encode_cones(cones)
@@ -254,6 +265,29 @@ class Model:
                  else self.boundary.decode_scaled(q,e))
             out.append([float(v) for v in rgb])
         return np.asarray(out).reshape(state.q.shape)
+
+    def release_output_state(self, state):
+        """Apply output appearance effects, then project into native AP1."""
+        mapped = apply_output_effects(state, self.settings.output_density, self.settings.output_compression)
+        return self.release_state(mapped, guard=True)
+
+    def release_native_output(self, values):
+        """Export native RGB, keeping exact legal values along untouched rays."""
+        native = np.asarray(values, dtype=np.float64)
+        if native.shape[-1:] != (3,) or not np.isfinite(native).all():
+            raise ValueError('Output must contain finite RGB triples')
+        shape = native.shape
+        native = native.reshape(-1, 3)
+        state = self.encode_native(native)
+        mapped = apply_output_effects(state, self.settings.output_density, self.settings.output_compression)
+        changed = (mapped.energy != state.energy) | np.any(mapped.q[:, 1:] != state.q[:, 1:], axis=-1)
+        project = changed | np.any((native < 0.) | (native > 1024.), axis=-1)
+        if not np.any(project):
+            return native.reshape(shape).copy()
+        result = native.copy()
+        result[project] = self.release_state(
+            State(mapped.q[project], mapped.energy[project]), guard=True)
+        return result.reshape(shape)
 
     def _adapters(self, input_matrix, output_matrix):
         native_xyz = self.boundary.matrix @ (CAT16/self.white_cones[:, None])
@@ -316,6 +350,9 @@ class Model:
         stage2_q, stage2_ja = self._tone_stage.scaled_apply(q, ja)
         request, energy = self.color.scaled_apply_state(stage2_q, stage2_ja)
         if export:
+            state = State(np.asarray(request, dtype=object), np.asarray(energy, dtype=object))
+            mapped = apply_output_effects(state, self.settings.output_density, self.settings.output_compression)
+            request, energy = list(mapped.q), mapped.energy.item()
             return cube_guard_scaled(boundary,request,energy)[2]
         return self.boundary.decode_scaled(request, energy)
 
@@ -327,7 +364,7 @@ class Model:
         request, energy = result.q, result.energy
         if np.any((request[..., 0] > 0) & (request[..., 0] < 2.**-200)):return None
         if export:
-            return cube_guard(self.boundary, request, energy)[2]
+            return self.release_output_state(result)
         return self.boundary.decode(request, energy)
 
     def forward_native(self, values, export=True, entry=True, apply_linear=True):
@@ -342,7 +379,10 @@ class Model:
         if entry:
             if apply_linear:values = self.input_native(values,before,True)
             if export and not self.nonlinear_active:
-                return np.asarray(values,dtype=float) if values.dtype==object else input_repair(values,self.acescg_y)
+                if not (self.settings.output_density.enabled or self.settings.output_compression.enabled):
+                    return np.asarray(values,dtype=float) if values.dtype==object else self.prepare_native(values)
+                if values.dtype != object:
+                    return self.release_native_output(self.prepare_native(values))
             if values.dtype==object:return self._scaled_entry(values,export)
             values = self.prepare_native(values)
             linear = np.eye(3)
@@ -388,7 +428,15 @@ class Model:
 
     def inverse_xyz(self, xyz):
         from .inverse import solve
-        return solve(self, xyz)
+        return solve(self._inverse_model(), xyz)
+
+    def _inverse_model(self):
+        """Fit the grade before the optional output appearance effects."""
+        if not (self.settings.output_density.enabled or self.settings.output_compression.enabled):
+            return self
+        return Model(replace(self.settings, output_density=OutputDensitySettings(),
+                             output_compression=OutputCompressionSettings()),
+                     self.space, hk_guard=self.hk_guard)
 
     def inverse(self, rgb):
         from .inverse import InverseResult, solve
@@ -399,7 +447,8 @@ class Model:
             return values[..., 1, None]*self.rgb_white+(values-values[..., 1, None]) @ self.rgb_to_xyz.T
         def from_xyz(values):
             return values[..., 1, None]+(values-values[..., 1, None]*self.rgb_white) @ self.xyz_to_rgb.T
+        model = self._inverse_model()
         def forward(xyz):
-            return to_xyz(self.forward(from_xyz(xyz)))
-        result = solve(self, to_xyz(rgb), forward)
+            return to_xyz(model.forward(from_xyz(xyz)))
+        result = solve(model, to_xyz(rgb), forward)
         return InverseResult(from_xyz(result.value), result.residual, result.status)

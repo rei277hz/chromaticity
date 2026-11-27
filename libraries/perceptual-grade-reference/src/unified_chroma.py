@@ -11,6 +11,16 @@ from .responses import HK, State, signed_hk
 from ..color_core.scaled import Scalar as S, dot, norm
 
 
+# Picker RADIUS_K / 75; RADIUS_K comes from //libraries/hdr-color-picker-core:radius_fit.
+_SATURATION_PICKER_K = 34.09902169100728 / 75.
+
+
+def _raw_saturation_crossover(coordinate):
+    """Decode the HDR Color Picker's compressed C/|J_A| coordinate."""
+    return (_SATURATION_PICKER_K * coordinate
+            / np.sqrt((1. - coordinate) * (1. + coordinate)))
+
+
 @dataclass(frozen=True)
 class UnifiedChromaSettings:
     input_nits: tuple = (LOW_Y * 203, .18 * 203, 203., 1000.)
@@ -22,7 +32,7 @@ class UnifiedChromaSettings:
     saturation_crossover: float = .5
     shadow_chroma: float = 0.
     highlight_chroma: float = 0.
-    tone_crossover: float = 45.
+    tone_crossover: float = .45
 
     def __post_init__(self):
         anchors = np.asarray(self.input_nits, dtype=np.float64)
@@ -36,12 +46,12 @@ class UnifiedChromaSettings:
         object.__setattr__(self, 'fit', int(self.fit))
         ranges = (
             ('black_compression_nits', 0., 2.),
-            ('muted_gain', -2., 2.),
-            ('vivid_gain', -2., 2.),
-            ('saturation_crossover', .05, .95),
-            ('shadow_chroma', -2., 2.),
-            ('highlight_chroma', -2., 2.),
-            ('tone_crossover', 10., 160.),
+            ('muted_gain', -4., 4.),
+            ('vivid_gain', -4., 4.),
+            ('saturation_crossover', 0., .99),
+            ('shadow_chroma', -4., 4.),
+            ('highlight_chroma', -4., 4.),
+            ('tone_crossover', .1, 1.4),
         )
         for name, lower, upper in ranges:
             if not lower <= getattr(self, name) <= upper:
@@ -197,8 +207,8 @@ class UnifiedChroma:
         self.tone = _UnifiedTone(settings)
         self._muted = float(np.exp2(settings.muted_gain))
         self._vivid = float(np.exp2(settings.vivid_gain))
-        crossover = settings.saturation_crossover
-        self._saturation_knee = crossover / (1. - crossover) * np.sqrt(self._vivid / self._muted)
+        self._saturation_knee = (_raw_saturation_crossover(settings.saturation_crossover)
+                                 * np.sqrt(self._vivid / self._muted))
         self.chroma_active = any((settings.muted_gain, settings.vivid_gain,
                                   settings.shadow_chroma, settings.highlight_chroma))
 
@@ -207,19 +217,20 @@ class UnifiedChroma:
         return self.tone.active or self.chroma_active
 
     def chroma_gain(self, ja, chroma, *, invert=False):
-        """Evaluate both chroma edits at the original signed achromatic lightness."""
+        """Evaluate chroma edits at post-Tone signed achromatic lightness."""
         p = self.settings
-        base = CHROMA_CROSSOVER * np.abs(ja)
-        offset = np.abs(ja) / p.tone_crossover - 1.
+        lightness = np.abs(ja)
+        knee = lightness * self._saturation_knee
+        tonal_knee = CHROMA_CROSSOVER * lightness / 9
+        offset = lightness / (100. * p.tone_crossover) - 1.
         t = np.minimum(1., np.abs(offset))
         amount = np.where(offset < 0., p.shadow_chroma, p.highlight_chroma) * t**2 * (3. - 2. * t)
         tonal_gain = np.exp2(amount)
         if invert:
-            tonal = radial_gain(chroma, base / 9, 1., tonal_gain, invert=True)
-            return tonal * radial_gain(chroma * tonal, base * self._saturation_knee,
-                                       self._muted, self._vivid, invert=True)
-        saturated = radial_gain(chroma, base * self._saturation_knee, self._muted, self._vivid)
-        return saturated * radial_gain(chroma * saturated, base / 9, 1., tonal_gain)
+            tonal = radial_gain(chroma, tonal_knee, 1., tonal_gain, invert=True)
+            return tonal * radial_gain(chroma * tonal, knee, self._muted, self._vivid, invert=True)
+        saturated = radial_gain(chroma, knee, self._muted, self._vivid)
+        return saturated * radial_gain(chroma * saturated, tonal_knee, 1., tonal_gain)
 
     def chroma_map(self, ja, chroma, *, invert=False):
         return chroma * self.chroma_gain(ja, chroma, invert=invert)
@@ -227,42 +238,42 @@ class UnifiedChroma:
     def _scaled_chroma_gain(self, ja, chroma, invert):
         p = self.settings
         lightness = abs(ja)
-        base = CHROMA_CROSSOVER * lightness
-        offset = min(lightness / p.tone_crossover, S(2.)) - 1
+        knee = lightness * self._saturation_knee
+        tonal_knee = CHROMA_CROSSOVER * lightness / 9
+        offset = min(lightness / (100. * p.tone_crossover), S(2.)) - 1
         t = float(abs(offset))
         amount = (p.shadow_chroma if offset < 0 else p.highlight_chroma) * t**2 * (3 - 2 * t)
         tonal_gain = float(np.exp2(amount))
         if invert:
-            g = _scaled_radial_gain(chroma, base / 9, 1., tonal_gain, True)
-            return g * _scaled_radial_gain(chroma * g, base * self._saturation_knee,
-                                          self._muted, self._vivid, True)
-        g = _scaled_radial_gain(chroma, base * self._saturation_knee, self._muted, self._vivid, False)
-        return g * _scaled_radial_gain(chroma * g, base / 9, 1., tonal_gain, False)
+            g = _scaled_radial_gain(chroma, tonal_knee, 1., tonal_gain, True)
+            return g * _scaled_radial_gain(chroma * g, knee, self._muted, self._vivid, True)
+        g = _scaled_radial_gain(chroma, knee, self._muted, self._vivid, False)
+        return g * _scaled_radial_gain(chroma * g, tonal_knee, 1., tonal_gain, False)
 
     def _array_map(self, points, invert):
         ja, ab = points[..., 0], points[..., 1:]
-        if not invert and self.chroma_active:
+        if invert and self.chroma_active:
             c = np.hypot(ab[..., 0], ab[..., 1])
-            ab = ab * self.chroma_gain(ja, c)[..., None]
+            ab = ab * self.chroma_gain(ja, c, invert=True)[..., None]
         if self.tone.active:
             c = np.hypot(ab[..., 0], ab[..., 1])
             height = np.hypot(ja, np.sqrt(HK * c))
             mapped = self.tone.inverse(height) if invert else self.tone.remap(height)
             gain = _ray_gain(ja, c, mapped)
             ja, ab = ja * gain, ab * gain[..., None]
-        if invert and self.chroma_active:
+        if not invert and self.chroma_active:
             c = np.hypot(ab[..., 0], ab[..., 1])
-            ab = ab * self.chroma_gain(ja, c, invert=True)[..., None]
+            ab = ab * self.chroma_gain(ja, c)[..., None]
         return np.concatenate((ja[..., None], ab), axis=-1)
 
     def _scaled_map(self, ja, ab, invert):
-        if not invert and self.chroma_active:
-            gain = self._scaled_chroma_gain(ja, norm(ab), False)
+        if invert and self.chroma_active:
+            gain = self._scaled_chroma_gain(ja, norm(ab), True)
             ab = [a * gain for a in ab]
         if self.tone.active:
             ja, ab = self.tone.scaled_ray(ja, ab, invert=invert)
-        if invert and self.chroma_active:
-            gain = self._scaled_chroma_gain(ja, norm(ab), True)
+        if not invert and self.chroma_active:
+            gain = self._scaled_chroma_gain(ja, norm(ab), False)
             ab = [a * gain for a in ab]
         return ja, ab
 

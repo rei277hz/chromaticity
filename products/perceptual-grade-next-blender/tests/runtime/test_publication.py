@@ -292,6 +292,24 @@ class PublicationGateTests(unittest.TestCase):
         gate.evaluation_finished("render", 17)
         running.clear()
 
+    def test_inline_preflight_claims_its_exact_ticket(self):
+        gate, _running, _manager = self.gate(jobs=("RENDER",))
+        gate.evaluation_started("render", 17)
+        subframe = float(0.0).hex()
+        earlier = gate.request_render_preflight(17, 1, subframe)
+        inline = gate.request_render_preflight(17, 1, subframe)
+
+        self.assertIs(gate.take_render_preflight(inline), inline)
+        self.assertIsNone(gate.take_render_preflight(earlier))
+        with gate.render_preflight(inline):
+            self.publish(gate, inline, 17, 1, subframe)
+        self.assertTrue(inline._finished.is_set())
+        self.assertIs(gate.take_render_preflight(), earlier)
+        with gate.render_preflight(earlier):
+            self.publish(gate, earlier, 17, 1, subframe)
+        gate.evaluation_finished("render", 17)
+        self.assertFalse(gate.has_render_preflight)
+
     def test_preflight_rejects_another_render_job_or_identity(self):
         gate, running, _manager = self.gate(jobs=("RENDER", "RENDER_PREVIEW"))
         gate.evaluation_started("render", 17)

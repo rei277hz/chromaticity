@@ -237,6 +237,18 @@ python_library(
 )
 
 python_library(
+    name = "scheduler_runtime",
+    srcs = {
+        "policy/__init__.py": POLICY_PREFIX + "__init__.py",
+        "policy/scheduler.py": POLICY_PREFIX + "scheduler.py",
+        "runtime/__init__.py": RUNTIME_PREFIX + "__init__.py",
+        "runtime/scheduler.py": RUNTIME_PREFIX + "scheduler.py",
+    },
+    base_module = "color_tools",
+    visibility = ["PUBLIC"],
+)
+
+python_library(
     name = "feature_policy_runtime",
     srcs = FEATURE_POLICY_SOURCES,
     base_module = "color_tools",
@@ -350,6 +362,9 @@ invariant_proof(
         "activation_failure_authorizes_rollback",
         "input_change_cancels_running_request",
         "input_change_discards_queued_result",
+        "pause_requests_cooperative_cancellation",
+        "resume_requires_current_retired_request",
+        "invalidated_pause_cannot_resume",
         "terminal_receipts_are_inert",
         "valid_artifact_remains_baked",
         "source_invalidation_requires_tracked_receipt",
@@ -439,6 +454,18 @@ export_file(
     visibility = ["PUBLIC"],
 )
 
+export_file(
+    name = "scheduler_source",
+    src = POLICY_PREFIX + "scheduler.py",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "scheduler_requirements",
+    src = PREFIX + "requirements/scheduler.inv",
+    visibility = ["PUBLIC"],
+)
+
 invariant_proof(
     name = "proof_preparation",
     required_properties = [
@@ -456,6 +483,31 @@ invariant_proof(
     requirements = ":preparation_requirements",
     runtime_source = "policy/preparation.py",
     source = ":preparation_source",
+    visibility = ["PUBLIC"],
+)
+
+invariant_proof(
+    name = "proof_scheduler",
+    required_mutations = ["ignore_class_order", "recovery_admits_bake"],
+    required_properties = [
+        "render_precedes_plot",
+        "newest_plot_generation_precedes_older_plot",
+        "consistency_precedes_bake",
+        "foreground_plot_precedes_background_plot",
+        "promoted_consistency_has_plot_rank",
+        "promoted_consistency_does_not_precede_foreground_plot",
+        "higher_priority_plot_can_pause_consistency",
+        "ordinary_work_is_fenced_during_recovery",
+        "startup_admits_consistency_but_fences_interactive_work",
+        "render_is_admitted_during_recovery",
+        "retry_delay_is_bounded",
+        "closed_admission_is_terminal",
+        "changed_host_data_fences_admission",
+    ],
+    required_witnesses = ["recovery_can_complete"],
+    requirements = ":scheduler_requirements",
+    runtime_source = "policy/scheduler.py",
+    source = ":scheduler_source",
     visibility = ["PUBLIC"],
 )
 
@@ -669,6 +721,8 @@ invariant_proof(
         "busy_scheduler_rejects_start",
         "waiting_scope_does_not_reserve_capture_slot",
         "current_capture_result_releases_active_slot",
+        "preempted_capture_resumes_pending_demand",
+        "retired_capture_cannot_resume_released_demand",
         "released_capture_is_not_analyzable",
         "replacement_source_capture_is_not_analyzable",
         "duplicate_release_does_not_replay_cancellation",
@@ -686,6 +740,7 @@ POLICY_PROOFS = [
     ":proof_bank_publication",
     ":proof_node",
     ":proof_preparation",
+    ":proof_scheduler",
     ":proof_helper",
     ":proof_resources",
     ":proof_gesture",

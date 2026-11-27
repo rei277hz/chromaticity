@@ -11,7 +11,8 @@ from ...kernel.stage2_bindings import (
 from ...kernel.stage2_parameters import (
     PARAMETER_CONTENT_SIGNATURE, PARAMETER_ROLE_SHAPES, PARAMETER_ROLES,
     PARAMETER_SCHEMA,
-    bind_parameter_bank, parameter_bank_images, parameter_bundle_receipt_matches,
+    bind_parameter_bank, parameter_bank_images, parameter_bank_pair_images,
+    parameter_bundle_receipt_matches,
     parameter_content_signature, parameter_image_matches, prepare_parameters,
     set_parameter_bundle_signature,
 )
@@ -59,7 +60,6 @@ class GradePublicationOperations:
 @dataclass
 class PublicationTransaction:
     previous_trees: dict
-    repairing: bool
     outer_before: tuple
     kernels: dict | None = None
     receipt_before: Any = None
@@ -119,7 +119,6 @@ def publish_grade_parameters(operations, source, authorized_records, prepared, *
 
     transaction = PublicationTransaction(
         previous_trees=dict(resource.trees),
-        repairing=not active_valid,
         outer_before=tuple(
             (record["node"], operations.kernel_for_node(record["node"]))
             for record in users
@@ -178,6 +177,18 @@ def publish_grade_parameters(operations, source, authorized_records, prepared, *
             for role in PARAMETER_ROLES
         }
         banks = resource.banks
+        # A native Image can disappear between a failed publication rollback
+        # and the next retry. The cached resource still contains the old
+        # wrappers, but passing one of those wrappers into a new kernel would
+        # raise ``StructRNA of type Image has been removed`` and strand the
+        # owner in its error output. Treat an invalid pair as a fresh bank
+        # allocation and let the normal ownership scan reclaim survivors.
+        if banks is not None and parameter_bank_pair_images(banks) is None:
+            resource.banks = None
+            resource.active_bank = None
+            resource.generation = None
+            resource.trees.clear()
+            banks = None
         fresh = banks is None
         if fresh:
             allocated = []
@@ -298,7 +309,8 @@ def publish_grade_parameters(operations, source, authorized_records, prepared, *
         transaction.receipt_before = operations.record_compositor_bindings(users)
         delivery_errors = []
         for record in users:
-            event_kind = "recovery_result" if transaction.repairing else "installation_result"
+            event_kind = ("recovery_result" if record["state"].error is not None
+                          else "installation_result")
             delivery_errors.extend(operations.dispatch(record["node"], node_policy.Event(
                 event_kind,
                 operations.signature(record["node"].id_data.bl_idname,

@@ -8,8 +8,9 @@ import numpy as np
 
 from color_tools.perceptual_grade_core.model.tonal_web import WebSettings
 from color_tools.perceptual_grade_reference.blender_gpu import ForwardProgram
+from color_tools.perceptual_grade_reference.export import OutputCompressionSettings, OutputDensitySettings
 from color_tools.perceptual_grade_reference.grading import ColorSettings, ToneSettings
-from color_tools.perceptual_grade_reference.model import Model, Settings
+from color_tools.perceptual_grade_reference.model import LinearSettings, Model, Settings
 from color_tools.perceptual_grade_reference.responses import hk_energy
 from color_tools.perceptual_grade_reference.stack_bake import BakeStack
 from color_tools.perceptual_grade_reference.unified_chroma import UnifiedChromaSettings
@@ -62,6 +63,30 @@ class WarpGPUComputeTests(unittest.TestCase):
                 forward.set_kernel(kernel)
                 self.assert_normalized_close(forward.evaluate(self.points, 2)[:, :3], actual)
                 self.assertTrue(np.all((actual >= 0) & (actual <= 1024)))
+
+    def test_output_effects_forward_and_inverse_ending_bakes(self):
+        compressed = Settings(output_compression=OutputCompressionSettings(True, .1, .3))
+        density = OutputDensitySettings(amount=.6, pivot=.5)
+        forward = ForwardProgram(self.base.kernels[0])
+        for output in (compressed, Settings(output_density=density), replace(compressed, output_density=density)):
+            stack = self.stack([output])
+            forward.set_kernel(stack.kernels[0])
+            graded = forward.evaluate(self.points, 2)[:, :3]
+            self.assert_normalized_close(graded, Model(output).forward_native(self.points), 1e-3)
+            self.assertGreater(np.max(abs(graded - self.points)), .01)
+            entered = forward.evaluate(self.points, 0)
+            self.assert_normalized_close(forward.evaluate(entered, 1)[:, :3], graded)
+
+            inverse = replace(output, linear=LinearSettings(exposure=1.))
+            for settings, directions in (([output, Settings()], ['FORWARD', 'FORWARD']),
+                                         ([output, inverse], ['FORWARD', 'INVERSE']),
+                                         ([inverse], ['INVERSE'])):
+                with self.subTest(output=output, directions=directions):
+                    baked = self.stack(settings, directions)
+                    actual = baked.bake_native(self.points, 'GPU', program=self.program)
+                    expected = baked.bake_native(self.points)
+                    self.assert_normalized_close(actual[:, :3], expected[:, :3])
+                    np.testing.assert_array_equal(actual[:, 3], expected[:, 3])
 
     def test_active_guard_precedes_scale_and_preserves_saturation_rays(self):
         radii = []
@@ -136,6 +161,8 @@ class WarpGPUComputeTests(unittest.TestCase):
         cases = [
             Settings(tone_chroma=chroma),
             Settings(tone_chroma=tone),
+            Settings(tone_chroma=replace(chroma, saturation_crossover=0.)),
+            Settings(tone_chroma=replace(chroma, saturation_crossover=.99)),
             Settings(tone_chroma=tone, color=ColorSettings(
                 web=WebSettings(log_scale=((.05,) * 6,) * 4),
                 adaptance=((.02, -.01),) * 4)),

@@ -16,8 +16,9 @@ Their old generator has been removed.
 ## Saturation radius
 
 The current mapping is `u = s / K`, `t = u + A*u^3`,
-`r = t / sqrt(1 + t^2)`. The current fit gives `K = 34.09902169100728` and
-`A = 0`. The curve is C2-smooth at neutral; finite saturation maps inside the
+`r = t / sqrt(1 + t^2)`. The `radius_fit.json` report from
+`//libraries/hdr-color-picker-core:radius_fit` gives `K = 34.09902169100728`
+and `A = 0`. The curve is C2-smooth at neutral; finite saturation maps inside the
 unit circle, whose edge represents infinite saturation and is rejected by the
 decoder. The mapping preserves the D65 neutral center, and its radius is
 independent of J′.

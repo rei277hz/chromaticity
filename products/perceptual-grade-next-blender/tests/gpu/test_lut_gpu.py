@@ -280,8 +280,8 @@ class LUTGPUComputeTests(unittest.TestCase):
             linear=LinearSettings(matrix=tuple(map(tuple, -np.eye(3)))),
             tone=ToneSettings(input_nits=(5., 38., 225., 1200.), fit=1.5,
                               black_compression_nits=.8, muted_gain=-.6, vivid_gain=.4,
-                              saturation_crossover=.35, shadow_chroma=.35,
-                              highlight_chroma=-.2, tone_crossover=48.),
+                              saturation_crossover=0., shadow_chroma=.35,
+                              highlight_chroma=-.2, tone_crossover=.48),
         )
         ids = np.array(((0, 0, 0), (24, 24, 26), (32, 34, 30),
                         (42, 40, 42), (50, 52, 52)))
@@ -291,6 +291,32 @@ class LUTGPUComputeTests(unittest.TestCase):
         receipts, _ = self.bake((grade, grade), directions=("FORWARD", "INVERSE"))
         actual = receipts["full"].cube.values[tuple(ids.T)]
         np.testing.assert_allclose(actual, points, rtol=2e-4, atol=3e-5)
+
+    def test_tone_chroma_compression_endpoints_round_trip_in_stack(self):
+        grade = Settings(tone=ToneSettings(
+            muted_gain=-4., vivid_gain=-4., shadow_chroma=-4., highlight_chroma=-4.,
+        ))
+        ids = np.array(((0, 0, 0), (18, 21, 16), (25, 28, 20), (35, 31, 32),
+                        (40, 37, 39), (64, 64, 64)))
+        points = lut.axis()[ids]
+        receipts, _ = self.bake((grade, grade), directions=("FORWARD", "INVERSE"))
+        actual = receipts["full"].cube.values[tuple(ids.T)]
+        np.testing.assert_allclose(actual, points, rtol=2e-4, atol=3e-5)
+
+    def test_tone_chroma_endpoint_expansion_is_repaired_before_stack_export(self):
+        grade = Settings(
+            linear=LinearSettings(exposure=-6.),
+            tone=ToneSettings(
+                muted_gain=-4., vivid_gain=4., saturation_crossover=.99,
+                shadow_chroma=-4., highlight_chroma=4., tone_crossover=.1,
+            ),
+        )
+        receipts, _ = self.bake((grade,))
+        cube = receipts["full"].cube.values
+        self.assertTrue(np.isfinite(cube).all())
+        self.assertGreater(float(np.max(cube)), 0.)
+        self.assertGreaterEqual(float(np.min(cube)), -1e-4)
+        self.assertLessEqual(float(np.max(cube)), lut.MAXIMUM + 1e-4)
 
     def test_inverse_authored_color_reproduces_chromatic_rgb_targets(self):
         grade = Settings(linear=LinearSettings(exposure=-2.),

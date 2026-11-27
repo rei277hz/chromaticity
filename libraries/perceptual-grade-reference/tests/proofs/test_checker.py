@@ -168,7 +168,8 @@ class ProofTests(unittest.TestCase):
             'cube_guard_positive_energy', 'hk_cube_guard_positive_luminance',
         })
         required.update({
-            'unified_radial_strict_mono', 'unified_radial_quadratic', 'unified_radial_inverse_exists',
+            'unified_saturation_ratio_nonneg', 'unified_radial_strict_mono',
+            'unified_radial_quadratic', 'unified_radial_inverse_exists',
             'unified_radial_stable_inverse',
             'unified_black_inverse_exists', 'unified_fitted_inverse_exists',
             'unified_tone_curve_inverse_exists', 'unified_chroma_radius_inverse_exists',

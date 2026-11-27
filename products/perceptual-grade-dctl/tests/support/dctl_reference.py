@@ -2,14 +2,16 @@
 import numpy as np
 
 from color_tools.perceptual_grade_reference.appearance import encode, decode
+from color_tools.perceptual_grade_reference.export import OutputCompressionSettings
 from color_tools.perceptual_grade_reference.grading import Tone, ToneSettings, kernel, normalized_kernel
 from color_tools.perceptual_grade_reference.model import LinearSettings, WHITES, linear_matrix
 
 from . import cone_color, cone_reference, jc_gain, jc_global_shape, jc_prototype, jc_surface
 from .dctl import (
     ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES,
-    OVERLAP_PROTOTYPES, PROTOTYPES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
-    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, SURFACE_PROTOTYPES,
+    TONE_FIT_LINEAR_GAIN_PROTOTYPES, TONE_FIT_PROTOTYPES, UNIFIED_CHROMA_STAGES,
+    WARP_QUADRATIC_SCALE_PROTOTYPES,
 )
 
 WHITE = cone_reference.WHITE
@@ -75,8 +77,6 @@ def apply_tone_fit(stage, wire, tone, controls):
 
     point = cone_reference.enter(wire)
     ja, ab = point.ja, point.q[:, 1:]
-    height = abs(ja)
-    chroma = np.hypot(ab[:, 0], ab[:, 1])
 
     # The limit of remap(J)/J defines the J-only gain on the chromatic J=0 axis.
     width = float(tone.width)
@@ -88,7 +88,7 @@ def apply_tone_fit(stage, wire, tone, controls):
     if compression > 0.:
         origin_gain *= .5
 
-    unified = stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES
+    unified = stage in UNIFIED_CHROMA_STAGES
     influence = 1. if unified else controls.get("hkInfluence", 1.)
 
     def tone_ray(scale, ja, hk_chroma):
@@ -112,9 +112,10 @@ def apply_tone_fit(stage, wire, tone, controls):
             return jc_global_shape.unified_chroma_map(height, chroma, controls)
         return jc_global_shape.chroma_map(height, chroma, controls, linear_gain=stage in TONE_FIT_LINEAR_GAIN_PROTOTYPES)
 
-    if invert:
-        # Recover Tone scale along the output ray, then invert C at input J.
+    def tone_gain(height, chroma):
         output_hk_chroma = 66. * chroma
+        if not invert:
+            return tone_ray(np.ones_like(height), height, output_hk_chroma)
         low, high = np.zeros_like(height), np.ones_like(height)
         for _ in range(64):
             mapped = tone_ray(high, height, output_hk_chroma)
@@ -126,10 +127,12 @@ def apply_tone_fit(stage, wire, tone, controls):
             middle = (low + high) / 2.
             below = tone_ray(middle, height, output_hk_chroma) < 1.
             low, high = np.where(below, middle, low), np.where(below, high, middle)
-        scale = (low + high) / 2.
-        ja, ab = ja * scale, ab * scale[:, None]
-        height = abs(ja)
-        chroma = np.hypot(ab[:, 0], ab[:, 1])
+        return (low + high) / 2.
+
+    def chroma_gain(height, chroma):
+        if not invert:
+            adjusted = map_chroma(height, chroma)
+            return np.divide(adjusted, chroma, out=np.ones_like(chroma), where=chroma > 0.)
         low, high = np.zeros_like(chroma), np.maximum(chroma, 1.)
         for _ in range(64):
             mapped = map_chroma(height, high)
@@ -142,15 +145,18 @@ def apply_tone_fit(stage, wire, tone, controls):
             below = map_chroma(height, middle) < chroma
             low, high = np.where(below, middle, low), np.where(below, high, middle)
         source_chroma = (low + high) / 2.
-        c_gain = np.divide(source_chroma, chroma, out=np.ones_like(chroma), where=chroma > 0.)
-        ab *= c_gain[:, None]
-        return cone_reference.pack(ja, ab[:, 0], ab[:, 1])
+        return np.divide(source_chroma, chroma, out=np.ones_like(chroma), where=chroma > 0.)
 
-    adjusted = map_chroma(height, chroma)
-    c_gain = np.divide(adjusted, chroma, out=np.ones_like(chroma), where=chroma > 0.)
-    gain = tone_ray(np.ones_like(height), height, 66. * adjusted)
-    ab = ab * (c_gain * gain)[:, None]
-    return cone_reference.pack(ja * gain, ab[:, 0], ab[:, 1])
+    height = abs(ja)
+    chroma = np.hypot(ab[:, 0], ab[:, 1])
+    if unified != bool(invert):
+        gain = tone_gain(height, chroma)
+        c_gain = chroma_gain(height * gain, chroma * gain)
+    else:
+        c_gain = chroma_gain(height, chroma)
+        gain = tone_gain(height, chroma * c_gain)
+    mapped_ab = ab * (c_gain * gain)[:, None]
+    return cone_reference.pack(ja * gain, mapped_ab[:, 0], mapped_ab[:, 1])
 
 
 def apply(stage, values, controls):
@@ -161,14 +167,21 @@ def apply(stage, values, controls):
     if stage == "input":
         return cone_reference.from_xyz(values)
     if stage == "output":
-        return cone_reference.output(values)
+        defaults = OutputCompressionSettings()
+        compression = OutputCompressionSettings(
+            enabled=bool(controls.get("saturationCompression", defaults.enabled)),
+            knee=controls.get("saturationKnee", defaults.knee),
+            ceiling=controls.get("saturationCeiling", defaults.ceiling),
+        )
+        return cone_reference.output(values, compression, density=controls.get("subtractiveDensity", 0.),
+                                     pivot=controls.get("densityPivot", .5))
     if stage in GLOBAL_SHAPE_PROTOTYPES:
         return jc_global_shape.apply(values, controls)
     if stage in OVERLAP_PROTOTYPES:
         controls = overlap_settings(stage, controls)
         stage = "jc"
     tone = Tone(tone_settings(controls))
-    if stage in (*TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES, *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES):
+    if stage in (*TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES, *UNIFIED_CHROMA_STAGES):
         return apply_tone_fit(stage, values, tone, controls)
     if stage in GAIN_PROTOTYPES:
         return jc_gain.apply(stage, values, tone, overlap_settings(stage, controls))

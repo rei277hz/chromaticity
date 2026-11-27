@@ -18,13 +18,18 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_grade_conversion.perceptual_grade")
+application = importlib.import_module(extension.__name__ + ".application")
 nodes = importlib.import_module(extension.__name__ + ".features.grade.host")
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append,
 ) is extension
 assert not errors, errors
-nodes._startup_reconcile_tick()
+scheduler = application._runtime.scheduler
+assert scheduler.has(nodes._STARTUP_TASK)
+scheduler.advance()
+assert not scheduler.has(nodes._STARTUP_TASK)
+assert scheduler.phase == "ready"
 
 
 def assert_grade_current(node):

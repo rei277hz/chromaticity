@@ -75,13 +75,14 @@ class ScopeState:
     waiting: bool = False
     published_capture_generation: Optional[int] = None
     published_current_generation: Optional[int] = None
+    published_source_generation: Optional[int] = None
     failure_revision: Optional[int] = None
     failure_error: Optional[str] = None
     preview_revision: Optional[int] = None
     preview_input_signature: Optional[str] = None
+    preview_published_input_signature: Optional[str] = None
     preview_grade_signature: Optional[str] = None
     preview_status: Literal["none", "pending", "preview", "unavailable"] = "none"
-    preview_error: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,7 @@ class Event:
     preview_input_signature: Optional[str] = None
     preview_grade_signature: Optional[str] = None
     allow_lagging: bool = True
+    resume: bool = False
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,7 @@ class Effects:
     cancel: bool = False
     evaluate_preview: bool = False
     publish_preview: bool = False
+    clear_preview: bool = False
 
 
 @dataclass(frozen=True)
@@ -166,9 +169,19 @@ def _clear_preview(state: ScopeState) -> ScopeState:
         state,
         preview_revision=None,
         preview_input_signature=None,
+        preview_published_input_signature=None,
         preview_grade_signature=None,
         preview_status="none",
-        preview_error=None,
+    )
+
+
+def _withdraw_preview(state: ScopeState) -> ScopeState:
+    return replace(
+        state,
+        preview_revision=None,
+        preview_input_signature=state.preview_published_input_signature,
+        preview_grade_signature=None,
+        preview_status="none",
     )
 
 
@@ -199,18 +212,15 @@ def step(state: State, event: Event) -> Transition:
             and scope.analysis_signature == event.analysis_signature
             and scope.revision == event.revision
         )
-        clear_preview = scope.preview_status != "none"
-        if same_demand:
-            scope = replace(scope, waiting=not event.ready)
-            if clear_preview:
-                scope = _clear_preview(scope)
-            return Transition(State(scope, scheduler), Effects(clear=clear_preview))
-
-        generation = scope.generation + 1
         same_source = (
             scope.source_signature is not None
             and scope.source_signature == event.source_signature
         )
+        if same_demand:
+            scope = replace(scope, waiting=not event.ready)
+            return Transition(State(scope, scheduler), Effects())
+
+        generation = scope.generation + 1
         source_generation = (
             scope.source_generation
             if same_source and scope.source_generation is not None
@@ -221,33 +231,25 @@ def step(state: State, event: Event) -> Transition:
             and scope.active_source_generation == source_generation
             and scope.active_capture_signature == event.capture_signature
         )
-        clear_display = (
-            scope.published_capture_generation is not None and not same_source
-        )
         remove_queue = scope.queued_generation is not None
         enqueue = False
         queued_generation = scope.queued_generation
         published_capture_generation = scope.published_capture_generation
         published_current_generation = scope.published_current_generation
+        published_source_generation = scope.published_source_generation
         publish = False
 
         if event.cache_available:
             queued_generation = None
             published_capture_generation = generation
             published_current_generation = generation
+            published_source_generation = source_generation
             publish = True
         elif active_same_capture:
             enqueue = False
         else:
             queued_generation = generation
             enqueue = True
-
-        if not same_source:
-            published_capture_generation = None
-            published_current_generation = None
-        if event.cache_available:
-            published_capture_generation = generation
-            published_current_generation = generation
 
         scope = replace(
             scope,
@@ -262,10 +264,11 @@ def step(state: State, event: Event) -> Transition:
             waiting=not event.ready,
             published_capture_generation=published_capture_generation,
             published_current_generation=published_current_generation,
+            published_source_generation=published_source_generation,
             failure_revision=None,
             failure_error=None,
         )
-        if clear_preview:
+        if publish:
             scope = _clear_preview(scope)
         return Transition(
             State(scope, scheduler),
@@ -273,7 +276,7 @@ def step(state: State, event: Event) -> Transition:
                 enqueue=enqueue,
                 remove_queue=remove_queue and (event.cache_available or active_same_capture),
                 publish=publish,
-                clear=clear_display or clear_preview,
+                clear_preview=publish,
             ),
         )
 
@@ -292,14 +295,13 @@ def step(state: State, event: Event) -> Transition:
             preview_input_signature=event.preview_input_signature,
             preview_grade_signature=event.preview_grade_signature,
             preview_status="pending",
-            preview_error=None,
         )
-        return Transition(State(scope, scheduler), Effects(clear=True, evaluate_preview=True))
+        return Transition(State(scope, scheduler), Effects(evaluate_preview=True))
 
     if event.kind == "preview_withdraw":
         if scope.preview_status == "none":
             return Transition(state, Effects())
-        return Transition(State(_clear_preview(scope), scheduler), Effects(clear=True))
+        return Transition(State(_withdraw_preview(scope), scheduler), Effects())
 
     if event.kind == "preview_result":
         matching_preview = (
@@ -311,7 +313,11 @@ def step(state: State, event: Event) -> Transition:
         if not matching_preview or not event.ready:
             return Transition(state, Effects())
         preview_status = "preview" if event.success else "unavailable"
-        scope = replace(scope, preview_status=preview_status, preview_error=event.error)
+        scope = replace(scope, preview_status=preview_status,
+                        preview_published_input_signature=(
+                            event.preview_input_signature if event.success
+                            else scope.preview_published_input_signature
+                        ))
         return Transition(
             State(scope, scheduler),
             Effects(publish_preview=event.success),
@@ -351,14 +357,18 @@ def step(state: State, event: Event) -> Transition:
     if event.kind == "deferred":
         if event.ticket_generation is None or scope.active_generation != event.ticket_generation:
             return Transition(state, Effects())
+        resume = (event.resume and scope.desired_generation is not None
+                  and scope.queued_generation is None
+                  and scope.published_current_generation != scope.desired_generation)
         scope = replace(
             scope,
             active_generation=None,
             active_capture_signature=None,
             active_source_generation=None,
+            queued_generation=scope.desired_generation if resume else scope.queued_generation,
         )
         scheduler = replace(scheduler, busy=False)
-        return Transition(State(scope, scheduler), Effects())
+        return Transition(State(scope, scheduler), Effects(enqueue=resume))
 
     if event.kind == "capture_result":
         if event.ticket_generation is None or scope.active_generation != event.ticket_generation:
@@ -383,8 +393,10 @@ def step(state: State, event: Event) -> Transition:
         ).effects
         published_capture_generation = scope.published_capture_generation
         published_current_generation = scope.published_current_generation
+        published_source_generation = scope.published_source_generation
         if decision.publish:
             published_capture_generation = event.ticket_generation
+            published_source_generation = scope.active_source_generation
             published_current_generation = (
                 scope.desired_generation if decision.current else None
             )
@@ -402,9 +414,13 @@ def step(state: State, event: Event) -> Transition:
             queued_generation=None if remove_queue else scope.queued_generation,
             published_capture_generation=published_capture_generation,
             published_current_generation=published_current_generation,
+            published_source_generation=published_source_generation,
             failure_revision=failure_revision,
             failure_error=failure_error,
         )
+        clear_preview = decision.publish and decision.current and event.success
+        if clear_preview:
+            scope = _clear_preview(scope)
         scheduler = replace(scheduler, busy=False)
         return Transition(
             State(scope, scheduler),
@@ -412,6 +428,7 @@ def step(state: State, event: Event) -> Transition:
                 remove_queue=remove_queue,
                 publish=decision.publish,
                 retain_samples=event.success and same_source,
+                clear_preview=clear_preview,
             ),
         )
 
@@ -433,6 +450,7 @@ def step(state: State, event: Event) -> Transition:
             scope,
             published_capture_generation=None,
             published_current_generation=None,
+            published_source_generation=None,
             failure_revision=event.revision if unavailable else None,
             failure_error=failure_error if unavailable else None,
             active_generation=active_generation,
@@ -443,6 +461,7 @@ def step(state: State, event: Event) -> Transition:
             Effects(
                 remove_queue=queued_generation is not None,
                 clear=True,
+                clear_preview=True,
                 cancel=had_demand and active_generation is not None,
             ),
         )
@@ -455,6 +474,7 @@ def step(state: State, event: Event) -> Transition:
             scope,
             published_capture_generation=None,
             published_current_generation=None,
+            published_source_generation=None,
             failure_revision=None,
             failure_error=None,
             active_generation=active_generation,
@@ -465,6 +485,7 @@ def step(state: State, event: Event) -> Transition:
             Effects(
                 remove_queue=queued_generation is not None,
                 clear=True,
+                clear_preview=True,
                 cancel=active_generation is not None,
             ),
         )
@@ -504,8 +525,7 @@ def status(state: ScopeState, revision: Optional[int], source_valid: bool) -> Re
 def project(input_state: ScopeState, appearance_state: ScopeState,
             binding_matches: bool, source_valid: bool, tone: bool,
             compatible: bool, revision: Optional[int],
-            appearance_revision: Optional[int], mode_matches: bool,
-            dragging: bool, muted: bool, baked: bool) -> EditorReadout:
+            appearance_revision: Optional[int], muted: bool, baked: bool) -> EditorReadout:
     input_readout = status(input_state, revision, source_valid)
     input_show_plot = (
         compatible
@@ -524,36 +544,42 @@ def project(input_state: ScopeState, appearance_state: ScopeState,
     if baked:
         return EditorReadout(True, input_readout.status, input_readout.error,
                              input_show_plot, "bake", None, False)
-    if not source_valid or not mode_matches:
+    retained_any = (appearance_state.published_capture_generation is not None
+                    or appearance_state.preview_published_input_signature is not None)
+    if not source_valid:
         return EditorReadout(True, input_readout.status, input_readout.error,
-                             input_show_plot, "updating", None, False)
+                             input_show_plot, "updating", None, retained_any)
 
     appearance_readout = status(appearance_state, appearance_revision, True)
-    if not dragging or appearance_readout.status == "error":
-        appearance_status = (
-            "updating" if appearance_readout.status == "idle"
-            else appearance_readout.status
-        )
-        return EditorReadout(
-            True, input_readout.status, input_readout.error, input_show_plot,
-            appearance_status, appearance_readout.error,
-            appearance_readout.status == "current",
-        )
-
-    active_preview = (
-        appearance_state.preview_status != "pending"
-        and appearance_state.preview_status != "none"
+    retained_capture = (
+        appearance_state.published_capture_generation is not None
+        and appearance_state.published_source_generation is not None
+        and appearance_state.published_source_generation == appearance_state.source_generation
     )
+    preview_retained = appearance_state.preview_published_input_signature is not None
+    preview_matches_input = (preview_retained
+                             and appearance_state.preview_published_input_signature
+                             == input_state.capture_signature)
+    retained_same_source = retained_capture or preview_matches_input
+    active_preview = appearance_state.preview_status == "preview"
     preview_is_current = preview_current(
-        active_preview,
+        active_preview and preview_matches_input,
         appearance_state.preview_revision == appearance_revision,
         input_readout.status == "current",
     )
-    if not preview_is_current:
+    if input_readout.status == "error" or appearance_readout.status == "error":
+        return EditorReadout(
+            True, input_readout.status, input_readout.error, input_show_plot,
+            "error", (appearance_readout.error if appearance_readout.error is not None
+                      else input_readout.error), False,
+        )
+    if appearance_readout.status == "current":
         return EditorReadout(True, input_readout.status, input_readout.error,
-                             input_show_plot, "updating", None, False)
-    return EditorReadout(
-        True, input_readout.status, input_readout.error, input_show_plot,
-        appearance_state.preview_status, appearance_state.preview_error,
-        appearance_state.preview_status == "preview",
-    )
+                             input_show_plot, "current", None, True)
+    if preview_is_current:
+        return EditorReadout(True, input_readout.status, input_readout.error,
+                             input_show_plot, "preview", None, True)
+    appearance_status = "retained" if retained_same_source else "updating"
+    return EditorReadout(True, input_readout.status, input_readout.error,
+                         input_show_plot, appearance_status, None,
+                         retained_any)

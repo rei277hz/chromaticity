@@ -148,9 +148,9 @@ BROWSER_PACKAGES = {
         "sha256": "0a459adaffd901109f7811ab65f58e7a957b4907d05539cf3d1184efdcde0468"
     },
     "libssl3t64": {
-        "filename": "libssl3t64_3.5.7-1~deb13u2_amd64.deb",
-        "url": "https://deb.debian.org/debian/pool/main/o/openssl/libssl3t64_3.5.7-1~deb13u2_amd64.deb",
-        "sha256": "916f7f40b34a06e6ebfaefcdab331bff458328411da672598f126a760472467d"
+        "filename": "libssl3t64_3.5.9-1~deb13u1_amd64.deb",
+        "url": "https://deb.debian.org/debian/pool/main/o/openssl/libssl3t64_3.5.9-1~deb13u1_amd64.deb",
+        "sha256": "ffefb9af363e0e4592251b2533eb06453c8e470f7772e40263c4b2129251a6d5"
     },
     "libtasn1-6": {
         "filename": "libtasn1-6_4.20.0-2+deb13u1_amd64.deb",

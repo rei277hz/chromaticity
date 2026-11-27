@@ -280,38 +280,73 @@ def scenario():
     original_appearance = state().appearance.rgba
     appearance_captures = capture_jobs.count("appearance")
     assert appearance_captures > 0
+
+    shared.pg_grade.pg_tone.input_highlights = 600.0
+    with bpy.context.temp_override(window=window, area=node_area, region=node_region):
+        assert bpy.ops.perceptual_grade.gizmo_set_peak(peak_nits="1000") == {"FINISHED"}
+    assert shared.pg_grade.pg_tone.input_highlights == 1000.0
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.appearance_status == "current"
+        and value.appearance is not None and value.appearance.rgba is not original_appearance,
+        "Same-value peak selection did not set shared Grade Highlights",
+    )
+    previous_appearance = state().appearance
+    panel_edit_started = time.monotonic()
+    shared.pg_grade.pg_tone.fit += 0.1
+    yield from wait_for(
+        lambda: (value := state()) is not None
+        and value.appearance_status in {"retained", "updating"}
+        and value.appearance is not None,
+        "Tone panel edit did not retain the previous appearance while updating",
+    )
+    yield from wait_for(
+        lambda: (value := state()) is not None and value.appearance_status == "preview"
+        and value.appearance is not None and value.appearance is not previous_appearance,
+        "Tone panel edit did not publish its bounded GPU preview",
+    )
+    panel_to_preview_seconds = time.monotonic() - panel_edit_started
+    yield from wait_for(
+        lambda: appearance_current() and state().appearance.rgba is not previous_appearance.rgba,
+        "Tone panel edit did not publish its exact appearance",
+    )
+    panel_to_exact_seconds = time.monotonic() - panel_edit_started
+    original_appearance = state().appearance.rgba
+    appearance_captures = capture_jobs.count("appearance")
+
     before = pointer.settings(shared)
     start = pointer.control_point("fit", shared)
     yield from pointer.press_at(start, "fit", shared)
-    previous_preview = None
-    timings = []
+    drag_started = time.monotonic()
+    previous_trace = state().appearance
     preview_resources = None
+    drag_preview_seconds = []
     for delta in (18, 35):
         end = start[0], start[1] + delta
         moved = time.monotonic()
         pointer.event_at("MOUSEMOVE", "NOTHING", end)
         yield from wait_for(
             lambda: (value := state()) is not None and value.appearance_status == "preview"
-            and value.appearance is not None and value.appearance is not previous_preview,
-            "Shared Shader Tone did not show the live appearance preview",
+            and value.appearance is not None and value.appearance is not previous_trace,
+            "Tone drag did not publish its bounded GPU preview",
         )
-        timings.append(time.monotonic() - moved)
-        previous_preview = state().appearance
-        assert previous_preview.rgba[..., 3].any()
-        assert capture_jobs.count("appearance") == appearance_captures
-        preview = vectorscope_ui._runtime.preview_backend
-        assert preview is not None
-        resources = {
-            "input": preview._input_texture,
-            **{role: value[2] for role, value in preview._role_textures.items()},
-        }
-        if preview_resources is None:
-            preview_resources = resources
-        else:
-            assert resources["input"] is preview_resources["input"]
-            for role in ("web", "web_toe", "adaptance"):
-                assert resources[role] is preview_resources[role]
-    released = time.monotonic()
+        drag_preview_seconds.append(time.monotonic() - moved)
+        previous_trace = state().appearance
+        assert previous_trace.rgba[..., 3].any()
+        preview = runtime.preview_backend
+        resources = (preview._input_texture, *(preview._role_textures[role][2]
+                     for role in ("web", "web_toe", "adaptance")))
+        if preview_resources is not None:
+            assert all(current is previous for current, previous in zip(resources, preview_resources))
+        preview_resources = resources
+    yield from wait_for(
+        lambda: pointer.settings(shared).tone.fit > before.tone.fit,
+        "Tone drag did not change Fit",
+    )
+    yield from wait_for(
+        lambda: appearance_current(original_appearance),
+        "Tone drag did not publish an exact appearance before release",
+    )
+    drag_to_exact_seconds = time.monotonic() - drag_started
     pointer.event_at("LEFTMOUSE", "RELEASE", end)
     edited = pointer.settings(shared)
     assert edited.tone.fit > before.tone.fit
@@ -325,12 +360,17 @@ def scenario():
     yield from wait_for(lambda: appearance_current(original_appearance),
                         "Shared Shader Tone Fit did not refresh final appearance")
     assert capture_jobs.count("input") == input_captures
-    assert capture_jobs.count("appearance") == appearance_captures + 1
+    assert capture_jobs.count("appearance") > appearance_captures
     report["appearance_timing_seconds"] = {
-        "first_preview": timings[0], "warm_preview": timings[1],
-        "release_to_exact": time.monotonic() - released,
+        "panel_to_exact": panel_to_exact_seconds,
+        "panel_to_preview": panel_to_preview_seconds,
+        "drag_to_exact": drag_to_exact_seconds,
+        "first_drag_preview": drag_preview_seconds[0],
+        "warm_drag_preview": drag_preview_seconds[1],
     }
+    report["appearance_retained_during_update"] = True
     report["appearance_preview_reused_inputs_and_roles"] = True
+    report["appearance_exact_during_drag"] = True
     report["shared_tone_gizmo"] = True
 
     tone_appearance = state().appearance.rgba
@@ -343,6 +383,65 @@ def scenario():
     assert capture_jobs.count("appearance") > appearance_captures
     assert state().status == "current" and state().tone_histogram is tone_histogram
     report["appearance_tone_and_warp"] = True
+
+    tone = shared.pg_grade.pg_tone
+    before_chroma = state().appearance.rgba
+    tone.muted_gain = -2.0
+    tone.shadow_chroma = -2.0
+    tone.tone_crossover = .50
+    yield from wait_for(lambda: appearance_current(before_chroma),
+                        "Shared Shader chroma controls did not refresh final appearance")
+    for field, delta in (("saturation_crossover", (32, 0)), ("tone_crossover", (0, 18))):
+        before_crossover = state().appearance.rgba
+        appearance_captures = capture_jobs.count("appearance")
+        crossover = getattr(tone, field)
+        start = pointer.control_point(field, shared)
+        yield from pointer.press_at(start, field, shared)
+        end = start[0] + delta[0], start[1] + delta[1]
+        pointer.event_at("MOUSEMOVE", "NOTHING", end)
+        yield from wait_for(lambda: getattr(tone, field) > crossover,
+                            f"{field} drag did not change its control")
+        assert getattr(tone, field) > crossover
+        pointer.event_at("LEFTMOUSE", "RELEASE", end)
+        yield from wait_for(lambda: appearance_current(before_crossover),
+                            f"{field} did not publish its exact appearance")
+        assert capture_jobs.count("appearance") > appearance_captures
+        assert capture_jobs.count("input") == input_captures
+        report[field + "_exact_capture"] = True
+
+    previous_appearance = state().appearance.rgba
+    tone.tone_crossover = .20
+    yield from wait_for(
+        lambda: appearance_current(previous_appearance),
+        "Lower tone crossover did not publish its exact appearance",
+    )
+    pointer.appearance_gain_point("highlight_chroma", shared)
+
+    gain_fields = ("muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma")
+    for field in gain_fields:
+        before_gain = pointer.settings(shared).tone
+        before_appearance = state().appearance.rgba
+        appearance_captures = capture_jobs.count("appearance")
+        start = pointer.control_point(field, shared)
+        yield from pointer.press_at(start, field, shared)
+        end = start[0] + 12, start[1]
+        pointer.event_at("MOUSEMOVE", "NOTHING", end)
+        yield from wait_for(
+            lambda: getattr(pointer.settings(shared).tone, field) > getattr(before_gain, field),
+            f"{field} drag did not change its control",
+        )
+        assert getattr(pointer.settings(shared).tone, field) > getattr(before_gain, field)
+        assert all(getattr(pointer.settings(shared).tone, other) == getattr(before_gain, other)
+                   for other in gain_fields if other != field)
+        pointer.event_at("LEFTMOUSE", "RELEASE", end)
+        # A gain can leave the sampled colors in the same density bins.
+        yield from wait_for(
+            lambda: appearance_current() and state().appearance.rgba is not before_appearance,
+            f"{field} did not publish its exact appearance",
+        )
+        assert capture_jobs.count("appearance") > appearance_captures
+        assert capture_jobs.count("input") == input_captures
+        report[field + "_exact_capture"] = True
 
 
 sequence = scenario()

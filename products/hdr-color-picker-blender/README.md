@@ -21,6 +21,8 @@ restart Blender before enabling the new version.
    x′/y′ slice. Release to apply; cancel the drag to keep the brush unchanged.
    Numeric controls edit the preview; **Apply Brush Color** confirms it.
 5. Use White, Black or Brush to restore a preset or inspect the active brush.
+6. Choose **Open Native Preview** to view the current slice and selection in a
+   separate Blender Image Editor. The 3D Viewport remains available for picking.
 
 Brush assignment converts scene-linear ACEScg into Blender's working space and
 preserves values above one. Colors outside the authoring gamut or with negative
@@ -45,11 +47,12 @@ The current Buck2 fitter and report are documented in the core README.
 
 The GPU compute slice validates against the NumPy implementation before use.
 If unavailable, slice calculation runs in the extension's private CPU helper.
-Authoring values remain scene-linear; the preview uses the active scene's OCIO
-view, look, exposure and gamma. Unsupported display settings suppress the
-preview and confirmation. Current validated support is the bundled configuration
-with an SDR sRGB display. HDR **color values** are supported; HDR **display
-output** is not yet validated. See [DISPLAY.md](DISPLAY.md) for exact coverage.
+Authoring values remain scene-linear. The picker follows Blender's bundled
+display devices, views, looks, exposure, gamma and display emulation. The 3D
+Viewport overlay has an SDR range. **Open Native Preview** passes the float
+slice to Blender's Image Editor for native display output, including HDR on
+capable windows. Unsupported OCIO configurations and view settings still
+block preview and confirmation. [Display details](DISPLAY.md)
 
 ## Downstream repo
 
@@ -81,7 +84,7 @@ independent extension lifecycles. Linux uses a private software GPU display.
 macOS/Metal, physical HDR displays and manual painting acceptance remain open.
 Framework policies are handwritten Python checked against owner-local `.inv`
 requirements by the shared verifier. Packaging requires proofs for the shipped
-policies and generated contracts, then checks the final ZIP's exact source
+policy sources, then checks the final ZIP's exact source
 inventory and bytes. Native tests separately cover picker UI behavior and
 Blender interactions; the proofs do not establish Blender's native memory
 management. See

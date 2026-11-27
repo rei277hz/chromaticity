@@ -4,6 +4,7 @@
 
 import asyncio
 from collections import deque
+from concurrent.futures import CancelledError
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 import json
@@ -62,6 +63,7 @@ class _Lane:
     prepare: object
     progressive: bool
     host_owner: Optional[object] = None
+    serial_lock: Optional[asyncio.Lock] = None
 
 
 @dataclass
@@ -72,6 +74,7 @@ class _HostWork:
     on_preview: object
     job: Optional[object] = None
     preview_emitted: bool = False
+    yielding: bool = False
 
 
 @dataclass(eq=False)
@@ -185,11 +188,11 @@ class PreparationRuntime:
                 # Diagnostics must not turn successful work into a Grade error.
                 pass
 
-    def register_async_lane(self, name, prepare_async):
+    def register_async_lane(self, name, prepare_async, *, serial=False):
         """Register an aggregate coroutine executed on the coordinator loop.
 
         The coroutine owns any worker fan-out it needs and must not call Blender
-        APIs. This lane is final-only; host-polled work uses register_polled_lane.
+        APIs. A serial lane runs one distinct signature at a time.
         """
         if not isinstance(name, str) or not name:
             raise ValueError("Preparation lane name must be nonempty")
@@ -201,7 +204,9 @@ class PreparationRuntime:
                 raise RuntimeError("Preparation runtime is closed")
             if name in self._lanes:
                 raise ValueError(f"Preparation lane already exists: {name}")
-            self._lanes[name] = _Lane(prepare_async, False)
+            self._lanes[name] = _Lane(
+                prepare_async, False, serial_lock=asyncio.Lock() if serial else None,
+            )
 
     def register_polled_lane(self, name, owner, *, progressive=False):
         """Register a lane whose transport advances only on the host thread.
@@ -247,6 +252,66 @@ class PreparationRuntime:
                        if self._failure is None else not self._failure_acknowledged)
             with self._host_lock:
                 return pending or bool(self._host_queue or self._host_active)
+
+    def pending_for(self, source):
+        """Report whether the source has preparation or a receipt to consume."""
+        with self._lock:
+            subscription = self._sources.get(source)
+            return (subscription is not None
+                    and (subscription in self._pending
+                         or subscription in self._publications))
+
+    def is_running(self, source):
+        """Report whether this source owns its current preparation lane.
+
+        Ownership begins when the policy admits the request, including a
+        queued host job or a serial async waiter. A replacement request no
+        longer owns the old slot until its signature is admitted.
+        """
+        with self._lock:
+            subscription = self._sources.get(source)
+            if subscription is None or subscription.latest is None:
+                return False
+            record = self._records.get(subscription)
+            signature = None if record is None else record.state.running_signature
+            return signature is not None and signature == subscription.latest.request_signature
+
+    def lane_busy(self, name):
+        """Count submitted demand and physical jobs awaiting retirement."""
+        with self._lock:
+            with self._host_lock:
+                host_busy = (any(work.lane == name for work in self._host_queue)
+                             or (self._host_active is not None
+                                 and self._host_active.lane == name))
+            return (any(source.latest is not None and source.latest.lane == name
+                        for source in self._pending)
+                    or any(job[0] == name for job in self._jobs)
+                    or host_busy)
+
+    def request_yield(self, source):
+        """Request cooperative retirement of this source's active host job."""
+        with self._lock:
+            subscription = self._sources.get(source)
+            if subscription is None or subscription.latest is None:
+                return False
+            signature = subscription.latest.request_signature
+            with self._host_lock:
+                work = self._host_active
+                if (work is None or work.snapshot.request_signature != signature
+                        or work.yielding or work.job is None):
+                    return False
+                cancel = getattr(work.job, "cancel", None)
+                if not callable(cancel):
+                    return False
+                work.yielding = True
+        try:
+            cancel()
+        except Exception:
+            with self._host_lock:
+                if self._host_active is work:
+                    work.yielding = False
+            raise
+        return True
 
     def request(self, source, signature, payload, *, lane=None,
                 progressive=None, playback_session: Optional[int] = None):
@@ -316,7 +381,7 @@ class PreparationRuntime:
             if not self.closed and self._failure is None:
                 self._schedule_locked(subscription)
 
-    def _has_host_demand_locked(self, signature):
+    def _has_demand_locked(self, signature):
         return any(source.latest is not None
                    and source.latest.request_signature == signature
                    for source in self._sources.values())
@@ -327,7 +392,7 @@ class PreparationRuntime:
             discarded = []
             while self._host_queue:
                 work = self._host_queue.popleft()
-                if self._has_host_demand_locked(work.snapshot.request_signature):
+                if self._has_demand_locked(work.snapshot.request_signature):
                     retained.append(work)
                 else:
                     discarded.append(work)
@@ -491,7 +556,15 @@ class PreparationRuntime:
             else:
                 if snapshot.progressive:
                     raise RuntimeError("Async preparation lanes are final-only")
-                prepared = await lane.prepare(snapshot.payload)
+                if lane.serial_lock is None:
+                    prepared = await lane.prepare(snapshot.payload)
+                else:
+                    async with lane.serial_lock:
+                        with self._lock:
+                            self._raise_failure()
+                            if not self._has_demand_locked(snapshot.request_signature):
+                                raise RuntimeError("Queued preparation is no longer demanded")
+                        prepared = await lane.prepare(snapshot.payload)
             result = _WorkResult(job_key, prepared, None, snapshot.playback_session)
             with self._lock:
                 if self._failure is None:
@@ -530,21 +603,36 @@ class PreparationRuntime:
             self._raise_failure()
             if self.closed:
                 raise RuntimeError("Preparation runtime is closed")
-            if not self._has_host_demand_locked(snapshot.request_signature):
+            if not self._has_demand_locked(snapshot.request_signature):
                 raise RuntimeError("Host preparation is no longer demanded")
             with self._host_lock:
                 self._host_queue.append(work)
         return await future
 
-    def pump_main_thread(self):
-        """Advance one authorized host-lane step; callers must be on main thread."""
+    def pump_main_thread(self, sources=None, *, preempt=False):
+        """Advance one host step, optionally starting only selected sources.
+
+        A priority caller may ask an unrelated job to yield once a selected
+        request is queued. Its snapshot stays pending and can restart after
+        the physical writer retires. Jobs without cancellation finish normally.
+        """
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("Host preparation must be pumped on the main thread")
         with self._lock:
             failure = self._failure
+            signatures = (None if sources is None else {
+                subscription.latest.request_signature for source in sources
+                if (subscription := self._sources.get(source)) is not None
+                and subscription.latest is not None
+            })
             with self._host_lock:
-                if self._host_active is None and failure is None and self._host_queue:
-                    self._host_active = self._host_queue.popleft()
+                selected = next((work for work in self._host_queue
+                                 if signatures is None
+                                 or work.snapshot.request_signature in signatures), None)
+                if self._host_active is None and failure is None:
+                    if selected is not None:
+                        self._host_queue.remove(selected)
+                        self._host_active = selected
                 work = self._host_active
         if work is None:
             return False
@@ -553,9 +641,16 @@ class PreparationRuntime:
         try:
             if failure is not None and work.job is None:
                 raise PreparationCoordinatorError(failure)
-            if failure is not None or work.preview_emitted:
+            if (preempt and failure is None and selected is not None
+                    and signatures is not None and not work.yielding
+                    and work.snapshot.request_signature not in signatures):
+                cancel = getattr(work.job, "cancel", None)
+                if callable(cancel):
+                    cancel()
+                    work.yielding = True
+            if (failure is not None or work.preview_emitted) and not work.yielding:
                 with self._lock:
-                    still_demanded = failure is None and self._has_host_demand_locked(
+                    still_demanded = failure is None and self._has_demand_locked(
                         work.snapshot.request_signature
                     )
                 if not still_demanded:
@@ -576,7 +671,7 @@ class PreparationRuntime:
             if quality == "preview":
                 if not work.snapshot.progressive:
                     raise RuntimeError("A final-only host job emitted a preview")
-                if self.failure is None:
+                if not work.yielding and self.failure is None:
                     work.on_preview(prepared)
                 work.preview_emitted = True
                 return True
@@ -590,6 +685,9 @@ class PreparationRuntime:
                     "Host preparation and cleanup both failed",
                     [error, cleanup_error],
                 )
+            if (work.yielding and isinstance(error, CancelledError)
+                    and self._resume_host_work(work)):
+                return True
             self._finish_host_work(work, error=error)
             return True
 
@@ -600,6 +698,17 @@ class PreparationRuntime:
             return True
         self._finish_host_work(work, prepared=prepared)
         return True
+
+    def _resume_host_work(self, work):
+        with self._lock:
+            if (self.closed or self._failure is not None
+                    or not self._has_demand_locked(work.snapshot.request_signature)):
+                return False
+            work.yielding = False
+            work.preview_emitted = False
+            with self._host_lock:
+                self._host_queue.append(work)
+            return True
 
     def _retire_host_job(self, work):
         try:
@@ -734,37 +843,45 @@ class PreparationRuntime:
             if signature not in wanted:
                 del self._prepared[signature]
 
-    def collect(self):
+    def collect(self, sources=None):
         with self._lock:
             self._raise_failure()
             results = []
-            for source, slots in tuple(self._publications.items()):
+            source_filter = None if sources is None else {
+                self._sources[key] for key in dict.fromkeys(sources)
+                if key in self._sources
+            }
+            sources_to_collect = (
+                tuple(self._publications) if source_filter is None else
+                tuple(source for source in self._publications if source in source_filter)
+            )
+            for source in sources_to_collect:
+                slots = self._publications.pop(source)
                 if self._sources.get(source.key) is not source:
                     continue
                 # A current failure revokes output directly, without installing
                 # the successful result that preceded it in the same host turn.
-                selected = slots.get("error") or slots.get("success")
-                if (selected is not None and selected.quality == "preview"
+                publication = slots.get("error") or slots.get("success")
+                if (publication is not None and publication.quality == "preview"
                         and (source.latest is None or not source.latest.progressive)):
                     if self.on_event is not None:
                         self._observe(
                             "preparation_collection_skipped", source_id=id(source.key),
-                            subscription_id=id(source), signature=selected.signature,
-                            lane=selected.lane, quality=selected.quality,
+                            subscription_id=id(source), signature=publication.signature,
+                            lane=publication.lane, quality=publication.quality,
                             reason="preview_no_longer_requested",
                         )
                     continue
-                if selected is not None:
+                if publication is not None:
                     if self.on_event is not None:
                         self._observe(
                             "preparation_collection", source_id=id(source.key),
-                            subscription_id=id(source), signature=selected.signature,
-                            lane=selected.lane, quality=selected.quality,
-                            progressive=selected.progressive,
-                            error=None if selected.error is None else str(selected.error),
+                            subscription_id=id(source), signature=publication.signature,
+                            lane=publication.lane, quality=publication.quality,
+                            progressive=publication.progressive,
+                            error=None if publication.error is None else str(publication.error),
                         )
-                    results.append(selected)
-            self._publications.clear()
+                    results.append(publication)
             return tuple(results)
 
     async def _wait_source(self, source):
@@ -782,6 +899,8 @@ class PreparationRuntime:
         """Join current preparations; never await host-side installation."""
         if asyncio.get_running_loop() is not self.loop:
             raise RuntimeError("Preparation barrier requires its coordinator loop")
+        if sources is not None:
+            sources = tuple(sources)
         with self._lock:
             self._raise_failure()
             selected = tuple(self._sources.values()) if sources is None else tuple(
@@ -789,11 +908,13 @@ class PreparationRuntime:
                 if key in self._sources
             )
         await asyncio.gather(*(self._wait_source(source) for source in selected))
-        return self.collect()
+        return self.collect(sources)
 
-    def wait(self, sources=None):
+    def wait(self, sources=None, *, preempt=False):
         if threading.current_thread() is self._thread:
             raise RuntimeError("The coordinator cannot block on its own preparation")
+        if sources is not None:
+            sources = tuple(sources)
         with self._lock:
             self._raise_failure()
             if self.closed:
@@ -812,7 +933,7 @@ class PreparationRuntime:
             future = asyncio.run_coroutine_threadsafe(self.wait_current(sources), self.loop)
         if threading.current_thread() is threading.main_thread():
             while not future.done():
-                self.pump_main_thread()
+                self.pump_main_thread(sources, preempt=preempt)
                 try:
                     future.result(timeout=0.01)
                 except FutureTimeout:

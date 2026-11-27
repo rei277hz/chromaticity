@@ -1,15 +1,15 @@
 # Color J/C cone prototypes
 
-Adjacent Overlap and Broad Overlap use the shipping cone Color J/C controls.
+Adjacent Overlap and Broad Overlap use the standalone cone Color J/C controls.
 Both spread each slider's influence across Shadows, Midtones, White, and
 Highlights before evaluating the J and C curves. Broad Overlap with Anchor
 Centers adds independent J and C saturation centers at each tonal anchor.
 Linear Gain and Log Gain use the same Broad Overlap weights with two controls
 per anchor, a saturation-preserving J Contrast and a C Gain that fades near gray.
 Global Shape uses continuous lightness and saturation curves with movable pivots.
-The Unified Chroma baseline combines the Tone curve with a single saturation
-curve for muted and vivid gains. The earlier integrated Log Gain and Linear
-Gain variants are available for comparison.
+The standard 2-3A Unified Chroma node combines the Tone curve with a single
+saturation curve for muted and vivid gains. The integrated Log Gain and Linear
+Gain variants have opt-in targets for comparison.
 
 ## Build and install
 
@@ -21,6 +21,7 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_global_shape_proto
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_prototype --show-output
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_linear_gain_prototype --show-output
 buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_chroma_prototype --show-output
+buck2 build --remote-only //products/perceptual-grade-dctl:standalone_tone_jc --show-output
 ```
 
 | Prototype | English filename |
@@ -35,10 +36,10 @@ buck2 build --remote-only //products/perceptual-grade-dctl:jc_tone_fit_unified_c
 | Integrated Tone and J/C Linear Gain | `Perceptual-Grade-2-3A-Cone-Tone-JC-Linear-Gain-Prototype.dctl` |
 | Integrated Tone and J/C Unified Chroma baseline | `Perceptual-Grade-2-3A-Cone-Tone-JC-Unified-Chroma-Prototype.dctl` |
 
-The Simplified Chinese filenames end in `-zh-HANS.dctl`. Use the overlap
-and Global Shape prototypes in the Color J/C position. Integrated Tone and J/C
-replaces both Cone Tone and Color J/C. It follows XYZ Input and precedes Warp
-and XYZ Output. [DCTL installation](README.md#install-and-use)
+The Simplified Chinese filenames end in `-zh-HANS.dctl`. To audition a
+standalone cone variant, place Cone Tone and the variant in place of 2-3A.
+Integrated Tone and J/C variants go directly in the 2-3A position between
+XYZ Input and Warp. [DCTL installation](README.md#install-and-use)
 
 ## Effective amounts
 
@@ -57,11 +58,11 @@ anchors are as follows. These numbers are inputs to the saturation response.
 
 | DCTL | Shadows | Midtones | White | Highlights |
 | --- | ---: | ---: | ---: | ---: |
-| Shipping cone Color J/C | 0 | 1 | 0 | 0 |
+| Standalone cone Color J/C | 0 | 1 | 0 | 0 |
 | Adjacent Overlap | 0.200 | 0.667 | 0.167 | 0 |
 | Broad Overlap | 0.320 | 0.485 | 0.242 | 0.040 |
 
-The shipping C curve already blends neighboring settings between anchors.
+The standalone C curve blends neighboring settings between anchors.
 For a Midtones-only `+1` edit, the amount is `+0.5` halfway from Midtones to
 White and reaches zero at White. The prototypes blend the effective amounts
 over the same interval. The wider reach reduces the peak response to an
@@ -254,11 +255,11 @@ The H-K contribution lets brighter-looking colors receive a different Tone
 gain from grays of equal `J_A`. This is intentional alongside the separate
 C adjustments. XYZ Output performs H-K repair at export.
 
-Forward applies C at the incoming signed lightness and hue, then applies
-Tone. The lightness-dependent chroma gains use that incoming lightness, so
-moving a Tone landmark leaves C Tone Crossover in the same input region.
-Inverse recovers the input tone along the preserved saturation and hue ray
-before undoing C.
+Legacy Log Gain and Linear Gain apply C at the incoming signed lightness and
+hue, then apply Tone. Their tonal chroma gains use that incoming lightness,
+so moving a Tone landmark leaves C Tone Crossover in the same input region.
+Their inverse recovers the input tone along the preserved saturation and hue
+ray before undoing C.
 
 ### Linear Gain audition
 
@@ -293,50 +294,53 @@ crossover, and paired forward/inverse round trips.
 ### Unified Chroma audition
 
 Unified Chroma replaces the serial contrast and end-shaping adjustments with
-one curve based on incoming chroma. The baseline retains the original smooth
-Tone remap with integer Remap Fit from `-2` to `+2` and a default of `0`.
-It applies full H–K Influence (`1.0`) and uses the Linear Gain fade for Shadow
-Chroma and Highlight Chroma.
+one curve based on corrected chroma after Tone. The baseline retains the
+original smooth Tone remap with integer Remap Fit from `-2` to `+2` and a
+default of `0`. Tone applies full H–K Influence (`1.0`). Shadow Chroma and
+Highlight Chroma apply the Linear Gain fade after the unified saturation curve.
 
 | Control | Default and range | Behavior |
 | --- | --- | --- |
-| C Muted Gain | `0` stops, `-2` to `+2` | Set the gain limit for nearly gray colors at nonzero lightness. |
-| C Vivid Gain | `0` stops, `-2` to `+2` | Set the gain limit for highly saturated colors. Its effect builds smoothly with input saturation. |
-| C Saturation Crossover | `0.50`, `0.05` to `0.95` | Set the input saturation where the gain in stops is halfway between Muted and Vivid. |
+| C Muted Gain | `0` stops, `-4` to `+4` | Set the gain limit for nearly gray colors at nonzero lightness. |
+| C Vivid Gain | `0` stops, `-4` to `+4` | Set the gain limit for highly saturated colors. Its effect builds smoothly with saturation after Tone. |
+| C Saturation Crossover | `0.5`, `0` to `0.99` | Select the HDR Color Picker saturation coordinate where gain in stops is halfway between Muted and Vivid. At zero all chromatic samples use Vivid Gain. |
+| Shadow Chroma and Highlight Chroma | `0` stops, `-4` to `+4` | Set the tonal chroma gain below and above C Tone Crossover. The gain fades near gray and toward the crossover. |
+| C Tone Crossover | `0.45`, `0.1` to `1.4` | Select the normalized output-neutral lightness where both tonal chroma gains reach zero. A value of `1` equals neutral `J=100`. |
 
-All three sliders use steps of `0.01`. Let `B = (35/75)|J_A|` and
-`s = C/(C+B)`. At the default crossover `s = 0.50`, input chroma equals
-`B`. The reference model uses that same ratio for equal low and high driver
-weights after Tone. Unified Chroma measures it before Tone. C Tone Crossover
-selects lightness for the separate Shadow and Highlight Chroma adjustments.
-[Reference chroma drivers](../../libraries/perceptual-grade-reference/src/grading.py)
+C Tone Crossover uses steps of `0.001`. The other chroma sliders use
+steps of `0.01`. The compressed saturation coordinate reaches `1` at
+infinite raw saturation. The slider's finite upper limit of `0.99`
+corresponds to raw saturation of about `3.19`.
 
 For Muted and Vivid stops `M` and `V`, set `L = 2^M` and `H = 2^V`.
-For a crossover setting `p`, chroma `K` is where input saturation equals
-`p`. The forward curve blends the two gains once.
+Decode the saturation crossover `u` into the raw ratio `s`. Here `J_A` and
+`C` are the achromatic lightness and chroma after Tone. The numerator in the
+first formula is the fitted picker `K` from `//libraries/hdr-color-picker-core:radius_fit`.
 
 ```text
-K = B*p/(1-p)
+s = (34.09902169100728 / 75) * u / sqrt(1 - u^2)
+K = abs(J_A)*s
 k = K*sqrt(H/L)
 C_out = C*(L*k + H*C)/(k + C)
 ```
 
-At `C = K`, the gain is `sqrt(L*H)`. Equal gains scale chroma uniformly. Equal and
-opposite stops hold the crossover fixed. Raising the crossover increases
-saturation when `M > V` and decreases it when `V > M`, for chromatic
-samples at nonzero lightness. With `B = 35`, `C = 70` and crossover `0.50`,
-Muted Gain `-1` gives `C_out` of `55.50` at Vivid Gain `0` and `87.50` at
-Vivid Gain `+1`, before tonal chroma and Tone.
+At `K > 0` and `C = K`, the gain is `sqrt(L*H)`. Equal gains scale chroma
+uniformly. Equal and opposite stops hold the crossover fixed. Raising the
+crossover increases saturation when `M > V` and decreases it when `V > M`
+for chromatic samples at nonzero lightness. The default crossover of `0.5`
+selects chroma of approximately `0.2625 * abs(J_A)`.
 
-Exact gray stays gray. At nonzero lightness, the near-gray gain approaches
-`L`, so Muted Gain also affects faintly colored pixels. At zero lightness, a
-chromatic sample receives `H*C`. For `k > 0`, the slope of the curve is
+Exact gray stays gray. At nonzero lightness and positive crossover, the
+near-gray gain approaches `L`, so Muted Gain also affects faintly colored
+pixels. At zero lightness or zero crossover, a chromatic sample receives
+`H*C`. For `k > 0`, the slope of the curve is
 `(L*k^2 + 2*H*k*C + H*C^2)/(k+C)^2 > 0` throughout the chroma range.
 Given output chroma `Y > 0`, the quadratic
 `H*C^2 + (L*k - Y)*C - k*Y = 0` has one positive root. The DCTL evaluates
 it with the stable Linear Gain inverse using output `Y/L`, knee `k`, and
-relative gain `H/L`. Inverse recovers input lightness with the Tone solve
-and undoes tonal chroma gain before undoing the unified curve.
+relative gain `H/L`. Inverse undoes tonal gain, then the unified saturation
+curve at the corrected lightness. It then recovers the input lightness
+with the Tone solve.
 
 Build the English and Simplified Chinese DCTLs with
 
@@ -348,7 +352,7 @@ Compare Unified Chroma and integrated Linear Gain on the same muted-to-vivid
 ramp and skin shot, with matching Tone settings, full H–K Influence, and tonal
 chroma at reset.
 Set Muted Gain to `-1` and sweep Vivid Gain from `0` to `+1`. At `+1`, sweep
-C Saturation Crossover from `0.05` to `0.95`, then swap the endpoint gains
+C Saturation Crossover from `0` to `0.99`, then swap the endpoint gains
 and confirm that the sweep reverses. Check matching Forward and Inverse nodes
 with Tone and both tonal chroma gains active on signed HDR material before
 export. Record the accepted controls and curve in Resolve before implementing
@@ -364,9 +368,9 @@ them in `libraries/perceptual-grade-reference` and then propagating them to
 | Black Compression | Compare separation near black and the placement of source-nit landmarks | Medium. The compression law can change if it stays invertible and applies to samples and landmarks together. |
 | Tonal chroma gain | Compare log-gain and Linear Gain between gray and their full-stop endpoints | Medium. Endpoint fades stay fixed while the midrange response changes. |
 | Unified saturation gains | Compare Vivid's reach on moderate colors and Muted's effect near gray | High. Slider limits and default crossover can be tuned. |
-| Unified saturation blend | Check the ordered crossover sweep and whether opposite stops hold the intended input saturation | Medium. A different blend needs to preserve positive slopes, the crossover behavior, and the closed-form inverse. |
-| C selector at input tone | Move the Tone landmarks while keeping C Tone Crossover fixed | Low. Changing the selector would change which input colors receive each gain and how the inverse recovers it. |
-| H-K and C interaction | Compare bright color separation at full H-K Influence with the C controls at reset and then active | The C curve shapes incoming chroma before the fixed full H-K Tone gain. |
+| Unified saturation blend | Check the ordered crossover sweep and whether opposite stops hold the selected corrected saturation | Medium. A different blend needs to preserve positive slopes, the crossover behavior, and the closed-form inverse. |
+| C selector at output tone | Move the Tone landmarks while keeping C Tone Crossover fixed | The crossover stays at the selected normalized output-neutral lightness. |
+| H-K and C interaction | Compare bright color separation at full H-K Influence with the C controls at reset and then active | The chroma curves operate on the result of the H–K Tone remap. |
 
 1. Match the source-nit landmarks, Remap Fit, and Peak Nits in the integrated
    node and a standalone Cone Tone on parallel branches. At zero Black
@@ -395,7 +399,7 @@ them in `libraries/perceptual-grade-reference` and then propagating them to
 | Tonal C Gain near gray | Whether a softly colored neutral stays close enough to gray when a vivid patch gains chroma at the same tone | High. The half-weight point can move. The curve must stay increasing over the full slider range. |
 | Linear or log-like C gain | Compare the multipliers in the table on the same muted-to-vivid ramp | High. Both variants share controls, tonal weights, and near-gray protection. |
 
-1. Compare shipping Color J/C, Adjacent Overlap, and Broad Overlap on the
+1. Compare standalone Color J/C, Adjacent Overlap, and Broad Overlap on the
    same skin shot, muted-to-vivid ramp, and colored lightness ramp. Use
    identical XYZ Input and XYZ Output nodes, Tone settings, and Peak Nits.
 2. Set Midtones C Contrast to `+1` with the other controls at reset. Compare

@@ -5,8 +5,9 @@ import unittest
 from tests.support import oracle
 from tests.support.dctl import (
     ALL_STAGES, ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES, LOCALES,
-    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
-    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES, WARP_QUADRATIC_SCALE_PROTOTYPES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, STANDALONE_STAGES, SURFACE_PROTOTYPES,
+    TONE_FIT_LINEAR_GAIN_PROTOTYPES, TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
+    WARP_QUADRATIC_SCALE_PROTOTYPES,
     body, controls, entry, filename,
 )
 
@@ -20,16 +21,29 @@ CENTER = {f"tone{tone}Adaptance{axis}" for tone in "SMWH" for axis in "AB"}
 
 
 class InterfaceTests(unittest.TestCase):
-    def test_product_contains_exactly_six_stages_per_locale(self):
-        self.assertEqual(tuple(STAGES), ("linear", "input", "tone", "jc", "warp", "output"))
+    def test_product_contains_exactly_five_stages_per_locale(self):
+        self.assertEqual(tuple(STAGES), ("linear", "input", "tone_jc", "warp", "output"))
         expected = {filename(stage, locale) for stage in STAGES for locale in LOCALES}
         self.assertEqual({path.name for path in oracle.STAGE_DIR.iterdir()}, expected)
+
+    def test_standalone_tone_and_jc_are_opt_in_artifacts(self):
+        expected = {filename(stage, locale) for stage in STANDALONE_STAGES for locale in LOCALES}
+        self.assertEqual({path.name for path in oracle.STANDALONE_DIR.iterdir()}, expected)
+
+    def test_standard_unified_node_matches_opt_in_prototype_in_both_locales(self):
+        for locale in LOCALES:
+            with self.subTest(locale=locale):
+                standard = oracle.source("tone_jc", locale)
+                prototype = oracle.source("jc_tone_fit_unified_chroma", locale)
+                self.assertEqual(body(standard), body(prototype))
+                self.assertEqual(entry(standard), entry(prototype))
+                self.assertEqual(controls(standard), controls(prototype))
 
     def test_prototype_artifact_contains_exactly_three_choices_per_locale(self):
         expected = {filename(stage, locale) for stage in PROTOTYPES for locale in LOCALES}
         self.assertEqual({path.name for path in oracle.PROTOTYPE_DIR.iterdir()}, expected)
 
-    def test_overlap_artifacts_have_the_shipping_jc_controls(self):
+    def test_overlap_artifacts_have_the_standalone_jc_controls(self):
         expected = {filename(stage, locale) for stage in OVERLAP_PROTOTYPES for locale in LOCALES}
         self.assertEqual({path.name for path in oracle.OVERLAP_DIR.iterdir()}, expected)
         for stage in OVERLAP_PROTOTYPES:
@@ -146,18 +160,22 @@ class InterfaceTests(unittest.TestCase):
                     self.assertLessEqual(sum(item["type"] == "DCTLUI_SLIDER_FLOAT" for item in ui), 64)
 
     def test_unified_chroma_replaces_both_saturation_adjustments(self):
-        stage = "jc_tone_fit_unified_chroma"
         self.assertEqual({path.name for path in oracle.TONE_FIT_UNIFIED_CHROMA_DIR.iterdir()},
-                         {filename(stage, locale) for locale in LOCALES})
-        limits = {"cMutedGain": (0., -2., 2.), "cVividGain": (0., -2., 2.),
-                  "cSaturationCrossover": (.5, .05, .95)}
+                         {filename(stage, locale) for stage in TONE_FIT_UNIFIED_CHROMA_PROTOTYPES
+                          for locale in LOCALES})
+        stops = (0., -4., 4., .01)
+        limits = {"cMutedGain": stops, "cVividGain": stops,
+                  "cSaturationCrossover": (.5, 0., .99, .01),
+                  "shadowChroma": stops, "highlightChroma": stops,
+                  "cToneCrossover": (.45, .1, 1.4, .001)}
         for locale in LOCALES:
             with self.subTest(locale=locale):
                 baseline = controls(oracle.source("jc_tone_fit_linear_gain", locale))
-                removed = {"cContrast", "cPivot", "cMuted", "cVivid", "hkInfluence", "remapFit"}
+                removed = {"cContrast", "cPivot", "cMuted", "cVivid", "hkInfluence", "remapFit",
+                           "shadowChroma", "highlightChroma", "cToneCrossover"}
                 shared = [item for item in baseline if item["name"] not in removed]
                 self.assertEqual(next(item for item in baseline if item["name"] == "remapFit")["max"], 6.)
-                records = controls(oracle.source(stage, locale))
+                records = controls(oracle.source("tone_jc", locale))
                 overlay = next(item for item in records if item["name"] == "showToneCurve")
                 self.assertEqual((overlay["type"], overlay["default"]), ("DCTLUI_CHECK_BOX", 0))
                 fit = next(item for item in records if item["name"] == "remapFit")
@@ -169,7 +187,7 @@ class InterfaceTests(unittest.TestCase):
                 self.assertEqual(list(adjustment), list(limits))
                 for name, item in adjustment.items():
                     self.assertEqual(tuple(item[key] for key in ("type", "default", "min", "max", "step")),
-                                     ("DCTLUI_SLIDER_FLOAT", *limits[name], .01))
+                                     ("DCTLUI_SLIDER_FLOAT", *limits[name]))
 
     def test_locales_match_numerically_and_declare_unique_translated_controls(self):
         for stage in ALL_STAGES:
@@ -207,7 +225,7 @@ class InterfaceTests(unittest.TestCase):
                     self.assertRegex(entry(source), r"\breturn\s+make_float3\(")
 
     def test_hk_repair_is_only_bundled_into_xyz_output(self):
-        for stage in (*STAGES, *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
+        for stage in (*STAGES, *STANDALONE_STAGES, *OVERLAP_PROTOTYPES, *ANCHOR_CENTER_PROTOTYPES, *GAIN_PROTOTYPES,
                       *GLOBAL_SHAPE_PROTOTYPES, *TONE_FIT_PROTOTYPES, *TONE_FIT_LINEAR_GAIN_PROTOTYPES,
                       *TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
                       *WARP_QUADRATIC_SCALE_PROTOTYPES):
@@ -218,16 +236,33 @@ class InterfaceTests(unittest.TestCase):
         expected = {
             "linear": {"srcWhite", "globalExposure", "srcX", "srcY", "le", "be", "ls", "bs", "la", "ba"},
             "input": set(),
-            "tone": {"inputBlack", "inputShadows", "inputMidtones", "inputWhite", "inputHighlights",
-                     "remapFit", "peakNits"},
-            "jc": J_C | SHAPE | {"globalChromaGain", "peakNits", "direction"},
+            "tone_jc": {"blackCompression", "inputShadows", "inputMidtones", "inputWhite",
+                        "inputHighlights", "remapFit", "peakNits", "cMutedGain", "cVividGain",
+                        "cSaturationCrossover", "shadowChroma", "highlightChroma", "cToneCrossover",
+                        "direction", "showToneCurve"},
             "warp": WEB | CENTER | {"adaptanceHalfSaturation", "peakNits", "direction"},
-            "output": set(),
+            "output": {"subtractiveDensity", "densityPivot", "saturationCompression", "saturationKnee",
+                       "saturationCeiling"},
         }
         for stage in STAGES:
             with self.subTest(stage=stage):
                 records = {item["name"]: item for item in oracle.ui(stage)}
                 self.assertEqual(records.keys(), expected[stage])
+                if stage == "output":
+                    toggle = records["saturationCompression"]
+                    self.assertEqual((toggle["type"], toggle["default"]), ("DCTLUI_CHECK_BOX", 0))
+                    for name, default, minimum, maximum in (("subtractiveDensity", 0., 0., .6),
+                                                            ("densityPivot", .5, .05, 8.),
+                                                            ("saturationKnee", .5, 0., 8.),
+                                                            ("saturationCeiling", 1., 0., 8.)):
+                        fields = ("type", "default", "min", "max", "step")
+                        self.assertEqual(tuple(records[name][key] for key in fields),
+                                         ("DCTLUI_SLIDER_FLOAT", default, minimum, maximum, .01))
+                    self.assertEqual(records["subtractiveDensity"]["label"], "Subtractive Density")
+                    self.assertEqual(records["densityPivot"]["label"], "Density Pivot")
+                    translated = {item["name"]: item["label"] for item in controls(oracle.source(stage, "zh_HANS"))}
+                    self.assertEqual(translated["subtractiveDensity"], "减色法密度")
+                    self.assertEqual(translated["densityPivot"], "密度饱和度中点")
                 self.assertLessEqual(sum(i["type"] == "DCTLUI_SLIDER_FLOAT" for i in records.values()), 64)
                 if "peakNits" in records:
                     self.assertEqual(records["peakNits"]["default"], 1)
@@ -237,6 +272,16 @@ class InterfaceTests(unittest.TestCase):
                     self.assertEqual(records["direction"]["type"], "DCTLUI_COMBO_BOX")
                     self.assertEqual(records["direction"]["default"], 0)
                     self.assertEqual(records["direction"]["options"][1], ["Forward", "Inverse"])
+
+        standalone = {
+            "tone": {"inputBlack", "inputShadows", "inputMidtones", "inputWhite", "inputHighlights",
+                     "remapFit", "peakNits"},
+            "jc": J_C | SHAPE | {"globalChromaGain", "peakNits", "direction"},
+        }
+        for stage, names in standalone.items():
+            with self.subTest(stage=stage):
+                records = {item["name"] for item in oracle.ui(stage)}
+                self.assertEqual(records, names)
 
         jc = {item["name"]: item for item in oracle.ui("jc")}
         surface = {item["name"]: item for item in oracle.ui("surface")}

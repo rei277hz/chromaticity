@@ -2,8 +2,8 @@
 
 ## Original Unified Chroma and Warp
 
-Field layout schema 7 and parameter schema 5 pack Stage 2's Original Unified
-Chroma parameters into the 512 × 1 RGBA32F scalar/Tone image. Stage 3 uses
+Field layout schema 7 and parameter schema 6 pack Stage 2's Unified Chroma
+parameters into the 512 × 1 RGBA32F scalar/Tone image. Stage 3 uses
 three field images for Web parameters, Web toes, and Compact Adaptance. A
 complete bank is 3,179,152 bytes. The two banks use 6,358,304 bytes, excluding
 the shared output-boundary image. The Warp geometry and pre-Scale H–K repair
@@ -157,7 +157,8 @@ passes **86 test methods across nine Buck2 targets**: 40 layout, 30 tool and
 16 native/persistent/gate-policy methods.
 
 The preceding schema-4 generation, complete-preparation and prepared-edit
-timings remain historical measurements; they do not measure schema 5 or 6.
+timings remain historical measurements; they do not measure parameter schema 6
+or Stack composition schema 5.
 Accuracy-run durations are not performance evidence.
 
 ## Historical schema-4 sensitivity and Compact-only timing
@@ -346,11 +347,21 @@ Linear supports exposure, source white, reference-convention balance, spread,
 heading and an authoritative XYZ matrix override. The context is D65/203 nits,
 with scene endpoints in Linear Rec.709, Linear Rec.2020 or Bradford-adapted ACEScg.
 The appearance encoder retains signed energy and stable opponent differences.
-Stage 2 adjusts chroma radially with Original Unified Chroma, then applies the
-original softplus Tone curve with Black Compression and fixed H–K influence of
-1.0. The curve uses the Quintic 256 coefficient field and continuous Fit from
+Stage 2 applies the softplus Tone curve with Black Compression and fixed H–K
+influence of 1.0, then adjusts chroma radially with Unified Chroma. The curve
+uses the Quintic 256 coefficient field and continuous Fit from
 `-2` to `2`. Exact reset bypasses Stage 2 computation. Persistent graphs retain
 the initialized parameter image and nodes.
+
+Saturation Crossover sets the compressed coordinate `u` from `0` to `0.99`,
+defaulting to `0.5`. Decode it to the ratio `s = k*u/sqrt(1-u²)`, where
+`k = 34.09902169100728/75`. The numerator is the fitted `K` from
+`//libraries/hdr-color-picker-core:radius_fit`. For Muted and Vivid gains `L`
+and `H` in linear units, the radial knee is `|J_A| * s * sqrt(H/L)`. This places the gain midpoint
+in stops at the selected saturation. A zero knee gives gain `H` for all
+chromatic inputs. The subsequent tonal gain uses post-Tone `|J_A|/100` with a
+crossover from `0.1` to `1.4` and retains its near-gray fade knee of
+`(35/75) * |J_A| / 9`.
 
 Stage 3 applies the six-handle tonal Web, selective Adaptance, and Web final
 scale. Its tonal selectors use the post-Tone state. Signed energy is carried
@@ -455,11 +466,10 @@ not pass through unchanged.
 for the old UI must negate its convention. `matrix` replaces the derived XYZ
 transform and may be singular. `ToneSettings` has four `input_nits` for
 Shadows, Midtones, White and Highlights, plus `fit`, `reference_nits` and
-`peak_nits`. Black Compression is a separate reversible control. Stage 2
-applies the Original Unified Chroma radial maps at input `|J_A|` before the
-full H-K Tone curve. Grade Stack inversion solves the scalar Tone curve by
-bisection and uses the closed-form inverses for Black Compression and the two
-chroma maps.
+`peak_nits`. Black Compression is a separate reversible control. After
+reconstructing the pre-Warp state, Grade Stack inversion undoes the two
+Unified Chroma maps analytically at the Tone output's `|J_A|`. It then solves
+the scalar Tone curve by bisection and analytically inverts Black Compression.
 
 `project_source_white` moves an xy pair to the nearest CAT16-positive point.
 `project_source_white_component(point, axis)` clamps one coordinate while

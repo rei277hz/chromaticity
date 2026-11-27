@@ -20,12 +20,14 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_gesture_undo.perceptual_grade")
+application = importlib.import_module(extension.__name__ + ".application")
 nodes = importlib.import_module("bl_ext.pg_gesture_undo.perceptual_grade.features.grade.host")
 errors = []
 assert addon_utils.enable(
     extension.__name__, default_set=False, handle_error=errors.append
 ) is extension
 assert not errors, errors
+runtime = application._runtime
 
 bpy.context.preferences.edit.use_global_undo = True
 bpy.context.preferences.view.show_splash = False
@@ -104,6 +106,16 @@ def assert_pending_pool():
     pooled = fallback_groups()
     assert len(pooled) == 1, [(item.name, item.users) for item in pooled]
     assert pooled[0] == tree
+    assert_acyclic_groups()
+
+
+def assert_pending_retained():
+    tree = bpy.data.node_groups.get(pending_name)
+    assert tree is not None and tree.use_fake_user
+    assert tree.bl_idname == nodes.SHADER_TREE
+    assert nodes.validate_fallback_instance(tree, "pending")
+    assert (tree.as_pointer(), int(tree.session_uid)) == pending_identity
+    assert fallback_groups() == (tree,)
     assert_acyclic_groups()
 
 
@@ -247,24 +259,36 @@ assert (color.adaptance_a_1, color.adaptance_b_1) == (0.0, 0.0)
 del color
 
 # Scripted undo leaves reconciliation queued until Blender returns to its event loop.
-assert nodes._undo_redo_reconcile_tick() is None
+assert runtime.scheduler.has(nodes._LIFECYCLE_TASK)
+deadline = time.monotonic() + 30
+while runtime.scheduler.has(nodes._LIFECYCLE_TASK) and time.monotonic() < deadline:
+    runtime._scheduler_tick()
+    time.sleep(.01)
 assert not nodes._lifecycle.reset_pending
 
 # Reconciliation is idempotent, and independent nodes share the same immutable
 # fallback. Removing either reader must preserve the ID held by undo history.
 node = current_node()
+assert nodes.node_policy.output_allowed(nodes._record_for(node)["state"])
+current_kernel = node.node_tree
 for _ in range(8):
     assert not nodes._refresh_nodes((node,))
-    assert_pending_pool()
+    assert node.node_tree == current_kernel
+    assert_pending_retained()
 pool_checks["repeated_reconciliation"] = True
 tree = node.id_data
 peer = nodes.create_node(tree)
-assert peer.node_tree == node.node_tree
 peer.pg_grade = node.pg_grade
+deadline = time.monotonic() + 30
+while not nodes._node_kernel_current(peer) and time.monotonic() < deadline:
+    runtime._scheduler_tick()
+    time.sleep(.01)
+assert nodes._node_kernel_current(peer)
 assert peer.node_tree == node.node_tree
 tree.nodes.remove(peer)
 del peer, tree, node
-assert_pending_pool()
+assert current_node().node_tree == current_kernel
+assert_pending_retained()
 pool_checks["shared_readers_and_removal"] = True
 
 # Publishing a full kernel must retain the old fallback even with no native
@@ -289,7 +313,7 @@ reconcile_deadline = time.monotonic() + 30
 
 def finish_after_undo_reconcile():
     # Undo recovery and preparation need event-loop time before shutdown.
-    reconcile_pending = bpy.app.timers.is_registered(nodes._undo_redo_reconcile_tick)
+    reconcile_pending = runtime.scheduler.has(nodes._LIFECYCLE_TASK)
     state = nodes._record_for(current_node())["state"]
     ready = nodes.node_policy.output_allowed(state)
     if reconcile_pending or not ready:

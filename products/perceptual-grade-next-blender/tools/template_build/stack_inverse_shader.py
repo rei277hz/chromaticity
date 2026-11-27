@@ -37,6 +37,17 @@ vec3 stack_undo_tone(vec3 point) {
     vec4 gains = texelFetch(grade_parameters, ivec2(stack_chroma_gain_slot, grade_index), 0);
     vec4 controls = texelFetch(grade_parameters, ivec2(stack_chroma_tone_slot, grade_index), 0);
     float chroma = length(point.yz);
+    if (gains.w != 0.0 && chroma != 0.0) {
+        float j = abs(point.x);
+        float base = (35.0 / 75.0) * j;
+        float offset = j / controls.z - 1.0;
+        float t = min(abs(offset), 1.0);
+        float tonal = exp2((offset < 0.0 ? controls.x : controls.y) * t * t * (3.0 - 2.0 * t));
+        float gain = stack_inverse_radial_gain(chroma, base / 9.0, 1.0, tonal);
+        gain *= stack_inverse_radial_gain(chroma * gain, base * gains.z, gains.x, gains.y);
+        point.yz *= gain;
+        chroma *= gain;
+    }
     float chroma_term = 66.0 * chroma;
     float desired = length(vec2(point.x, sqrt(chroma_term)));
     if (desired == 0.0) return point;
@@ -66,17 +77,6 @@ vec3 stack_undo_tone(vec3 point) {
             float j = point.x / desired;
             point *= safe_divide(2.0 * ratio * ratio, length(vec2(c, 2.0 * j * ratio)) + c);
         }
-    }
-    if (gains.w != 0.0 && chroma != 0.0) {
-        float j = abs(point.x);
-        float base = (35.0 / 75.0) * j;
-        float offset = j / controls.z - 1.0;
-        float t = min(abs(offset), 1.0);
-        float tonal = exp2((offset < 0.0 ? controls.x : controls.y) * t * t * (3.0 - 2.0 * t));
-        chroma = length(point.yz);
-        float gain = stack_inverse_radial_gain(chroma, base / 9.0, 1.0, tonal);
-        gain *= stack_inverse_radial_gain(chroma * gain, base * gains.z, gains.x, gains.y);
-        point.yz *= gain;
     }
     return point;
 }
@@ -109,10 +109,13 @@ vec3 stack_normal_step(vec4 j[3], vec4 residual, float damping) {
 vec3 stack_inverse_fit(vec3 seed, vec4 target, vec4 weights) {
     vec3 scale = max(vec3(abs(seed.x), length(seed.yz), length(seed.yz)),
                      vec3(0.25));
-    // Chroma can expand before Tone. The largest reachable H-K height bounds
-    // both the achromatic coordinate and chroma at the input to Warp.
+    // Tone bounds achromatic lightness and the chroma before gain. Chroma
+    // can then expand while the achromatic coordinate stays fixed.
     float height = stack_tone_magnitude(stack_max_magnitude);
-    float c = height * height / 66.0;
+    vec4 gains = texelFetch(grade_parameters, ivec2(stack_chroma_gain_slot, grade_index), 0);
+    vec4 controls = texelFetch(grade_parameters, ivec2(stack_chroma_tone_slot, grade_index), 0);
+    float max_gain = max(gains.x, gains.y) * exp2(max(0.0, max(controls.x, controls.y)));
+    float c = (height * height / 66.0) * max_gain;
     vec3 bound = vec3(height, c, c) / scale;
     vec3 x = clamp(seed / scale, -bound, bound);
     vec4 r = stack_inverse_residual(x, scale, target, weights);

@@ -41,7 +41,7 @@ class ViewportTests(unittest.TestCase):
             process = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, text=True, start_new_session=True)
             try:
-                output, _ = process.communicate(timeout=180)
+                output, _ = process.communicate(timeout=960)
             finally:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
@@ -51,5 +51,15 @@ class ViewportTests(unittest.TestCase):
             details = output + '\n' + json.dumps(data, indent=2)
             self.assertEqual(process.returncode, 0, details)
             self.assertTrue(data.get('passed'), details)
-            self.assertEqual(len(data['cases']), 12, details)
-            print('Native viewport display acceptance:', json.dumps(data, sort_keys=True), flush=True)
+            counts = {'sRGB': 9}
+            if tuple(data['blender']) >= (5, 3, 0):
+                counts.update({'Display P3': 6, 'Rec.1886': 6, 'Rec.2020': 6,
+                               'Rec.2100-PQ': 14, 'Rec.2100-HLG': 9})
+            for working in ('ACEScg', 'Linear Rec.709'):
+                for emulation in ('OFF', 'AUTO'):
+                    cases = [case for case in data['cases']
+                             if case['working_space'] == working and case['emulation'] == emulation]
+                    coverage = {device: len({case['view'] for case in cases if case['device'] == device})
+                                for device in {case['device'] for case in cases}}
+                    self.assertEqual(coverage, counts, details)
+            print(f'Compared {len(data["cases"])} overlay and native Image Editor cases', flush=True)

@@ -32,6 +32,21 @@ class Job:
         self.cancel_calls += 1
 
 
+class PauseJob(Job):
+    def __init__(self, inputs):
+        super().__init__(inputs)
+        self.cancelled = False
+
+    def advance(self):
+        if self.cancelled:
+            return CancelledError("cooperative pause")
+        return super().advance()
+
+    def cancel(self):
+        super().cancel()
+        self.cancelled = True
+
+
 class Backend:
     def __init__(self):
         self.jobs = []
@@ -317,6 +332,98 @@ class BakeManagerTests(unittest.TestCase):
         self.assertEqual(len(self.backend.jobs), 2)
         self.complete()
         self.assertEqual(self.events, ["publish", "activate", "publish", "activate"])
+
+    def test_deferred_snapshot_waits_for_grade_prerequisite_and_advances_by_phase(self):
+        node = self.node(1)
+        ready = False
+        checks = []
+
+        def prepare(_node, upstream):
+            checks.append(tuple(upstream))
+            return ready
+
+        entry = self.manager.request(
+            node,
+            {"request_signature": "source-1"},
+            lambda *_args: self.events.append("publish"),
+            self.current,
+            prepare_kernels=prepare,
+            defer_snapshot=True,
+            upstream_grades=("grade",),
+        )
+        self.assertIsNone(entry["root"])
+        self.assertTrue(self.manager.poll(one_phase=True))
+        self.assertIsNone(entry["root"])
+        self.assertEqual(checks, [("grade",)])
+
+        ready = True
+        self.manager.poll(one_phase=True)
+        self.assertIsNone(entry["root"])
+        self.manager.poll(one_phase=True)
+        self.assertTrue(entry["root"].is_dir())
+        self.assertFalse(self.backend.jobs)
+        self.manager.poll(one_phase=True)
+        self.assertEqual(len(self.backend.jobs), 1)
+        self.assertIs(self.manager.active, entry)
+
+    def test_plot_preemption_restarts_only_after_helper_retires(self):
+        backend = Backend()
+        backend.create_job = lambda inputs: self._pause_job(inputs, backend)
+        manager = self.module.BakeManager(
+            freeze_snapshot=self.manager.freeze_snapshot,
+            create_job=backend.create_job,
+        )
+        node = self.node(1)
+        entry = manager.request(
+            node,
+            {"request_signature": "source-1"},
+            lambda *_args: self.events.append("publish"),
+            self.current,
+        )
+        manager.poll()
+        original_root = entry["root"]
+        original_job = manager.active["job"]
+        self.assertTrue(manager.pause())
+        self.assertEqual(entry["state"].phase, "pausing")
+        self.assertTrue(manager.poll(one_phase=True))
+        self.assertIsNone(manager.active)
+        self.assertEqual(entry["state"].phase, "queued")
+        self.assertTrue(original_root.is_dir())
+        self.assertFalse((original_root / "bake.exr").exists())
+
+        manager.poll(one_phase=True)
+        self.assertIs(manager.active, entry)
+        self.assertIsNot(manager.active["job"], original_job)
+        self.assertEqual(len(backend.jobs), 2)
+
+    def _pause_job(self, inputs, backend):
+        job = PauseJob(inputs)
+        backend.jobs.append(job)
+        return job
+
+    def test_grade_change_during_pause_discards_instead_of_resuming(self):
+        backend = Backend()
+        backend.create_job = lambda inputs: self._pause_job(inputs, backend)
+        manager = self.module.BakeManager(
+            freeze_snapshot=self.manager.freeze_snapshot,
+            create_job=backend.create_job,
+        )
+        node = self.node(1)
+        entry = manager.request(
+            node,
+            {"request_signature": "source-1"},
+            lambda *_args: self.events.append("publish"),
+            self.current,
+        )
+        manager.poll()
+        manager.pause()
+        self.signatures[1] = "source-2"
+        manager.invalidate(node, "source-2")
+        self.assertEqual(entry["state"].phase, "cancelling")
+        manager.poll(one_phase=True)
+        self.assertNotIn(1, manager.jobs)
+        self.assertFalse(entry["root"].exists())
+        self.assertFalse(self.events)
 
     def test_stale_active_keeps_artifacts_until_receipt_and_stale_queue_is_removed(self):
         first = self.node(1)

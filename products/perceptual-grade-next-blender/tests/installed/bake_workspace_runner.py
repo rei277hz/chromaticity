@@ -18,6 +18,7 @@ bpy.context.preferences.extensions.repos.new(
     custom_directory=str(repository),
 )
 extension = importlib.import_module("bl_ext.pg_workspace_bake.perceptual_grade")
+application = importlib.import_module("bl_ext.pg_workspace_bake.perceptual_grade.application")
 nodes = importlib.import_module("bl_ext.pg_workspace_bake.perceptual_grade.features.grade.host")
 errors = []
 assert addon_utils.enable(extension.__name__, default_set=False,
@@ -28,7 +29,7 @@ assert not errors, errors
 def wait_ready(node):
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
-        nodes._preparation_tick()
+        application._runtime._scheduler_tick()
         state = nodes._record_for(node)["state"]
         if (state.error is None and nodes.node_policy.output_allowed(state)
                 and state.applied_quality == "full"
@@ -43,7 +44,7 @@ def wait_ready(node):
 def wait_bake(node):
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
-        nodes._bake_tick()
+        application._runtime._scheduler_tick()
         manager = nodes._bake.manager
         if manager is None or manager._node_key(node) not in manager.jobs:
             return

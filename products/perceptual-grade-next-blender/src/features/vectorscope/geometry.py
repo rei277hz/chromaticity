@@ -8,14 +8,17 @@ from functools import lru_cache
 import math
 
 from ...kernel.prepare import prepare_tone
+from ...kernel.settings import TONE_CHROMA_LIMITS
+from . import appearance_scope
 from .analysis import CHROMA_LIMIT, color_bar_targets
-from .tone_scope import PLOT_MAX
+from .tone_scope import peak_j as tone_peak_j
 
 
 _TARGETS = {label: (cb, cr) for label, cb, cr in color_bar_targets()}
-AXIS_LABELS = {"cr": "R", "yb": "B"}
-SLIDER_RANGES = {"exposure": (-6., 6.), "cr_balance": (-2., 2.),
-                 "yb_balance": (-2., 2.), "fit": (-2., 2.)}
+HANDLE_AXES = {"R": "cr", "C": "cr", "B": "yb", "Y": "yb"}
+BALANCE_SIGNS = {"R": 1., "C": -1., "B": 1., "Y": -1.}
+SLIDER_RANGES = {"exposure": (-6., 6.), "fit": (-2., 2.)}
+BALANCE_RANGE = (-2., 2.)
 DEFAULT_LINEAR_SIZE = 300.
 DEFAULT_TONE_SIZE = (500., 340.)
 MIN_LINEAR_SIZE = 160.
@@ -23,6 +26,17 @@ MAX_LINEAR_SIZE = 900.
 MIN_TONE_SIZE = (280., 232.)
 MAX_TONE_SIZE = (1200., 900.)
 _RESIZE_GRIP = 8.
+CROSSOVER_HANDLE_RADIUS = 4.
+_CROSSOVER_HIT_RADIUS = CROSSOVER_HANDLE_RADIUS + 1.
+_CROSSOVER_MIN, _CROSSOVER_MAX = TONE_CHROMA_LIMITS["saturation_crossover"]
+_TONE_CROSSOVER_MIN, _TONE_CROSSOVER_MAX = TONE_CHROMA_LIMITS["tone_crossover"]
+APPEARANCE_GAIN_FIELDS = frozenset((
+    "muted_gain", "vivid_gain", "shadow_chroma", "highlight_chroma",
+))
+_APPEARANCE_EDGE_FRACTION = .12
+_LINEAR_HANDLE_HIT_RADIUS = 7.
+_BALANCE_RAIL_WIDTH = 12.
+_BALANCE_RAIL_HEIGHT = 80.
 
 
 def _rect(x, y, width, height):
@@ -53,9 +67,120 @@ def tone_model(tone):
     return prepare_tone(tone)
 
 
-def curve_point(rect, source, target):
+def curve_point(rect, source, target, peak_j):
     x, y, width, height = rect
-    return x + source / PLOT_MAX * width, y + min(1., max(0., target / PLOT_MAX)) * height
+    return (x + min(1., max(0., source / peak_j)) * width,
+            y + min(1., max(0., target / peak_j)) * height)
+
+
+def saturation_crossover_point(rect, value):
+    """Return the guide position for the compressed saturation crossover."""
+    x, y, width, _height = rect
+    return (x + value * width, y)
+
+
+def saturation_crossover_hit(rect, value, point, scale):
+    """Return whether a pointer is close enough to the crossover guide."""
+    marker = saturation_crossover_point(rect, value)
+    band = _CROSSOVER_HIT_RADIUS * scale
+    return (math.dist(point, marker) <= band
+            or contains(rect, point) and abs(point[0] - marker[0]) <= band)
+
+
+def drag_saturation_crossover(rect, value, dx):
+    """Move the marker in plot space and return its compressed coordinate."""
+    position = value + dx / rect[2]
+    return min(_CROSSOVER_MAX, max(_CROSSOVER_MIN, position))
+
+
+def tone_crossover_point(rect, peak_j, value):
+    """Return the marker for a normalized output-neutral J crossover."""
+    x, y, _width, height = rect
+    output = appearance_scope.LIGHTNESS_KNEE * value
+    position = 1. if value >= peak_j else appearance_scope.lightness_position(output, peak_j)
+    return (x, y + float(position) * height), value > peak_j
+
+
+def appearance_crossover_at(rect, tone, point, scale):
+    """Resolve the existing Tone and Saturation guide hit zones."""
+    x, y, width, height = rect
+    band = _CROSSOVER_HIT_RADIUS * scale
+    if not contains((x - band, y - band, width + 2 * band, height + 2 * band), point):
+        return None
+    marker, _pinned = tone_crossover_point(
+        rect, tone_peak_j(tone), tone.tone_crossover,
+    )
+    if math.dist(point, marker) <= band:
+        return "tone_crossover"
+    if saturation_crossover_hit(rect, tone.saturation_crossover, point, scale):
+        return "saturation_crossover"
+    if not contains(rect, point):
+        return None
+    if abs(point[1] - marker[1]) <= band:
+        return "tone_crossover"
+
+
+def appearance_control_at(rect, tone, point, scale):
+    """Resolve crossover guides before the tonal strips and saturation halves."""
+    crossover = appearance_crossover_at(rect, tone, point, scale)
+    if crossover is not None:
+        return crossover
+    x, y, width, _height = rect
+    if not contains(rect, point):
+        return None
+    tone_y = tone_crossover_point(
+        rect, tone_peak_j(tone), tone.tone_crossover,
+    )[0][1]
+    for field, strip in appearance_gain_strips(rect, tone_y, scale).items():
+        if contains(strip, point):
+            return field
+    saturation_x, _ = saturation_crossover_point(rect, tone.saturation_crossover)
+    return "muted_gain" if point[0] < saturation_x else "vivid_gain"
+
+
+def appearance_gain_regions(rect, saturation_x, tone_y):
+    """Return the four highlight rectangles bounded by the visible guides."""
+    x, y, width, height = rect
+    return {
+        "muted_gain": (x, y, saturation_x - x, height),
+        "vivid_gain": (saturation_x, y, x + width - saturation_x, height),
+        "shadow_chroma": (x, y, width, tone_y - y),
+        "highlight_chroma": (x, tone_y, width, y + height - tone_y),
+    }
+
+
+def appearance_gain_strips(rect, tone_y, scale):
+    """Return percentage-height edge zones clear of the Tone crossover."""
+    x, y, width, height = rect
+    top = y + height
+    band = _CROSSOVER_HIT_RADIUS * scale
+    strip = height * _APPEARANCE_EDGE_FRACTION
+    strips = {}
+    if tone_y - y > band:
+        strips["shadow_chroma"] = (x, y, width, min(strip, tone_y - y - band))
+    if top - tone_y > band:
+        thickness = min(strip, top - tone_y - band)
+        strips["highlight_chroma"] = (x, top - thickness, width, thickness)
+    return strips
+
+
+def drag_appearance_gain(rect, field, value, dx):
+    """Map a full-plot horizontal drag to the gain's full stop range."""
+    low, high = TONE_CHROMA_LIMITS[field]
+    return min(high, max(low, value + dx / rect[2] * (high - low)))
+
+
+def drag_tone_crossover(rect, peak_j, value, dy):
+    """Map vertical plot motion directly to normalized output-neutral J."""
+    if dy == 0.:
+        return value
+    if value >= peak_j and dy > 0.:
+        return value
+    (_marker_x, marker_y), _pinned = tone_crossover_point(rect, peak_j, value)
+    target = (marker_y - rect[1] + dy) / rect[3]
+    output_j = (appearance_scope.lightness_at_position(target, peak_j)
+                / appearance_scope.LIGHTNESS_KNEE)
+    return min(_TONE_CROSSOVER_MAX, max(_TONE_CROSSOVER_MIN, output_j))
 
 
 def tone_anchor_levels(model):
@@ -124,9 +249,6 @@ def layout(stage, width, height, scale=1.0, position=(24.0, 24.0), size=None):
         result.update({
             "scope": _rect(scope_x, scope_y, side, side),
             "exposure": _rect(inner_x, scope_y, 62 * scale, side),
-            "cr_balance": _rect(scope_x + side + 10 * scale,
-                                scope_y, 62 * scale, side),
-            "yb_balance": _rect(scope_x, py + 32 * scale, side, 32 * scale),
         })
     else:
         # Both plots reserve a left gutter for their vertical tick labels.
@@ -139,13 +261,13 @@ def layout(stage, width, height, scale=1.0, position=(24.0, 24.0), size=None):
         curve_top = py + panel_height - 86 * scale
         curve_width = curve_right - curve_x
         curve_height = curve_top - curve_y
-        appearance_width = min(appearance_column - 26 * scale, 2 * curve_height)
-        appearance_height = appearance_width / 2
+        appearance_width = appearance_column - 26 * scale
+        appearance_height = curve_height
         title_y = py + panel_height - 58 * scale
         peak_width = min(116 * scale, inner_right - tone_x - 66 * scale)
         peak_x = inner_right - peak_width
         result.update({
-            "appearance": _rect(inner_x + 26 * scale, curve_top - appearance_height,
+            "appearance": _rect(inner_x + 26 * scale, curve_y,
                                 appearance_width, appearance_height),
             "curve": _rect(curve_x, curve_y, curve_width, curve_height),
             "curve_title": _rect(tone_x, title_y, peak_x - tone_x - 6 * scale, 24 * scale),
@@ -207,8 +329,8 @@ def resize(stage, rect, bounds, handle, dx, dy, scale):
     return (x, y), size
 
 
-def _handle_polar(rect, axis, spread, heading):
-    cb, cr = _TARGETS[AXIS_LABELS[axis]]
+def _handle_polar(rect, label, spread, heading):
+    cb, cr = _TARGETS[label]
     base_radius = math.hypot(cb, cr) / CHROMA_LIMIT * rect[2] * .5
     radius = base_radius * (1 + spread / 100)
     angle = math.atan2(cr, cb) + math.radians(heading)
@@ -224,37 +346,111 @@ def _clip_to_circle(center, point, radius):
     return center[0] + dx * factor, center[1] + dy * factor
 
 
-def handle_positions(rect, linear, scale=1.0):
-    """Return clipped CR/YB handle positions for a Linear settings object."""
+def _separate_handles(rect, positions, scale):
+    """Keep colliding color handles distinguishable without leaving the scope."""
     radius = rect[2] * .5
     center = (rect[0] + radius, rect[1] + radius)
-    positions = {}
-    for axis, spread, heading in zip(AXIS_LABELS, linear.spread, linear.heading):
-        _, distance, angle = _handle_polar(rect, axis, spread, heading)
+    labels = tuple(HANDLE_AXES)
+    adjusted = [positions[label] for label in labels]
+    separation = 2 * _LINEAR_HANDLE_HIT_RADIUS * scale
+    for _ in range(8):
+        for first in range(len(adjusted)):
+            for second in range(first + 1, len(adjusted)):
+                dx = adjusted[second][0] - adjusted[first][0]
+                dy = adjusted[second][1] - adjusted[first][1]
+                distance = math.hypot(dx, dy)
+                if distance >= separation:
+                    continue
+                if distance == 0.:
+                    angle = math.tau * (first + second + 1) / len(adjusted)
+                    dx, dy = math.cos(angle), math.sin(angle)
+                else:
+                    dx, dy = dx / distance, dy / distance
+                offset = (separation - distance) * .5
+                adjusted[first] = _clip_to_circle(
+                    center, (adjusted[first][0] - dx * offset,
+                             adjusted[first][1] - dy * offset), radius,
+                )
+                adjusted[second] = _clip_to_circle(
+                    center, (adjusted[second][0] + dx * offset,
+                             adjusted[second][1] + dy * offset), radius,
+                )
+    return dict(zip(labels, adjusted))
+
+
+def handle_positions(rect, linear, scale=1.0):
+    """Return clipped Red/Cyan/Blue/Yellow handles for Linear settings."""
+    radius = rect[2] * .5
+    center = (rect[0] + radius, rect[1] + radius)
+    raw = {}
+    for label, axis in HANDLE_AXES.items():
+        index = int(axis == "yb")
+        spread, heading = linear.spread[index], linear.heading[index]
+        _, distance, angle = _handle_polar(rect, label, spread, heading)
         distance = min(distance, radius)
-        positions[axis] = (center[0] + distance * math.cos(angle),
-                           center[1] + distance * math.sin(angle))
-
-    cr, yb = positions["cr"], positions["yb"]
-    separation = 13 * scale
-    if math.dist(cr, yb) < separation:
-        # Separate coincident handles tangentially so both stay accessible at
-        # the circle edge and neither changes the underlying drag baseline.
-        midpoint = ((cr[0] + yb[0]) / 2, (cr[1] + yb[1]) / 2)
-        angle = math.atan2(midpoint[1] - center[1], midpoint[0] - center[0])
-        tangent = (-math.sin(angle), math.cos(angle))
-        direction = (cr[0] - yb[0]) * tangent[0] + (cr[1] - yb[1]) * tangent[1]
-        offset = math.copysign(separation / 2, direction)
-        for axis, sign in (("cr", 1), ("yb", -1)):
-            point = (midpoint[0] + sign * offset * tangent[0],
-                     midpoint[1] + sign * offset * tangent[1])
-            positions[axis] = _clip_to_circle(center, point, radius)
-    return positions
+        raw[label] = (center[0] + distance * math.cos(angle),
+                      center[1] + distance * math.sin(angle))
+    return _separate_handles(rect, raw, scale)
 
 
-def drag_handle(rect, axis, spread, heading, dx, dy):
+def handle_balance(linear, label):
+    """Return the user-facing balance value shown at one color endpoint."""
+    axis = HANDLE_AXES[label]
+    value = -linear.balance[int(axis == "yb")]
+    return value * BALANCE_SIGNS[label]
+
+
+def balance_rails(rect, positions, scale=1.0):
+    """Place a small vertical balance rail beside each live color handle."""
+    x, y, width, height = rect
+    margin = 2 * scale
+    rail_width = _BALANCE_RAIL_WIDTH * scale
+    rail_height = min(_BALANCE_RAIL_HEIGHT * scale, height * .24)
+    placed = {}
+
+    def overlap(left, right):
+        return (max(0., min(left[0] + left[2], right[0] + right[2]) - max(left[0], right[0]))
+                * max(0., min(left[1] + left[3], right[1] + right[3]) - max(left[1], right[1])))
+
+    for label, point in positions.items():
+        candidates = []
+        for offset in (15., -15., 23., -23., 31., -31.):
+            for shift in (0., -.4 * rail_height, .4 * rail_height,
+                          -.8 * rail_height, .8 * rail_height):
+                left = max(x + margin, min(point[0] + offset * scale - rail_width * .5,
+                                           x + width - rail_width - margin))
+                bottom = max(y + margin, min(point[1] - rail_height * .5 + shift,
+                                             y + height - rail_height - margin))
+                candidate = _rect(left, bottom, rail_width, rail_height)
+                center = (left + rail_width * .5, bottom + rail_height * .5)
+                score = math.dist(center, point)
+                for other_label, other_point in positions.items():
+                    if other_label == label:
+                        continue
+                    radius = _LINEAR_HANDLE_HIT_RADIUS * scale
+                    hit = (other_point[0] - radius, other_point[1] - radius,
+                           2 * radius, 2 * radius)
+                    score += overlap(candidate, hit) * 100.
+                for other in placed.values():
+                    score += overlap(candidate, other) * 1000.
+                candidates.append((score, candidate))
+        placed[label] = min(candidates, key=lambda item: item[0])[1]
+    return placed
+
+
+def linear_handle_at(positions, rails, point, scale=1.0):
+    """Resolve a balance rail before a nearby color handle."""
+    for label, rail in rails.items():
+        if contains(rail, point):
+            return "balance_" + label
+    distance, label = min((math.dist(point, position), label)
+                          for label, position in positions.items())
+    return label if distance <= _LINEAR_HANDLE_HIT_RADIUS * scale else None
+
+
+def drag_handle(rect, label, spread, heading, dx, dy):
     """Apply a relative drag and return unclipped Spread/Heading values."""
-    base_radius, radius, angle = _handle_polar(rect, axis, spread, heading)
+    base_radius, radius, angle = _handle_polar(rect, label, spread, heading)
     cosine, sine = math.cos(angle), math.sin(angle)
     radial = dx * cosine + dy * sine
     tangential = -dx * sine + dy * cosine
@@ -267,4 +463,5 @@ def drag_handle(rect, axis, spread, heading, dx, dy):
     return spread, heading
 
 
-__all__ = ["contains", "drag_handle", "handle_positions", "layout", "scope_targets"]
+__all__ = ["contains", "drag_handle", "handle_positions", "balance_rails",
+           "handle_balance", "linear_handle_at", "layout", "scope_targets"]

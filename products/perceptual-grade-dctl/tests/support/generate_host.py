@@ -4,8 +4,8 @@ from pathlib import Path
 
 from tests.support.dctl import (
     ALL_STAGES, ANCHOR_CENTER_PROTOTYPES, GAIN_PROTOTYPES, GLOBAL_SHAPE_PROTOTYPES,
-    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, SURFACE_PROTOTYPES, TONE_FIT_LINEAR_GAIN_PROTOTYPES,
-    TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
+    OVERLAP_PROTOTYPES, PROTOTYPES, STAGES, STANDALONE_STAGES, SURFACE_PROTOTYPES,
+    TONE_FIT_LINEAR_GAIN_PROTOTYPES, TONE_FIT_PROTOTYPES, TONE_FIT_UNIFIED_CHROMA_PROTOTYPES,
     WARP_QUADRATIC_SCALE_PROTOTYPES,
     body, controls, entry, filename,
 )
@@ -99,6 +99,7 @@ int run_surface() {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dctl-dir", type=Path, required=True)
+    parser.add_argument("--standalone-dir", type=Path, required=True)
     parser.add_argument("--prototype-dir", type=Path, required=True)
     parser.add_argument("--surface-dir", type=Path, required=True)
     parser.add_argument("--overlap-dir", type=Path, required=True)
@@ -112,7 +113,8 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     sections = ['#include "float3.h"', '#include <stdio.h>', '#include <string.h>']
-    for stages, root in ((STAGES, args.dctl_dir), (PROTOTYPES, args.prototype_dir),
+    for stages, root in ((STAGES, args.dctl_dir), (STANDALONE_STAGES, args.standalone_dir),
+                         (PROTOTYPES, args.prototype_dir),
                          (SURFACE_PROTOTYPES, args.surface_dir), (OVERLAP_PROTOTYPES, args.overlap_dir),
                          (ANCHOR_CENTER_PROTOTYPES, args.anchor_centers_dir), (GAIN_PROTOTYPES, args.gain_dir),
                          (GLOBAL_SHAPE_PROTOTYPES, args.global_shape_dir), (TONE_FIT_PROTOTYPES, args.tone_fit_dir),
