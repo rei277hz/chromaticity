@@ -350,7 +350,7 @@
         "products/perceptual-grade-next-blender/tests/runtime/test_scheduler.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_scheduler_render.py",
         "products/perceptual-grade-next-blender/tests/runtime/test_preparation_runtime.py",
-        "products/perceptual-grade-next-blender/tests/installed/runner.py"
+        "products/perceptual-grade-next-blender/tests/installed/test_installed.py"
       ]
     },
     {
